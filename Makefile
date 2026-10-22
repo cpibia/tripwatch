@@ -27,7 +27,9 @@ test:
 	go test -race ./...
 
 cover:
-	go test -race -coverprofile=coverage.out ./internal/...
+	# -coverpkg counts code exercised from other packages' tests too: transport and pki are
+	# tested end to end through the verifier's ingest.
+	go test -race -coverpkg=./internal/... -coverprofile=coverage.out ./internal/...
 	@go tool cover -func=coverage.out | awk -v min=$(COVERAGE_MIN) '/^total:/ { sub("%", "", $$3); printf "coverage %s%% (min %s%%)\n", $$3, min; if ($$3 + 0 < min) exit 1 }'
 
 lint:
