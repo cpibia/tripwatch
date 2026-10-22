@@ -3,8 +3,12 @@ package apps
 import (
 	"context"
 	"errors"
+	"io"
+	"io/fs"
+	"net"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
 
@@ -220,14 +224,114 @@ $databases['default']['default'] = [
 ];`),
 		"var/www/site/sites/default/settings.local.php": text(`<?php $databases['default']['default']['port'] = '3307'; $databases['default']['default'] = ['database' => 'override', 'port' => '3307'];`),
 		"proc/1/comm":     text("tini\n"),
-		"proc/1/status":   text("Name:\ttini\nPPid:\t0\n"),
+		"proc/1/status":   text("Name:\ttini\nPPid:\t0\nUid:\t0\t0\t0\t0\n"),
 		"proc/1/environ":  text("PATH=/usr/bin\x00DRUPAL_DB_HOST=mariadb\x00DRUPAL_DB_PASSWORD=pw\x00"),
 		"proc/50/comm":    text("php-fpm8.2\n"),
 		"proc/50/status":  text("Name:\tphp-fpm8.2\nPPid:\t1\n"),
 		"proc/50/environ": text("PATH=/usr/bin\x00"),
+		// A PHP process of the web server user trying to feed its own database.
+		"proc/7/comm":    text("php\n"),
+		"proc/7/status":  text("Name:\tphp\nPPid:\t1\nUid:\t33\t33\t33\t33\n"),
+		"proc/7/environ": text("DRUPAL_DB_HOST=evil.example.net\x00DRUPAL_DB_USER=attacker\x00"),
 	}
 	collect(t, fsys, Collector{Connect: connectTo(&fakeDB{}, &seen)})
 	if seen.Host != "mariadb" || seen.Password != "pw" || seen.User != "drupal" || seen.Name != "override" || seen.Port != "3307" {
 		t.Errorf("config = %+v", seen)
+	}
+}
+
+func sockFile(uid uint32) *fstest.MapFile {
+	return &fstest.MapFile{Mode: fs.ModeSocket | 0o777, Sys: &syscall.Stat_t{Uid: uid}}
+}
+
+func dirFile(uid uint32, perm fs.FileMode) *fstest.MapFile {
+	return &fstest.MapFile{Mode: fs.ModeDir | perm, Sys: &syscall.Stat_t{Uid: uid}}
+}
+
+func TestEndpoint(t *testing.T) {
+	base := func() fstest.MapFS {
+		return fstest.MapFS{
+			"etc/passwd":   text("root:x:0:0::/root:/bin/sh\nmysql:x:999:999::/nonexistent:/bin/false\nwww-data:x:33:33::/var/www:/bin/sh\n"),
+			"proc/88/comm": text("mysqld\n"),
+		}
+	}
+	src := func(fsys fstest.MapFS) collector.Source { return collector.Source{FS: fsys, Root: "/host"} }
+	ctx := context.Background()
+
+	good := base()
+	good["run/mysqld"] = dirFile(999, 0o755)
+	good["run/mysqld/mysqld.sock"] = sockFile(999)
+	if net, addr, err := endpoint(ctx, src(good), dbConfig{Host: "localhost"}, nil); err != nil || net != "unix" || addr != "/host/run/mysqld/mysqld.sock" {
+		t.Errorf("trusted socket: %s %s %v", net, addr, err)
+	}
+
+	for name, fsys := range map[string]fstest.MapFS{
+		"socket owned by the web user": func() fstest.MapFS {
+			f := base()
+			f["run/mysqld"] = dirFile(999, 0o755)
+			f["run/mysqld/mysqld.sock"] = sockFile(33)
+			return f
+		}(),
+		"directory owned by the web user": func() fstest.MapFS {
+			f := base()
+			f["run/mysqld"] = dirFile(33, 0o755)
+			f["run/mysqld/mysqld.sock"] = sockFile(999)
+			return f
+		}(),
+		"world-writable directory": func() fstest.MapFS {
+			f := base()
+			f["run/mysqld"] = dirFile(999, 0o777)
+			f["run/mysqld/mysqld.sock"] = sockFile(999)
+			return f
+		}(),
+		"no database process": func() fstest.MapFS {
+			f := base()
+			delete(f, "proc/88/comm")
+			f["run/mysqld"] = dirFile(999, 0o755)
+			f["run/mysqld/mysqld.sock"] = sockFile(999)
+			return f
+		}(),
+	} {
+		if _, _, err := endpoint(ctx, src(fsys), dbConfig{Host: "localhost"}, nil); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, _, err := endpoint(ctx, src(good), dbConfig{Host: "localhost", Socket: "/tmp/mysql.sock"}, nil); err == nil {
+		t.Error("a socket in /tmp named by the configuration was accepted")
+	}
+
+	if _, _, err := endpoint(ctx, src(base()), dbConfig{Host: "evil.example.net"}, nil); !errors.Is(err, errUntrustedHost) {
+		t.Errorf("remote host: %v", err)
+	}
+	if _, _, err := endpoint(ctx, src(base()), dbConfig{Host: "127.0.0.1", Port: "3307"}, nil); !errors.Is(err, errUntrustedHost) {
+		t.Errorf("loopback port without a database server: %v", err)
+	}
+	if _, addr, err := endpoint(ctx, src(base()), dbConfig{Host: "db", Port: "3306"}, []string{"db"}); err != nil || addr != "db:3306" {
+		t.Errorf("allowed host: %s %v", addr, err)
+	}
+	if _, _, err := endpoint(ctx, src(base()), dbConfig{Host: "db", Port: "4444"}, []string{"db"}); err == nil {
+		t.Error("an allowed host on another port was accepted")
+	}
+	if _, _, err := endpoint(ctx, src(base()), dbConfig{Host: "db", Port: "4444"}, []string{"db:4444"}); err != nil {
+		t.Errorf("allowed host and port: %v", err)
+	}
+}
+
+// A server that keeps sending is cut off at the allowance instead of filling memory.
+func TestLimitedConn(t *testing.T) {
+	client, server := net.Pipe()
+	go func() {
+		chunk := make([]byte, 1<<20)
+		for {
+			if _, err := server.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+	c := &limitedConn{Conn: client, left: 3 << 20}
+	n, err := io.Copy(io.Discard, c)
+	_ = client.Close()
+	if !errors.Is(err, errConnLimit) || n != 3<<20 {
+		t.Errorf("read %d bytes, err %v", n, err)
 	}
 }

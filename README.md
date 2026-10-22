@@ -118,12 +118,24 @@ MariaDB, lo interroga con sole `SELECT` e timeout di pochi secondi:
 - le **impostazioni da sviluppo** rimaste in produzione: debug attivo, modalità sviluppatore,
   modifica dei file PHP dal pannello.
 
-**Disattivato per default** (`-app-db=false`) finché le connessioni non sono limitate a
-destinazioni locali attendibili: oggi l'host del database viene dalla configurazione
-dell'applicazione, che un utente non privilegiato può fabbricare, e il sensore gli consegnerebbe
-le credenziali. Le credenziali vengono lette dai file di configurazione o, quando l'applicazione
-usa `getenv()`, dall'ambiente dei processi PHP e dei loro processi padre. Lo snapshot riporta solo
-`database@host`. Il prefisso delle tabelle viene accettato solo se è un identificatore semplice.
+Il sensore si collega solo a destinazioni che può verificare, perché l'host del database viene
+da un file che un attaccante può aver scritto e riceverebbe le credenziali vere:
+
+- un socket Unix di proprietà dell'utente `mysql` o di root, in una directory che altri non
+  possono scrivere, con un server database in esecuzione (`/tmp` è escluso);
+- una porta di loopback su cui ascolta un processo `mysqld` o `mariadbd` di root o dell'utente
+  `mysql`;
+- un host indicato esplicitamente dall'operatore con `-app-db-hosts` (`db` oppure `db:3307`),
+  per esempio il nome di un servizio Docker.
+
+Ogni altro host viene riportato come avviso e non interrogato. Le credenziali vengono lette dai
+file di configurazione o, quando l'applicazione usa `getenv()`, dall'ambiente dei processi di root
+che avviano PHP (il master di FPM, l'init del container), mai da un processo dell'utente web.
+Restano in memoria per la durata della connessione e lo snapshot riporta solo `database@host`. Se
+il file di configurazione è scrivibile da un utente diverso da root, il profilo lo segnala: chi
+può scriverlo può far leggere al sensore un database diverso. Ogni connessione ha un tetto di
+byte ricevuti e le colonne lette sono troncate; il prefisso delle tabelle viene accettato solo se
+è un identificatore semplice. Il collector si disattiva con `-app-db=false`.
 
 ## Log dei web server
 

@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/buildinfo"
@@ -29,7 +30,8 @@ type report struct {
 func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	rootDir := flag.String("root", "/", "root of the filesystem to observe (the host root when running in a DaemonSet)")
-	appDB := flag.Bool("app-db", false, "read administrators, extensions and stored scripts from the databases of recognised applications (off until database connections are restricted to trusted local endpoints)")
+	appDB := flag.Bool("app-db", true, "read administrators, extensions and stored scripts from the databases of recognised applications (local database servers only)")
+	appDBHosts := flag.String("app-db-hosts", "", "comma-separated database hosts, as host or host:port, trusted beyond the local server, such as a Docker service name")
 	stateDir := flag.String("state-dir", "/var/lib/tripwatch", "directory for state kept between runs, such as log positions (empty to keep none)")
 	flag.Parse()
 
@@ -44,7 +46,7 @@ func main() {
 	weblog := &logs.Collector{StateDir: *stateDir}
 	collectors := append(system.All(), web.Collector{}, weblog)
 	if *appDB {
-		collectors = append(collectors, apps.Collector{})
+		collectors = append(collectors, apps.Collector{AllowedHosts: splitList(*appDBHosts)})
 	}
 	src := collector.NewSource(*rootDir)
 	out := report{
@@ -61,4 +63,14 @@ func main() {
 	if err := weblog.Commit(); err != nil {
 		log.Printf("weblog positions not saved, the same lines will be read again: %v", err)
 	}
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(strings.ToLower(v)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

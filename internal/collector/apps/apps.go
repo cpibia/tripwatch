@@ -8,8 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
-	"net"
-	"path/filepath"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -70,6 +69,8 @@ type querier interface {
 // the database; it is replaceable for tests.
 type Collector struct {
 	Connect func(ctx context.Context, src collector.Source, cfg dbConfig) (querier, func(), error)
+	// AllowedHosts are database hosts the operator trusts beyond the local server.
+	AllowedHosts []string
 }
 
 func (Collector) Name() string { return "apps" }
@@ -77,7 +78,10 @@ func (Collector) Name() string { return "apps" }
 func (c Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	connect := c.Connect
 	if connect == nil {
-		connect = connectMySQL
+		allowed := c.AllowedHosts
+		connect = func(ctx context.Context, src collector.Source, cfg dbConfig) (querier, func(), error) {
+			return connectMySQL(ctx, src, cfg, allowed)
+		}
 	}
 	res := Result{Apps: []Profile{}}
 	env := runtimeEnv(src.FS)
@@ -96,8 +100,10 @@ var runtimeProcesses = []string{"php-fpm", "php", "apache2", "httpd", "frankenph
 
 // runtimeEnv merges the environment of the running PHP processes and of their ancestors: in
 // containers the variables usually sit in the init process and reach PHP through the FPM pool
-// configuration, not through the PHP process's own environment. It is only used to resolve
-// configuration values and never leaves the sensor: it holds credentials.
+// configuration, not through the PHP process's own environment. Only processes running as root
+// count (the FPM master, the container's init): a PHP process started by the web server user
+// could otherwise feed the sensor the credentials of a database of its own. It is only used to
+// resolve configuration values and never leaves the sensor.
 func runtimeEnv(fsys fs.FS) map[string]string {
 	env := map[string]string{}
 	entries, err := fs.ReadDir(fsys, "proc")
@@ -116,7 +122,7 @@ func runtimeEnv(fsys fs.FS) map[string]string {
 		}
 		for pid, hops := e.Name(), 0; pid != "" && pid != "0" && !visited[pid] && hops < 32; hops++ {
 			visited[pid] = true
-			if data, err := fs.ReadFile(fsys, "proc/"+pid+"/environ"); err == nil {
+			if data, err := fs.ReadFile(fsys, "proc/"+pid+"/environ"); err == nil && processUID(fsys, pid) == "0" {
 				for _, kv := range strings.Split(string(data), "\x00") {
 					if k, v, ok := strings.Cut(kv, "="); ok {
 						if _, seen := env[k]; !seen {
@@ -129,6 +135,18 @@ func runtimeEnv(fsys fs.FS) map[string]string {
 		}
 	}
 	return env
+}
+
+func processUID(fsys fs.FS, pid string) string {
+	lines, _ := collector.ReadLines(fsys, "proc/"+pid+"/status")
+	for _, line := range lines {
+		if v, ok := strings.CutPrefix(line, "Uid:"); ok {
+			if f := strings.Fields(v); len(f) > 0 {
+				return f[0]
+			}
+		}
+	}
+	return ""
 }
 
 func parentPID(fsys fs.FS, pid string) string {
@@ -149,6 +167,13 @@ func profile(ctx context.Context, src collector.Source, app discovery.Applicatio
 	root := strings.TrimPrefix(app.Path, "/")
 	cfg := readConfig(src.FS, root, app.Framework, env, &p.Issues)
 	p.Settings, p.Warnings, p.Extensions = cfg.Settings, cfg.Warnings, cfg.Modules
+	for _, f := range configFiles[app.Framework] {
+		if info, err := fs.Stat(src.FS, path.Join(root, f)); err == nil {
+			if uid, ok := collector.Owner(info); ok && (uid != 0 || info.Mode().Perm()&0o022 != 0) {
+				p.Warnings = append(p.Warnings, fmt.Sprintf("%s is writable by a user other than root (uid %d): the database it names, and so the administrators and scripts reported, can be forged by that user", f, uid))
+			}
+		}
+	}
 	if cfg.DB == nil {
 		return p
 	}
@@ -179,6 +204,15 @@ func profile(ctx context.Context, src collector.Source, app discovery.Applicatio
 	return p
 }
 
+// configFiles are where each framework keeps its database settings.
+var configFiles = map[string][]string{
+	"wordpress": {"wp-config.php"},
+	"magento":   {"app/etc/env.php"},
+	"drupal":    {"sites/default/settings.php", "sites/default/settings.local.php"},
+	"drupal7":   {"sites/default/settings.php"},
+	"laravel":   {".env"},
+}
+
 func run(ctx context.Context, db querier, p *Profile, q string, args ...any) []map[string]string {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -194,17 +228,17 @@ func wordpressChecks(ctx context.Context, db querier, t string, p *Profile) {
 		JOIN `+t+`usermeta m ON m.user_id = u.ID AND m.meta_key = ? WHERE m.meta_value LIKE '%administrator%' LIMIT `+fmt.Sprint(maxRows), t+"capabilities") {
 		p.Admins = append(p.Admins, Admin{ID: r["ID"], Name: r["user_login"], Email: r["user_email"], Created: r["user_registered"]})
 	}
-	for _, r := range run(ctx, db, p, `SELECT option_name, option_value FROM `+t+`options WHERE option_name IN ('siteurl', 'home', 'active_plugins', 'admin_email')`) {
+	for _, r := range run(ctx, db, p, `SELECT option_name, LEFT(option_value, 65535) AS option_value FROM `+t+`options WHERE option_name IN ('siteurl', 'home', 'active_plugins', 'admin_email')`) {
 		if r["option_name"] == "active_plugins" {
 			p.Extensions = serializedStrings(r["option_value"])
 			continue
 		}
 		p.Settings[r["option_name"]] = r["option_value"]
 	}
-	for _, r := range run(ctx, db, p, `SELECT option_name, option_value FROM `+t+`options WHERE option_value LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
+	for _, r := range run(ctx, db, p, `SELECT option_name, LEFT(option_value, 65535) AS option_value FROM `+t+`options WHERE option_value LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
 		p.Injected = append(p.Injected, scriptsIn("option "+r["option_name"], r["option_value"]))
 	}
-	for _, r := range run(ctx, db, p, `SELECT ID, post_type, post_content FROM `+t+`posts WHERE post_status = 'publish' AND post_content LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
+	for _, r := range run(ctx, db, p, `SELECT ID, post_type, LEFT(post_content, 65535) AS post_content FROM `+t+`posts WHERE post_status = 'publish' AND post_content LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
 		p.Injected = append(p.Injected, scriptsIn(r["post_type"]+" "+r["ID"], r["post_content"]))
 	}
 }
@@ -213,7 +247,7 @@ func magentoChecks(ctx context.Context, db querier, t string, p *Profile) {
 	for _, r := range run(ctx, db, p, `SELECT user_id, username, email, created, logdate, is_active FROM `+t+`admin_user LIMIT `+fmt.Sprint(maxRows)) {
 		p.Admins = append(p.Admins, Admin{ID: r["user_id"], Name: r["username"], Email: r["email"], Created: r["created"], LastLogin: r["logdate"], Active: r["is_active"]})
 	}
-	for _, r := range run(ctx, db, p, `SELECT path, scope, scope_id, value FROM `+t+`core_config_data WHERE path IN ('web/unsecure/base_url', 'web/secure/base_url') OR value LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
+	for _, r := range run(ctx, db, p, `SELECT path, scope, scope_id, LEFT(value, 65535) AS value FROM `+t+`core_config_data WHERE path IN ('web/unsecure/base_url', 'web/secure/base_url') OR value LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
 		if strings.HasSuffix(r["path"], "base_url") && !strings.Contains(r["value"], "<script") {
 			p.Settings[r["path"]+"@"+r["scope"]+":"+r["scope_id"]] = r["value"]
 			continue
@@ -222,7 +256,7 @@ func magentoChecks(ctx context.Context, db querier, t string, p *Profile) {
 	}
 	for _, table := range []string{"cms_block", "cms_page"} {
 		id := map[string]string{"cms_block": "block_id", "cms_page": "page_id"}[table]
-		for _, r := range run(ctx, db, p, `SELECT `+id+` AS id, identifier, content FROM `+t+table+` WHERE content LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
+		for _, r := range run(ctx, db, p, `SELECT `+id+` AS id, identifier, LEFT(content, 65535) AS content FROM `+t+table+` WHERE content LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
 			p.Injected = append(p.Injected, scriptsIn(table+" "+r["identifier"]+" ("+r["id"]+")", r["content"]))
 		}
 	}
@@ -243,10 +277,10 @@ func drupalChecks(ctx context.Context, db querier, t string, p *Profile) {
 		LEFT JOIN `+t+`user__roles r ON r.entity_id = u.uid WHERE u.uid = 1 OR r.roles_target_id IN (`+placeholders+`) LIMIT `+fmt.Sprint(maxRows), roles...) {
 		p.Admins = append(p.Admins, Admin{ID: r["uid"], Name: r["name"], Email: r["mail"], Created: unixTime(r["created"]), LastLogin: unixTime(r["access"]), Active: r["status"]})
 	}
-	for _, r := range run(ctx, db, p, `SELECT data FROM `+t+`config WHERE name = 'core.extension'`) {
+	for _, r := range run(ctx, db, p, `SELECT LEFT(data, 1048576) AS data FROM `+t+`config WHERE name = 'core.extension'`) {
 		p.Extensions = serializedKeysUnder(r["data"], "module")
 	}
-	for _, r := range run(ctx, db, p, `SELECT entity_id, bundle, body_value FROM `+t+`node__body WHERE body_value LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
+	for _, r := range run(ctx, db, p, `SELECT entity_id, bundle, LEFT(body_value, 65535) AS body_value FROM `+t+`node__body WHERE body_value LIKE '%<script%' LIMIT `+fmt.Sprint(maxRows)) {
 		p.Injected = append(p.Injected, scriptsIn(r["bundle"]+" "+r["entity_id"], r["body_value"]))
 	}
 }
@@ -325,29 +359,22 @@ func unixTime(s string) string {
 	return time.Unix(sec, 0).UTC().Format(time.RFC3339)
 }
 
-// socketPaths are where MySQL and MariaDB put their socket on common distributions.
-var socketPaths = []string{"run/mysqld/mysqld.sock", "var/run/mysqld/mysqld.sock", "var/lib/mysql/mysql.sock", "tmp/mysql.sock"}
-
-// connectMySQL opens the database read-only in spirit: only SELECT statements are ever sent.
-// For localhost it prefers the Unix socket inside the observed root, as the mysql client does.
-func connectMySQL(ctx context.Context, src collector.Source, cfg dbConfig) (querier, func(), error) {
+// connectMySQL opens the database only at an endpoint endpoint() trusts, through a dialer that
+// bounds what the server can send. Only SELECT statements are ever sent.
+func connectMySQL(ctx context.Context, src collector.Source, cfg dbConfig, allowed []string) (querier, func(), error) {
+	network, addr, err := endpoint(ctx, src, cfg, allowed)
+	if err != nil {
+		return nil, nil, err
+	}
+	registerDialers()
 	mc := mysql.NewConfig()
 	mc.User, mc.Passwd, mc.DBName = cfg.User, cfg.Password, cfg.Name
 	mc.Timeout, mc.ReadTimeout, mc.WriteTimeout = connectTimeout, queryTimeout, queryTimeout
-	mc.Net, mc.Addr = "tcp", net.JoinHostPort(cfg.Host, cmpOr(cfg.Port, "3306"))
-
-	socket := cfg.Socket
-	if socket == "" && (cfg.Host == "localhost" || cfg.Host == "") && src.Root != "" {
-		for _, s := range socketPaths {
-			if _, err := fs.Stat(src.FS, s); err == nil {
-				socket = "/" + s
-				break
-			}
-		}
+	mc.Net, mc.Addr = dialTCP, addr
+	if network == "unix" {
+		mc.Net = dialUnix
 	}
-	if socket != "" && src.Root != "" {
-		mc.Net, mc.Addr = "unix", filepath.Join(src.Root, socket)
-	}
+	mc.MaxAllowedPacket = 4 << 20
 
 	db, err := sql.Open("mysql", mc.FormatDSN())
 	if err != nil {
