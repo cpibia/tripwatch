@@ -24,7 +24,13 @@ Il sensore spedisce in push al verificatore su TLS 1.3 con certificato client
 atomica, e solo dopo spedita: se la conferma si perde, al riavvio parte la stessa busta, che il
 verificatore riconosce e accetta una volta sola. Il pacchetto di registrazione contiene la CA, il
 certificato e la chiave TLS del server e una chiave Ed25519 di firma, distinta da quella TLS.
-Il certificato client dura due anni: negli ultimi 60 giorni il sensore ne chiede uno nuovo su
+La registrazione consigliata usa un token monouso creato nell'interfaccia: indirizzo del
+verificatore, segreto valido un'ora (conservato solo come hash e consumato in un'unica
+istruzione) e impronta SHA-256 della CA. Il sensore genera le sue chiavi, apre la connessione
+accettando solo una catena che termina in quella CA (il verificatore la invia dopo il proprio
+certificato) e manda su `/v1/enroll`, l'unico percorso senza certificato client, il segreto e le
+chiavi pubbliche; riceve il certificato client e compone da sé il pacchetto. Il certificato
+client dura due anni: negli ultimi 60 giorni il sensore ne chiede uno nuovo su
 `/v1/renew`, autenticandosi con quello attuale; il verificatore lo rilascia solo negli ultimi 90
 giorni di validità e solo a un server registrato e non revocato. Il nuovo certificato sta nella
 directory di stato del sensore, il pacchetto in `/etc` resta in sola lettura, e la chiave di

@@ -178,7 +178,7 @@ func TestCrossSiteFormsRejected(t *testing.T) {
 func TestEnrollDownloadsBundleOnce(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
-	res, body := h.post("/enroll", url.Values{"host": {"web-01"}, "csrf": {csrf}})
+	res, body := h.post("/enroll", url.Values{"host": {"web-01"}, "csrf": {csrf}, "mode": {"bundle"}})
 	if res.StatusCode != http.StatusOK || !strings.Contains(res.Header.Get("Content-Disposition"), `filename="tripwatch-web-01.json"`) {
 		t.Fatalf("enroll: status %d, disposition %q", res.StatusCode, res.Header.Get("Content-Disposition"))
 	}
@@ -187,11 +187,11 @@ func TestEnrollDownloadsBundleOnce(t *testing.T) {
 		t.Fatalf("bundle: %v %+v", err, b)
 	}
 
-	res, body = h.post("/enroll", url.Values{"host": {"web-01"}, "csrf": {csrf}})
+	res, body = h.post("/enroll", url.Values{"host": {"web-01"}, "csrf": {csrf}, "mode": {"bundle"}})
 	if res.StatusCode != http.StatusConflict || !strings.Contains(body, `name="replace"`) {
 		t.Fatalf("enrolling an existing host without confirmation: status %d", res.StatusCode)
 	}
-	res, _ = h.post("/enroll", url.Values{"host": {"web-01"}, "csrf": {csrf}, "replace": {"yes"}})
+	res, _ = h.post("/enroll", url.Values{"host": {"web-01"}, "csrf": {csrf}, "replace": {"yes"}, "mode": {"bundle"}})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("confirmed re-enrollment: status %d", res.StatusCode)
 	}
@@ -199,6 +199,30 @@ func TestEnrollDownloadsBundleOnce(t *testing.T) {
 		if res, _ := h.post("/enroll", url.Values{"host": {bad}, "csrf": {csrf}}); res.StatusCode != http.StatusBadRequest {
 			t.Errorf("host %q: status %d, want 400", bad, res.StatusCode)
 		}
+	}
+}
+
+func TestEnrollTokenShownOnce(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	res, body := h.post("/enroll", url.Values{"host": {"web-07"}, "csrf": {csrf}})
+	m := regexp.MustCompile(`tripwatch-sensor enroll -token (tw1\.[A-Za-z0-9_-]+)`).FindStringSubmatch(body)
+	if res.StatusCode != http.StatusOK || m == nil {
+		t.Fatalf("token page: status %d", res.StatusCode)
+	}
+	token, err := pki.ParseEnrollToken(m[1])
+	if err != nil || token.URL != "https://verifier.example.net:8443/v1/envelopes" || token.CA == "" {
+		t.Fatalf("token = %+v, %v", token, err)
+	}
+	host, by, err := h.store.ConsumeEnrollToken(context.Background(), token.Secret, now)
+	if err != nil || host != "web-07" || by != email {
+		t.Fatalf("token not usable: %q %q %v", host, by, err)
+	}
+	if _, err := h.store.Host(context.Background(), "web-07"); err == nil {
+		t.Fatal("making a token enrolled the host before the token was used")
+	}
+	if _, body := h.get("/enroll"); strings.Contains(body, m[1]) {
+		t.Fatal("the token is shown again")
 	}
 }
 

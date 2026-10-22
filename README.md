@@ -303,8 +303,9 @@ docker compose exec verifier /tripwatch-verifier user -email collega@example.net
   snapshot ricevuti, la revoca.
 - **Allarmi.** Da gestire, presi in carico, risolti. Ogni allarme si può prendere in carico e
   risolvere; il dettaglio mostra il testo raccolto dal server come dato, senza interpretarlo.
-- **Registra server.** Genera il pacchetto del server (certificato, chiave TLS, chiave di firma)
-  e lo scarica una sola volta: il verificatore non ne conserva copia.
+- **Registra server.** Genera il token monouso con il comando da eseguire sul server, oppure il
+  pacchetto con le chiavi da scaricare una sola volta; il verificatore non conserva né l'uno né
+  l'altro.
 
 L'interfaccia è in italiano, con tema chiaro e scuro (segue il sistema, oppure si sceglie dal
 menu), si aggiorna da sola ogni minuto e funziona anche da telefono. Le pagine non eseguono script
@@ -321,13 +322,27 @@ allarme del verificatore.
 
 ## Esecuzione del sensore
 
-Si registra il server dall'interfaccia, oppure da riga di comando:
+Il modo consigliato è il token: dall'interfaccia ("Registra server") si sceglie il nome del server
+e si ottiene un comando da eseguire sul server, come root:
+
+```sh
+tripwatch-sensor enroll -token tw1....
+sudo systemctl enable --now tripwatch-sensor
+```
+
+Il sensore genera da sé chiave TLS e chiave di firma, verifica che il verificatore sia quello
+giusto confrontando la sua CA con l'impronta contenuta nel token, e solo allora invia il segreto
+e le chiavi pubbliche; le chiavi private non lasciano mai il server. Il token vale un'ora e una
+volta sola, e il verificatore ne conserva solo l'hash.
+
+In alternativa il verificatore genera un pacchetto con le chiavi già dentro, dall'interfaccia o
+da riga di comando:
 
 ```sh
 (umask 077; docker compose exec -T verifier /tripwatch-verifier enroll -host web-01 -out - > web-01.json)
 ```
 
-Poi si copia il pacchetto sul server e si avvia il servizio:
+Il pacchetto va copiato sul server e il servizio avviato:
 
 ```sh
 sudo install -o root -g root -m 600 web-01.json /etc/tripwatch/bundle.json

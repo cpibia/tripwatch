@@ -729,21 +729,30 @@ func (s *server) transition(w http.ResponseWriter, r *http.Request, se session, 
 
 type enrollData struct {
 	Host      string
+	Mode      string
 	Error     string
 	Existing  bool
 	IngestURL string
+	// Token and Expires are set once a token was made: it is shown on this page only.
+	Token   string
+	Expires time.Time
 }
 
 func (s *server) enrollForm(w http.ResponseWriter, r *http.Request, se session) {
 	s.render(w, r, http.StatusOK, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(),
-		Data: enrollData{IngestURL: s.IngestURL}})
+		Data: enrollData{IngestURL: s.IngestURL, Mode: "token"}})
 }
 
-// enroll issues a host's certificate and keys and hands them over as a download. The bundle is
-// not kept: if it is lost, the host is enrolled again, which invalidates the previous keys.
+// enroll makes a one-time token for the host, or, in bundle mode, issues its certificate and
+// keys and hands them over as a download. Neither is kept: a lost token or bundle means
+// enrolling again, which invalidates the previous keys once used.
 func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 	host := strings.TrimSpace(strings.ToLower(r.PostFormValue("host")))
-	d := enrollData{Host: host, IngestURL: s.IngestURL}
+	mode := "token"
+	if r.PostFormValue("mode") == "bundle" {
+		mode = "bundle"
+	}
+	d := enrollData{Host: host, Mode: mode, IngestURL: s.IngestURL}
 	again := func(status int, msg string) {
 		d.Error = msg
 		s.render(w, r, status, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
@@ -763,6 +772,18 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 		return
 	}
 	now := s.Now()
+	if mode == "token" {
+		secret, expires, err := s.Store.CreateEnrollToken(r.Context(), host, se.Email, now)
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
+		s.Log.Info("enrollment token made", "host", host, "by", se.Email, "replaces", existing.ID != "")
+		d.Token = pki.EnrollToken{URL: s.IngestURL, Secret: secret, CA: s.CA.Fingerprint()}.String()
+		d.Expires = expires
+		s.render(w, r, http.StatusOK, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
+		return
+	}
 	bundle, pub, err := s.CA.Enroll(host, s.IngestURL, now)
 	if err != nil {
 		s.internal(w, r, err)

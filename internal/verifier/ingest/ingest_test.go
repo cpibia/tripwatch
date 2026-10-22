@@ -458,3 +458,23 @@ func TestClientCertificateRenewal(t *testing.T) {
 		t.Fatal("a revoked host renewed its certificate")
 	}
 }
+
+// The sensor side of token enrollment: keys made locally, CA pinned, bundle usable at once.
+func TestTransportEnroll(t *testing.T) {
+	h := newHarness(t)
+	secret, _, _ := h.store.CreateEnrollToken(context.Background(), "web-10", "ops@example.net", now)
+	token := pki.EnrollToken{URL: strings.Replace(h.srv.URL, "127.0.0.1", "localhost", 1) + Path, Secret: secret, CA: h.ca.Fingerprint()}
+	// The server certificate of the harness names 127.0.0.1 only: a token pointing at another
+	// name must fail the pinned verification, before the secret is spent.
+	if _, err := transport.Enroll(t.Context(), token); err == nil {
+		t.Fatal("verifier accepted under a name its certificate does not carry")
+	}
+	token.URL = h.srv.URL + Path
+	b, err := transport.Enroll(t.Context(), token)
+	if err != nil || b.HostID != "web-10" {
+		t.Fatalf("enroll: %+v %v", b, err)
+	}
+	if err := h.client(b, t.TempDir()).Send(context.Background(), protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+}

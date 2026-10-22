@@ -278,6 +278,15 @@ func (b Bundle) SigningPrivateKey() (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
+// EncodeKey writes a private key as PKCS#8 PEM, the form bundles carry.
+func EncodeKey(key ed25519.PrivateKey) ([]byte, error) {
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
+}
+
 func encode(der []byte, key ed25519.PrivateKey) ([]byte, []byte, error) {
 	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {

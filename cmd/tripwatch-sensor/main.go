@@ -3,6 +3,8 @@
 //
 // With -bundle it runs as a daemon: a heartbeat every -heartbeat, a snapshot every -interval.
 // Without, it prints one snapshot as JSON and exits.
+//
+//	tripwatch-sensor enroll -token tw1....   (writes /etc/tripwatch/bundle.json)
 package main
 
 import (
@@ -17,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -45,6 +48,13 @@ type sensor struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "enroll" {
+		if err := enroll(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "tripwatch-sensor enroll:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	rootDir := flag.String("root", "/", "root of the filesystem to observe (the host root when running in a DaemonSet)")
 	appDB := flag.Bool("app-db", true, "read administrators, extensions and stored scripts from the databases of recognised applications (local database servers only)")
@@ -84,6 +94,49 @@ func main() {
 		log.Error("sensor stopped", "err", err)
 		os.Exit(1)
 	}
+}
+
+// enroll registers this host with a token from the verifier's interface and writes the bundle,
+// readable by root only. The keys are generated here and never leave the host.
+func enroll(args []string) error {
+	fs := flag.NewFlagSet("enroll", flag.ExitOnError)
+	token := fs.String("token", "", "enrollment token shown by the verifier's interface")
+	out := fs.String("out", "/etc/tripwatch/bundle.json", "where to write the bundle")
+	_ = fs.Parse(args)
+	t, err := pki.ParseEnrollToken(*token)
+	if err != nil {
+		return err
+	}
+	// Refuse to overwrite before using the token, which works only once.
+	if _, err := os.Stat(*out); err == nil {
+		return fmt.Errorf("%s already exists: remove it first to enroll this host again", *out)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	b, err := transport.Enroll(ctx, t)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(*out), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Printf("Enrolled as %s. Start the sensor: systemctl enable --now tripwatch-sensor\n", b.HostID)
+	return nil
 }
 
 func (s sensor) snapshot(ctx context.Context) report {

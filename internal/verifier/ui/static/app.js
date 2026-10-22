@@ -27,3 +27,18 @@
     window.location.href = row.dataset.href;
   });
 })();
+
+// Copy buttons copy the text of the element they name.
+(function () {
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("button[data-copy]");
+    if (!button || !navigator.clipboard) return;
+    var source = document.getElementById(button.dataset.copy);
+    if (!source) return;
+    navigator.clipboard.writeText(source.textContent.trim()).then(function () {
+      var label = button.textContent;
+      button.textContent = "Copiati";
+      setTimeout(function () { button.textContent = label; }, 2000);
+    });
+  });
+})();

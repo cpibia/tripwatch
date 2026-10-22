@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -189,4 +191,61 @@ func RenewIfDue(ctx context.Context, hc *http.Client, verifierURL string, id *pk
 		return false, err
 	}
 	return true, id.Replace([]byte(r.Cert), []byte(r.Key))
+}
+
+// Enroll registers this host with a one-time token and returns its bundle. The TLS key and the
+// signing key are generated here and only their public halves are sent; the verifier is
+// trusted only if its chain ends in the CA the token names.
+func Enroll(ctx context.Context, token pki.EnrollToken) (pki.Bundle, error) {
+	u, err := url.Parse(token.URL)
+	if err != nil {
+		return pki.Bundle{}, err
+	}
+	tlsPub, tlsKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return pki.Bundle{}, err
+	}
+	signPub, signKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return pki.Bundle{}, err
+	}
+	body, err := json.Marshal(map[string]any{"secret": token.Secret, "tls_key": []byte(tlsPub), "signing_key": []byte(signPub)})
+	if err != nil {
+		return pki.Bundle{}, err
+	}
+	enrollURL := *u
+	enrollURL.Path, enrollURL.RawQuery = "/v1/enroll", ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, enrollURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return pki.Bundle{}, err
+	}
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: token.PinnedTLS(u.Hostname())}, Timeout: time.Minute}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return pki.Bundle{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode != http.StatusOK {
+		return pki.Bundle{}, fmt.Errorf("verifier answered %s: %s", resp.Status, bytes.TrimSpace(data))
+	}
+	var r struct {
+		HostID string `json:"host_id"`
+		CA     string `json:"ca"`
+		Cert   string `json:"cert"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return pki.Bundle{}, err
+	}
+	keyPEM, err := pki.EncodeKey(tlsKey)
+	if err != nil {
+		return pki.Bundle{}, err
+	}
+	b := pki.Bundle{HostID: r.HostID, VerifierURL: token.URL, CA: r.CA, Cert: r.Cert, Key: string(keyPEM),
+		SigningKey: base64.StdEncoding.EncodeToString(signKey.Seed())}
+	// The answer must make a usable identity: the certificate is for our key, from the pinned CA.
+	if _, err := b.ClientIdentity(""); err != nil {
+		return pki.Bundle{}, fmt.Errorf("verifier answer unusable: %w", err)
+	}
+	return b, nil
 }
