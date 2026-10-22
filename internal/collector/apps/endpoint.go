@@ -62,10 +62,14 @@ func endpoint(ctx context.Context, src collector.Source, cfg dbConfig, allowed [
 	if err != nil || !ip.IsLoopback() {
 		return "", "", fmt.Errorf("%s: %w; add it to -app-db-hosts to query it", cfg.Host, errUntrustedHost)
 	}
-	if !databaseListening(ctx, src, port) {
-		return "", "", fmt.Errorf("%s:%s: %w (no database server process listens there)", cfg.Host, port, errUntrustedHost)
+	target, err := netip.ParseAddrPort(net.JoinHostPort(ip.String(), port))
+	if err != nil {
+		return "", "", fmt.Errorf("%s:%s: %w", cfg.Host, port, errUntrustedHost)
 	}
-	return "tcp", net.JoinHostPort(ip.String(), port), nil
+	if !databaseListening(ctx, src, target) {
+		return "", "", fmt.Errorf("%s: %w (no database server process listens on that exact address)", target, errUntrustedHost)
+	}
+	return "tcp", target.String(), nil
 }
 
 func trustedSocket(src collector.Source, configured string) (string, bool) {
@@ -127,24 +131,31 @@ func databaseRunning(src collector.Source) bool {
 	return false
 }
 
-// databaseListening requires the listening socket to belong to a database server process
-// running as root or as the database user: a free loopback port can be opened by anyone, and a
-// process name is easy to fake, its user is not.
-func databaseListening(ctx context.Context, src collector.Source, port string) bool {
+// databaseListening requires a listening socket that serves exactly target, in the sensor's
+// own network namespace, held by a database server process running as root or as the database
+// user. Matching the port alone is not enough: with the server on 127.0.0.1:3306 anyone can
+// listen on [::1]:3306, or on the same port in another namespace. The address that serves
+// target is the address itself or the unspecified address of the same family.
+func databaseListening(ctx context.Context, src collector.Source, target netip.AddrPort) bool {
 	out, err := system.Sockets{}.Collect(ctx, src)
 	if err != nil {
 		return false
 	}
+	ownNS, _ := fs.ReadLink(src.FS, "proc/self/ns/net")
 	owners := databaseUIDs(src)
 	for _, s := range out.(system.SocketsResult).Sockets {
 		if s.State != "listen" || s.PID == 0 || !slices.Contains(databaseProcesses, s.Process) || !slices.Contains(owners, uint32(s.UID)) { //nolint:gosec // UIDs fit in 32 bits
 			continue
 		}
-		ap, err := netip.ParseAddrPort(s.Local)
-		if err != nil || strconv.Itoa(int(ap.Port())) != port {
+		if ownNS != "" && s.NetNS != "" && s.NetNS != ownNS {
 			continue
 		}
-		if ap.Addr().IsLoopback() || ap.Addr().IsUnspecified() {
+		local, err := netip.ParseAddrPort(s.Local)
+		if err != nil || local.Port() != target.Port() {
+			continue
+		}
+		addr := local.Addr()
+		if addr == target.Addr() || (addr.IsUnspecified() && addr.Is4() == target.Addr().Is4()) {
 			return true
 		}
 	}

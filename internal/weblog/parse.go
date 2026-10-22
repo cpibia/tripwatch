@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,11 +31,24 @@ type Request struct {
 	UserAgent string    `json:"user_agent,omitempty"`
 
 	path  string
+	norm  string
 	query string
 }
 
-// Path returns the URI path, percent-decoded.
-func (r *Request) Path() string { return r.path }
+// Path returns the URI path, percent-decoded and normalised the way nginx resolves it before
+// routing: slashes merged, "." and ".." resolved. /v1/../index.php and //index.php are the
+// same request as /index.php and are grouped with it.
+func (r *Request) Path() string { return r.norm }
+
+// RawPath returns the decoded path before normalisation, which still shows traversal attempts.
+func (r *Request) RawPath() string { return r.path }
+
+func normalisePath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	return path.Clean("/" + p)
+}
 
 // combinedRe matches the NCSA combined format used by default by nginx and Apache. Anything
 // after the user agent (request time, upstream, host) is ignored.
@@ -64,6 +78,7 @@ func Parse(format, line string) (Request, bool) {
 		return Request{}, false
 	}
 	r.path, r.query = splitURI(r.URI)
+	r.norm = normalisePath(r.path)
 	return r, true
 }
 

@@ -192,7 +192,7 @@ func dpkgHost() fstest.MapFS {
 		"var/lib/dpkg/info/openssh-server.list": text("/usr/sbin/sshd\n/usr/bin/scp\n"),
 		"var/lib/dpkg/info/coreutils:amd64.md5sums": text(md5hex("ls") + "  bin/ls\n" +
 			md5hex("original x") + "  usr/bin/x\n"),
-		"var/lib/dpkg/info/coreutils:amd64.list": text("/bin/ls\n/usr/bin/x\n"),
+		"var/lib/dpkg/info/coreutils:amd64.list": text("/bin/ls\n/usr/bin/x\n/usr/bin/vim.basic\n"),
 		"var/lib/dpkg/diversions":                text("/usr/bin/x\n/usr/bin/x.distrib\nother-package\n"),
 
 		"bin":                         link("usr/bin"),
@@ -201,6 +201,10 @@ func dpkgHost() fstest.MapFS {
 		"usr/bin/backdoor":            text("not from any package"),
 		"usr/bin/editor":              link("/etc/alternatives/editor"),
 		"usr/local/bin/sudo":          link("/dev/shm/x"),
+		"etc/alternatives/editor":     link("/usr/bin/vim.basic"),
+		"usr/bin/vim.basic":           text("vim"),
+		"usr/local/bin/su":            link("/etc/alternatives/evil"),
+		"etc/alternatives/evil":       link("/dev/shm/y"),
 		"usr/local/bin/vi":            link("/etc/alternatives/../../dev/shm/vi"),
 		"usr/sbin/sshd":               text("sshd with a backdoor"),
 		"etc/ssh/moduli":              text("moduli"),
@@ -231,7 +235,7 @@ func TestPackagesDpkg(t *testing.T) {
 	if !slices.Equal(res.Missing, []string{"/usr/bin/scp"}) {
 		t.Errorf("missing = %v; documentation must be ignored", res.Missing)
 	}
-	if !slices.Equal(res.UnownedLinks, []Link{{Path: "/usr/local/bin/sudo", Target: "/dev/shm/x"}, {Path: "/usr/local/bin/vi", Target: "/etc/alternatives/../../dev/shm/vi"}}) {
+	if !slices.Equal(res.UnownedLinks, []Link{{Path: "/usr/local/bin/su", Target: "/etc/alternatives/evil"}, {Path: "/usr/local/bin/sudo", Target: "/dev/shm/x"}, {Path: "/usr/local/bin/vi", Target: "/etc/alternatives/../../dev/shm/vi"}}) {
 		t.Errorf("unowned links = %+v; links managed by update-alternatives are skipped", res.UnownedLinks)
 	}
 	if len(res.DatabaseSHA256) != 64 {

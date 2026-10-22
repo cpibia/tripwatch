@@ -491,7 +491,8 @@ func TestSymlinkedUploadDirectoryIsScanned(t *testing.T) {
 	tr.link("../uploads", "var/www/shared/uploads/2026/loop")
 
 	got := findingsOf(tr.scan())
-	if !slices.Contains(got, KindScriptInUploads+" /var/www/releases/5/uploads/2026/shell.php") {
+	// Followed trees are walked by their real path.
+	if !slices.Contains(got, KindScriptInUploads+" /var/www/shared/uploads/2026/shell.php") {
 		t.Errorf("findings = %v", got)
 	}
 }
@@ -650,5 +651,61 @@ func TestLinkChainOutOfTheApplication(t *testing.T) {
 	}
 	if !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "not followed") }) {
 		t.Errorf("issues = %v", res.Issues)
+	}
+}
+
+// The names pass follows an upload directory that is a link, as in release-based deploys.
+func TestNamesPassFollowsLinkedUploads(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/releases/5/index.php", "<?php echo 1;")
+	tr.file("var/www/shared/uploads/zz.php", `<?php system($_GET['c']);`)
+	tr.link("../../shared/uploads", "var/www/releases/5/uploads")
+
+	src := collector.NewSource(tr.root)
+	inv := discovery.Inspect(src.FS)
+	s := newScanner(src, inv.Applications[0], inv.Sites, inv.Applications)
+	s.namesPass(context.Background())
+	if len(s.report.Findings) != 1 || s.report.Findings[0].Path != "/var/www/shared/uploads/zz.php" {
+		t.Errorf("findings = %+v", s.report.Findings)
+	}
+}
+
+// A directory replaced by a link after the walk validated its parent is not followed.
+func TestWalkRefusesDirectorySwappedForLink(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/shared/up/a/x.php", "<?php")
+	tr.file("etc/secret.php", "<?php system($_GET['c']);")
+	tr.link("../shared/up", "var/www/site/uploads")
+	src := collector.NewSource(tr.root)
+	inv := discovery.Inspect(src.FS)
+	s := newScanner(src, inv.Applications[0], inv.Sites, inv.Applications)
+
+	// Swap var/www/shared/up/a for a link to / and walk it as the followed tree would.
+	if err := os.RemoveAll(filepath.Join(tr.root, "var/www/shared/up/a")); err != nil {
+		t.Fatal(err)
+	}
+	tr.link("/", "var/www/shared/up/a")
+	s.walkData(context.Background(), "var/www/shared/up/a", true, true)
+	for _, f := range s.report.Findings {
+		if strings.Contains(f.Path, "secret.php") {
+			t.Errorf("walked out through a swapped link: %+v", f)
+		}
+	}
+	if !slices.ContainsFunc(s.issues, func(i string) bool { return strings.Contains(i, "changed during the scan") }) {
+		t.Errorf("issues = %v", s.issues)
+	}
+}
+
+// A small sparse script is read at the edges only, and still reported.
+func TestSparseSmallFile(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/uploads/s.php", `<?php system($_GET['c']);`)
+	if err := os.Truncate(filepath.Join(tr.root, "var/www/site/uploads/s.php"), 3<<20); err != nil {
+		t.Fatal(err)
+	}
+	if got := findingsOf(tr.scan()); !slices.Contains(got, KindScriptInUploads+" /var/www/site/uploads/s.php") {
+		t.Errorf("findings = %v", got)
 	}
 }

@@ -248,17 +248,32 @@ func (s *scanner) namesPass(ctx context.Context) {
 		}
 	}
 	for _, root := range roots {
-		if info, err := fs.Lstat(s.src.FS, root); err != nil || !info.IsDir() {
+		info, err := fs.Lstat(s.src.FS, root)
+		if err != nil {
 			continue
 		}
-		s.listNames(ctx, root, 0)
+		verify := false
+		if info.Mode()&fs.ModeSymlink != 0 {
+			// The usual release layout: pub/media -> ../../shared/pub/media.
+			resolved, ok := s.followable(root)
+			if !ok {
+				continue
+			}
+			if info, err = fs.Lstat(s.src.FS, resolved); err != nil {
+				continue
+			}
+			root, verify = resolved, true
+		}
+		if info.IsDir() {
+			s.listNames(ctx, root, 0, verify)
+		}
 	}
 }
 
 const maxNamesDepth = 64
 
-func (s *scanner) listNames(ctx context.Context, dir string, depth int) {
-	if depth > maxNamesDepth || s.expired(ctx) {
+func (s *scanner) listNames(ctx context.Context, dir string, depth int, verify bool) {
+	if depth > maxNamesDepth || s.expired(ctx) || (verify && !s.unchanged(dir)) {
 		return
 	}
 	f, err := s.src.FS.Open(dir)
@@ -276,7 +291,7 @@ func (s *scanner) listNames(ctx context.Context, dir string, depth int) {
 			name := path.Join(dir, raw.Name())
 			switch {
 			case raw.IsDir():
-				s.listNames(ctx, name, depth+1)
+				s.listNames(ctx, name, depth+1, verify)
 			case raw.Type().IsRegular() && isScript(strings.ToLower(raw.Name())):
 				s.add(KindScriptInUploads, name, lazyEntry{DirEntry: raw, fsys: s.src.FS, name: name}, nil)
 			}
@@ -323,7 +338,7 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 		// Too many entries to hold and sort: every one is still inspected, streaming, and the
 		// directory is fingerprinted as oversized instead of hashed.
 		s.issues = append(s.issues, fmt.Sprintf("/%s: over %d entries, inspected without hashing", dir, collector.MaxDirEntries))
-		s.walkData(ctx, dir, false)
+		s.walkData(ctx, dir, false, false)
 		return "oversized-directory"
 	}
 	if err != nil {
@@ -381,48 +396,64 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 	if e.Type()&fs.ModeSymlink != 0 {
 		target, _ := fs.ReadLink(s.src.FS, name)
 		s.inspectSymlink(name, e, target, true)
-		if !s.followable(name) {
+		resolved, ok := s.followable(name)
+		if !ok {
 			s.issues = append(s.issues, fmt.Sprintf("/%s -> %s not followed: target outside the application and its deploy directory", name, target))
 			return
 		}
-		info, err := fs.Stat(s.src.FS, name)
+		info, err := fs.Lstat(s.src.FS, resolved)
 		if err != nil || !info.IsDir() {
 			return
 		}
-		id, ok := collector.FileID(info)
-		if ok && s.followed[id] {
-			return
+		if id, ok := collector.FileID(info); ok {
+			if s.followed[id] {
+				return
+			}
+			s.followed[id] = true
 		}
-		s.followed[id] = true
+		s.walkData(ctx, resolved, inUploads, true)
+		return
 	} else if !e.IsDir() {
 		s.inspectFile(name, e, inUploads, true, false)
 		return
 	}
-	s.walkData(ctx, name, inUploads)
+	s.walkData(ctx, name, inUploads, false)
 }
 
 // followable allows a linked upload or data directory to lead inside the application, or into
 // the directory that holds it and its siblings (releases/5/storage -> ../../shared/storage with
 // release-based deploys), never above that and never into system trees. The decision is taken
 // on the fully resolved location, since the target can itself go through further links.
-func (s *scanner) followable(name string) bool {
+func (s *scanner) followable(name string) (string, bool) {
 	resolved, err := collector.ResolvePath(s.src.FS, name)
 	if err != nil {
-		return false
+		return "", false
 	}
-	resolved = "/" + resolved
+	abs := "/" + resolved
 	root := "/" + s.root
-	if strings.HasPrefix(resolved, root+"/") {
-		return true
+	if strings.HasPrefix(abs, root+"/") {
+		return resolved, true
 	}
 	deploy := path.Dir(path.Dir(root))
-	return strings.Count(deploy, "/") >= 2 && strings.HasPrefix(resolved, deploy+"/")
+	return resolved, strings.Count(deploy, "/") >= 2 && strings.HasPrefix(abs, deploy+"/")
+}
+
+// unchanged reports whether dir still resolves to itself, that is no component of it has been
+// replaced by a link since the walk entered it. Followed trees are walked by their real path
+// and checked at every directory, so a link swapped in during the scan cannot lead out.
+func (s *scanner) unchanged(dir string) bool {
+	resolved, err := collector.ResolvePath(s.src.FS, dir)
+	if err == nil && resolved == dir {
+		return true
+	}
+	s.issues = append(s.issues, fmt.Sprintf("/%s changed during the scan (a component is now a link): not scanned", dir))
+	return false
 }
 
 // walkData inspects a data directory without hashing it. Entries are streamed in batches, so a
 // directory with millions of uploads is scanned in full without holding its listing.
-func (s *scanner) walkData(ctx context.Context, dir string, inUploads bool) {
-	if s.expired(ctx) {
+func (s *scanner) walkData(ctx context.Context, dir string, inUploads, verify bool) {
+	if s.expired(ctx) || (verify && !s.unchanged(dir)) {
 		return
 	}
 	f, err := s.src.FS.Open(dir)
@@ -443,7 +474,7 @@ func (s *scanner) walkData(ctx context.Context, dir string, inUploads bool) {
 			}
 			name := path.Join(dir, raw.Name())
 			e := lazyEntry{DirEntry: raw, fsys: s.src.FS, name: name}
-			s.inspectDataEntry(ctx, name, e, inUploads)
+			s.inspectDataEntry(ctx, name, e, inUploads, verify)
 		}
 		if err != nil || len(batch) == 0 {
 			if err != nil && !errors.Is(err, io.EOF) {
@@ -454,7 +485,7 @@ func (s *scanner) walkData(ctx context.Context, dir string, inUploads bool) {
 	}
 }
 
-func (s *scanner) inspectDataEntry(ctx context.Context, name string, e fs.DirEntry, inUploads bool) {
+func (s *scanner) inspectDataEntry(ctx context.Context, name string, e fs.DirEntry, inUploads, verify bool) {
 	if slices.Contains(s.nested, name) {
 		// Not skipped: the parent's rules for uploads still apply to what is inside.
 		s.add(KindAppInData, name, e, nil)
@@ -474,7 +505,7 @@ func (s *scanner) inspectDataEntry(ctx context.Context, name string, e fs.DirEnt
 		if isSuspiciousHidden(e.Name()) {
 			s.add(KindHiddenInData, name, e, nil)
 		}
-		s.walkData(ctx, name, inUploads)
+		s.walkData(ctx, name, inUploads, verify)
 	case e.Type().IsRegular():
 		s.inspectFile(name, e, inUploads, true, false)
 	}
@@ -535,7 +566,13 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData, has
 		return ""
 	}
 	needContent := script || image || inUploads || inData
-	if !needContent || info.Size() > maxInMemory {
+	// A sparse file costs nothing to create and a full read to inspect: it is read at the
+	// edges like a large one.
+	sparse := false
+	if allocated, ok := collector.Allocated(info); ok && info.Size() > edgeScanSize && allocated < info.Size()/2 {
+		sparse = true
+	}
+	if !needContent || info.Size() > maxInMemory || sparse {
 		if !hash {
 			s.classify(name, e, s.edges(name, info), false, inUploads, inData)
 			return ""

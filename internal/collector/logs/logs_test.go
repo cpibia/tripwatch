@@ -460,3 +460,27 @@ func TestFloodFromManyAddressesIsOneEvent(t *testing.T) {
 		t.Errorf("web shell event = %+v", shell)
 	}
 }
+
+// Path variants that nginx resolves to the same file are one event, so they cannot flood the
+// list and push out a real one.
+func TestPathVariantsAreOneEvent(t *testing.T) {
+	h := newHost(t)
+	var b strings.Builder
+	for i := range 3000 {
+		b.WriteString(logLine(fmt.Sprintf("2001:db8::%x", i), "GET", fmt.Sprintf("/v%d/../index.php?c=id", i), 200))
+	}
+	b.WriteString(logLine("203.0.113.66", "GET", "/media/catalog/x.php", 200))
+	h.writeLog(b.String())
+	res := h.run()
+	perRule := map[string]int{}
+	for _, e := range res.Events {
+		perRule[e.Rule]++
+	}
+	// The flood triggers two rules (command in parameters, traversal), each one event.
+	if perRule["command_in_parameters"] != 1 || perRule["path_traversal"] != 1 {
+		t.Errorf("events per rule = %v", perRule)
+	}
+	if !slices.ContainsFunc(res.Events, func(e Event) bool { return e.Evidence.Request == "/media/catalog/x.php" && e.Severity == "critical" }) {
+		t.Error("web shell event lost")
+	}
+}

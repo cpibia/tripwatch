@@ -99,7 +99,8 @@ func caddyLines(fsys fs.FS, name string, budget *configBudget, issues *collector
 	var out []string
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "import" {
+		// import <file> [args...]: arguments only fill placeholders in the imported text.
+		if len(fields) >= 2 && fields[0] == "import" {
 			pattern := fields[1]
 			if !path.IsAbs(pattern) {
 				// Relative to the file holding the import, as Caddy resolves it.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -25,8 +26,11 @@ var systemUnitDirs = []string{
 var generatorDirs = []string{
 	"etc/systemd/system-generators", "usr/lib/systemd/system-generators", "lib/systemd/system-generators",
 	"usr/local/lib/systemd/system-generators", "run/systemd/system-generators",
-	"etc/systemd/user-generators", "usr/lib/systemd/user-generators", "usr/local/lib/systemd/user-generators",
+	"etc/systemd/user-generators", "usr/lib/systemd/user-generators", "usr/local/lib/systemd/user-generators", "run/systemd/user-generators",
 }
+
+// environment.d files set the environment of user services and sessions.
+var environmentDirs = []string{"etc/environment.d", "run/environment.d", "usr/lib/environment.d", "usr/local/lib/environment.d"}
 
 // Manager configuration: DefaultEnvironment there reaches every service (LD_PRELOAD included).
 var managerConfigs = []string{
@@ -94,14 +98,30 @@ func (Services) Collect(ctx context.Context, src collector.Source) (any, error) 
 			res.Generators = appendDescribed(res.Generators, &res.Issues, src, name)
 		}
 	}
+	envDirs := slices.Clone(environmentDirs)
+	for _, home := range homes(accounts) {
+		envDirs = append(envDirs, path.Join(home, ".config/environment.d"))
+	}
+	for _, dir := range envDirs {
+		for _, name := range collector.Glob(src.FS, dir+"/*.conf") {
+			res.Manager = appendDescribed(res.Manager, &res.Issues, src, name)
+			lines, err := collector.ReadLines(src.FS, name)
+			res.Issues.Add(err)
+			for _, line := range directives(lines) {
+				if strings.Contains(line, "LD_PRELOAD") || strings.Contains(line, "LD_LIBRARY_PATH") {
+					res.Environment = append(res.Environment, line+" ("+name+")")
+				}
+			}
+		}
+	}
 	for _, pattern := range managerConfigs {
 		for _, name := range collector.Glob(src.FS, pattern) {
 			res.Manager = appendDescribed(res.Manager, &res.Issues, src, name)
 			lines, err := collector.ReadLines(src.FS, name)
 			res.Issues.Add(err)
 			for _, line := range directives(lines) {
-				if key, value, ok := strings.Cut(line, "="); ok && strings.TrimSpace(key) == "DefaultEnvironment" {
-					res.Environment = append(res.Environment, "DefaultEnvironment="+strings.TrimSpace(value))
+				if key, value, ok := strings.Cut(line, "="); ok && (strings.TrimSpace(key) == "DefaultEnvironment" || strings.TrimSpace(key) == "ManagerEnvironment") {
+					res.Environment = append(res.Environment, strings.TrimSpace(key)+"="+strings.TrimSpace(value))
 				}
 			}
 		}

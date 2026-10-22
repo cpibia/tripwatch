@@ -392,6 +392,13 @@ func TestRedactCmdline(t *testing.T) {
 		{[]string{"sshpass", "-p", "pw", "ssh", "host"}, "sshpass -p [redacted] ssh host"},
 		{[]string{"curl", "-u", "user:pw", "-H", "Authorization: Bearer abc", "https://x"}, "curl -u [redacted] -H Authorization: [redacted] https://x"},
 		{[]string{"agent", "--relay-token-host", "c2.example.net"}, "agent --relay-token-host c2.example.net"},
+		{[]string{"sh", "-c", `curl -H "Authorization: Bearer abc" https://x`}, "sh -c curl -H Authorization: [redacted] https://x"},
+		{[]string{"sudo", "sh", "-c", "mysql -pX db"}, "sudo sh -c mysql -p[redacted] db"},
+		{[]string{"su", "-c", "mysql -pX db", "root"}, "su -c mysql -p[redacted] db root"},
+		{[]string{"env", "MYSQL_PWD=x", "mysql"}, "env MYSQL_PWD=[redacted] mysql"},
+		{[]string{"openssl", "enc", "-pass", "pass:x"}, "openssl enc -pass [redacted]"},
+		{[]string{"redis-cli", "-u", "redis://:pw@10.0.0.5:6379"}, "redis-cli -u redis://:[redacted]@10.0.0.5:6379"},
+		{[]string{"psql", "postgres://u:p@ss@db/x"}, "psql postgres://u:[redacted]@db/x"},
 	}
 	for _, tt := range tests {
 		if got := redactCmdline(tt.args); got != tt.want {
@@ -421,10 +428,11 @@ func TestSSHDIncludeCycle(t *testing.T) {
 func TestManagerConfigFromRun(t *testing.T) {
 	fsys := fstest.MapFS{
 		"etc/passwd":                       text("root:x:0:0:root:/root:/bin/bash\n"),
-		"run/systemd/system.conf.d/x.conf": text("[Manager]\nDefaultEnvironment = LD_PRELOAD=/dev/shm/l.so\n"),
+		"run/systemd/system.conf.d/x.conf": text("[Manager]\nDefaultEnvironment = LD_PRELOAD=/dev/shm/l.so\nManagerEnvironment=A=1\n"),
+		"etc/environment.d/50-x.conf":      text("LD_PRELOAD=/dev/shm/m.so\n"),
 	}
 	res := collect[ServicesResult](t, Services{}, collector.Source{FS: fsys})
-	if !slices.Equal(res.Environment, []string{"DefaultEnvironment=LD_PRELOAD=/dev/shm/l.so"}) {
+	if !slices.Equal(res.Environment, []string{"LD_PRELOAD=/dev/shm/m.so (etc/environment.d/50-x.conf)", "DefaultEnvironment=LD_PRELOAD=/dev/shm/l.so", "ManagerEnvironment=A=1"}) {
 		t.Errorf("environment = %v", res.Environment)
 	}
 }

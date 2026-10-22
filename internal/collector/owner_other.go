@@ -22,3 +22,8 @@ func FileID(fs.FileInfo) (string, bool) {
 func Owner(fs.FileInfo) (uint32, bool) {
 	return 0, false
 }
+
+// Allocated is not available on this platform.
+func Allocated(fs.FileInfo) (int64, bool) {
+	return 0, false
+}

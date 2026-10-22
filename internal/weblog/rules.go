@@ -84,7 +84,8 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	var hits []Hit
 	hit := func(rule, severity string) { hits = append(hits, Hit{Rule: rule, Severity: severity}) }
 
-	p := strings.ToLower(r.path)
+	p := strings.ToLower(r.norm)
+	raw := strings.ToLower(r.path)
 	q := r.query
 	ok := r.Status >= 200 && r.Status < 300
 	ext := path.Ext(p)
@@ -132,7 +133,7 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	if sensitiveRe.MatchString(p) {
 		hit("sensitive_file", bySuccess(ok, SeverityHigh, SeverityLow))
 	}
-	if traversalRe.MatchString(p) || traversalRe.MatchString(q) {
+	if traversalRe.MatchString(raw) || traversalRe.MatchString(q) {
 		hit("path_traversal", bySuccess(ok, SeverityHigh, SeverityMedium))
 	}
 	if sqlInjectionRe.MatchString(q) || sqlInjectionRe.MatchString(p) {

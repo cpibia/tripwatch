@@ -202,3 +202,28 @@ func TestBruteForceAfterManyAddresses(t *testing.T) {
 		t.Errorf("fired %v, tracked %d", fired, len(a.logins))
 	}
 }
+
+func TestPathNormalisation(t *testing.T) {
+	for _, uri := range []string{"/index.php", "//index.php", "/v1/../index.php", "/a/./b/../../index.php", "/v1/%2e%2e/index.php"} {
+		if r := req("GET", uri, 200, "-"); r.Path() != "/index.php" {
+			t.Errorf("%s normalised to %q", uri, r.Path())
+		}
+	}
+	if r := req("GET", "/a/../../etc/passwd", 200, "-"); !slices.ContainsFunc(NewAnalyzer().Analyze(r), func(h Hit) bool { return h.Rule == "path_traversal" }) {
+		t.Error("traversal must be judged on the raw path")
+	}
+}
+
+func TestRedactKeepsEvidenceHidesTokens(t *testing.T) {
+	for in, want := range map[string]string{ //nolint:gosec // test fixtures shaped like tokens, not credentials
+		"/pub/media/catalog/a1b2c3d4e5f6g7h8.php":          "/pub/media/catalog/a1b2c3d4e5f6g7h8.php",
+		"/hooks/0123456789abcdef0123/run":                  "/hooks/[redacted]/run",
+		"/reset/SECRETTOKEN123":                            "/reset/[redacted]",
+		"/auth/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig42": "/auth/[redacted]",
+		"/blog/2026/10/how-to-secure-your-shop":            "/blog/2026/10/how-to-secure-your-shop",
+	} {
+		if got := RedactURI(in); got != want {
+			t.Errorf("RedactURI(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

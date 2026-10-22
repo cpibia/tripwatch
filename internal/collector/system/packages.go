@@ -326,7 +326,7 @@ func unownedExecutables(fsys fs.FS, owned map[string]bool) ([]string, []Link) {
 		for _, e := range entries {
 			p := path.Join(dir, e.Name())
 			switch {
-			case owned[p] || alternative(fsys, p):
+			case owned[p] || alternative(fsys, p, owned):
 			case e.Type().IsRegular():
 				out = append(out, "/"+p)
 			case e.Type()&fs.ModeSymlink != 0:
@@ -338,10 +338,19 @@ func unownedExecutables(fsys fs.FS, owned map[string]bool) ([]string, []Link) {
 	return out, links
 }
 
-// alternative reports links managed by update-alternatives, which no package lists as its own.
-func alternative(fsys fs.FS, p string) bool {
+// alternative reports links managed by update-alternatives, which no package lists as its own:
+// the link must be /etc/alternatives/<name>, and that alternative must point to a packaged file.
+func alternative(fsys fs.FS, p string, owned map[string]bool) bool {
 	target, err := fs.ReadLink(fsys, p)
-	return err == nil && strings.HasPrefix(path.Clean(target), "/etc/alternatives/")
+	if err != nil {
+		return false
+	}
+	target = path.Clean(target)
+	if path.Dir(target) != "/etc/alternatives" {
+		return false
+	}
+	final, err := fs.ReadLink(fsys, collector.Rel(target))
+	return err == nil && owned[collector.Rel(path.Clean(final))]
 }
 
 // hiddenEntries lists dot-named files and directories under /usr, where packages do not put

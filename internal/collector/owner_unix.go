@@ -43,3 +43,13 @@ func Owner(info fs.FileInfo) (uint32, bool) {
 	}
 	return st.Uid, true
 }
+
+// Allocated returns the bytes actually allocated on disk for the file, smaller than its size
+// when the file is sparse.
+func Allocated(info fs.FileInfo) (int64, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return st.Blocks * 512, true
+}

@@ -168,9 +168,10 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 
 var (
 	secretOption = regexp.MustCompile(`(?i)^(--?[a-z0-9_-]*(password|passwd|passphrase|token|secret|apikey|api-key|api_key|credential|private-key)[a-z0-9_-]*)=(.*)$`)
-	secretEnv    = regexp.MustCompile(`(?i)^([a-z0-9_]*(password|passwd|token|secret|api_?key|auth|credential)[a-z0-9_]*)=.+`)
-	urlUserinfo  = regexp.MustCompile(`(://[^:/@\s]+):[^@/\s]+@`)
-	authHeader   = regexp.MustCompile(`(?i)^((proxy-)?authorization|x-api-key|cookie)\s*:.*`)
+	secretEnv    = regexp.MustCompile(`(?i)^([a-z0-9_]*(password|passwd|pwd|token|secret|api_?key|auth|credential)[a-z0-9_]*)=.+`)
+	// The password may contain @: everything up to the last @ before the host is userinfo.
+	urlUserinfo = regexp.MustCompile(`(://[^:/@\s]*):[^/\s]*@`)
+	authHeader  = regexp.MustCompile(`(?i)^((proxy-)?authorization|x-api-key|cookie)\s*:.*`)
 )
 
 // Options whose next argument is a secret. Only known ones: hiding the argument after any
@@ -181,6 +182,7 @@ var secretNextArg = map[string][]string{
 	"sshpass":   {"-p"},
 	"mysql":     {"--password"},
 	"curl":      {"-u", "--user", "--proxy-user", "--oauth2-bearer"},
+	"openssl":   {"-pass", "-passin", "-passout", "-k"},
 	"wget":      {"--password", "--http-password", "--ftp-password", "--proxy-password"},
 }
 
@@ -193,7 +195,6 @@ func redactCmdline(args []string) string {
 	if len(args) > 0 {
 		prog = path.Base(args[0])
 	}
-	shell := slices.Contains([]string{"sh", "bash", "dash", "zsh", "ash", "ksh"}, prog)
 	out := make([]string, 0, len(args))
 	hideNext := false
 	for i, a := range args {
@@ -202,8 +203,10 @@ func redactCmdline(args []string) string {
 			hideNext = false
 			continue
 		}
-		if shell && i > 0 && args[i-1] == "-c" {
-			out = append(out, redactCmdline(strings.Fields(a)))
+		// A script after -c, whether the program is a shell or a wrapper (sudo, su, env,
+		// timeout...) that passes it to one.
+		if i > 0 && args[i-1] == "-c" && strings.ContainsAny(a, " \t") {
+			out = append(out, redactCmdline(shellWords(a)))
 			continue
 		}
 		a, hideNext = redactArg(prog, a)
@@ -227,6 +230,8 @@ func redactArg(prog, a string) (string, bool) {
 		return "-p[redacted]", false
 	case family == "curl" && (strings.HasPrefix(a, "-u") && len(a) > 2):
 		return "-u[redacted]", false
+	case strings.HasPrefix(a, "pass:") || strings.HasPrefix(a, "env:"):
+		return a[:5] + "[redacted]", false
 	case secretOption.MatchString(a):
 		return secretOption.FindStringSubmatch(a)[1] + "=[redacted]", false
 	case secretEnv.MatchString(a):
@@ -234,8 +239,41 @@ func redactArg(prog, a string) (string, bool) {
 	case authHeader.MatchString(a):
 		name, _, _ := strings.Cut(a, ":")
 		return name + ": [redacted]", false
+	case strings.Contains(a, "Authorization:") || strings.Contains(a, "authorization:"):
+		before, _, _ := strings.Cut(a, ":")
+		return before + ": [redacted]", false
 	}
 	return urlUserinfo.ReplaceAllString(a, "$1:[redacted]@"), false
+}
+
+// shellWords splits a shell script into words, keeping quoted strings together, so that a
+// header such as "Authorization: Bearer x" stays one argument.
+func shellWords(s string) []string {
+	var out []string
+	var cur strings.Builder
+	var quote rune
+	in := false
+	for _, r := range s {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote == 0 && (r == '"' || r == '\''):
+			quote, in = r, true
+		case quote == 0 && (r == ' ' || r == '\t' || r == ';' || r == '|' || r == '&'):
+			if in {
+				out = append(out, cur.String())
+				cur.Reset()
+				in = false
+			}
+		default:
+			cur.WriteRune(r)
+			in = true
+		}
+	}
+	if in {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // isKernelThread reads the flags field of /proc/<pid>/stat. The command name in that line is
