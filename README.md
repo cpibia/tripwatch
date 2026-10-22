@@ -240,6 +240,8 @@ Il design completo è in [docs/architecture.md](docs/architecture.md).
   fare.
 - Il sensore fuori da Linux serve solo allo sviluppo: il confinamento dei symlink si basa su
   interfacce Linux.
+- Con un battito al minuto, un sensore sospeso per meno di 100 secondi non si distingue da un
+  ritardo di rete e non dà allarme; pause più lunghe sì, anche se poi i battiti riprendono.
 
 ## Build
 
