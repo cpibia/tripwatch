@@ -297,6 +297,8 @@ type runState struct {
 	ips           map[string]int
 	posts         map[string]*postTally
 	postPairs     int
+	// ranks counts the events held per severity rank.
+	ranks [5]int
 }
 
 func (r *runState) read(ctx context.Context, name, kind string) error {
@@ -318,7 +320,7 @@ func (r *runState) read(ctx context.Context, name, kind string) error {
 	case prev.Inode != inode:
 		lf.Rotated = true
 		r.drainRotated(ctx, name, kind, prev)
-	case info.Size() < prev.Offset && r.drainCopy(ctx, name, kind, prev):
+	case info.Size() < prev.Offset && r.drainCopy(ctx, name, kind, prev, info):
 		// logrotate copytruncate: the content was copied to a sibling, then the file emptied.
 		lf.Rotated = true
 	case info.Size() < prev.Offset:
@@ -421,7 +423,11 @@ func (r *runState) drainRotated(ctx context.Context, name, kind string, prev pos
 
 // drainCopy recognises copytruncate: a sibling whose bytes before the saved offset match the
 // saved fingerprint is the copy of what was read, and is drained from there.
-func (r *runState) drainCopy(ctx context.Context, name, kind string, prev position) bool {
+//
+// The copy only proves anything if the log's owner could not have written it: otherwise whoever
+// emptied the log could have planted a matching copy. In that case the copy is still read, but
+// the truncation stays an event.
+func (r *runState) drainCopy(ctx context.Context, name, kind string, prev position, logInfo fs.FileInfo) bool {
 	if prev.Fingerprint == "" {
 		return false
 	}
@@ -430,12 +436,27 @@ func (r *runState) drainCopy(ctx context.Context, name, kind string, prev positi
 		if err != nil || info.Size() < prev.Offset {
 			continue
 		}
-		if fingerprint(r.src.FS, sibling, prev.Offset) == prev.Fingerprint {
-			r.drain(ctx, sibling, kind, prev.Offset, info.Size())
+		if fingerprint(r.src.FS, sibling, prev.Offset) != prev.Fingerprint {
+			continue
+		}
+		r.drain(ctx, sibling, kind, prev.Offset, info.Size())
+		if !writableByOwnerOf(info, logInfo) {
 			return true
 		}
+		r.tamper(name, "log_truncated", fmt.Sprintf("emptied; /%s matches what was read, but the log's owner can write it too", sibling))
+		return true
 	}
 	return false
+}
+
+// writableByOwnerOf reports whether the owner of log could have written dup.
+func writableByOwnerOf(dup, log fs.FileInfo) bool {
+	dupUID, okDup := collector.Owner(dup)
+	logUID, okLog := collector.Owner(log)
+	if !okDup || !okLog {
+		return true
+	}
+	return dupUID == logUID || dup.Mode().Perm()&0o022 != 0
 }
 
 func (r *runState) drain(ctx context.Context, name, kind string, from, size int64) {
@@ -452,8 +473,9 @@ func (r *runState) drain(ctx context.Context, name, kind string, from, size int6
 }
 
 // scan reads complete lines from lf.From, up to maxBytes, and sets lf.To after the last
-// complete line: a line still being written is left for the next run. Lines longer than
-// MaxLineLength are skipped past and counted, never held in memory.
+// complete line: a line still being written is left for the next run. Of a line longer than
+// MaxLineLength only the head and the tail are kept: the head holds method, path and status,
+// and the tail holds a real line written after a hole of NUL bytes.
 func (r *runState) scan(ctx context.Context, name string, offset int64, analyzer *weblog.Analyzer, lf *LogFile) error {
 	lf.To = offset
 	f, err := r.src.FS.Open(name)
@@ -474,65 +496,109 @@ func (r *runState) scan(ctx context.Context, name string, offset int64, analyzer
 				return err
 			}
 		}
-		line, n, complete, err := readLine(br)
-		if !complete {
+		l := readLine(br)
+		if !l.complete {
 			// A stretch with no line end longer than the per-run limit (a hole made with
 			// truncate -s +N, for instance) would otherwise stop the offset here forever.
-			if n >= MaxLineLength && lf.To+n-offset >= r.maxBytes {
-				lf.To += n
+			if l.n >= MaxLineLength && lf.To+l.n-offset >= r.maxBytes {
+				lf.To += l.n
 				lf.Oversized++
-				r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: %d bytes without a line end skipped at offset %d", name, n, lf.To-n))
+				r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: %d bytes without a line end skipped at offset %d", name, l.n, lf.To-l.n))
 			}
 			break
 		}
-		lf.To += n
+		lf.To += l.n
 		lf.Lines++
-		if errors.Is(err, errLineTooLong) {
-			lf.Oversized++
-			continue
-		}
-		line = bytes.TrimRight(line, "\r\n")
 
-		if analyzer == nil {
-			r.errorLine(name, string(line))
-			continue
+		parts := [][]byte{l.head}
+		if l.oversized {
+			lf.Oversized++
+			parts = append(parts, l.tail)
 		}
-		if lf.Format == "" {
-			lf.Format = weblog.DetectFormat(string(line))
+		for _, part := range parts {
+			// Web servers never write NUL bytes: a run of them is a hole punched into the log,
+			// and whatever follows it is a line of its own.
+			if i := bytes.LastIndexByte(part, 0); i >= 0 {
+				r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: NUL bytes before offset %d (hole in the log)", name, lf.To))
+				part = part[i+1:]
+			}
+			part = bytes.TrimRight(part, "\r\n")
+			if len(part) == 0 {
+				continue
+			}
+			r.line(name, part, analyzer, lf)
 		}
-		req, ok := weblog.Parse(lf.Format, string(line))
-		if !ok {
-			lf.Unparsed++
-			continue
-		}
-		r.request(name, &req, analyzer.Analyze(&req))
 	}
 	return nil
 }
 
-var errLineTooLong = errors.New("line too long")
+func (r *runState) line(name string, line []byte, analyzer *weblog.Analyzer, lf *LogFile) {
+	if analyzer == nil {
+		r.errorLine(name, string(line))
+		return
+	}
+	if lf.Format == "" {
+		lf.Format = weblog.DetectFormat(string(line))
+	}
+	req, ok := weblog.Parse(lf.Format, string(line))
+	if !ok {
+		lf.Unparsed++
+		return
+	}
+	r.request(name, &req, analyzer.Analyze(&req))
+}
 
-// readLine returns the next line and how many bytes it took. complete is false at the end of
-// the data, including a final line without its newline. A line over the buffer is consumed
-// to its end without being kept, and reported with errLineTooLong.
-func readLine(br *bufio.Reader) (line []byte, n int64, complete bool, err error) {
-	line, err = br.ReadSlice('\n')
-	n = int64(len(line))
+// readResult is one line: its bytes when it fits the buffer, otherwise its first and last
+// MaxLineLength bytes.
+type readResult struct {
+	head      []byte
+	tail      []byte
+	n         int64
+	complete  bool
+	oversized bool
+}
+
+// readLine returns the next line. complete is false at the end of the data, including a final
+// line without its newline. head aliases the reader's buffer until the next read.
+func readLine(br *bufio.Reader) readResult {
+	line, err := br.ReadSlice('\n')
+	res := readResult{head: line, n: int64(len(line))}
 	if err == nil {
-		return line, n, true, nil
+		res.complete = true
+		return res
 	}
 	if !errors.Is(err, bufio.ErrBufferFull) {
-		return nil, n, false, nil
+		return readResult{n: res.n}
 	}
+
+	res.oversized = true
+	res.head = bytes.Clone(line)
+	// The tail lives in a fixed buffer, compacted in place, so a line of any length costs the
+	// same memory.
+	tail := make([]byte, 0, 2*MaxLineLength)
 	for errors.Is(err, bufio.ErrBufferFull) {
 		var chunk []byte
 		chunk, err = br.ReadSlice('\n')
-		n += int64(len(chunk))
+		res.n += int64(len(chunk))
+		if len(chunk) >= MaxLineLength {
+			tail = append(tail[:0], chunk[len(chunk)-MaxLineLength:]...)
+			continue
+		}
+		if len(tail)+len(chunk) > cap(tail) {
+			keep := tail[len(tail)-(MaxLineLength-len(chunk)):]
+			tail = append(tail[:0], keep...)
+		}
+		tail = append(tail, chunk...)
+	}
+	if len(tail) > MaxLineLength {
+		tail = tail[len(tail)-MaxLineLength:]
 	}
 	if err != nil {
-		return nil, n, false, nil
+		return readResult{n: res.n}
 	}
-	return nil, n, true, errLineTooLong
+	res.complete = true
+	res.tail = tail
+	return res
 }
 
 func seek(f fs.File, offset int64) error {
@@ -571,6 +637,8 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 		}
 		// The worst outcome wins: a later 200 on a probed web shell path raises the event.
 		if weblog.SeverityRank(h.Severity) > weblog.SeverityRank(e.Severity) {
+			r.ranks[weblog.SeverityRank(e.Severity)]--
+			r.ranks[weblog.SeverityRank(h.Severity)]++
 			e.Severity, e.Status, e.Evidence.Request = h.Severity, req.Status, weblog.RedactURI(req.URI)
 		}
 		e.Count++
@@ -578,34 +646,38 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 	}
 }
 
-// admit decides whether a new event fits. Up to maxEvents anything does. Past it, an event of
-// high or critical severity evicts the least severe and least frequent event below high, so
-// noise sent first cannot push out the event that matters; with nothing to evict, urgent events
-// may grow the list up to twice the limit.
+// admit decides whether a new event of the given severity fits. Up to maxEvents anything
+// does. Past it, the new event takes the place of one strictly less severe (the least frequent
+// among the least severe), so whatever floods the list first, a more severe event still gets
+// in: lows give way to highs, highs to criticals. When nothing less severe is left the new
+// event is dropped, in constant time thanks to the per-severity counts.
 func (r *runState) admit(severity string) bool {
+	rank := weblog.SeverityRank(severity)
 	if len(r.events) < maxEvents {
+		r.ranks[rank]++
 		return true
 	}
 	r.res.Truncated = true
-	urgent := weblog.SeverityRank(weblog.SeverityHigh)
-	if weblog.SeverityRank(severity) < urgent {
+	lowest := -1
+	for i, n := range r.ranks {
+		if n > 0 {
+			lowest = i
+			break
+		}
+	}
+	if lowest < 0 || lowest >= rank {
 		return false
 	}
 	victim := ""
 	for k, e := range r.events {
-		rank := weblog.SeverityRank(e.Severity)
-		if rank >= urgent {
-			continue
-		}
-		if v := r.events[victim]; victim == "" || rank < weblog.SeverityRank(v.Severity) || (rank == weblog.SeverityRank(v.Severity) && e.Count < v.Count) {
+		if weblog.SeverityRank(e.Severity) == lowest && (victim == "" || e.Count < r.events[victim].Count) {
 			victim = k
 		}
 	}
-	if victim != "" {
-		delete(r.events, victim)
-		return true
-	}
-	return len(r.events) < 2*maxEvents
+	delete(r.events, victim)
+	r.ranks[lowest]--
+	r.ranks[rank]++
+	return true
 }
 
 // countIP keeps approximate per-IP counts with the Misra-Gries summary: when the table is

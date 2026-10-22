@@ -532,3 +532,19 @@ func TestNginxVariablesExpandDeterministically(t *testing.T) {
 		}
 	}
 }
+
+// Lines continued with a backslash are joined in linear time and bounded in length.
+func TestApacheLongContinuation(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/httpd/conf/httpd.conf": text("ServerRoot /etc/httpd\nInclude conf.d/*.conf\n"),
+		"etc/httpd/conf.d/big.conf": text(strings.Repeat("a \\\n", 750_000) + "DocumentRoot /srv\n"),
+	}
+	start := time.Now()
+	_, _, issues := ApacheSites(fsys)
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("parsing took %s", time.Since(start))
+	}
+	if !slices.ContainsFunc(issues, func(s string) bool { return strings.Contains(s, "continued line") }) {
+		t.Errorf("issues = %v", issues)
+	}
+}

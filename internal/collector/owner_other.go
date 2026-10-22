@@ -17,3 +17,8 @@ func Inode(fs.FileInfo) (uint64, bool) {
 func FileID(fs.FileInfo) (string, bool) {
 	return "", false
 }
+
+// Owner is not available on this platform.
+func Owner(fs.FileInfo) (uint32, bool) {
+	return 0, false
+}

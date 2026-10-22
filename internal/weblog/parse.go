@@ -67,10 +67,22 @@ func Parse(format, line string) (Request, bool) {
 	return r, true
 }
 
+// requestPrefixRe matches the start of a combined line whose request was cut: what is left is
+// enough to apply the rules on method and path.
+var requestPrefixRe = regexp.MustCompile(`^(\S+) \S+ \S+ \[([^\]]+)\] "(\S+) (\S+)`)
+
 func parseCombined(line string) (Request, bool) {
 	m := combinedRe.FindStringSubmatch(line)
 	if m == nil {
-		return Request{}, false
+		p := requestPrefixRe.FindStringSubmatch(line)
+		if p == nil {
+			return Request{}, false
+		}
+		t, err := time.Parse(combinedTime, p[2])
+		if err != nil {
+			return Request{}, false
+		}
+		return Request{Time: t.UTC(), IP: p[1], Method: p[3], URI: p[4]}, true
 	}
 	t, err := time.Parse(combinedTime, m[2])
 	if err != nil {

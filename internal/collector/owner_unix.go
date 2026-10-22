@@ -34,3 +34,12 @@ func FileID(info fs.FileInfo) (string, bool) {
 	}
 	return fmt.Sprintf("%d:%d", st.Dev, st.Ino), true
 }
+
+// Owner returns the user that owns the file.
+func Owner(info fs.FileInfo) (uint32, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return st.Uid, true
+}

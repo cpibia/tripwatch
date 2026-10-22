@@ -14,6 +14,9 @@ const maxEvidenceLen = 200
 // carry an attack pattern.
 var sensitiveParam = regexp.MustCompile(`(?i)(token|passw|pwd|secret|key|auth|session|sid|code|sig|signature|otp|nonce|credential|bearer|jwt)`)
 
+// nestedSecret matches name=value pairs with sensitive names inside a parameter value.
+var nestedSecret = regexp.MustCompile(`(?i)([a-z0-9_]*(?:token|passw|pwd|secret|key|auth|session|sid|code|sig|otp|nonce|credential|bearer|jwt)[a-z0-9_]*)=([^&\s]+)`)
+
 // tokenLike matches long runs of letters and digits, the shape of reset tokens, API keys and
 // session identifiers wherever they appear: in a path segment or inside a kept value.
 var tokenLike = regexp.MustCompile(`[A-Za-z0-9_\-]{24,}`)
@@ -64,6 +67,9 @@ func redactQuery(raw string) string {
 		switch {
 		case sensitiveParam.MatchString(name) || !isEvidence(decoded):
 			parts[i] = name + "=[redacted]"
+		case nestedSecret.MatchString(decoded):
+			// A kept value can embed a query of its own (a redirect target, a URL).
+			parts[i] = name + "=" + maskTokens(nestedSecret.ReplaceAllString(decoded, "$1=[redacted]"))
 		default:
 			parts[i] = name + "=" + maskTokens(value)
 		}

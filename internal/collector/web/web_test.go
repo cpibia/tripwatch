@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 
 	"github.com/cpibia/tripwatch/internal/collector"
+	"github.com/cpibia/tripwatch/internal/discovery"
 )
 
 func text(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s), Mode: 0o644} }
@@ -551,5 +552,85 @@ func TestOverridesInUploads(t *testing.T) {
 	}
 	if sigs, ok := got["/var/www/site/media/.htaccess"]; !ok || len(sigs) != 0 {
 		t.Errorf("hardening .htaccess must be a finding without handler_directive: %v", got)
+	}
+}
+
+// Laravel keeps public uploads in storage/app/public, inside the storage data directory.
+func TestUploadDirectoryInsideDataDirectory(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/app/artisan", "")
+	tr.file("var/www/app/bootstrap/app.php", "<?php")
+	tr.file("var/www/app/public/index.php", "<?php")
+	tr.file("var/www/app/storage/app/public/avatars/x.php", `<?php system($_GET['c']);`)
+	tr.file("var/www/app/storage/framework/views/compiled.php", "<?php echo 1;")
+
+	got := findingsOf(tr.scan())
+	if !slices.Contains(got, KindScriptInUploads+" /var/www/app/storage/app/public/avatars/x.php") {
+		t.Errorf("findings = %v", got)
+	}
+	if slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "compiled.php") }) {
+		t.Errorf("compiled views are data, not uploads: %v", got)
+	}
+}
+
+// A link to / inside an upload directory is reported, never walked.
+func TestLinksInsideUploadsAreNotFollowed(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/uploads/a.jpg", "\xff\xd8")
+	tr.file("etc/secret.php", "<?php system($_GET['c']);")
+	tr.link("/", "var/www/site/uploads/everything")
+	tr.file("var/www/other/index.php", "<?php echo 1;")
+	tr.link("/etc", "var/www/other/uploads")
+
+	res := tr.scan()
+	got := findingsOf(res)
+	if !slices.Contains(got, KindSuspiciousSymlink+" /var/www/site/uploads/everything") {
+		t.Errorf("link not reported: %v", got)
+	}
+	if slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "secret.php") }) {
+		t.Errorf("a link out of the application was followed: %v", got)
+	}
+	if !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "not followed") }) {
+		t.Errorf("issues = %v", res.Issues)
+	}
+}
+
+// A code directory over the listing limit is still inspected entry by entry.
+func TestHugeCodeDirectoryIsInspected(t *testing.T) {
+	prev := collector.MaxDirEntries
+	collector.MaxDirEntries = 50
+	t.Cleanup(func() { collector.MaxDirEntries = prev })
+
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	for i := range 120 {
+		tr.file(fmt.Sprintf("var/www/site/lib/c%03d.php", i), "<?php class C {}")
+	}
+	tr.file("var/www/site/lib/zz.php", `<?php eval(base64_decode($_POST['x']));`)
+
+	res := tr.scan()
+	if got := findingsOf(res); !slices.Contains(got, KindSignature+" /var/www/site/lib/zz.php") {
+		t.Errorf("findings = %v", got)
+	}
+}
+
+// Scripts in upload directories are reported from the listing alone, before any content is
+// read, so slow files cannot push them past the deadline.
+func TestNamesPassReportsScriptsBeforeReading(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	for i := range 50 {
+		tr.file(fmt.Sprintf("var/www/site/uploads/%02d/big.jpg", i), "\xff\xd8 photo")
+	}
+	tr.file("var/www/site/uploads/99/zz.php", `<?php system($_GET['c']);`)
+
+	src := collector.NewSource(tr.root)
+	inv := discovery.Inspect(src.FS)
+	s := newScanner(src, inv.Applications[0], inv.Sites, inv.Applications)
+	s.namesPass(context.Background())
+
+	if len(s.report.Findings) != 1 || s.report.Findings[0].Path != "/var/www/site/uploads/99/zz.php" {
+		t.Errorf("findings after the names pass = %+v", s.report.Findings)
 	}
 }

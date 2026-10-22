@@ -163,6 +163,7 @@ func TestRedact(t *testing.T) {
 		"/password/reset/9f8e7d6c5b4a39281706f5e4d3c2b1a0":     "/password/reset/[redacted]",
 		"/f?file=../../tmp/sess_a1b2c3d4e5f6a7b8c9d0e1f2a3b4":  "/f?file=../../tmp/[redacted]",
 		"/products/stainless-steel-water-bottle-large":         "/products/stainless-steel-water-bottle-large",
+		"/f?file=..%2F..%2Fx%3Fapi_key%3Dabc%26v%3D1":          "/f?file=../../x?api_key=[redacted]&v=1",
 	}
 	for in, want := range tests {
 		if got := RedactURI(in); got != want {

@@ -172,14 +172,18 @@ type scanner struct {
 	// followed holds the directories reached through symlinks, so a link loop is walked once.
 	followed map[string]bool
 	stopped  bool
+	findings map[string]int
 }
 
 func newScanner(src collector.Source, app discovery.Application, sites []discovery.Site, apps []discovery.Application) *scanner {
 	s := &scanner{
-		src:     src,
-		root:    strings.TrimPrefix(app.Path, "/"),
-		profile: app.Profile,
-		report:  AppReport{Application: app, DirHashes: map[string]string{}},
+		src:      src,
+		root:     strings.TrimPrefix(app.Path, "/"),
+		profile:  app.Profile,
+		report:   AppReport{Application: app, DirHashes: map[string]string{}},
+		budget:   &hashBudget{left: MaxHashBytesPerRun},
+		followed: map[string]bool{},
+		findings: map[string]int{},
 	}
 	for _, site := range sites {
 		if site.Root != "" && (site.Root == app.Path || strings.HasPrefix(site.Root, app.Path+"/")) {
@@ -209,11 +213,9 @@ func (s *scanner) expand(patterns []string) []string {
 }
 
 func (s *scanner) scan(ctx context.Context) {
-	if s.budget == nil {
-		s.budget = &hashBudget{left: MaxHashBytesPerRun}
-	}
-	s.followed = map[string]bool{}
+	s.namesPass(ctx)
 	s.report.TreeHash = s.walk(ctx, s.root, 0, false, false)
+	s.report.Findings = slices.DeleteFunc(s.report.Findings, func(f Finding) bool { return f.Kind == "" })
 	if s.stopped {
 		s.report.Truncated = true
 		s.issues = append(s.issues, fmt.Sprintf("%s: scan stopped before the end (%v), results are partial", s.report.Path, ctx.Err()))
@@ -221,6 +223,77 @@ func (s *scanner) scan(ctx context.Context) {
 	if s.budget.exhausted {
 		s.issues = append(s.issues, fmt.Sprintf("hash budget of %d bytes per run exhausted: later files fingerprinted by size, ctime and inode", MaxHashBytesPerRun))
 	}
+}
+
+// namesPass lists the upload directories before any file is read and reports the scripts in
+// them by name alone. It costs directory listings only, so the files that would take long to
+// read (sparse files, millions of images) cannot push a web shell past the deadline.
+func (s *scanner) namesPass(ctx context.Context) {
+	roots := slices.Clone(s.uploads)
+	if len(roots) == 0 {
+		for _, base := range []string{s.root, path.Join(s.root, s.webRoot())} {
+			for _, g := range discovery.GenericUploadDirs {
+				if p := path.Join(base, g); !slices.Contains(roots, p) {
+					roots = append(roots, p)
+				}
+			}
+		}
+	}
+	for _, root := range roots {
+		if info, err := fs.Lstat(s.src.FS, root); err != nil || !info.IsDir() {
+			continue
+		}
+		s.listNames(ctx, root, 0)
+	}
+}
+
+const maxNamesDepth = 64
+
+func (s *scanner) listNames(ctx context.Context, dir string, depth int) {
+	if depth > maxNamesDepth || s.expired(ctx) {
+		return
+	}
+	f, err := s.src.FS.Open(dir)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	rd, ok := f.(fs.ReadDirFile)
+	if !ok {
+		return
+	}
+	for {
+		batch, err := rd.ReadDir(4096)
+		for _, raw := range batch {
+			name := path.Join(dir, raw.Name())
+			switch {
+			case raw.IsDir():
+				s.listNames(ctx, name, depth+1)
+			case raw.Type().IsRegular() && isScript(strings.ToLower(raw.Name())):
+				s.add(KindScriptInUploads, name, lazyEntry{DirEntry: raw, fsys: s.src.FS, name: name}, nil)
+			}
+		}
+		if err != nil || len(batch) == 0 {
+			return
+		}
+	}
+}
+
+// withdraw removes a finding recorded by an earlier pass. Withdrawn findings are dropped when
+// the scan ends.
+func (s *scanner) withdraw(kind, name string) {
+	key := kind + "\x00" + name
+	if i, seen := s.findings[key]; seen {
+		s.report.Findings[i].Kind = ""
+		delete(s.findings, key)
+	}
+}
+
+func (s *scanner) webRoot() string {
+	if s.profile == nil || s.profile.WebRoot == "" {
+		return "."
+	}
+	return s.profile.WebRoot
 }
 
 func (s *scanner) expired(ctx context.Context) bool {
@@ -238,8 +311,14 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 		return ""
 	}
 	entries, err := fs.ReadDir(s.src.FS, dir)
+	if errors.Is(err, collector.ErrTooManyEntries) {
+		// Too many entries to hold and sort: every one is still inspected, streaming, and the
+		// directory is fingerprinted as oversized instead of hashed.
+		s.issues = append(s.issues, fmt.Sprintf("/%s: over %d entries, inspected without hashing", dir, collector.MaxDirEntries))
+		s.walkData(ctx, dir, false)
+		return "oversized-directory"
+	}
 	if err != nil {
-		// A partial listing (a directory over the entry limit) is still scanned.
 		s.issues = append(s.issues, err.Error())
 	}
 
@@ -294,6 +373,10 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 	if e.Type()&fs.ModeSymlink != 0 {
 		target, _ := fs.ReadLink(s.src.FS, name)
 		s.inspectSymlink(name, e, target, true)
+		if !s.followable(name, target) {
+			s.issues = append(s.issues, fmt.Sprintf("/%s -> %s not followed: target outside the application and its deploy directory", name, target))
+			return
+		}
 		info, err := fs.Stat(s.src.FS, name)
 		if err != nil || !info.IsDir() {
 			return
@@ -308,6 +391,23 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 		return
 	}
 	s.walkData(ctx, name, inUploads)
+}
+
+// followable allows a linked upload or data directory to point inside the application, or
+// into the directory that holds it and its siblings (releases/5/storage -> ../../shared/storage
+// with release-based deploys), never above that and never into system trees.
+func (s *scanner) followable(name, target string) bool {
+	resolved := target
+	if !path.IsAbs(resolved) {
+		resolved = path.Join("/"+path.Dir(name), target)
+	}
+	resolved = path.Clean(resolved)
+	root := "/" + s.root
+	if strings.HasPrefix(resolved, root+"/") {
+		return true
+	}
+	deploy := path.Dir(path.Dir(root))
+	return strings.Count(deploy, "/") >= 2 && strings.HasPrefix(resolved, deploy+"/")
 }
 
 // walkData inspects a data directory without hashing it. Entries are streamed in batches, so a
@@ -350,9 +450,14 @@ func (s *scanner) inspectDataEntry(ctx context.Context, name string, e fs.DirEnt
 		// Not skipped: the parent's rules for uploads still apply to what is inside.
 		s.add(KindAppInData, name, e, nil)
 	}
+	// An upload directory can sit inside a data directory (storage/app/public in storage).
+	inUploads = inUploads || slices.Contains(s.uploads, name)
 	switch {
 	case e.Type()&fs.ModeSymlink != 0:
-		s.enterData(ctx, name, e, inUploads)
+		// Reported, never followed: a link to / in an upload directory would walk the whole
+		// host. Only a linked upload directory itself is followed, from enterData.
+		target, _ := fs.ReadLink(s.src.FS, name)
+		s.inspectSymlink(name, e, target, true)
 	case e.IsDir():
 		if e.Name() == ".git" {
 			return
@@ -459,7 +564,10 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	switch {
 	case image && containsCode(content):
 		s.add(KindPolyglotImage, name, e, nil)
-	case script && inUploads && (!complete || !isPlaceholder(content)):
+	case script && inUploads && complete && isPlaceholder(content):
+		// The names pass reported it; the content shows an empty placeholder.
+		s.withdraw(KindScriptInUploads, name)
+	case script && inUploads:
 		s.add(KindScriptInUploads, name, e, matchSignatures(content, php))
 	case inUploads && !script && containsCode(content):
 		s.add(KindCodeInUploads, name, e, matchSignatures(content, false))
@@ -511,8 +619,8 @@ func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inDa
 			}
 		}
 	}
-	if s.add(kind, name, e, sigs) {
-		s.report.Findings[len(s.report.Findings)-1].Target = target
+	if f := s.add(kind, name, e, sigs); f != nil {
+		f.Target = target
 	}
 	if s.isPHP(strings.ToLower(e.Name())) {
 		s.markReachable(name)
@@ -621,15 +729,27 @@ func (s *scanner) describe(name string, e fs.DirEntry) collector.File {
 	return f
 }
 
-// add records a finding and reports whether it was kept (the list is capped).
-func (s *scanner) add(kind, name string, e fs.DirEntry, sigs []string) bool {
+// add records a finding, or adds signatures to the same finding already recorded by an earlier
+// pass, and returns it; nil when the list is full.
+func (s *scanner) add(kind, name string, e fs.DirEntry, sigs []string) *Finding {
+	key := kind + "\x00" + name
+	if i, seen := s.findings[key]; seen {
+		f := &s.report.Findings[i]
+		for _, sig := range sigs {
+			if !slices.Contains(f.Signatures, sig) {
+				f.Signatures = append(f.Signatures, sig)
+			}
+		}
+		return f
+	}
 	if len(s.report.Findings) >= maxFindingsPerApp {
 		s.report.Truncated = true
-		return false
+		return nil
 	}
 	f := s.describe(name, e)
+	s.findings[key] = len(s.report.Findings)
 	s.report.Findings = append(s.report.Findings, Finding{Kind: kind, Signatures: sigs, Reachable: s.reachable(name), File: f})
-	return true
+	return &s.report.Findings[len(s.report.Findings)-1]
 }
 
 // reachable reports whether some site serving this application would execute name.

@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"fmt"
 	"io/fs"
 	"path"
 	"regexp"
@@ -16,6 +17,9 @@ var apacheConfigs = []struct{ conf, root string }{
 	{"etc/httpd/conf/httpd.conf", "etc/httpd"},
 	{"usr/local/apache2/conf/httpd.conf", "usr/local/apache2"},
 }
+
+// maxLogicalLine bounds a directive continued over several lines with a trailing backslash.
+const maxLogicalLine = 64 << 10
 
 // Extensions the stock PHP handlers match (".+\.ph(ar|p|tml)$").
 var phpHandlerExtensions = []string{".php", ".phar", ".phtml"}
@@ -102,16 +106,23 @@ func (p *apacheParser) parseFile(name string, depth int) {
 		return
 	}
 
-	var logical string
+	var logical strings.Builder
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if cont, ok := strings.CutSuffix(line, "\\"); ok {
-			logical += cont + " "
+		cont, continued := strings.CutSuffix(line, "\\")
+		if logical.Len()+len(cont) > maxLogicalLine {
+			*p.issues = append(*p.issues, fmt.Sprintf("apache: continued line over %d bytes in /%s ignored", maxLogicalLine, name))
+			logical.Reset()
 			continue
 		}
-		logical += line
-		p.directive(logical, name, depth)
-		logical = ""
+		if continued {
+			logical.WriteString(cont)
+			logical.WriteByte(' ')
+			continue
+		}
+		logical.WriteString(line)
+		p.directive(logical.String(), name, depth)
+		logical.Reset()
 	}
 }
 

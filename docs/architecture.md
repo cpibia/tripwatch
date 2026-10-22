@@ -86,6 +86,15 @@ I nomi generici di upload (`uploads`, `media`, `files`...) valgono solo sotto la
 dell'applicazione o della web root e solo se il profilo non indica dove vanno gli upload: più in
 basso sono normali cartelle di codice.
 
+Prima di leggere qualunque contenuto, un passaggio elenca solo i nomi nelle cartelle di upload e
+segnala gli script: costa soltanto il listing, così file lenti da leggere (sparsi, milioni di
+immagini) non possono spingere una webshell oltre la scadenza. Il passaggio sui contenuti poi
+arricchisce gli stessi finding con le firme, o li ritira se il file è un segnaposto vuoto. Le
+cartelle di dati si leggono in streaming e non si hashano; una cartella di codice con più voci
+del limite viene ispezionata allo stesso modo. Dentro le upload i symlink vengono segnalati e mai
+seguiti; si segue soltanto una cartella di upload che è essa stessa un link, e solo verso
+l'applicazione o la cartella che contiene le sue release.
+
 ## Log dei web server
 
 `internal/weblog` non fa I/O: trasforma una riga in una richiesta normalizzata (formato combined e
@@ -101,9 +110,14 @@ inode, ed è un evento. Alla rotazione cerca il vecchio file fra i fratelli per 
 nomi con data di Caddy) e ne rilegge la coda dall'offset salvato; un file svuotato in place con
 una copia accanto il cui contenuto coincide con l'impronta salvata è `copytruncate`, non un
 troncamento. Se il file precedente non si trova, lo dice. Un tratto senza a capo più lungo del
-limite per giro viene saltato con un'issue, invece di fermare l'offset. Gli eventi hanno un tetto
-con riserva per gravità (un evento high o critical sfratta i più bassi), gli IP sono contati con
-il riassunto di Misra-Gries e le tabelle per IP delle regole sfrattano invece di rifiutare. Le posizioni nuove restano in sospeso finché il chiamante non conferma la
+limite per giro viene saltato con un'issue, invece di fermare l'offset. Gli eventi hanno un tetto:
+oltre, un evento entra solo al posto di uno strettamente meno grave, così un flood di eventi di
+una gravità non tiene fuori quelli più gravi. Gli IP sono contati con il riassunto di Misra-Gries
+e le tabelle per IP delle regole sfrattano invece di rifiutare. Di una riga oltre il limite si
+tengono testa e coda: la testa contiene metodo, path e status, la coda una riga vera scritta
+dopo un buco di byte nulli, che i web server non scrivono mai e che vengono trattati come
+separatore. Una copia usata per riconoscere `copytruncate` vale solo se il proprietario del log
+non poteva scriverla. Le posizioni nuove restano in sospeso finché il chiamante non conferma la
 consegna dello snapshot con `Commit`: un giro perso viene riletto.
 
 ## Struttura dei package

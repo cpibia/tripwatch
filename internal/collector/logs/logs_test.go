@@ -341,26 +341,41 @@ func TestDateextRotation(t *testing.T) {
 	}
 }
 
-// copytruncate copies the log and empties it in place: that is a rotation, not tampering.
+// copytruncate copies the log and empties it in place. The copy is drained either way; the
+// truncation is a rotation only if the log's owner could not have forged the copy.
 func TestCopyTruncate(t *testing.T) {
-	h := newHost(t)
-	h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
-	h.run()
-	h.appendLog(logLine("203.0.113.7", "GET", "/media/late.php", 200))
-	data, err := os.ReadFile(filepath.Join(h.root, accessLog))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(h.root, accessLog+".1"), data, 0o600); err != nil { //nolint:gosec // test fixture under t.TempDir
-		t.Fatal(err)
-	}
-	if err := os.Truncate(filepath.Join(h.root, accessLog), 0); err != nil {
-		t.Fatal(err)
-	}
+	for _, copyByRoot := range []bool{false, true} {
+		if copyByRoot && os.Geteuid() != 0 {
+			continue // needs chown: covered when the tests run as root
+		}
+		h := newHost(t)
+		h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
+		h.run()
+		h.appendLog(logLine("203.0.113.7", "GET", "/media/late.php", 200))
+		logPath := filepath.Join(h.root, accessLog)
+		data, err := os.ReadFile(logPath) //nolint:gosec // test fixture under t.TempDir
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(logPath+".1", data, 0o600); err != nil { //nolint:gosec // test fixture under t.TempDir
+			t.Fatal(err)
+		}
+		if copyByRoot {
+			if err := os.Chown(logPath, 33, 33); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Truncate(logPath, 0); err != nil {
+			t.Fatal(err)
+		}
 
-	res := h.run()
-	if rules := eventRules(res); !slices.Contains(rules, "script_in_upload_path") || slices.Contains(rules, "log_truncated") {
-		t.Errorf("events %v", rules)
+		rules := eventRules(h.run())
+		if !slices.Contains(rules, "script_in_upload_path") {
+			t.Errorf("copy by root %v: lines in the copy not read: %v", copyByRoot, rules)
+		}
+		if got := slices.Contains(rules, "log_truncated"); got == copyByRoot {
+			t.Errorf("copy by root %v: log_truncated reported = %v", copyByRoot, got)
+		}
 	}
 }
 
@@ -370,6 +385,49 @@ func TestFirstRunTailIsDeclared(t *testing.T) {
 	h.writeLog(strings.Repeat(logLine("198.51.100.2", "GET", "/", 200), 10))
 	res := h.run()
 	if !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "no saved position") }) {
+		t.Errorf("issues = %v", res.Issues)
+	}
+}
+
+// A flood of high events from many addresses must not keep a critical one out.
+func TestCriticalEventSurvivesHighFlood(t *testing.T) {
+	h := newHost(t)
+	var b strings.Builder
+	for i := range 2 * maxEvents {
+		b.WriteString(logLine(fmt.Sprintf("2001:db8::%x", i), "POST", fmt.Sprintf("/media/p%d.php", i), 404))
+	}
+	b.WriteString(logLine("203.0.113.66", "GET", "/media/catalog/x.php", 200))
+	h.writeLog(b.String())
+
+	res := h.run()
+	if !slices.ContainsFunc(res.Events, func(e Event) bool { return e.Severity == "critical" }) {
+		t.Errorf("critical event lost among %d events", len(res.Events))
+	}
+	if len(res.Events) > maxEvents {
+		t.Errorf("%d events kept, limit %d", len(res.Events), maxEvents)
+	}
+}
+
+// A request is not hidden by a long user agent: the start of the line is still inspected.
+func TestLongLineIsStillInspected(t *testing.T) {
+	h := newHost(t)
+	ua := strings.Repeat(`\x41`, MaxLineLength)
+	h.writeLog(fmt.Sprintf("203.0.113.7 - - [14/Feb/2026:18:48:01 +0000] \"GET /media/catalog/x.php HTTP/1.1\" 200 10 \"-\" \"%s\"\n", ua))
+	res := h.run()
+	if res.Files[0].Oversized != 1 || !slices.Contains(eventRules(res), "script_in_upload_path") {
+		t.Errorf("oversized %d, events %v", res.Files[0].Oversized, eventRules(res))
+	}
+}
+
+// A hole of NUL bytes glued to the next line must not swallow it.
+func TestLineAfterNulHole(t *testing.T) {
+	h := newHost(t)
+	h.writeLog(logLine("198.51.100.2", "GET", "/", 200) + strings.Repeat("\x00", 100<<10) + logLine("203.0.113.7", "GET", "/.env", 200))
+	res := h.run()
+	if !slices.Contains(eventRules(res), "sensitive_file") {
+		t.Errorf("line after the hole lost: events %v", eventRules(res))
+	}
+	if !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "NUL bytes") }) {
 		t.Errorf("issues = %v", res.Issues)
 	}
 }
