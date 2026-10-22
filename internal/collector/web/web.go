@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"path"
@@ -252,9 +253,9 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData bool
 	}
 	needContent := script || image || inUploads || inData
 	if !needContent || info.Size() > maxInMemory {
-		sum, edges := s.hashStream(name, needContent)
-		if image && containsCode(edges) {
-			s.add(KindPolyglotImage, name, e, nil)
+		sum, edges := s.hashLarge(name, info, needContent)
+		if needContent {
+			s.classify(name, e, edges, false, inUploads, inData)
 		}
 		return sum
 	}
@@ -265,12 +266,23 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData bool
 		return ""
 	}
 	sum := sha256.Sum256(content)
+	s.classify(name, e, content, true, inUploads, inData)
+	return hex.EncodeToString(sum[:])
+}
 
+// classify runs the content checks. For large files content holds only the head and tail
+// (complete is false): a script in an upload directory is reported whatever its size, and
+// signatures are searched in what was read.
+func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete, inUploads, inData bool) {
+	base := strings.ToLower(e.Name())
+	script := isScript(base)
+	image := slices.Contains(imageExtensions, path.Ext(base))
 	php := s.isPHP(base)
+
 	switch {
 	case image && containsCode(content):
 		s.add(KindPolyglotImage, name, e, nil)
-	case script && inUploads && !isPlaceholder(content):
+	case script && inUploads && (!complete || !isPlaceholder(content)):
 		s.add(KindScriptInUploads, name, e, matchSignatures(content, php))
 	case inUploads && !script && containsCode(content):
 		s.add(KindCodeInUploads, name, e, matchSignatures(content, false))
@@ -292,7 +304,36 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData bool
 	if php {
 		s.markReachable(name)
 	}
-	return hex.EncodeToString(sum[:])
+}
+
+// hashLarge hashes a file too big to load, keeping its first and last bytes for the content
+// checks: code hidden in an image sits after the header or at the end. Beyond MaxHashSize the
+// content is not hashed at all (a sparse file of terabytes would take hours to read): size
+// and modification time stand in for the hash, and only the edges are read.
+func (s *scanner) hashLarge(name string, info fs.FileInfo, keepEdges bool) (string, []byte) {
+	if info.Size() <= collector.MaxHashSize {
+		return s.hashStream(name, keepEdges)
+	}
+	surrogate := fmt.Sprintf("size:%d:mtime:%d", info.Size(), info.ModTime().UnixNano())
+	if !keepEdges {
+		return surrogate, nil
+	}
+
+	f, err := s.src.FS.Open(name)
+	if err != nil {
+		s.issues.Add(err)
+		return surrogate, nil
+	}
+	defer func() { _ = f.Close() }()
+	ra, ok := f.(io.ReaderAt)
+	if !ok {
+		return surrogate, nil
+	}
+	head := make([]byte, edgeScanSize)
+	n, _ := ra.ReadAt(head, 0)
+	tail := make([]byte, edgeScanSize)
+	m, _ := ra.ReadAt(tail, info.Size()-edgeScanSize)
+	return surrogate, append(head[:n], tail[:m]...)
 }
 
 // hashStream hashes a large file without loading it, keeping its first and last bytes for
@@ -309,8 +350,9 @@ func (s *scanner) hashStream(name string, keepEdges bool) (string, []byte) {
 	var head bytes.Buffer
 	tail := make([]byte, 0, edgeScanSize)
 	buf := make([]byte, 64<<10)
+	r := io.LimitReader(f, collector.MaxHashSize)
 	for {
-		n, err := f.Read(buf)
+		n, err := r.Read(buf)
 		if n > 0 {
 			h.Write(buf[:n])
 			if keepEdges {

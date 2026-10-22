@@ -7,3 +7,8 @@ import "io/fs"
 func owner(fs.FileInfo) (uid, gid *uint32) {
 	return nil, nil
 }
+
+// Inode is not available on this platform.
+func Inode(fs.FileInfo) (uint64, bool) {
+	return 0, false
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"io/fs"
@@ -18,6 +19,10 @@ import (
 )
 
 const maxMissingReported = 200
+
+// maxPackageFileSize bounds checksumming: no packaged file comes close, and a sparse file of
+// terabytes in its place would otherwise be read in full on every run.
+const maxPackageFileSize = 1 << 30
 
 // Package managers.
 const (
@@ -126,6 +131,9 @@ func checksum(fsys fs.FS, name string, newHash func() hash.Hash) ([]byte, error)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fs.ErrNotExist
+	}
+	if info.Size() > maxPackageFileSize {
+		return nil, fmt.Errorf("%s: %w (%d bytes)", name, collector.ErrTooLarge, info.Size())
 	}
 	h := newHash()
 	if _, err := io.Copy(h, f); err != nil {

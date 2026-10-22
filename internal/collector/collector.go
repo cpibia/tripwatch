@@ -4,8 +4,13 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
+
+// Timeout bounds each collector, so that one stuck on a hostile file or a huge tree cannot
+// stop the others or the next snapshot.
+var Timeout = 15 * time.Minute
 
 // Collector gathers one aspect of the machine state. Collectors only observe: judging what
 // is suspicious is the verifier's job.
@@ -33,7 +38,7 @@ func Run(ctx context.Context, src Source, collectors []Collector, now time.Time)
 	}
 
 	for _, c := range collectors {
-		result, err := c.Collect(ctx, src)
+		result, err := collectWithTimeout(ctx, c, src)
 		if err != nil {
 			fail(c.Name(), err)
 			continue
@@ -46,4 +51,29 @@ func Run(ctx context.Context, src Source, collectors []Collector, now time.Time)
 		snap.Results[c.Name()] = raw
 	}
 	return snap
+}
+
+type outcome struct {
+	result any
+	err    error
+}
+
+// collectWithTimeout runs c under a deadline. Collectors check their context while walking,
+// so they stop soon after it expires; if one is stuck in a call that ignores it, Run moves on
+// and the goroutine is left to finish on its own.
+func collectWithTimeout(ctx context.Context, c Collector, src Source) (any, error) {
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := c.Collect(ctx, src)
+		done <- outcome{result, err}
+	}()
+	select {
+	case o := <-done:
+		return o.result, o.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%s: %w after %s", c.Name(), ctx.Err(), Timeout)
+	}
 }

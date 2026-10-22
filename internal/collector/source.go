@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -40,10 +39,11 @@ type Source struct {
 	Attrs func(name string) (Attrs, error)
 }
 
-// NewSource observes the filesystem rooted at dir.
+// NewSource observes the filesystem rooted at dir through a view that unprivileged users
+// cannot use to block or exhaust the sensor (see rootFS).
 func NewSource(dir string) Source {
 	return Source{
-		FS: os.DirFS(dir),
+		FS: rootFS{dir: dir},
 		Attrs: func(name string) (Attrs, error) {
 			return ReadAttrs(filepath.Join(dir, filepath.FromSlash(name)))
 		},

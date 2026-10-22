@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -281,4 +283,55 @@ func TestGenericUploadDirs(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("findings:\n got  %v\n want %v", got, want)
 	}
+}
+
+// A script in an upload directory is reported whatever its size, including files too large
+// to load (padded past the in-memory limit) and files too large to hash (sparse, read only at
+// the edges).
+func TestLargeScriptsInUploads(t *testing.T) {
+	padded := compromisedShop()
+	padded["var/www/commerce/pub/media/catalog/big.php"] = text("<?php system($_GET['c']); ?>" + strings.Repeat(" ", maxInMemory+1))
+	if !hasFinding(paddedReport(t, padded), KindScriptInUploads, "/var/www/commerce/pub/media/catalog/big.php") {
+		t.Error("padded script in uploads not reported")
+	}
+
+	dir := t.TempDir()
+	app := filepath.Join(dir, "var/www/site")
+	if err := os.MkdirAll(filepath.Join(app, "uploads"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "index.php"), []byte("<?php echo 1;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	huge := filepath.Join(app, "uploads/huge.php")
+	if err := os.WriteFile(huge, []byte(`<?php eval(base64_decode($_POST['x']));`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(huge, collector.MaxHashSize+1<<20); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Collector{}.Collect(context.Background(), collector.NewSource(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *Finding
+	for _, a := range out.(Result).Apps {
+		for i, f := range a.Findings {
+			if f.Path == "/var/www/site/uploads/huge.php" {
+				found = &a.Findings[i]
+			}
+		}
+	}
+	if found == nil || found.Kind != KindScriptInUploads || !slices.Contains(found.Signatures, "eval_decoded_payload") {
+		t.Errorf("sparse script in uploads = %+v", found)
+	}
+}
+
+func paddedReport(t *testing.T, fsys fstest.MapFS) AppReport {
+	t.Helper()
+	return commerceReport(t, run(t, fsys))
+}
+
+func hasFinding(app AppReport, kind, p string) bool {
+	return slices.ContainsFunc(app.Findings, func(f Finding) bool { return f.Kind == kind && f.Path == p })
 }

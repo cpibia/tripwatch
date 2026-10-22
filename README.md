@@ -23,8 +23,9 @@ corrispondente. Funziona su host normali, host Docker, nodi Kubernetes e AWS Far
 ```
 
 - **Il sensore osserva e basta.** È un binario Go statico senza dipendenze, quindi gira anche su
-  distribuzioni vecchie o non aggiornate. Invia gli eventi critici appena accadono, uno snapshot
-  completo a intervalli regolari e un battito che dimostra che è vivo.
+  distribuzioni vecchie o non aggiornate. Oggi produce uno snapshot completo dello stato a ogni
+  esecuzione; con il trasporto (vedi la roadmap) invierà anche gli eventi critici appena accadono
+  e un battito che dimostra che è vivo.
 - **Il verificatore decide, fuori dal server.** Baseline e manifest di build stanno dove un
   attaccante con root su un server monitorato non può riscriverli. Il verificatore non ha
   credenziali per entrare nei server: sono i sensori a inviare i dati.
@@ -93,18 +94,30 @@ baseline del verificatore li riconoscerà come noti dopo il primo snapshot.
 ## Modello di fiducia
 
 Un attaccante con root su un server monitorato può fermarne il sensore o farlo mentire.
-tripwatch non finge il contrario, ma rende visibili entrambe le cose:
+tripwatch non finge il contrario, ma punta a rendere visibili entrambe le cose. Già oggi:
 
-- un sensore fermo viene scoperto entro pochi minuti dal battito mancante;
-- gli eventi di escalation dei privilegi partono prima che l'attaccante possa agire sul sensore;
-- falsificare i dati richiede di rubare la chiave di firma e continuare la catena in modo
-  credibile;
+- i messaggi sono firmati e collegati in catena: un messaggio perso, ripetuto o falsificato con
+  una chiave diversa viene rilevato dal verificatore;
+- il sensore legge i file in modo che l'utente del web server non possa bloccarlo né esaurirne la
+  memoria: ogni apertura è non bloccante e controllata sul descrittore (FIFO e dispositivi vengono
+  rifiutati), le letture hanno un tetto, i file enormi vengono letti solo in testa e in coda, ogni
+  collector ha un timeout e, su Linux, i symlink si risolvono dentro la root osservata.
+
+Con il trasporto e il verificatore arriveranno:
+
+- il battito, che scopre un sensore fermo entro pochi minuti;
+- gli eventi di escalation dei privilegi spediti appena accadono, prima che l'attaccante possa
+  agire sul sensore (fino ad allora ciò che accade fra due snapshot, come un processo che dura
+  pochi secondi, non viene visto);
 - i controlli che non girano sul server (pagine scaricate dall'esterno, API del cloud provider,
-  canary token, snapshot del disco verificati a freddo) non si possono silenziare da lì.
+  canary token, snapshot del disco verificati a freddo), che non si possono silenziare da lì.
+
+Un attaccante con root può copiare la chiave di firma e continuare la catena con dati credibili:
+contro questo servono i controlli esterni e, in prospettiva, una chiave legata all'hardware.
 
 La maggior parte delle compromissioni web passa settimane o mesi con l'utente del web server
 prima di arrivare a root. In quella fase l'attaccante non ha i permessi per fermare il sensore o
-modificarne i file.
+modificarne i file, e i file che può creare non bastano a bloccarlo.
 
 Il design completo è in [docs/architecture.md](docs/architecture.md).
 

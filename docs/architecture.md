@@ -9,9 +9,9 @@ che si attivano quando la scoperta automatica trova la tecnologia corrispondente
 ## Componenti
 
 **Sensore** (`cmd/tripwatch-sensor`): un binario statico su ogni macchina monitorata. Osserva e
-riferisce, non decide mai. Gli eventi critici (utenti, chiavi, sudoers, setuid, nuove unit e
-righe di cron, moduli del kernel) vengono inviati appena accadono; lo stato completo parte come
-snapshot periodico; un battito dimostra che il sensore è vivo.
+riferisce, non decide mai. Oggi produce uno snapshot completo dello stato a ogni esecuzione. Con
+il trasporto, gli eventi critici (utenti, chiavi, sudoers, setuid, nuove unit e righe di cron,
+moduli del kernel) verranno inviati appena accadono e un battito dimostrerà che il sensore è vivo.
 
 **Verificatore** (`cmd/tripwatch-verifier`): gira su una macchina dedicata. Tiene baseline e
 manifest di build fuori dai server monitorati, confronta, applica le regole e genera gli allarmi.
@@ -37,6 +37,23 @@ non cerca di impedirlo, lo rende visibile:
 - gli eventi di escalation dei privilegi partono prima che l'attaccante possa agire sul sensore;
 - i controlli che non girano sul server (pagine scaricate dall'esterno, API del provider, canary
   token, snapshot del disco verificati a freddo) non si possono silenziare da lì.
+
+## Lettura sicura dei file
+
+Il sensore gira come root ma legge file che un utente non privilegiato può creare o sostituire.
+Tutti i collector passano da un'unica vista del filesystem (`rootFS` in `internal/collector`):
+
+- ogni apertura è `O_NONBLOCK|O_NOCTTY`, quindi una FIFO non blocca la lettura;
+- dopo l'apertura, `fstat` sul descrittore verifica che si tratti di un file regolare o di una
+  directory: un file scambiato con una FIFO o con un dispositivo dopo il listing viene rifiutato
+  senza finestre di race;
+- `ReadFile` rifiuta i file oltre `MaxReadSize`; l'hash si ferma a `MaxHashSize`, oltre il quale
+  di un file si leggono solo testa e coda (abbastanza per le firme e le immagini poliglotte);
+- su Linux, quando la root osservata non è `/` (DaemonSet con `-root /host`), l'apertura usa
+  `openat2` con `RESOLVE_IN_ROOT`: un symlink assoluto si risolve dentro la root osservata, come
+  per l'host, e non nel filesystem del container del sensore. `/proc` fa eccezione perché i suoi
+  link speciali servono al collector dei processi;
+- ogni collector gira con un timeout (`collector.Timeout`): uno bloccato non ferma gli altri.
 
 ## Stack web
 
