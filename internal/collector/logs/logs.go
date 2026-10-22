@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"
@@ -339,9 +340,12 @@ type runState struct {
 	posts         map[string]*postTally
 	postPairs     int
 	// ranks counts the events held per severity rank, perRule per rule.
-	ranks     [5]int
-	perRule   map[string]int
-	ruleRanks map[string][5]int
+	ranks   [5]int
+	perRule map[string]int
+	// sampleRank and sampleSeen drive the reservoir of dropped serious events.
+	sampleRank int
+	sampleSeen int
+	ruleRanks  map[string][5]int
 }
 
 func (r *runState) read(ctx context.Context, name, kind string) error {
@@ -715,15 +719,37 @@ func (r *runState) admit(severity, rule string, sample Dropped) bool {
 	return true
 }
 
+// sampleDropped keeps a uniform random sample of the dropped critical events, or of the high
+// ones while no critical was dropped, one per source address. Whatever their order and number,
+// every dropped event has the same chance to be kept: a flood sent first cannot reserve the
+// places ahead of the event it is meant to hide.
+func (r *runState) sampleDropped(d Dropped) {
+	rank := weblog.SeverityRank(d.Severity)
+	if rank < weblog.SeverityRank(weblog.SeverityHigh) || rank < r.sampleRank {
+		return
+	}
+	samples := &r.res.Stats.DroppedSamples
+	if rank > r.sampleRank {
+		*samples, r.sampleSeen, r.sampleRank = nil, 0, rank
+	}
+	if slices.ContainsFunc(*samples, func(x Dropped) bool { return x.IP == d.IP }) {
+		return
+	}
+	r.sampleSeen++
+	switch {
+	case len(*samples) < maxDroppedSamples:
+		*samples = append(*samples, d)
+	default:
+		if j := rand.IntN(r.sampleSeen); j < maxDroppedSamples { //nolint:gosec // math/rand/v2 draws from a randomly seeded ChaCha8 the host cannot observe
+			(*samples)[j] = d
+		}
+	}
+}
+
 func (r *runState) drop(d Dropped) bool {
 	r.res.Truncated = true
 	r.res.Stats.DroppedEvents[d.Severity]++
-	// One sample per source address: a flood from one address cannot take every place, and the
-	// request of another address, such as the one that matters, still gets one.
-	if weblog.SeverityRank(d.Severity) >= weblog.SeverityRank(weblog.SeverityHigh) && len(r.res.Stats.DroppedSamples) < maxDroppedSamples &&
-		!slices.ContainsFunc(r.res.Stats.DroppedSamples, func(x Dropped) bool { return x.IP == d.IP }) {
-		r.res.Stats.DroppedSamples = append(r.res.Stats.DroppedSamples, d)
-	}
+	r.sampleDropped(d)
 	return false
 }
 
