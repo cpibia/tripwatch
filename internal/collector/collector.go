@@ -24,6 +24,8 @@ type Snapshot struct {
 	TakenAt time.Time                  `json:"taken_at"`
 	Results map[string]json.RawMessage `json:"results"`
 	Errors  map[string]string          `json:"errors,omitempty"`
+	// Warnings are conditions that weaken what the snapshot can be trusted for.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Run executes every collector against src. A failing collector is recorded in Errors and
@@ -50,6 +52,7 @@ func Run(ctx context.Context, src Source, collectors []Collector, now time.Time)
 		}
 		snap.Results[c.Name()] = raw
 	}
+	snap.Warnings = Warnings()
 	return snap
 }
 

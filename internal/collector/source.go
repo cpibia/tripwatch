@@ -13,9 +13,10 @@ import (
 	"time"
 )
 
-// MaxHashSize bounds how much of a file is read to hash it; larger files are reported
-// without a hash rather than stalling the collection.
-const MaxHashSize = 64 << 20
+// MaxHashSize bounds how much of a file is read to hash it. Larger files are reported without
+// a hash, with an explicit error, rather than stalling the collection: a sparse file of
+// terabytes costs nothing to create and hours to read.
+const MaxHashSize = 512 << 20
 
 // ErrAttrsUnsupported is returned where inode flags cannot be read.
 var ErrAttrsUnsupported = errors.New("collector: file attributes not supported on this platform")
@@ -104,7 +105,10 @@ func describeInfo(src Source, name string, info fs.FileInfo) (File, error) {
 		}
 	}
 
-	if info.Mode().IsRegular() && info.Size() <= MaxHashSize {
+	if info.Mode().IsRegular() && info.Size() > MaxHashSize {
+		return f, fmt.Errorf("%s not hashed: %w (%d bytes)", f.Path, ErrTooLarge, info.Size())
+	}
+	if info.Mode().IsRegular() {
 		sum, err := hashFile(src.FS, name)
 		if err != nil {
 			return f, fmt.Errorf("hash %s: %w", f.Path, err)

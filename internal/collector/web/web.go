@@ -267,7 +267,8 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData bool
 
 	info, err := e.Info()
 	if err != nil {
-		s.issues.Add(err)
+		// Explicit even for "does not exist": a file listed a moment ago must not vanish silently.
+		s.issues = append(s.issues, fmt.Sprintf("/%s: %v", name, err))
 		return ""
 	}
 	needContent := script || image || inUploads || inData
@@ -363,13 +364,19 @@ func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inDa
 
 // hashLarge hashes a file too big to load, keeping its first and last bytes for the content
 // checks: code hidden in an image sits after the header or at the end. Beyond MaxHashSize the
-// content is not hashed at all (a sparse file of terabytes would take hours to read): size
-// and modification time stand in for the hash, and only the edges are read.
+// content is not hashed at all (a sparse file of terabytes would take hours to read): size,
+// change time and inode stand in for the hash, an issue records it, and only the edges are
+// read.
 func (s *scanner) hashLarge(name string, info fs.FileInfo, keepEdges bool) (string, []byte) {
 	if info.Size() <= collector.MaxHashSize {
 		return s.hashStream(name, keepEdges)
 	}
-	surrogate := fmt.Sprintf("size:%d:mtime:%d", info.Size(), info.ModTime().UnixNano())
+	// The modification time can be set back by the file's owner; the change time and the
+	// inode cannot, so a rewrite at the same size still changes the surrogate.
+	ctime, _ := collector.ChangeTime(info)
+	id, _ := collector.FileID(info)
+	surrogate := fmt.Sprintf("unhashed:size:%d:ctime:%d:id:%s", info.Size(), ctime, id)
+	s.issues = append(s.issues, fmt.Sprintf("/%s not hashed: %d bytes, over %d", name, info.Size(), collector.MaxHashSize))
 	if !keepEdges {
 		return surrogate, nil
 	}

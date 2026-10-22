@@ -43,16 +43,24 @@ non cerca di impedirlo, lo rende visibile:
 Il sensore gira come root ma legge file che un utente non privilegiato può creare o sostituire.
 Tutti i collector passano da un'unica vista del filesystem (`rootFS` in `internal/collector`):
 
-- ogni apertura è `O_NONBLOCK|O_NOCTTY`, quindi una FIFO non blocca la lettura;
-- dopo l'apertura, `fstat` sul descrittore verifica che si tratti di un file regolare o di una
-  directory: un file scambiato con una FIFO o con un dispositivo dopo il listing viene rifiutato
-  senza finestre di race;
-- `ReadFile` rifiuta i file oltre `MaxReadSize`; l'hash si ferma a `MaxHashSize`, oltre il quale
-  di un file si leggono solo testa e coda (abbastanza per le firme e le immagini poliglotte);
-- su Linux, quando la root osservata non è `/` (DaemonSet con `-root /host`), l'apertura usa
-  `openat2` con `RESOLVE_IN_ROOT`: un symlink assoluto si risolve dentro la root osservata, come
-  per l'host, e non nel filesystem del container del sensore. `/proc` fa eccezione perché i suoi
-  link speciali servono al collector dei processi;
+- su Linux il percorso viene prima risolto con `O_PATH`, che non apre il file: un dispositivo o
+  una FIFO non subiscono nessuna operazione. `fstat` sul descrittore ne legge il tipo e solo file
+  regolari e directory vengono riaperti in lettura, attraverso `/proc/self/fd`, sullo stesso
+  inode; la lettura è comunque `O_NONBLOCK|O_NOCTTY`;
+- quando la root osservata non è `/` (DaemonSet con `-root /host`) i symlink si risolvono dentro
+  la root, come per l'host e non nel container del sensore: con `openat2` e `RESOLVE_IN_ROOT` se
+  il kernel lo offre, altrimenti (kernel vecchio, `openat2` vietato da seccomp) con un resolver in
+  userspace che segue i link componente per componente e apre l'ultimo con `O_NOFOLLOW`. In quel
+  caso lo snapshot riporta un avviso (`warnings`), perché il resolver in userspace è esposto a
+  race che `openat2` non ha. `/proc` fa eccezione: i suoi link speciali servono al collector dei
+  processi;
+- `Lstat` e `ReadLink` risolvono la directory padre nello stesso modo e leggono l'ultimo
+  componente attraverso il suo descrittore, così un link intermedio non porta fuori dalla root;
+- `ReadFile` rifiuta i file oltre `MaxReadSize` con un errore, mai con un risultato troncato;
+  `ReadDir` si ferma oltre un numero massimo di voci e lo dice;
+- l'hash si calcola fino a `MaxHashSize`; oltre, il file viene riportato senza hash con un errore
+  esplicito e il collector web usa come impronta dimensione, ctime e inode (l'mtime si può
+  riportare indietro senza privilegi, il ctime no) leggendo solo testa e coda del file;
 - ogni collector gira con un timeout (`collector.Timeout`): uno bloccato non ferma gli altri.
 
 ## Stack web
