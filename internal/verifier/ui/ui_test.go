@@ -302,3 +302,112 @@ func TestMostUrgent(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestHostPageAndRevoke(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	csrf := h.login()
+	res, body := h.get("/hosts/web-01")
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "muto dalla registrazione") || !strings.Contains(body, "in corso") {
+		t.Fatalf("host page: status %d", res.StatusCode)
+	}
+	if res, _ := h.get("/hosts/nope"); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown host: status %d", res.StatusCode)
+	}
+
+	if res, _ := h.post("/hosts/web-01/revoke", url.Values{"csrf": {csrf}, "confirm": {"web-02"}}); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("revoke with the wrong name: status %d", res.StatusCode)
+	}
+	if res, _ := h.post("/hosts/web-01/revoke", url.Values{"csrf": {csrf}, "confirm": {"web-01"}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("revoke: status %d", res.StatusCode)
+	}
+	if hs, _ := h.store.Host(ctx, "web-01"); !hs.Revoked {
+		t.Fatal("host not revoked")
+	}
+	if _, body := h.get("/hosts/web-01"); strings.Contains(body, `action="/hosts/web-01/revoke"`) || !strings.Contains(body, "revocato") {
+		t.Fatal("revoked host still offers revocation or hides its state")
+	}
+}
+
+func TestAlertViews(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for i, st := range []string{"open", "acked", "resolved"} {
+		if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: "fp:" + st, Severity: "medium", Kind: "web", Title: "alert " + st}, now.Add(-time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, _ := h.store.Alerts(ctx, store.AlertFilter{})
+	for _, a := range all {
+		switch a.Fingerprint {
+		case "fp:acked":
+			_ = h.store.Ack(ctx, a.ID, email, now)
+		case "fp:resolved":
+			_ = h.store.Resolve(ctx, a.ID, email, now)
+		}
+	}
+	h.login()
+	for view, want := range map[string][]string{
+		"open":         {"alert open", "alert acked"},
+		"acknowledged": {"alert acked"},
+		"resolved":     {"alert resolved"},
+		"all":          {"alert open", "alert acked", "alert resolved"},
+	} {
+		_, body := h.get("/alerts?view=" + view)
+		if n := strings.Count(body, `<td class="what">`); n != len(want) {
+			t.Errorf("view %s: %d rows, want %d", view, n, len(want))
+		}
+		for _, w := range want {
+			if !strings.Contains(body, w) {
+				t.Errorf("view %s misses %q", view, w)
+			}
+		}
+	}
+	if _, body := h.get("/alerts?view=all&host=web-02"); strings.Contains(body, `<td class="what">`) {
+		t.Error("host filter ignored")
+	}
+}
+
+func TestLogoutAndTheme(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	themes := []string{}
+	for range 3 {
+		res, _ := h.post("/theme", url.Values{"csrf": {csrf}, "back": {"/alerts"}})
+		if res.Header.Get("Location") != "/alerts" {
+			t.Fatalf("theme redirected to %q", res.Header.Get("Location"))
+		}
+		_, body := h.get("/")
+		m := regexp.MustCompile(`Tema: ([a-z ]+)<`).FindStringSubmatch(body)
+		themes = append(themes, m[1])
+	}
+	if strings.Join(themes, ",") != "chiaro,scuro,di sistema" {
+		t.Fatalf("theme cycle = %v", themes)
+	}
+
+	if res, _ := h.post("/logout", url.Values{"csrf": {csrf}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("logout: status %d", res.StatusCode)
+	}
+	if res, _ := h.get("/"); res.StatusCode != http.StatusSeeOther {
+		t.Fatal("still signed in after logout")
+	}
+}
+
+func TestFormatting(t *testing.T) {
+	for d, want := range map[time.Duration]string{30 * time.Second: "1 min", 59 * time.Minute: "59 min", 2 * time.Hour: "2 h", 125 * time.Minute: "2 h 5 min", 50 * time.Hour: "2 g 2 h"} {
+		if got := duration(d); got != want {
+			t.Errorf("duration(%v) = %q, want %q", d, got, want)
+		}
+	}
+	for n, want := range map[int]string{512: "512 B", 2048: "2 KB", 3 << 20: "3.0 MB"} {
+		if got := size(n); got != want {
+			t.Errorf("size(%d) = %q, want %q", n, got, want)
+		}
+	}
+	if shape("unknown", "") != "" || !strings.Contains(string(shape("high", "acknowledged")), "acked") {
+		t.Error("shape")
+	}
+}

@@ -1,0 +1,149 @@
+package analyze
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/cpibia/tripwatch/internal/protocol"
+	"github.com/cpibia/tripwatch/internal/verifier/store"
+)
+
+var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+
+type harness struct {
+	t     *testing.T
+	store *store.Store
+	an    *Analyzer
+	clock time.Time
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	h := &harness{t: t, store: st, clock: now}
+	h.an = &Analyzer{Store: st, Now: func() time.Time { return h.clock }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := st.Enroll(context.Background(), "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// deliver stores an envelope of web-01 as the ingest would after verifying it.
+func (h *harness) deliver(kind protocol.Kind, payload []byte) {
+	h.t.Helper()
+	ctx := context.Background()
+	host, err := h.store.Host(ctx, "web-01")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	e := protocol.Envelope{HostID: "web-01", Kind: kind, Sequence: host.Chain.Sequence + 1, SentAt: h.clock, Payload: payload}
+	if err := h.store.Accept(ctx, e, host.Chain, protocol.ChainState{Sequence: e.Sequence}, h.clock); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func (h *harness) open() map[string]store.Alert {
+	h.t.Helper()
+	all, err := h.store.Alerts(context.Background(), store.AlertFilter{Statuses: []string{store.StatusOpen}})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	out := map[string]store.Alert{}
+	for _, a := range all {
+		out[a.Fingerprint] = a
+	}
+	return out
+}
+
+const (
+	rootOnly   = `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0}]}}}}`
+	secondRoot = `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0},{"name":"backup","uid":0}]}}}}`
+)
+
+// The worker drains the queue in order: a second root account appearing in the newer snapshot
+// raises a critical alert, and an undecodable snapshot raises its own.
+func TestWorkerAnalysesQueuedSnapshots(t *testing.T) {
+	h := newHarness(t)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, secondRoot))
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, []byte("not gzip"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	wake := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() { h.an.Worker(ctx, wake); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		pending, err := h.store.PendingSnapshots(context.Background(), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pending) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("still pending: %v", pending)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	alerts := h.open()
+	if a, ok := alerts["accounts:uid0:backup"]; !ok || a.Severity != "critical" {
+		t.Errorf("second root account: %+v", alerts)
+	}
+	if a, ok := alerts["snapshot:undecodable"]; !ok || a.Severity != "high" {
+		t.Errorf("undecodable snapshot: %+v", alerts)
+	}
+}
+
+func TestSilentSensor(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Enrolled an hour ago and never heard from.
+	h.an.Silent(ctx, 3*time.Minute, 3*time.Hour)
+	if _, ok := h.open()["sensor:silent"]; !ok {
+		t.Fatal("a host never heard from raised no silence alert")
+	}
+
+	// It reports again: the silence alert closes by itself, even though it is critical.
+	h.deliver(protocol.KindHeartbeat, nil)
+	h.an.Silent(ctx, 3*time.Minute, 3*time.Hour)
+	if _, ok := h.open()["sensor:silent"]; ok {
+		t.Fatal("the silence alert stayed open after a heartbeat")
+	}
+
+	// Heartbeats keep coming but snapshots stop.
+	h.clock = h.clock.Add(4 * time.Hour)
+	h.deliver(protocol.KindHeartbeat, nil)
+	h.an.Silent(ctx, 3*time.Minute, 3*time.Hour)
+	alerts := h.open()
+	if _, ok := alerts["sensor:no-snapshots"]; !ok {
+		t.Fatalf("heartbeats without snapshots raised nothing: %+v", alerts)
+	}
+	if _, ok := alerts["sensor:silent"]; ok {
+		t.Fatal("a host sending heartbeats is reported silent")
+	}
+
+	// A revoked host is no longer watched.
+	if err := h.store.Revoke(ctx, "web-01"); err != nil {
+		t.Fatal(err)
+	}
+	h.clock = h.clock.Add(time.Hour)
+	h.an.Silent(ctx, 3*time.Minute, 3*time.Hour)
+	if a, ok := h.open()["sensor:silent"]; ok {
+		t.Fatalf("revoked host reported silent: %+v", a)
+	}
+}

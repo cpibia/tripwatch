@@ -128,3 +128,86 @@ func TestLoginAndSessions(t *testing.T) {
 		t.Error("a password change must end existing sessions")
 	}
 }
+
+func TestHostsActivityAndSnapshots(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	pub, _, _ := ed25519.GenerateKey(nil)
+	for _, id := range []string{"web-02", "web-01"} {
+		if err := s.Enroll(ctx, id, pub, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deliver := func(kind protocol.Kind, at time.Time) {
+		t.Helper()
+		h, _ := s.Host(ctx, "web-01")
+		e := protocol.Envelope{HostID: "web-01", Kind: kind, Sequence: h.Chain.Sequence + 1, SentAt: at, Payload: []byte("payload")}
+		if err := s.Accept(ctx, e, h.Chain, protocol.ChainState{Sequence: e.Sequence}, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deliver(protocol.KindHeartbeat, t0.Add(time.Minute))
+	deliver(protocol.KindHeartbeat, t0.Add(90*time.Second)) // same minute: recorded once
+	deliver(protocol.KindSnapshot, t0.Add(2*time.Minute))
+	deliver(protocol.KindHeartbeat, t0.Add(8*24*time.Hour)) // pushes the first marks out of retention
+
+	hosts, err := s.Hosts(ctx)
+	if err != nil || len(hosts) != 2 || hosts[0].ID != "web-01" {
+		t.Fatalf("hosts = %+v, %v", hosts, err)
+	}
+	marks, err := s.Activity(ctx, "web-01", t0)
+	if err != nil || len(marks) != 1 || marks[0].Kind != protocol.KindHeartbeat {
+		t.Fatalf("activity after retention = %+v, %v", marks, err)
+	}
+	heads, err := s.SnapshotHeads(ctx, "web-01", 10)
+	if err != nil || len(heads) != 1 || heads[0].Size != len("payload") || heads[0].Analyzed {
+		t.Fatalf("snapshot heads = %+v, %v", heads, err)
+	}
+	if n, _ := s.CountSnapshots(ctx, "web-01", t0); n != 1 {
+		t.Fatalf("count = %d", n)
+	}
+	if err := s.Revoke(ctx, "web-02"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Revoke(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoking an unknown host: %v", err)
+	}
+	if _, err := s.Host(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown host: %v", err)
+	}
+}
+
+func TestAlertLifecycle(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	if _, err := s.Raise(ctx, Alert{HostID: "web-01", Fingerprint: "a", Severity: "high", Kind: "ssh", Title: "key"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.Alerts(ctx, AlertFilter{})
+	id := a[0].ID
+	if err := s.Ack(ctx, id, "ops@example.net", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Ack(ctx, id, "ops@example.net", t0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second ack: %v", err)
+	}
+	un, _ := s.Unnotified(ctx, []string{"high"})
+	if len(un) != 1 {
+		t.Fatalf("unnotified = %+v", un)
+	}
+	if err := s.MarkNotified(ctx, []int64{id}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if un, _ := s.Unnotified(ctx, []string{"high"}); len(un) != 0 {
+		t.Fatalf("still unnotified: %+v", un)
+	}
+	if err := s.Resolve(ctx, id, "ops@example.net", t0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Alert(ctx, id); got.Status != StatusResolved || got.AckedBy != "ops@example.net" {
+		t.Fatalf("after resolve: %+v", got)
+	}
+	if _, err := s.Alert(ctx, id+1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing alert: %v", err)
+	}
+}
