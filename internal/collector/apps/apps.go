@@ -319,10 +319,16 @@ func wordpressChecks(ctx context.Context, db querier, t string, p *Profile) {
 	for _, r := range posts {
 		p.Injected = append(p.Injected, scriptsIn(r["post_type"]+" "+r["ID"], r["post_content"]))
 	}
+	// Page builders keep the page content in post meta, out of post_content.
+	meta := run(ctx, db, p, `SELECT post_id, meta_key, LEFT(meta_value, 65535) AS meta_value FROM `+t+`postmeta WHERE `+scriptLike("meta_value")+` ORDER BY meta_id DESC LIMIT `+fmt.Sprint(maxRows))
+	truncated(p, meta, "post meta with scripts")
+	for _, r := range meta {
+		p.Injected = append(p.Injected, scriptsIn("post meta "+r["meta_key"]+" of "+r["post_id"], r["meta_value"]))
+	}
 }
 
 // scriptPatterns are the shapes stored scripts take; skimmers rarely stop at a plain <script>.
-var scriptPatterns = []string{"<script", "<iframe", "javascript:", "eval(", "atob(", "fromcharcode", "document.write", "onerror="}
+var scriptPatterns = []string{"<script", "<iframe", "javascript:", "eval(", "atob(", "fromcharcode", "document.write", "onerror=", "onload=", "onmouseover=", "onfocus="}
 
 // scriptLike builds a SQL condition matching any script pattern in col, case-insensitively.
 func scriptLike(col string) string {
@@ -364,10 +370,14 @@ func grantedKeys(serialized string) []string {
 }
 
 func magentoChecks(ctx context.Context, db querier, t string, p *Profile) {
-	for _, r := range run(ctx, db, p, `SELECT user_id, username, email, created, logdate, is_active FROM `+t+`admin_user LIMIT `+fmt.Sprint(maxRows)) {
+	admins := run(ctx, db, p, `SELECT user_id, username, email, created, logdate, is_active FROM `+t+`admin_user ORDER BY user_id DESC LIMIT `+fmt.Sprint(maxRows))
+	truncated(p, admins, "administrators")
+	for _, r := range admins {
 		p.Admins = append(p.Admins, Admin{ID: r["user_id"], Name: r["username"], Email: r["email"], Created: r["created"], LastLogin: r["logdate"], Active: r["is_active"]})
 	}
-	for _, r := range run(ctx, db, p, `SELECT path, scope, scope_id, LEFT(value, 65535) AS value FROM `+t+`core_config_data WHERE path IN ('web/unsecure/base_url', 'web/secure/base_url') OR `+scriptLike("value")+` ORDER BY config_id DESC LIMIT `+fmt.Sprint(maxRows)) {
+	config := run(ctx, db, p, `SELECT path, scope, scope_id, LEFT(value, 65535) AS value FROM `+t+`core_config_data WHERE path IN ('web/unsecure/base_url', 'web/secure/base_url') OR `+scriptLike("value")+` ORDER BY config_id DESC LIMIT `+fmt.Sprint(maxRows))
+	truncated(p, config, "configuration with scripts")
+	for _, r := range config {
 		if strings.HasSuffix(r["path"], "base_url") && len(scriptsIn("", r["value"]).Domains) == 0 && !strings.Contains(strings.ToLower(r["value"]), "<script") {
 			p.Settings[r["path"]+"@"+r["scope"]+":"+r["scope_id"]] = r["value"]
 			continue
@@ -376,7 +386,9 @@ func magentoChecks(ctx context.Context, db querier, t string, p *Profile) {
 	}
 	for _, table := range []string{"cms_block", "cms_page"} {
 		id := map[string]string{"cms_block": "block_id", "cms_page": "page_id"}[table]
-		for _, r := range run(ctx, db, p, `SELECT `+id+` AS id, identifier, LEFT(content, 65535) AS content FROM `+t+table+` WHERE `+scriptLike("content")+` LIMIT `+fmt.Sprint(maxRows)) {
+		rows := run(ctx, db, p, `SELECT `+id+` AS id, identifier, LEFT(content, 65535) AS content FROM `+t+table+` WHERE `+scriptLike("content")+` ORDER BY `+id+` DESC LIMIT `+fmt.Sprint(maxRows))
+		truncated(p, rows, table+" with scripts")
+		for _, r := range rows {
 			p.Injected = append(p.Injected, scriptsIn(table+" "+r["identifier"]+" ("+r["id"]+")", r["content"]))
 		}
 	}
@@ -394,14 +406,18 @@ func drupalChecks(ctx context.Context, db querier, t string, p *Profile) {
 		}
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(roles)), ",")
-	for _, r := range run(ctx, db, p, `SELECT DISTINCT u.uid, u.name, u.mail, u.created, u.access, u.status FROM `+t+`users_field_data u
-		LEFT JOIN `+t+`user__roles r ON r.entity_id = u.uid WHERE u.uid = 1 OR r.roles_target_id IN (`+placeholders+`) LIMIT `+fmt.Sprint(maxRows), roles...) {
+	admins := run(ctx, db, p, `SELECT DISTINCT u.uid, u.name, u.mail, u.created, u.access, u.status FROM `+t+`users_field_data u
+		LEFT JOIN `+t+`user__roles r ON r.entity_id = u.uid WHERE u.uid = 1 OR r.roles_target_id IN (`+placeholders+`) ORDER BY u.uid LIMIT `+fmt.Sprint(maxRows), roles...)
+	truncated(p, admins, "administrators")
+	for _, r := range admins {
 		p.Admins = append(p.Admins, Admin{ID: r["uid"], Name: r["name"], Email: r["mail"], Created: unixTime(r["created"]), LastLogin: unixTime(r["access"]), Active: r["status"]})
 	}
 	for _, r := range run(ctx, db, p, `SELECT LEFT(data, 1048576) AS data FROM `+t+`config WHERE name = 'core.extension'`) {
 		p.Extensions = serializedKeysUnder(r["data"], "module")
 	}
-	for _, r := range run(ctx, db, p, `SELECT entity_id, bundle, LEFT(body_value, 65535) AS body_value FROM `+t+`node__body WHERE `+scriptLike("body_value")+` LIMIT `+fmt.Sprint(maxRows)) {
+	bodies := run(ctx, db, p, `SELECT entity_id, bundle, LEFT(body_value, 65535) AS body_value FROM `+t+`node__body WHERE `+scriptLike("body_value")+` ORDER BY entity_id DESC LIMIT `+fmt.Sprint(maxRows))
+	truncated(p, bodies, "node bodies with scripts")
+	for _, r := range bodies {
 		p.Injected = append(p.Injected, scriptsIn(r["bundle"]+" "+r["entity_id"], r["body_value"]))
 	}
 }
