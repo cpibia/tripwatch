@@ -107,7 +107,7 @@ func TestWriteFileAtomic(t *testing.T) {
 		if err := WriteFileAtomic(p, []byte(content)); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := os.ReadFile(p); string(got) != content {
+		if got, _ := os.ReadFile(p); string(got) != content { //nolint:gosec // test file in a temporary directory
 			t.Fatalf("content %q", got)
 		}
 	}
