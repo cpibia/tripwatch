@@ -221,3 +221,35 @@ func TestRepeatedEventDoesNotKeepEverySnapshot(t *testing.T) {
 		t.Fatalf("%d of 40 daily snapshots kept: the repeated event pins them past 30 days", len(snaps))
 	}
 }
+
+// An alert made to reopen at every snapshot keeps one proof a day, not one per snapshot.
+func TestFlappingAlertKeepsOneProofADay(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for i := range 48 {
+		payload := rootOnly
+		if i%2 == 1 {
+			payload = secondRoot
+		}
+		h.deliver(protocol.KindSnapshot, gz(t, payload))
+		ids, _ := h.store.PendingSnapshots(ctx, 10)
+		for _, id := range ids {
+			h.an.RunSnapshot(ctx, id)
+			_ = h.store.MarkAnalyzed(ctx, id)
+		}
+		// Resolved by hand each time, so the next snapshot with it reopens the alert.
+		alerts, _ := h.store.Alerts(ctx, store.AlertFilter{HostID: "web-01", Statuses: []string{store.StatusOpen}})
+		for _, a := range alerts {
+			_ = h.store.Resolve(ctx, a.ID, "ops@example.net", h.clock)
+		}
+		h.clock = h.clock.Add(time.Hour)
+	}
+	// Three days later the thinning runs: of the 48 hourly snapshots only the proofs (one a
+	// day with the snapshot before it), the last of each day and the baseline remain.
+	h.clock = h.clock.Add(72 * time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	snaps, _ := h.store.SnapshotHeads(ctx, "web-01", 100)
+	if len(snaps) > 10 {
+		t.Fatalf("%d snapshots kept: a flapping alert keeps one per reopening", len(snaps))
+	}
+}

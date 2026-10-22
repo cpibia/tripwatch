@@ -312,6 +312,9 @@ con:
 docker compose exec verifier /tripwatch-verifier revoke-browsers -email ops@example.net
 ```
 
+Il comando non chiude le sessioni già aperte: per un portatile perso o rubato serve anche il cambio
+password, che le chiude tutte.
+
 ### Interfaccia
 
 - **Panoramica.** Un quadro da sala controllo: tutto è grigio finché qualcosa devia. In alto i

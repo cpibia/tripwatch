@@ -230,22 +230,29 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			evidenceOf = append(evidenceOf, f.Fingerprint)
 		}
 	}
-	evidence := len(evidenceOf) > 0
+
 	// A snapshot that raises a new alert is evidence, and so is the one before it, which shows the
 	// host as it was: both are kept beyond the thinning.
-	if evidence {
+	// One proof a day per alert: an alert made to reopen at every snapshot (two files swapped
+	// back and forth) would otherwise keep them all.
+	var alertIDs []int64
+	day := a.Now().Truncate(24 * time.Hour)
+	for _, fp := range evidenceOf {
+		alertID, err := a.Store.AlertID(ctx, host, fp)
+		if err != nil {
+			continue
+		}
+		if seen, err := a.Store.HasEvidenceSince(ctx, alertID, day); err == nil && !seen {
+			alertIDs = append(alertIDs, alertID)
+		}
+	}
+	if len(alertIDs) > 0 {
 		keep := []int64{id}
 		if prevSnap != nil {
 			keep = append(keep, prevSnap.ID)
 		}
 		// Linked to every alert it shows, the snapshot outlives the retention while any of them
 		// stays open.
-		var alertIDs []int64
-		for _, fp := range evidenceOf {
-			if id, err := a.Store.AlertID(ctx, host, fp); err == nil {
-				alertIDs = append(alertIDs, id)
-			}
-		}
 		for _, k := range keep {
 			if err := a.Store.Keep(ctx, k, alertIDs...); err != nil {
 				a.Log.Error("keep snapshot", "snapshot", k, "err", err)

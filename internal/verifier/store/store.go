@@ -433,6 +433,15 @@ func (s *Store) Keep(ctx context.Context, id int64, alertIDs ...int64) error {
 	return nil
 }
 
+// HasEvidenceSince reports whether an alert already has a snapshot kept as its evidence among
+// those received since the given time.
+func (s *Store) HasEvidenceSince(ctx context.Context, alertID int64, since time.Time) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM snapshot_evidence ev JOIN snapshots sn ON sn.id = ev.snapshot_id
+		WHERE ev.alert_id = ? AND sn.received_at >= ?`, alertID, since.Unix()).Scan(&n)
+	return n > 0, err
+}
+
 func (s *Store) MarkAnalyzed(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE snapshots SET analyzed = 1 WHERE id = ?`, id)
 	return err

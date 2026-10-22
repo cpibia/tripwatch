@@ -5,10 +5,13 @@ package ui
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -892,8 +895,14 @@ type limiter struct {
 	ceiling time.Duration
 	window  time.Duration        // failures older than this are forgotten
 	entries map[string]*attempts // users and their known browsers
-	unknown map[string]*attempts // emails that are not users, bounded on their own
+	// unknown holds the lanes of emails that are not users: a fixed set chosen by a keyed hash
+	// of the email, so there is nothing to scan or evict, no lock shared with the users' lanes,
+	// and an attacker cannot aim two emails at one lane.
+	unknown [unknownLanes]*attempts
+	key     [32]byte
 }
+
+const unknownLanes = 1 << 14
 
 type attempts struct {
 	turn  chan struct{} // one-slot semaphore: whose turn it is, given up when the request ends
@@ -903,64 +912,59 @@ type attempts struct {
 
 func newAttempts() *attempts { return &attempts{turn: make(chan struct{}, 1)} }
 
-// evictOne drops stale idle lanes from a full table. In the table of unknown emails it also
-// drops an idle lane without recent failures, so that flooding it with made-up emails pushes
-// out only lanes that carry no delay: a lane slowed by failures keeps its delay, as a user's
-// does, and the delays still do not tell which emails exist. Lanes with failures go only past
-// a much larger bound, and memory stays bounded.
-func (l *limiter) evictOne(table map[string]*attempts, unknown bool, now func() time.Time) {
-	var calm, busy string
-	for k, e := range table {
+// evictStale drops idle lanes whose failures are past the window from a full table.
+func (l *limiter) evictStale(now func() time.Time) {
+	for k, e := range l.entries {
 		select {
 		case e.turn <- struct{}{}:
 			stale := now().Sub(e.last) > l.window
-			failing := e.fails > 0 && !stale
 			<-e.turn
-			switch {
-			case stale:
-				delete(table, k)
-			case !failing && calm == "":
-				calm = k
-			case failing && busy == "":
-				busy = k
+			if stale {
+				delete(l.entries, k)
 			}
 		default:
 		}
-	}
-	if !unknown || len(table) < maxLimiterEntries {
-		return
-	}
-	switch {
-	case calm != "":
-		delete(table, calm)
-	case busy != "" && len(table) >= 20*maxLimiterEntries:
-		delete(table, busy)
 	}
 }
 
 const maxLimiterEntries = 10_000
 
 func newLimiter(free int, base, ceiling, window time.Duration) *limiter {
-	return &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}, unknown: map[string]*attempts{}}
+	l := &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}}
+	_, _ = rand.Read(l.key[:])
+	for i := range l.unknown {
+		l.unknown[i] = newAttempts()
+	}
+	return l
+}
+
+// lane picks the lane of an email that is not a user.
+func (l *limiter) lane(email string) int {
+	mac := hmac.New(sha256.New, l.key[:])
+	mac.Write([]byte(email))
+	return int(binary.BigEndian.Uint32(mac.Sum(nil)) % unknownLanes)
 }
 
 // begin waits for the turn of key and the delay its failures earned. The caller calls done with
 // the outcome. It returns false if ctx ended while waiting.
 func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (done func(ok bool), started bool) {
-	l.mu.Lock()
-	table, unknown := l.entries, strings.HasPrefix(key, "unknown:")
-	if unknown {
-		table = l.unknown
-	}
-	a, ok := table[key]
-	if !ok {
-		if len(table) >= maxLimiterEntries {
-			l.evictOne(table, unknown, now)
+	var a *attempts
+	if email, ok := strings.CutPrefix(key, "unknown:"); ok {
+		a = l.unknown[l.lane(email)]
+	} else {
+		l.mu.Lock()
+		var found bool
+		if a, found = l.entries[key]; !found {
+			// Lanes exist only for real users and their known browsers, so the table stays
+			// small; stale ones are still dropped now and then.
+			if len(l.entries) >= maxLimiterEntries {
+				l.evictStale(now)
+			}
+			a = newAttempts()
+			l.entries[key] = a
 		}
-		a = newAttempts()
-		table[key] = a
+		l.mu.Unlock()
 	}
-	l.mu.Unlock()
 
 	select {
 	case a.turn <- struct{}{}:
