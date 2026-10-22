@@ -115,7 +115,7 @@ func serve(log *slog.Logger) error {
 
 	analyzer := &analyze.Analyzer{Store: st, Now: now, Log: log}
 	wake := make(chan struct{}, 1)
-	in := &ingest.Server{Store: st, Now: now, Log: log, Wake: wake}
+	in := &ingest.Server{Store: st, CA: ca, Now: now, Log: log, Wake: wake}
 	go analyzer.Worker(ctx, wake)
 	ingestSrv := &http.Server{
 		Addr:              env("TRIPWATCH_INGEST_ADDR", ":8443"),

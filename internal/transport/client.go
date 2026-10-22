@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -153,4 +154,39 @@ func (c *Client) save() error {
 		return err
 	}
 	return pki.SyncDir(c.stateDir)
+}
+
+// RenewBefore is how long before expiry the sensor asks for a new client certificate; it is
+// inside the verifier's renewal window, which leaves a month of daily retries.
+const RenewBefore = 60 * 24 * time.Hour
+
+// RenewIfDue replaces the client certificate of id with a new one from the verifier when the
+// current one expires within RenewBefore. It reports whether it renewed.
+func RenewIfDue(ctx context.Context, hc *http.Client, verifierURL string, id *pki.Identity, now time.Time) (bool, error) {
+	if id.NotAfter().Sub(now) > RenewBefore {
+		return false, nil
+	}
+	u, err := url.Parse(verifierURL)
+	if err != nil {
+		return false, err
+	}
+	u.Path, u.RawQuery = "/v1/renew", ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("verifier answered %s: %s", resp.Status, bytes.TrimSpace(body))
+	}
+	var r struct{ Cert, Key string }
+	if err := json.Unmarshal(body, &r); err != nil {
+		return false, err
+	}
+	return true, id.Replace([]byte(r.Cert), []byte(r.Key))
 }

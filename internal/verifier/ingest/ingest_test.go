@@ -32,6 +32,7 @@ type harness struct {
 	store *store.Store
 	srv   *httptest.Server
 	wake  chan struct{}
+	clock time.Time
 }
 
 func newHarness(t *testing.T) *harness {
@@ -51,8 +52,8 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	wake := make(chan struct{}, 1)
-	h := &harness{t: t, ca: ca, store: st, wake: wake}
-	ingest := &Server{Store: st, Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Wake: wake}
+	h := &harness{t: t, ca: ca, store: st, wake: wake, clock: now}
+	ingest := &Server{Store: st, CA: ca, Now: func() time.Time { return h.clock }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Wake: wake}
 
 	h.srv = httptest.NewUnstartedServer(ingest)
 	h.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: ca.Pool(), ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}
@@ -76,10 +77,11 @@ func (h *harness) sensor(host string) (*transport.Client, pki.Bundle) {
 
 func (h *harness) client(b pki.Bundle, stateDir string) *transport.Client {
 	h.t.Helper()
-	tlsConf, err := b.ClientTLS()
+	id, err := b.ClientIdentity("")
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	tlsConf := id.TLS()
 	key, err := b.SigningPrivateKey()
 	if err != nil {
 		h.t.Fatal(err)
@@ -181,9 +183,21 @@ func TestCertificateBoundToHost(t *testing.T) {
 	h := newHarness(t)
 	_, b1 := h.sensor("web-01")
 	_, b2 := h.sensor("web-02")
-	mixed := b2
-	mixed.Cert, mixed.Key = b1.Cert, b1.Key
-	c := h.client(mixed, t.TempDir())
+	// The sensor itself refuses such a bundle, so the client is built by hand to reach the
+	// verifier with web-01's certificate and web-02's signing key.
+	if _, err := (pki.Bundle{HostID: "web-02", CA: b2.CA, Cert: b1.Cert, Key: b1.Key}).ClientIdentity(""); err == nil {
+		t.Error("a bundle with another host's certificate was accepted")
+	}
+	cert, err := tls.X509KeyPair([]byte(b1.Cert), []byte(b1.Key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := b2.SigningPrivateKey()
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, RootCAs: h.ca.Pool(), MinVersion: tls.VersionTLS13}}, Timeout: 5 * time.Second}
+	c, err := transport.New(b2.VerifierURL, hc, t.TempDir(), "web-02", key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := c.Send(context.Background(), protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) {
 		t.Errorf("err = %v", err)
 	}
@@ -248,7 +262,8 @@ func TestConcurrentForkAcceptedOnce(t *testing.T) {
 	h := newHarness(t)
 	_, b := h.sensor("web-01")
 	key, _ := b.SigningPrivateKey()
-	tlsConf, _ := b.ClientTLS()
+	id, _ := b.ClientIdentity("")
+	tlsConf := id.TLS()
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConf}}
 
 	const n = 20
@@ -285,7 +300,8 @@ func TestRequestsCheckedBeforeTheBody(t *testing.T) {
 	h := newHarness(t)
 	_, b := h.sensor("web-01")
 	key, _ := b.SigningPrivateKey()
-	tlsConf, _ := b.ClientTLS()
+	id, _ := b.ClientIdentity("")
+	tlsConf := id.TLS()
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConf}}
 	post := func(kind string, body []byte) int {
 		t.Helper()
@@ -334,5 +350,43 @@ func TestSensorStartRaisesAnAlert(t *testing.T) {
 	a := h.alerts()
 	if len(a) != 1 || a[0].Title != "Sensore avviato" || a[0].Severity != "medium" || !strings.Contains(a[0].Detail, "1.2.0") {
 		t.Fatalf("alerts = %+v", a)
+	}
+}
+
+func TestClientCertificateRenewal(t *testing.T) {
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	dir := t.TempDir()
+	id, err := b.ClientIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: id.TLS()}, Timeout: 5 * time.Second}
+	first := id.NotAfter()
+
+	if renewed, err := transport.RenewIfDue(t.Context(), hc, b.VerifierURL, id, now); renewed || err != nil {
+		t.Fatalf("renewed a fresh certificate: %v %v", renewed, err)
+	}
+	// The verifier refuses an early renewal even when the sensor asks.
+	if renewed, err := transport.RenewIfDue(t.Context(), hc, b.VerifierURL, id, first.Add(-30*24*time.Hour)); renewed || err == nil {
+		t.Fatalf("early renewal accepted: %v %v", renewed, err)
+	}
+
+	h.clock = first.Add(-30 * 24 * time.Hour)
+	renewed, err := transport.RenewIfDue(t.Context(), hc, b.VerifierURL, id, h.clock)
+	if err != nil || !renewed || !id.NotAfter().After(first) {
+		t.Fatalf("renewal: %v %v, expires %v", renewed, err, id.NotAfter())
+	}
+	// A restarted sensor picks the renewed certificate up from its state directory.
+	again, err := b.ClientIdentity(dir)
+	if err != nil || !again.NotAfter().Equal(id.NotAfter()) {
+		t.Fatalf("renewed certificate not kept: %v", err)
+	}
+
+	if err := h.store.Revoke(context.Background(), "web-01"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RenewIfDue(t.Context(), hc, b.VerifierURL, id, id.NotAfter()); err == nil {
+		t.Fatal("a revoked host renewed its certificate")
 	}
 }

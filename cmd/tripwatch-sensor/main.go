@@ -109,11 +109,11 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 	if err != nil {
 		return err
 	}
-	tlsConf, err := bundle.ClientTLS()
+	identity, err := bundle.ClientIdentity(stateDir)
 	if err != nil {
 		return err
 	}
-	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConf}, Timeout: 2 * time.Minute}
+	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: identity.TLS()}, Timeout: 2 * time.Minute}
 	client, err := transport.New(bundle.VerifierURL, httpClient, stateDir, bundle.HostID, key)
 	if err != nil {
 		return err
@@ -127,6 +127,22 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 	if err := client.Send(ctx, protocol.KindEvent, started, time.Now()); err != nil && ctx.Err() == nil {
 		log.Warn("start event not delivered yet", "err", err)
 	}
+
+	// The client certificate is renewed before it expires, checked once a day.
+	go func() {
+		for {
+			if renewed, err := transport.RenewIfDue(ctx, httpClient, bundle.VerifierURL, identity, time.Now()); err != nil && ctx.Err() == nil {
+				log.Warn("client certificate not renewed yet", "expires", identity.NotAfter(), "err", err)
+			} else if renewed {
+				log.Info("client certificate renewed", "expires", identity.NotAfter())
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(24 * time.Hour):
+			}
+		}
+	}()
 
 	// Heartbeats run on their own: a snapshot taking minutes must not look like silence.
 	go func() {

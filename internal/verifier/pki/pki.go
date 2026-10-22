@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -155,6 +156,15 @@ func (ca *CA) Enroll(hostID, verifierURL string, now time.Time) (Bundle, ed25519
 	}, signPub, nil
 }
 
+// RenewWindow is how long before expiry a client certificate may be renewed.
+const RenewWindow = 90 * 24 * time.Hour
+
+// RenewClient issues a new client certificate and TLS key for an enrolled host. The signing key
+// of the host does not change.
+func (ca *CA) RenewClient(hostID string, now time.Time) ([]byte, []byte, error) {
+	return ca.issue(hostID, nil, x509.ExtKeyUsageClientAuth, now)
+}
+
 func (ca *CA) issue(cn string, names []string, usage x509.ExtKeyUsage, now time.Time) ([]byte, []byte, error) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -230,19 +240,6 @@ func (b Bundle) SigningPrivateKey() (ed25519.PrivateKey, error) {
 		return nil, errors.New("invalid signing key")
 	}
 	return ed25519.NewKeyFromSeed(seed), nil
-}
-
-// ClientTLS is the TLS configuration a sensor uses to reach the verifier with its bundle.
-func (b Bundle) ClientTLS() (*tls.Config, error) {
-	cert, err := tls.X509KeyPair([]byte(b.Cert), []byte(b.Key))
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM([]byte(b.CA)) {
-		return nil, errors.New("bundle: invalid CA")
-	}
-	return &tls.Config{Certificates: []tls.Certificate{cert}, RootCAs: pool, MinVersion: tls.VersionTLS13}, nil
 }
 
 func encode(der []byte, key ed25519.PrivateKey) ([]byte, []byte, error) {
@@ -327,4 +324,109 @@ func SyncDir(dir string) error {
 func serial() *big.Int {
 	n, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
 	return n
+}
+
+// renewedFile keeps, in the sensor's state directory, the client certificate obtained by
+// renewal: the bundle itself stays read-only.
+const renewedFile = "client-cert.json"
+
+// Identity is the TLS client certificate a sensor presents, which renewal can replace while
+// the sensor runs.
+type Identity struct {
+	mu       sync.Mutex
+	cert     tls.Certificate
+	leaf     *x509.Certificate
+	hostID   string
+	pool     *x509.CertPool
+	stateDir string
+}
+
+// ClientIdentity returns the bundle's client certificate, or the renewed one kept in stateDir
+// when it is valid for this host and lasts longer.
+func (b Bundle) ClientIdentity(stateDir string) (*Identity, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(b.CA)) {
+		return nil, errors.New("bundle: invalid CA")
+	}
+	id := &Identity{hostID: b.HostID, pool: pool, stateDir: stateDir}
+	if err := id.set([]byte(b.Cert), []byte(b.Key)); err != nil {
+		return nil, err
+	}
+	if stateDir != "" {
+		if data, err := os.ReadFile(filepath.Join(stateDir, renewedFile)); err == nil { //nolint:gosec // the state directory is the operator's configuration
+			var r struct{ Cert, Key string }
+			if json.Unmarshal(data, &r) == nil {
+				previous := id.cert
+				previousLeaf := id.leaf
+				if err := id.set([]byte(r.Cert), []byte(r.Key)); err != nil || id.leaf.NotAfter.Before(previousLeaf.NotAfter) {
+					id.cert, id.leaf = previous, previousLeaf
+				}
+			}
+		}
+	}
+	return id, nil
+}
+
+// set installs a certificate after checking it is a client certificate of this host signed by
+// the verifier's CA.
+func (id *Identity) set(certPEM, keyPEM []byte) error {
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return err
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return err
+	}
+	if leaf.Subject.CommonName != id.hostID {
+		return fmt.Errorf("certificate for %q, not %q", leaf.Subject.CommonName, id.hostID)
+	}
+	// The chain and the usage are checked here; the validity window is checked by TLS on every
+	// connection, and a sensor whose clock is off must still accept its renewed certificate.
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: id.pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: leaf.NotBefore.Add(time.Second)}); err != nil {
+		return err
+	}
+	id.mu.Lock()
+	id.cert, id.leaf = cert, leaf
+	id.mu.Unlock()
+	return nil
+}
+
+// NotAfter is when the current certificate expires.
+func (id *Identity) NotAfter() time.Time {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	return id.leaf.NotAfter
+}
+
+// Replace installs a renewed certificate and keeps it in the state directory.
+func (id *Identity) Replace(certPEM, keyPEM []byte) error {
+	if err := id.set(certPEM, keyPEM); err != nil {
+		return err
+	}
+	if id.stateDir == "" {
+		return nil
+	}
+	data, err := json.Marshal(map[string]string{"Cert": string(certPEM), "Key": string(keyPEM)})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(id.stateDir, 0o700); err != nil {
+		return err
+	}
+	return WriteFileAtomic(filepath.Join(id.stateDir, renewedFile), data)
+}
+
+// TLS is the client configuration presenting the current certificate on every connection.
+func (id *Identity) TLS() *tls.Config {
+	return &tls.Config{
+		RootCAs:    id.pool,
+		MinVersion: tls.VersionTLS13,
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			id.mu.Lock()
+			defer id.mu.Unlock()
+			c := id.cert
+			return &c, nil
+		},
+	}
 }

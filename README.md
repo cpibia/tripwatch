@@ -335,7 +335,8 @@ sudo systemctl enable --now tripwatch-sensor
 ```
 
 Il sensore rifiuta un pacchetto che non appartiene al suo utente, leggibile da altri utenti o con
-un indirizzo del verificatore non `https`. Lo stato fra un avvio e l'altro
+un indirizzo del verificatore non `https`. Il certificato client dura due anni e il sensore lo rinnova da
+solo negli ultimi due mesi, senza riavvio e senza toccare il pacchetto. Lo stato fra un avvio e l'altro
 (posizione nella catena, busta in attesa di conferma, posizioni nei log) sta in `-state-dir`
 (predefinito `/var/lib/tripwatch`); ogni busta viene salvata prima di essere spedita e rispedita
 identica se la conferma si perde.

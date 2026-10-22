@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/protocol"
+	"github.com/cpibia/tripwatch/internal/verifier/pki"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
 
@@ -29,8 +30,17 @@ const (
 // the host's state and the size and rate limits of its kind before anything is read.
 const KindHeader = "Tripwatch-Kind"
 
-// Path is where sensors post envelopes.
-const Path = "/v1/envelopes"
+// Path is where sensors post envelopes; RenewPath is where they renew their client
+// certificate, authenticated by the one they have.
+const (
+	Path      = "/v1/envelopes"
+	RenewPath = "/v1/renew"
+)
+
+// Renewer issues client certificates for enrolled hosts.
+type Renewer interface {
+	RenewClient(hostID string, now time.Time) ([]byte, []byte, error)
+}
 
 // A host may send at most SnapshotBurst snapshots per SnapshotWindow: more would only let a
 // compromised host bury its history. The burst lets a restarted sensor deliver its startup
@@ -55,6 +65,7 @@ const ConcurrentSnapshots = 2
 // delays a sensor and a restart loses nothing.
 type Server struct {
 	Store *store.Store
+	CA    Renewer
 	Wake  chan<- struct{}
 	Now   func() time.Time
 	Log   *slog.Logger
@@ -82,12 +93,16 @@ func (s *Server) lock(ctx context.Context, host string) (func(), bool) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || r.URL.Path != Path {
+	if r.Method != http.MethodPost || (r.URL.Path != Path && r.URL.Path != RenewPath) {
 		http.NotFound(w, r)
 		return
 	}
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		http.Error(w, "client certificate required", http.StatusUnauthorized)
+		return
+	}
+	if r.URL.Path == RenewPath {
+		s.renew(w, r)
 		return
 	}
 	s.once.Do(func() { s.snapshots = make(chan struct{}, ConcurrentSnapshots) })
@@ -221,6 +236,41 @@ func (s *Server) chainAlert(ctx context.Context, host string, e protocol.Envelop
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	s.Log.Error("ingest", "err", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
+// renew issues a new client certificate to an enrolled host whose current one, the one this
+// connection was made with, expires within the renewal window. Earlier requests are refused,
+// so a host cannot mint certificates at will.
+func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
+	presented := r.TLS.PeerCertificates[0]
+	identity := presented.Subject.CommonName
+	now := s.Now()
+	unlock, ok := s.lock(r.Context(), identity)
+	if !ok {
+		return
+	}
+	defer unlock()
+	host, err := s.Store.Host(r.Context(), identity)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && host.Revoked) {
+		http.Error(w, "host not enrolled", http.StatusForbidden)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if s.CA == nil || presented.NotAfter.Sub(now) > pki.RenewWindow {
+		http.Error(w, "renewal not due", http.StatusConflict)
+		return
+	}
+	certPEM, keyPEM, err := s.CA.RenewClient(identity, now)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.Log.Info("client certificate renewed", "host", identity, "expired", presented.NotAfter)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"cert": string(certPEM), "key": string(keyPEM)})
 }
 
 // event turns the events a sensor reports into alerts. A start is worth one even when it is
