@@ -610,7 +610,7 @@ func TestPasswordResetCancelsLinksAndDevicesAreBounded(t *testing.T) {
 // Unknown emails use fixed lanes: however many arrive, the users' table does not grow and the
 // same email always lands in the same lane.
 func TestUnknownLanesAreFixed(t *testing.T) {
-	l := newLimiter(5, time.Millisecond, 15*time.Millisecond, time.Hour)
+	l := newLimiter(time.Millisecond, 15*time.Millisecond)
 	clock := func() time.Time { return now }
 	for i := range 5000 {
 		done, ok := l.begin(t.Context(), "unknown:x"+strconv.Itoa(i)+"@example.net", clock)
@@ -623,7 +623,7 @@ func TestUnknownLanesAreFixed(t *testing.T) {
 		t.Fatalf("unknown emails grew the users' table to %d", len(l.entries))
 	}
 	first, again := l.lane("a@example.net"), l.lane("a@example.net")
-	if first != again || newLimiter(5, time.Millisecond, time.Millisecond, time.Hour).lane("a@example.net") == first && l.lane("b@example.net") == first {
+	if first != again || newLimiter(time.Millisecond, time.Millisecond).lane("a@example.net") == first && l.lane("b@example.net") == first {
 		t.Fatal("lanes are not stable per process, or not keyed")
 	}
 }

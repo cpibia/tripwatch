@@ -78,9 +78,9 @@ type server struct {
 
 // New returns the web interface handler.
 func New(c Config) (http.Handler, error) {
-	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(5, time.Second, 15*time.Second, time.Hour)}
+	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(time.Second, 15*time.Second)}
 	if c.LoginBackoff > 0 {
-		s.logins = newLimiter(5, c.LoginBackoff, 15*c.LoginBackoff, time.Hour)
+		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "host", "alerts", "alert", "enroll", "error"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
@@ -929,8 +929,15 @@ func (l *limiter) evictStale(now func() time.Time) {
 
 const maxLimiterEntries = 10_000
 
-func newLimiter(free int, base, ceiling, window time.Duration) *limiter {
-	l := &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}}
+// A lane gets freeFailures failures before the delays start, and forgets failures older than
+// failureWindow.
+const (
+	freeFailures  = 5
+	failureWindow = time.Hour
+)
+
+func newLimiter(base, ceiling time.Duration) *limiter {
+	l := &limiter{free: freeFailures, base: base, ceiling: ceiling, window: failureWindow, entries: map[string]*attempts{}}
 	_, _ = rand.Read(l.key[:])
 	for i := range l.unknown {
 		l.unknown[i] = newAttempts()
