@@ -138,6 +138,10 @@ func (s *Server) alive(ctx context.Context, host string, now time.Time) {
 	}
 }
 
+// HeartbeatGap is the pause between two accepted heartbeats that raises an alert, with the
+// sensor's default interval of one minute: a missed beat or more.
+const HeartbeatGap = 150 * time.Second
+
 // ConcurrentSnapshots bounds the snapshot bodies held in memory at once, whatever the number of
 // hosts: each costs its size several times over while it is decoded and stored.
 const ConcurrentSnapshots = 2
@@ -312,6 +316,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e.Kind == protocol.KindEvent {
 		s.event(ctx, identity, e, now)
 	}
+	// A pause shorter than the silence threshold, a sensor frozen with SIGSTOP for instance,
+	// shows only here: as a gap between two heartbeats that were both accepted.
+	if e.Kind == protocol.KindHeartbeat && !host.LastHeartbeat.IsZero() && now.Sub(host.LastHeartbeat) > HeartbeatGap {
+		s.raise(ctx, store.Alert{HostID: identity, Fingerprint: "sensor:gap:" + strconv.FormatInt(now.Unix(), 10), Severity: "medium", Kind: "sensor-event",
+			Title: "Battiti mancati",
+			Detail: fmt.Sprintf("Nessun battito tra le %s e le %s (%s). Una pausa di rete, oppure il sensore è stato sospeso o fermato per poco: controlla cosa è successo in quell'intervallo.",
+				host.LastHeartbeat.Format("15:04:05"), now.Format("15:04:05"), now.Sub(host.LastHeartbeat).Round(time.Second)),
+		}, now)
+	}
 	if e.Kind == protocol.KindSnapshot && s.Wake != nil {
 		select {
 		case s.Wake <- struct{}{}:
@@ -484,7 +497,7 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 		return
 	}
 	detail := fmt.Sprintf("Il sensore si è avviato (versione %s, avvio del sistema %s). Se il server non è stato riavviato e il sensore non è stato aggiornato, qualcuno lo ha fermato e fatto ripartire: controlla cosa è successo mentre era fermo.", ev.Version, ev.BootID)
-	if _, err := s.Store.Raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:started:" + strconv.FormatUint(e.Sequence, 10), Severity: "medium", Kind: "sensor-event",
+	if _, err := s.Store.Raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:started:" + strconv.FormatUint(e.Sequence, 10), Severity: "high", Kind: "sensor-event",
 		Title: "Sensore avviato", Detail: detail}, now); err != nil {
 		s.Log.Error("raise start alert", "host", host, "err", err)
 	}

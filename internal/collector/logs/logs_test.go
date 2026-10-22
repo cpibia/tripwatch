@@ -510,3 +510,27 @@ func TestPathInfoVariantsAreOneEvent(t *testing.T) {
 		t.Error("web shell event lost")
 	}
 }
+
+// Dropped serious events keep one sample per source address, so a flood from one address
+// leaves room for the others.
+func TestDroppedSamplesOnePerAddress(t *testing.T) {
+	h := newHost(t)
+	var b strings.Builder
+	for i := range 3000 {
+		b.WriteString(logLine("198.51.100.7", "GET", fmt.Sprintf("/x%d.php?cmd=id", i), 200))
+	}
+	b.WriteString(logLine("203.0.113.66", "GET", "/wp-content/plugins/hello/zz.php?cmd=whoami", 200))
+	h.writeLog(b.String())
+	res := h.run()
+	ips := map[string]int{}
+	for _, d := range res.Stats.DroppedSamples {
+		ips[d.IP]++
+	}
+	if ips["198.51.100.7"] > 1 {
+		t.Errorf("one address took %d samples", ips["198.51.100.7"])
+	}
+	kept := slices.ContainsFunc(res.Events, func(e Event) bool { return e.IP == "203.0.113.66" })
+	if !kept && ips["203.0.113.66"] != 1 {
+		t.Error("the web shell request is neither kept nor sampled")
+	}
+}

@@ -718,7 +718,10 @@ func (r *runState) admit(severity, rule string, sample Dropped) bool {
 func (r *runState) drop(d Dropped) bool {
 	r.res.Truncated = true
 	r.res.Stats.DroppedEvents[d.Severity]++
-	if weblog.SeverityRank(d.Severity) >= weblog.SeverityRank(weblog.SeverityHigh) && len(r.res.Stats.DroppedSamples) < maxDroppedSamples {
+	// One sample per source address: a flood from one address cannot take every place, and the
+	// request of another address, such as the one that matters, still gets one.
+	if weblog.SeverityRank(d.Severity) >= weblog.SeverityRank(weblog.SeverityHigh) && len(r.res.Stats.DroppedSamples) < maxDroppedSamples &&
+		!slices.ContainsFunc(r.res.Stats.DroppedSamples, func(x Dropped) bool { return x.IP == d.IP }) {
 		r.res.Stats.DroppedSamples = append(r.res.Stats.DroppedSamples, d)
 	}
 	return false

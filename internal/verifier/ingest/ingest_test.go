@@ -425,7 +425,7 @@ func TestSensorStartRaisesAnAlert(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := h.alerts()
-	if len(a) != 1 || a[0].Title != "Sensore avviato" || a[0].Severity != "medium" || !strings.Contains(a[0].Detail, "1.2.0") {
+	if len(a) != 1 || a[0].Title != "Sensore avviato" || a[0].Severity != "high" || !strings.Contains(a[0].Detail, "1.2.0") {
 		t.Fatalf("alerts = %+v", a)
 	}
 }
@@ -553,5 +553,28 @@ func TestOnlyTheCurrentCertificateIsAccepted(t *testing.T) {
 	}
 	if err := h.client(current, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, h.clock); !errors.Is(err, transport.ErrRejected) {
 		t.Fatalf("the replaced certificate still works after the renewed one was used: %v", err)
+	}
+}
+
+// A pause shorter than the silence threshold leaves an alert once heartbeats come back.
+func TestHeartbeatGapRaisesAnAlert(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	for _, at := range []time.Duration{0, time.Minute, 2 * time.Minute} {
+		h.clock = now.Add(at)
+		if err := c.Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.alerts()) != 0 {
+		t.Fatalf("regular heartbeats raised %+v", h.alerts())
+	}
+	h.clock = now.Add(5 * time.Minute)
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+		t.Fatal(err)
+	}
+	if a := h.alerts(); len(a) != 1 || a[0].Title != "Battiti mancati" {
+		t.Fatalf("alerts = %+v", a)
 	}
 }
