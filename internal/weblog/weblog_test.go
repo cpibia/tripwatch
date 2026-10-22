@@ -227,3 +227,18 @@ func TestRedactKeepsEvidenceHidesTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestScriptPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/index.php/p1":                  "/index.php",
+		"/index.php;p1":                  "/index.php",
+		"/shop/Index.PHP/catalog/x":      "/shop/Index.PHP",
+		"/wp-content/uploads/a.php/b.js": "/wp-content/uploads/a.php",
+		"/static/app.js":                 "/static/app.js",
+		"/":                              "/",
+	} {
+		if got := ScriptPath(in); got != want {
+			t.Errorf("ScriptPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

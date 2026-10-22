@@ -118,3 +118,16 @@ func TestEvaluateIsLinear(t *testing.T) {
 		t.Fatalf("%d findings", len(findings))
 	}
 }
+
+func TestDroppedLogEventsRaiseAnAlert(t *testing.T) {
+	cur := State{Weblog: &logs.Result{Stats: logs.Stats{
+		DroppedEvents:  map[string]int{"critical": 3},
+		DroppedSamples: []logs.Dropped{{Rule: "command_in_parameters", Severity: "critical", Path: "/x.php", IP: "203.0.113.9"}},
+	}}}
+	findings := Evaluate(nil, cur)
+	if !slices.ContainsFunc(findings, func(f Finding) bool {
+		return f.Severity == "high" && strings.Contains(f.Detail, "/x.php") && strings.Contains(f.Detail, "203.0.113.9")
+	}) {
+		t.Fatalf("findings = %+v", findings)
+	}
+}

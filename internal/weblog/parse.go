@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -174,4 +175,21 @@ func dash(s string) string {
 		return ""
 	}
 	return s
+}
+
+// ScriptPath reduces a normalised path to the script that serves it, as the server's
+// SCRIPT_NAME: the part up to the first segment naming a script, without the PATH_INFO after
+// it and without ";" parameters. Paths without a script are returned whole.
+func ScriptPath(p string) string {
+	segments := strings.Split(p, "/")
+	for i, seg := range segments {
+		if j := strings.IndexByte(seg, ';'); j >= 0 {
+			seg = seg[:j]
+			segments[i] = seg
+		}
+		if slices.Contains(scriptExtensions, strings.ToLower(path.Ext(seg))) {
+			return strings.Join(segments[:i+1], "/")
+		}
+	}
+	return strings.Join(segments, "/")
 }

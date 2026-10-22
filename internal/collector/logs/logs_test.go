@@ -484,3 +484,29 @@ func TestPathVariantsAreOneEvent(t *testing.T) {
 		t.Error("web shell event lost")
 	}
 }
+
+// PATH_INFO and ";" variants of one script are one event: they cannot fill a rule's quota and
+// push out a web shell that triggers the same rule.
+func TestPathInfoVariantsAreOneEvent(t *testing.T) {
+	h := newHost(t)
+	var b strings.Builder
+	for i := range 2000 {
+		b.WriteString(logLine("198.51.100.7", "GET", fmt.Sprintf("/index.php/p%d?c=id", i), 200))
+		b.WriteString(logLine("198.51.100.7", "GET", fmt.Sprintf("/index.php;p%d?c=id", i), 200))
+	}
+	b.WriteString(logLine("203.0.113.66", "GET", "/wp-content/plugins/hello/zz.php?cmd=whoami", 200))
+	h.writeLog(b.String())
+	res := h.run()
+	n := 0
+	for _, e := range res.Events {
+		if e.Rule == "command_in_parameters" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("command_in_parameters events = %d, want the flood as one and the web shell", n)
+	}
+	if !slices.ContainsFunc(res.Events, func(e Event) bool { return strings.HasPrefix(e.Evidence.Request, "/wp-content/plugins/hello/zz.php") }) {
+		t.Error("web shell event lost")
+	}
+}

@@ -152,7 +152,20 @@ type Stats struct {
 	OtherPosts  int            `json:"other_post_requests,omitempty"`
 	// DroppedEvents counts by severity the events that did not fit the bounded list.
 	DroppedEvents map[string]int `json:"dropped_events,omitempty"`
+	// DroppedSamples keeps where the first dropped high and critical events came from, so a
+	// flood that pushed a real attack out of the list does not erase it entirely.
+	DroppedSamples []Dropped `json:"dropped_samples,omitempty"`
 }
+
+// Dropped is an event that did not fit, reduced to what identifies it.
+type Dropped struct {
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Path     string `json:"path"`
+	IP       string `json:"ip"`
+}
+
+const maxDroppedSamples = 20
 
 type Result struct {
 	Files     []LogFile        `json:"files"`
@@ -382,7 +395,7 @@ func (r *runState) read(ctx context.Context, name, kind string) error {
 
 func (r *runState) tamper(name, rule, detail string) {
 	key := rule + "\x00" + name
-	if _, seen := r.events[key]; !seen && r.admit(weblog.SeverityHigh, rule) {
+	if _, seen := r.events[key]; !seen && r.admit(weblog.SeverityHigh, rule, Dropped{Rule: rule, Severity: weblog.SeverityHigh, Path: name}) {
 		r.events[key] = &Event{Rule: rule, Severity: weblog.SeverityHigh, Log: "/" + name, Count: 1, Evidence: AttackerControlled{Line: detail}}
 	}
 	r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: %s (%s), read again from the start", name, strings.ReplaceAll(rule, "_", " "), detail))
@@ -651,11 +664,14 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 		r.countPost(req)
 	}
 
+	scriptPath := weblog.ScriptPath(req.Path())
 	for _, h := range hits {
-		key := h.Rule + "\x00" + req.Path()
+		// Requests are grouped by the script they reach, as the web server's SCRIPT_NAME:
+		// /index.php/a and /index.php/b are one event, not two filling the list.
+		key := h.Rule + "\x00" + scriptPath
 		e, ok := r.events[key]
 		if !ok {
-			if !r.admit(h.Severity, h.Rule) {
+			if !r.admit(h.Severity, h.Rule, Dropped{Rule: h.Rule, Severity: h.Severity, Path: weblog.RedactURI(scriptPath), IP: req.IP}) {
 				continue
 			}
 			e = &Event{
@@ -683,25 +699,28 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 // rule is at its limit), the least frequent among the least severe. Otherwise it is dropped
 // and counted in Stats.DroppedEvents. Per-severity counts keep the common case of a flood of
 // equal severity in constant time.
-func (r *runState) admit(severity, rule string) bool {
+func (r *runState) admit(severity, rule string, sample Dropped) bool {
 	rank := weblog.SeverityRank(severity)
 	switch {
 	case r.perRule[rule] >= maxEventsPerRule:
 		if !r.evict(rank, rule) {
-			return r.drop(severity)
+			return r.drop(sample)
 		}
 	case len(r.events) >= maxEvents:
 		if !r.evict(rank, "") {
-			return r.drop(severity)
+			return r.drop(sample)
 		}
 	}
 	r.count(rule, rank, 1)
 	return true
 }
 
-func (r *runState) drop(severity string) bool {
+func (r *runState) drop(d Dropped) bool {
 	r.res.Truncated = true
-	r.res.Stats.DroppedEvents[severity]++
+	r.res.Stats.DroppedEvents[d.Severity]++
+	if weblog.SeverityRank(d.Severity) >= weblog.SeverityRank(weblog.SeverityHigh) && len(r.res.Stats.DroppedSamples) < maxDroppedSamples {
+		r.res.Stats.DroppedSamples = append(r.res.Stats.DroppedSamples, d)
+	}
 	return false
 }
 
@@ -728,8 +747,7 @@ func (r *runState) evict(rank int, rule string) bool {
 		}
 	}
 	v := r.events[victim]
-	r.res.Truncated = true
-	r.res.Stats.DroppedEvents[v.Severity]++
+	r.drop(Dropped{Rule: v.Rule, Severity: v.Severity, Path: weblog.RedactURI(v.path), IP: v.IP})
 	r.count(v.Rule, lowest, -1)
 	delete(r.events, victim)
 	return true
@@ -788,7 +806,7 @@ func (r *runState) errorLine(log, line string) {
 		key := "php_error\x00" + marker + "\x00" + log
 		e, ok := r.events[key]
 		if !ok {
-			if !r.admit(weblog.SeverityMedium, "suspicious_php_error") {
+			if !r.admit(weblog.SeverityMedium, "suspicious_php_error", Dropped{Rule: "suspicious_php_error", Severity: weblog.SeverityMedium, Path: log}) {
 				return
 			}
 			e = &Event{Rule: "suspicious_php_error", Severity: weblog.SeverityMedium, Log: "/" + log, Evidence: AttackerControlled{Line: weblog.RedactLine(line)}}

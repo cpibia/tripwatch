@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector/web"
@@ -303,6 +304,21 @@ func Evaluate(prev *State, cur State) []Finding {
 			// from the first snapshot on.
 			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d richieste da %d indirizzi (primo %s), log %s.\nTesto della richiesta, scritto da chi l'ha inviata: %s",
 				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, e.Evidence.Request)})
+		}
+		// A flood that pushed serious events out of the bounded list is itself an alert: it may
+		// have been sent to hide one.
+		if n := l.Stats.DroppedEvents["critical"] + l.Stats.DroppedEvents["high"]; n > 0 {
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d eventi critici o alti non sono entrati nell'elenco dei log, saturato da altri. Un'ondata di richieste rumorose può servire a nascondere quella che conta.", n)
+			if len(l.Stats.DroppedSamples) > 0 {
+				b.WriteString("\nAlcuni degli eventi scartati (testo scritto da chi ha fatto la richiesta):")
+				for _, d := range l.Stats.DroppedSamples {
+					fmt.Fprintf(&b, "\n  %s %s da %s: %s", d.Severity, strings.ReplaceAll(d.Rule, "_", " "), d.IP, d.Path)
+				}
+			}
+			// Like the events, each run's drops are new: one alert per snapshot that had them.
+			add(Finding{Kind: "weblog", Fingerprint: "weblog:dropped:" + strconv.FormatInt(cur.TakenAt.Unix(), 10), Severity: "high",
+				Title: "Log: eventi gravi scartati per saturazione", Detail: b.String()})
 		}
 	}
 
