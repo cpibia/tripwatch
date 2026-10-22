@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/protocol"
+	"github.com/cpibia/tripwatch/internal/verifier/pki"
 )
 
 const stateFile = "transport-state.json"
@@ -148,5 +149,8 @@ func (c *Client) save() error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(c.stateDir, stateFile))
+	if err := os.Rename(tmp, filepath.Join(c.stateDir, stateFile)); err != nil {
+		return err
+	}
+	return pki.SyncDir(c.stateDir)
 }

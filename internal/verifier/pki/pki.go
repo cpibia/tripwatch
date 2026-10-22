@@ -308,7 +308,20 @@ func WriteFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	return SyncDir(filepath.Dir(path))
+}
+
+// SyncDir makes a rename inside dir durable: without it a crash can bring back the old name.
+func SyncDir(dir string) error {
+	d, err := os.Open(dir) //nolint:gosec // a directory the caller just wrote to
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	return d.Sync()
 }
 
 func serial() *big.Int {
