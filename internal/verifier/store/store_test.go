@@ -263,37 +263,58 @@ func TestRetentionThinsOlderSnapshots(t *testing.T) {
 	}
 }
 
-// One host's flood of findings is bounded and cannot hide another host's alert.
+// One host's flood of findings is bounded, cannot hide another host's alert, and cannot mute a
+// new finding of another rule on the same host.
 func TestAlertFloodIsBounded(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	long := strings.Repeat("é", MaxDetail)
-	for i := range MaxOpenPerHost + 50 {
-		if _, err := s.Raise(ctx, Alert{HostID: "noisy", Fingerprint: "f" + strconv.Itoa(i) + strings.Repeat("x", 600), Severity: "critical", Kind: "web",
-			Title: strings.Repeat("t", 1000), Detail: long}, t0); err != nil {
+	raise := func(a Alert) bool {
+		t.Helper()
+		fresh, err := s.Raise(ctx, a, t0)
+		if err != nil {
 			t.Fatal(err)
 		}
+		return fresh
 	}
-	if _, err := s.Raise(ctx, Alert{HostID: "quiet", Fingerprint: "one", Severity: "high", Kind: "ssh", Title: "key"}, t0); err != nil {
+	long := strings.Repeat("é", MaxDetail)
+	// Anyone can make the web logs report scripts in the upload directory.
+	for i := range MaxOpenPerGroup + 50 {
+		raise(Alert{HostID: "noisy", Fingerprint: "weblog:script_in_upload:/u/p" + strconv.Itoa(i) + ".php" + strings.Repeat("x", 600), Severity: "critical", Kind: "weblog",
+			Title: strings.Repeat("t", 1000), Detail: long})
+	}
+	if !raise(Alert{HostID: "noisy", Fingerprint: "ssh-change:key:root:SHA256:abc", Severity: "high", Kind: "ssh-change", Title: "Nuova chiave SSH per root"}) {
+		t.Fatal("a new SSH key was swallowed by the log noise")
+	}
+	// Medium findings of many rules hit the per-host bound.
+	for i := range MaxOpenPerHost {
+		raise(Alert{HostID: "noisy", Fingerprint: "web:r" + strconv.Itoa(i) + ":x", Severity: "medium", Kind: "web", Title: "m"})
+	}
+	if _, err := s.Raise(ctx, Alert{HostID: "quiet", Fingerprint: "ssh:one:x", Severity: "high", Kind: "ssh", Title: "key"}, t0); err != nil {
 		t.Fatal(err)
 	}
 
+	open := map[string]Alert{}
+	all, _ := s.Alerts(ctx, AlertFilter{HostID: "noisy", Statuses: []string{StatusOpen}})
+	for _, a := range all {
+		open[a.Fingerprint] = a
+	}
+	if _, ok := open["flood:critical:weblog:script_in_upload"]; !ok {
+		t.Error("no aggregate alert for the noisy rule")
+	}
+	if f, ok := open[FloodFingerprint]; !ok || f.Severity != "high" {
+		t.Errorf("no host flood alert for the medium findings: %+v", f)
+	}
+	if n := len(all); n > MaxOpenPerGroup+1+1+MaxOpenPerHost+1 {
+		t.Errorf("%d open alerts: unbounded", n)
+	}
 	sums, err := s.Summaries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sums["noisy"].Open != MaxOpenPerHost+1 {
-		t.Errorf("noisy host has %d open alerts, want the cap plus the flood alert", sums["noisy"].Open)
-	}
 	if q := sums["quiet"]; q.Open != 1 || q.Worst.Title != "key" {
 		t.Errorf("the quiet host's alert is hidden: %+v", q)
 	}
-	flood, err := s.Alerts(ctx, AlertFilter{HostID: "noisy", Statuses: []string{StatusOpen}, Limit: 1, Oldest: false})
-	if err != nil || len(flood) != 1 {
-		t.Fatal(err)
-	}
-	all, _ := s.Alerts(ctx, AlertFilter{HostID: "noisy", Limit: 5})
-	for _, a := range all {
+	for _, a := range all[:5] {
 		if len(a.Title) > MaxTitle+len("…") || len(a.Detail) > MaxDetail+len("…") || len(a.Fingerprint) > MaxFingerprint || !utf8.ValidString(a.Detail) {
 			t.Fatalf("unbounded or broken fields: title %d, detail %d, fingerprint %d", len(a.Title), len(a.Detail), len(a.Fingerprint))
 		}
@@ -304,10 +325,6 @@ func TestAlertFloodIsBounded(t *testing.T) {
 	un, err := s.Unnotified(ctx, []string{"critical", "high"}, 10)
 	if err != nil || len(un) != 10 || un[0].Severity != "critical" {
 		t.Fatalf("unnotified = %d alerts, %v", len(un), err)
-	}
-	tallies, err := s.Tallies(ctx)
-	if err != nil || tallies["critical"].N != MaxOpenPerHost+1 || tallies["high"].N != 1 {
-		t.Fatalf("tallies = %+v, %v", tallies, err)
 	}
 }
 
@@ -359,5 +376,24 @@ func TestEnrollTokensWorkOnce(t *testing.T) {
 	}
 	if _, _, err := s.ConsumeEnrollToken(ctx, replaced, t0); !errors.Is(err, ErrNotFound) {
 		t.Fatal("a token worked twice")
+	}
+}
+
+func TestPruneResolved(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	for _, fp := range []string{"a:x:1", "a:x:2"} {
+		if _, err := s.Raise(ctx, Alert{HostID: "h", Fingerprint: fp, Severity: "low", Kind: "a", Title: fp}, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, _ := s.Alerts(ctx, AlertFilter{})
+	_ = s.Resolve(ctx, all[0].ID, "ops@example.net", t0)
+	if err := s.PruneResolved(ctx, t0.Add(ResolvedRetention+time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	left, _ := s.Alerts(ctx, AlertFilter{})
+	if len(left) != 1 || left[0].Status != StatusOpen {
+		t.Fatalf("left = %+v", left)
 	}
 }

@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 	UNIQUE(host_id, fingerprint)
 );
 CREATE INDEX IF NOT EXISTS alerts_status ON alerts(status, severity, updated_at);
+CREATE INDEX IF NOT EXISTS alerts_host_status ON alerts(host_id, status);
 CREATE TABLE IF NOT EXISTS activity (
 	host_id TEXT NOT NULL,
 	minute  INTEGER NOT NULL,

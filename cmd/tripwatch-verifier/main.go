@@ -174,6 +174,9 @@ func serve(log *slog.Logger) error {
 			case <-tick.C:
 				analyzer.Silent(ctx, silence, snapshotsAfter)
 				notifier.Round(ctx)
+				if err := st.PruneResolved(ctx, now()); err != nil {
+					log.Error("prune resolved alerts", "err", err)
+				}
 			}
 		}
 	}()

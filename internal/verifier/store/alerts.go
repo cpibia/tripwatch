@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -35,17 +36,34 @@ type Alert struct {
 }
 
 // Bounds on what one host can put in the alert table. Titles and details come in part from the
-// host, which may be compromised; a host with thousands of distinct findings is reported as one
-// flood alert instead of filling the table, the overview and the mailbox.
+// host, which may be compromised, and some findings (requests in the web logs) can be produced
+// by anyone. Alerts of one rule and severity beyond MaxOpenPerGroup become one aggregate alert
+// of that rule and severity, so noise from one rule never mutes another: a new rule at any
+// severity is a new group and is raised and notified on its own. MaxOpenPerHost bounds the
+// medium and low alerts of a host; high and critical ones are bounded per group only.
 const (
-	MaxTitle       = 300
-	MaxDetail      = 8 << 10
-	MaxFingerprint = 512
-	MaxOpenPerHost = 2000
+	MaxTitle        = 300
+	MaxDetail       = 8 << 10
+	MaxFingerprint  = 512
+	MaxOpenPerGroup = 100
+	MaxOpenPerHost  = 2000
 )
 
-// FloodFingerprint marks the alert that stands for the findings of a host beyond MaxOpenPerHost.
-const FloodFingerprint = "alerts:flood"
+// FloodFingerprint marks the alert that stands for the medium and low findings of a host
+// beyond MaxOpenPerHost; aggregate alerts of one group start with floodPrefix.
+const (
+	FloodFingerprint = "alerts:flood"
+	floodPrefix      = "flood:"
+)
+
+// group is the rule part of a fingerprint, "kind:rule", which aggregation counts by.
+func group(fingerprint string) string {
+	parts := strings.SplitN(fingerprint, ":", 3)
+	if len(parts) < 3 {
+		return fingerprint
+	}
+	return parts[0] + ":" + parts[1]
+}
 
 func clip(s string, n int) string {
 	if len(s) <= n {
@@ -71,16 +89,31 @@ func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error)
 	err := s.db.QueryRowContext(ctx, `SELECT status FROM alerts WHERE host_id = ? AND fingerprint = ?`, a.HostID, a.Fingerprint).Scan(&status)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		if a.Fingerprint != FloodFingerprint {
-			var open int
-			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE host_id = ? AND status != 'resolved'`, a.HostID).Scan(&open); err != nil {
+		if a.Fingerprint != FloodFingerprint && !strings.HasPrefix(a.Fingerprint, floodPrefix) {
+			g := group(a.Fingerprint)
+			var inGroup int
+			// The range on the fingerprint uses the (host_id, fingerprint) index.
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE host_id = ? AND fingerprint >= ? AND fingerprint < ?
+				AND severity = ? AND status != 'resolved'`, a.HostID, g+":", g+";", a.Severity).Scan(&inGroup); err != nil {
 				return false, err
 			}
-			if open >= MaxOpenPerHost {
-				return s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: FloodFingerprint, Severity: "critical", Kind: "verifier",
-					Title:  "Troppi allarmi aperti su questo server",
-					Detail: "Il server ha già " + strconv.Itoa(open) + " allarmi aperti: i nuovi non vengono registrati finché non se ne chiudono. Un server che produce così tante anomalie va esaminato direttamente. Ultimo scartato: " + a.Title,
+			if inGroup >= MaxOpenPerGroup {
+				return s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: floodPrefix + a.Severity + ":" + g, Severity: a.Severity, Kind: a.Kind,
+					Title:  clip("Molti allarmi della stessa regola: "+a.Title, MaxTitle),
+					Detail: "Il server ha già " + strconv.Itoa(inGroup) + " allarmi aperti di questa regola e gravità: i successivi sono raccolti qui. Ultimo arrivato:\n" + a.Detail,
 				}, now)
+			}
+			if a.Severity != "critical" && a.Severity != "high" {
+				var open int
+				if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE host_id = ? AND status != 'resolved'`, a.HostID).Scan(&open); err != nil {
+					return false, err
+				}
+				if open >= MaxOpenPerHost {
+					return s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: FloodFingerprint, Severity: "high", Kind: "verifier",
+						Title:  "Troppi allarmi aperti su questo server",
+						Detail: "Il server ha già " + strconv.Itoa(open) + " allarmi aperti: i nuovi di gravità media e bassa non vengono registrati finché non se ne chiudono (quelli alti e critici sì). Un server che produce così tante anomalie va esaminato direttamente. Ultimo scartato: " + a.Title,
+					}, now)
+				}
 			}
 		}
 		_, err = s.db.ExecContext(ctx, `INSERT INTO alerts (host_id, fingerprint, severity, kind, title, detail, created_at, updated_at)
@@ -142,6 +175,16 @@ func (s *Store) resolveMissing(ctx context.Context, host, kind string, current [
 		}
 	}
 	return nil
+}
+
+// ResolvedRetention is how long resolved alerts stay for reference before they are deleted.
+const ResolvedRetention = 90 * 24 * time.Hour
+
+// PruneResolved deletes alerts resolved before the retention. A condition that comes back after
+// that is raised as new.
+func (s *Store) PruneResolved(ctx context.Context, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE status = 'resolved' AND updated_at < ?`, now.Add(-ResolvedRetention).Unix())
+	return err
 }
 
 // Resolve closes an alert by hand.

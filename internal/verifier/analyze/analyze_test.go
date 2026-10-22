@@ -158,9 +158,11 @@ func TestFindingsPerSnapshotAreBounded(t *testing.T) {
 	h.deliver(protocol.KindSnapshot, gz(t, `{"snapshot":{"results":{"accounts":{"accounts":[`+accounts+`]}}}}`))
 	ids, _ := h.store.PendingSnapshots(context.Background(), 1)
 	h.an.RunSnapshot(context.Background(), ids[0])
+	// 200 findings of one rule reach the store: 100 alerts, then the rule's aggregate; plus the
+	// summary of the 101 findings the snapshot cap dropped.
 	alerts := h.open()
-	if len(alerts) != maxFindings+1 {
-		t.Fatalf("%d alerts, want %d plus the summary", len(alerts), maxFindings)
+	if len(alerts) != store.MaxOpenPerGroup+2 {
+		t.Fatalf("%d alerts, want %d", len(alerts), store.MaxOpenPerGroup+2)
 	}
 	if _, ok := alerts["snapshot:too-many-findings"]; !ok {
 		t.Fatal("no summary of the dropped findings")
