@@ -211,3 +211,51 @@ func TestAlertLifecycle(t *testing.T) {
 		t.Fatalf("missing alert: %v", err)
 	}
 }
+
+// Hourly snapshots: the last 48 hours stay whole, older days keep their last snapshot, the
+// baseline and the snapshots marked as evidence.
+func TestRetentionThinsOlderSnapshots(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	if err := s.Enroll(ctx, "h", pub, t0); err != nil {
+		t.Fatal(err)
+	}
+	sealer := protocol.NewSealer("h", priv, protocol.ChainState{})
+	var state protocol.ChainState
+	var evidence int64
+	const hours = 5 * 24
+	for hour := range hours {
+		at := t0.Add(time.Duration(hour) * time.Hour)
+		e := sealer.Seal(protocol.KindSnapshot, []byte{byte(hour)}, at)
+		next, err := protocol.Verify(e, "h", pub, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Accept(ctx, e, state, next, at); err != nil {
+			t.Fatal(err)
+		}
+		state = next
+		ids, _ := s.PendingSnapshots(ctx, 100)
+		for _, id := range ids {
+			if hour == 30 {
+				evidence = id
+				_ = s.Keep(ctx, id)
+			}
+			_ = s.MarkAnalyzed(ctx, id)
+		}
+	}
+	snaps, _ := s.LatestSnapshots(ctx, "h", 1000)
+	kept := map[int64]bool{}
+	for _, sn := range snaps {
+		kept[sn.ID] = true
+	}
+	// Hours 71 to 119 are within 48 hours of the newest: 49. Of the older ones, the last of
+	// days 0 and 1 (day 2 ends inside the dense window), the baseline and the evidence: 4.
+	if len(snaps) != 53 {
+		t.Errorf("kept %d snapshots, want 53", len(snaps))
+	}
+	if !kept[evidence] || snaps[len(snaps)-1].Payload[0] != 0 {
+		t.Error("evidence or baseline thinned out")
+	}
+}

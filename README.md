@@ -241,6 +241,12 @@ Al primo avvio il verificatore crea la CA, il certificato del server per i nomi 
 significa registrare di nuovo ogni server. Il container gira senza root, con filesystem in sola
 lettura e nessuna capability.
 
+Lo spazio cresce con il numero di server, non con il tempo. Il verificatore conserva tutti gli
+snapshot delle ultime 48 ore, poi l'ultimo di ogni giorno e quelli che hanno sollevato un allarme
+fino a 30 giorni, e il primo di ogni server per sempre. Con snapshot compressi da qualche
+centinaio di KB si arriva a circa 40 MB per server, quindi 50 server stanno in un paio di GB;
+battiti e allarmi pesano poco.
+
 Altri utenti o una nuova password:
 
 ```sh

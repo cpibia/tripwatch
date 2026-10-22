@@ -192,10 +192,19 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 
 	findings := Evaluate(prev, state)
 	current := map[string][]string{}
+	evidence := false
 	for _, f := range findings {
-		a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail})
+		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) {
+			evidence = true
+		}
 		if f.State {
 			current[f.Kind] = append(current[f.Kind], f.Fingerprint)
+		}
+	}
+	// The snapshot that first showed a condition is evidence: kept beyond the thinning.
+	if evidence {
+		if err := a.Store.Keep(ctx, id); err != nil {
+			a.Log.Error("keep snapshot", "snapshot", id, "err", err)
 		}
 	}
 	for _, kind := range StateKinds {
@@ -205,10 +214,13 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	}
 }
 
-func (a *Analyzer) raise(ctx context.Context, al store.Alert) {
-	if _, err := a.Store.Raise(ctx, al, a.Now()); err != nil {
+// raise records an alert and reports whether it is new or reopened.
+func (a *Analyzer) raise(ctx context.Context, al store.Alert) bool {
+	fresh, err := a.Store.Raise(ctx, al, a.Now())
+	if err != nil {
 		a.Log.Error("raise alert", "host", al.HostID, "err", err)
 	}
+	return fresh
 }
 
 // Silent raises an alert for every enrolled host whose last heartbeat is older than limit, or

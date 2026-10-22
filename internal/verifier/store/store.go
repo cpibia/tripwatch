@@ -15,10 +15,15 @@ import (
 	"github.com/cpibia/tripwatch/internal/protocol"
 )
 
-// Retention keeps every snapshot of the last 30 days, and a host's first snapshot for good as
-// its baseline. Retention is by age, not by count: a compromised host flooding snapshots must
-// not be able to push the evidence out.
-const Retention = 30 * 24 * time.Hour
+// Snapshot retention, by age and never by count, so that a compromised host flooding snapshots
+// cannot push the evidence out: every snapshot of the last DenseRetention, then the last one of
+// each day and every snapshot that raised an alert until Retention, and a host's first snapshot
+// for good as its baseline. Hourly snapshots of a stable host are nearly identical; thinning
+// them keeps the database at a few days' worth per host instead of a month.
+const (
+	DenseRetention = 48 * time.Hour
+	Retention      = 30 * 24 * time.Hour
+)
 
 // ActivityRetention bounds the per-minute record of heartbeats and snapshots behind the traces
 // of the web interface.
@@ -45,6 +50,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 	taken_at    INTEGER NOT NULL,
 	received_at INTEGER NOT NULL,
 	analyzed    INTEGER NOT NULL DEFAULT 0,
+	keep        INTEGER NOT NULL DEFAULT 0,
 	payload     BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS snapshots_pending ON snapshots(analyzed, id);
@@ -100,7 +106,24 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: migration: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate adds the columns that databases created by earlier versions lack.
+func migrate(db *sql.DB) error {
+	var n int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('snapshots') WHERE name = 'keep'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		_, err := db.ExecContext(context.Background(), `ALTER TABLE snapshots ADD COLUMN keep INTEGER NOT NULL DEFAULT 0`)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -220,6 +243,12 @@ func (s *Store) Accept(ctx context.Context, e protocol.Envelope, prev, state pro
 			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)`, e.HostID, now.Add(-Retention).Unix(), e.HostID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND keep = 0 AND received_at < ?
+			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
+			AND id NOT IN (SELECT MAX(id) FROM snapshots WHERE host_id = ? GROUP BY received_at / 86400)`,
+			e.HostID, now.Add(-DenseRetention).Unix(), e.HostID, e.HostID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -241,6 +270,12 @@ func (s *Store) PendingSnapshots(ctx context.Context, limit int) ([]int64, error
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// Keep marks a snapshot as evidence of an alert, exempt from thinning until Retention.
+func (s *Store) Keep(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1 WHERE id = ?`, id)
+	return err
 }
 
 func (s *Store) MarkAnalyzed(ctx context.Context, id int64) error {

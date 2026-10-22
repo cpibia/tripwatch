@@ -31,11 +31,14 @@ certificato e la chiave TLS del server e una chiave Ed25519 di firma, distinta d
   l'identità dichiarata nella busta; firma e catena si verificano con la chiave registrata. Le
   buste dello stesso server passano una alla volta e la posizione nella catena si aggiorna solo se
   è ancora quella verificata, quindi due buste non possono estendere lo stesso anello. Uno
-  snapshot arrivato prima di 5 minuti dal precedente viene rifiutato prima di qualsiasi lavoro.
+  snapshot oltre il terzo in 15 minuti viene rifiutato prima di qualsiasi lavoro.
   Una catena rotta o ripartita è un allarme critico.
-- **Archivio** (`internal/verifier/store`): SQLite. Gli snapshot restano 30 giorni, il primo di
-  ogni server per sempre come baseline; la conservazione è per età, così un server compromesso che
-  inonda di snapshot non può spingere fuori le prove. Ogni minuto in cui arriva un battito o uno
+- **Archivio** (`internal/verifier/store`): SQLite. Gli snapshot restano tutti per 48 ore, poi
+  l'ultimo di ogni giorno e quelli che hanno sollevato un allarme fino a 30 giorni, il primo di
+  ogni server per sempre come baseline. La conservazione è per età e mai per numero, così un
+  server compromesso che inonda di snapshot non può spingere fuori le prove; snapshot orari di un
+  server stabile sono quasi identici, e diradarli tiene il database a pochi giorni per server.
+  Ogni minuto in cui arriva un battito o uno
   snapshot viene annotato per 7 giorni: da qui l'interfaccia ricava i silenzi di ogni server.
 - **Analisi** (`internal/verifier/analyze`): una coda nel database, analizzata in ordine. Ogni
   snapshot è decompresso con limiti di dimensione, numero di valori e profondità, poi confrontato
