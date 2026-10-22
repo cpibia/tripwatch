@@ -159,6 +159,36 @@ fra due letture, invece, non si può vedere. Le rotazioni (`name.1`, `dateext`, 
 possibile, lo snapshot lo dice. Le posizioni avanzano solo dopo che lo snapshot è stato
 consegnato.
 
+## Cosa rileva, a confronto
+
+<!-- bench:start -->
+Su 29 scenari d'attacco riprodotti in un container Debian (commit `78d624e`), quanti ne rileva
+ciascuno strumento con la configurazione di default:
+
+![Scenari rilevati su 29: tripwatch 27, AIDE 24, rkhunter 4, debsums 1](bench/detection.svg)
+
+| Categoria | Scenari | tripwatch | AIDE | rkhunter | debsums |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Persistenza | 10 | 10 | 10 | 2 | 0 |
+| Privilegi | 4 | 4 | 4 | 0 | 0 |
+| Integrità del sistema | 5 | 5 | 5 | 1 | 1 |
+| Processi e rete | 3 | 3 | 0 | 1 | 0 |
+| Applicazioni web | 4 | 4 | 4 | 0 | 0 |
+| Limiti: attacchi tra due controlli e trappole | 3 | 1 | 1 | 0 | 0 |
+| **Totale** | **29** | **27** | **24** | **4** | **1** |
+
+Rileva vuol dire che il dato sull'attacco compare nell'output dello strumento; per tripwatch il
+giudizio resta al verificatore. Gli scenari della categoria "Limiti" (un dropper o una chiave SSH
+che compaiono e spariscono tra due controlli) misurano il limite di chi confronta stati, tripwatch
+compreso. Metodo, risultati per scenario, versioni e costo in [bench/RESULTS.md](bench/RESULTS.md).
+<!-- bench:end -->
+
+Dove AIDE e tripwatch vedono entrambi un file nuovo, AIDE dice solo che il file è comparso o è
+cambiato; tripwatch dice anche di cosa si tratta: script nella cartella delle upload con la firma
+della webshell, immagine con codice PHP, `.htaccess` che cambia il gestore dei file, codice
+offuscato iniettato in un file dell'applicazione. Il costo di un controllo completo (tempo e
+memoria di ciascuno strumento) è in [bench/RESULTS.md](bench/RESULTS.md).
+
 ## Modello di fiducia
 
 Un attaccante con root su un server monitorato può fermarne il sensore o farlo mentire.
@@ -318,12 +348,16 @@ Una unit systemd con le restrizioni di sicurezza è in [deploy/systemd](deploy/s
 ## Roadmap
 
 1. Eventi in tempo reale via eBPF o auditd, spediti appena accadono.
-2. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
-3. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
-4. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
-5. Controlli dall'esterno e canary token.
-6. Verifica dei pacchetti rpm.
-7. Database PostgreSQL per i profili applicativi (Django, Rails, Drupal su PostgreSQL).
+2. Installazione senza toolchain: pacchetti `.deb`, `.rpm` e `.apk` firmati e repository APT/YUM,
+   registrazione in un comando con un token monouso del verificatore
+   (`tripwatch-sensor enroll --token ...`), immagine e chart Helm per il DaemonSet; il
+   verificatore confronta il binario in esecuzione con quello della versione pubblicata.
+3. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
+4. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
+5. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
+6. Controlli dall'esterno e canary token.
+7. Verifica dei pacchetti rpm.
+8. Database PostgreSQL per i profili applicativi (Django, Rails, Drupal su PostgreSQL).
 
 ## Stato
 
