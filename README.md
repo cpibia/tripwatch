@@ -118,12 +118,12 @@ MariaDB, lo interroga con sole `SELECT` e timeout di pochi secondi:
 - le **impostazioni da sviluppo** rimaste in produzione: debug attivo, modalità sviluppatore,
   modifica dei file PHP dal pannello.
 
-Le credenziali vengono lette dai file di configurazione o, quando l'applicazione usa
-`getenv()`, dall'ambiente dei processi PHP e dei loro processi padre (come succede nei
-container). Restano in memoria per la durata della connessione e non finiscono mai nello snapshot,
-che riporta solo `database@host`. Il prefisso delle tabelle viene accettato solo se è un
-identificatore semplice, perché il file che lo contiene può essere stato scritto da un
-attaccante. Il collector si disattiva con `-app-db=false`.
+**Disattivato per default** (`-app-db=false`) finché le connessioni non sono limitate a
+destinazioni locali attendibili: oggi l'host del database viene dalla configurazione
+dell'applicazione, che un utente non privilegiato può fabbricare, e il sensore gli consegnerebbe
+le credenziali. Le credenziali vengono lette dai file di configurazione o, quando l'applicazione
+usa `getenv()`, dall'ambiente dei processi PHP e dei loro processi padre. Lo snapshot riporta solo
+`database@host`. Il prefisso delle tabelle viene accettato solo se è un identificatore semplice.
 
 ## Log dei web server
 

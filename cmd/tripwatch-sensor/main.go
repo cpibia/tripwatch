@@ -29,7 +29,7 @@ type report struct {
 func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	rootDir := flag.String("root", "/", "root of the filesystem to observe (the host root when running in a DaemonSet)")
-	appDB := flag.Bool("app-db", true, "read administrators, extensions and stored scripts from the databases of recognised applications")
+	appDB := flag.Bool("app-db", false, "read administrators, extensions and stored scripts from the databases of recognised applications (off until database connections are restricted to trusted local endpoints)")
 	stateDir := flag.String("state-dir", "/var/lib/tripwatch", "directory for state kept between runs, such as log positions (empty to keep none)")
 	flag.Parse()
 
