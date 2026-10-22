@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -191,6 +192,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	if e.Kind == protocol.KindEvent {
+		s.event(ctx, identity, e, now)
+	}
 	if e.Kind == protocol.KindSnapshot && s.Wake != nil {
 		select {
 		case s.Wake <- struct{}{}:
@@ -217,6 +221,24 @@ func (s *Server) chainAlert(ctx context.Context, host string, e protocol.Envelop
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	s.Log.Error("ingest", "err", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
+// event turns the events a sensor reports into alerts. A start is worth one even when it is
+// legitimate: a stop shorter than the silence threshold leaves no other trace.
+func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, now time.Time) {
+	var ev struct {
+		Event   string `json:"event"`
+		Version string `json:"version"`
+		BootID  string `json:"boot_id"`
+	}
+	if json.Unmarshal(e.Payload, &ev) != nil || ev.Event != "sensor_started" {
+		return
+	}
+	detail := fmt.Sprintf("Il sensore si è avviato (versione %s, avvio del sistema %s). Se il server non è stato riavviato e il sensore non è stato aggiornato, qualcuno lo ha fermato e fatto ripartire: controlla cosa è successo mentre era fermo.", ev.Version, ev.BootID)
+	if _, err := s.Store.Raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:started:" + strconv.FormatUint(e.Sequence, 10), Severity: "medium", Kind: "sensor-event",
+		Title: "Sensore avviato", Detail: detail}, now); err != nil {
+		s.Log.Error("raise start alert", "host", host, "err", err)
+	}
 }
 
 func writeAck(w http.ResponseWriter, seq uint64) {

@@ -120,6 +120,14 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 	}
 	log.Info("tripwatch sensor started", "version", buildinfo.Version, "host", bundle.HostID, "verifier", bundle.VerifierURL)
 
+	// Every start is reported: a stop shorter than the silence threshold would otherwise leave
+	// no trace. If the verifier is unreachable the event stays pending and goes out first.
+	bootID, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	started, _ := json.Marshal(map[string]string{"event": "sensor_started", "version": buildinfo.Version, "boot_id": strings.TrimSpace(string(bootID))})
+	if err := client.Send(ctx, protocol.KindEvent, started, time.Now()); err != nil && ctx.Err() == nil {
+		log.Warn("start event not delivered yet", "err", err)
+	}
+
 	// Heartbeats run on their own: a snapshot taking minutes must not look like silence.
 	go func() {
 		tick := time.NewTicker(heartbeat)

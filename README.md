@@ -205,7 +205,8 @@ tripwatch non finge il contrario, ma punta a rendere visibili entrambe le cose. 
   collector ha un timeout e, su Linux, i symlink si risolvono dentro la root osservata.
 
 - il battito scopre un sensore fermo entro pochi minuti, e un sensore che manda battiti ma non
-  più snapshot solleva un allarme a sé;
+  più snapshot solleva un allarme a sé; ogni avvio del sensore arriva come evento firmato, così
+  anche un arresto più breve della soglia di silenzio lascia traccia;
 - gli allarmi critici e alti non si chiudono da soli quando la condizione sparisce: un server
   compromesso potrebbe ripulire e far tacere i propri allarmi, quindi li chiude una persona.
 

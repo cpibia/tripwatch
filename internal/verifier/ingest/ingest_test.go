@@ -324,3 +324,15 @@ func TestRequestsCheckedBeforeTheBody(t *testing.T) {
 		t.Errorf("revoked host: %d", code)
 	}
 }
+
+func TestSensorStartRaisesAnAlert(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	if err := c.Send(context.Background(), protocol.KindEvent, []byte(`{"event":"sensor_started","version":"1.2.0","boot_id":"b1"}`), now); err != nil {
+		t.Fatal(err)
+	}
+	a := h.alerts()
+	if len(a) != 1 || a[0].Title != "Sensore avviato" || a[0].Severity != "medium" || !strings.Contains(a[0].Detail, "1.2.0") {
+		t.Fatalf("alerts = %+v", a)
+	}
+}
