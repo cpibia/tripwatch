@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -41,8 +42,10 @@ const (
 	maxTrackedIPs   = 50_000
 	maxTrackedPosts = 10_000
 	maxIPsPerPost   = 1000
-	maxTopIPs       = 20
-	maxPostTargets  = 50
+	// maxPostPairs bounds the (path, IP) pairs over all POST targets together.
+	maxPostPairs   = 100_000
+	maxTopIPs      = 20
+	maxPostTargets = 50
 
 	// fingerprintSize is how much of the already-read part is hashed with the saved offset,
 	// to notice a log rewritten in place.
@@ -203,7 +206,20 @@ func (c *Collector) Commit() error {
 	}
 	// Written to a temporary file and renamed, so a crash never leaves a half-written state.
 	tmp := filepath.Join(c.StateDir, stateFile+".tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // the state directory is the operator's configuration
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	// Synced before the rename: otherwise a power loss can leave the new name on an empty file.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(c.StateDir, stateFile))
@@ -280,6 +296,7 @@ type runState struct {
 	events        map[string]*Event
 	ips           map[string]int
 	posts         map[string]*postTally
+	postPairs     int
 }
 
 func (r *runState) read(ctx context.Context, name, kind string) error {
@@ -295,11 +312,18 @@ func (r *runState) read(ctx context.Context, name, kind string) error {
 	switch {
 	case !known:
 		lf.From = max(0, info.Size()-r.firstRunBytes)
+		if lf.From > 0 {
+			r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: no saved position, only the last %d bytes read", name, r.firstRunBytes))
+		}
 	case prev.Inode != inode:
 		lf.Rotated = true
 		r.drainRotated(ctx, name, kind, prev)
+	case info.Size() < prev.Offset && r.drainCopy(ctx, name, kind, prev):
+		// logrotate copytruncate: the content was copied to a sibling, then the file emptied.
+		lf.Rotated = true
 	case info.Size() < prev.Offset:
-		// Same file, shorter than what was already read: truncated in place.
+		// Same file, shorter than what was already read, and no copy holds what was there:
+		// truncated in place.
 		lf.Rewritten = true
 		r.tamper(name, "log_truncated", fmt.Sprintf("%d bytes, %d already read", info.Size(), prev.Offset))
 	case prev.Fingerprint != "" && fingerprint(r.src.FS, name, prev.Offset) != prev.Fingerprint:
@@ -326,7 +350,7 @@ func (r *runState) read(ctx context.Context, name, kind string) error {
 
 func (r *runState) tamper(name, rule, detail string) {
 	key := rule + "\x00" + name
-	if _, seen := r.events[key]; !seen {
+	if _, seen := r.events[key]; !seen && r.admit(weblog.SeverityHigh) {
 		r.events[key] = &Event{Rule: rule, Severity: weblog.SeverityHigh, Log: "/" + name, Count: 1, Evidence: AttackerControlled{Line: detail}}
 	}
 	r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: %s (%s), read again from the start", name, strings.ReplaceAll(rule, "_", " "), detail))
@@ -355,25 +379,72 @@ func fingerprint(fsys fs.FS, name string, offset int64) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// drainRotated finishes the previous file, which logrotate renamed to name.1, from where the
-// last run stopped. When that is not possible the lines in between are lost, and that is said.
-func (r *runState) drainRotated(ctx context.Context, name, kind string, prev position) {
-	rotated := name + ".1"
-	info, err := fs.Stat(r.src.FS, rotated)
+// rotatedSiblings lists the files rotation may have produced from name: name.1, dated copies
+// (name-20261022 with dateext), and Caddy's stem-<timestamp>.ext. Compressed copies cannot be
+// read from an offset and are left out.
+func rotatedSiblings(fsys fs.FS, name string) []string {
+	dir, base := path.Dir(name), path.Base(name)
+	stem := strings.TrimSuffix(base, path.Ext(base))
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s rotated and /%s not readable (%v): lines after offset %d of the old file were not read", name, rotated, err, prev.Offset))
-		return
+		return nil
 	}
-	if inode, ok := collector.Inode(info); !ok || inode != prev.Inode || info.Size() < prev.Offset {
-		r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s rotated and /%s is not the file read last time: lines after offset %d of the old file were not read", name, rotated, prev.Offset))
-		return
+	var out []string
+	for _, e := range entries {
+		n := e.Name()
+		if n == base || !e.Type().IsRegular() || slices.Contains([]string{".gz", ".bz2", ".xz", ".zst"}, path.Ext(n)) {
+			continue
+		}
+		if strings.HasPrefix(n, base) || strings.HasPrefix(n, stem+"-") {
+			out = append(out, path.Join(dir, n))
+		}
 	}
+	return out
+}
+
+// drainRotated finishes the previous file, found among the rotated siblings by its inode,
+// from where the last run stopped. When it cannot be found the lines in between are lost,
+// and that is said.
+func (r *runState) drainRotated(ctx context.Context, name, kind string, prev position) {
+	for _, sibling := range rotatedSiblings(r.src.FS, name) {
+		info, err := fs.Stat(r.src.FS, sibling)
+		if err != nil {
+			continue
+		}
+		if inode, ok := collector.Inode(info); ok && inode == prev.Inode && info.Size() >= prev.Offset {
+			r.drain(ctx, sibling, kind, prev.Offset, info.Size())
+			return
+		}
+	}
+	r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s rotated and the previous file is gone or compressed: lines after offset %d of the old file were not read", name, prev.Offset))
+}
+
+// drainCopy recognises copytruncate: a sibling whose bytes before the saved offset match the
+// saved fingerprint is the copy of what was read, and is drained from there.
+func (r *runState) drainCopy(ctx context.Context, name, kind string, prev position) bool {
+	if prev.Fingerprint == "" {
+		return false
+	}
+	for _, sibling := range rotatedSiblings(r.src.FS, name) {
+		info, err := fs.Stat(r.src.FS, sibling)
+		if err != nil || info.Size() < prev.Offset {
+			continue
+		}
+		if fingerprint(r.src.FS, sibling, prev.Offset) == prev.Fingerprint {
+			r.drain(ctx, sibling, kind, prev.Offset, info.Size())
+			return true
+		}
+	}
+	return false
+}
+
+func (r *runState) drain(ctx context.Context, name, kind string, from, size int64) {
 	var analyzer *weblog.Analyzer
 	if kind == "access" {
 		analyzer = weblog.NewAnalyzer()
 	}
-	lf := LogFile{Path: "/" + rotated, Kind: kind, Size: info.Size(), From: prev.Offset}
-	if err := r.scan(ctx, rotated, prev.Offset, analyzer, &lf); err != nil {
+	lf := LogFile{Path: "/" + name, Kind: kind, Size: size, From: from}
+	if err := r.scan(ctx, name, from, analyzer, &lf); err != nil {
 		r.res.Issues.Add(err)
 		return
 	}
@@ -405,6 +476,13 @@ func (r *runState) scan(ctx context.Context, name string, offset int64, analyzer
 		}
 		line, n, complete, err := readLine(br)
 		if !complete {
+			// A stretch with no line end longer than the per-run limit (a hole made with
+			// truncate -s +N, for instance) would otherwise stop the offset here forever.
+			if n >= MaxLineLength && lf.To+n-offset >= r.maxBytes {
+				lf.To += n
+				lf.Oversized++
+				r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: %d bytes without a line end skipped at offset %d", name, n, lf.To-n))
+			}
 			break
 		}
 		lf.To += n
@@ -472,11 +550,7 @@ func seek(f fs.File, offset int64) error {
 func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 	r.res.Stats.Requests++
 	r.res.Stats.Statuses[fmt.Sprintf("%dxx", req.Status/100)]++
-	if _, tracked := r.ips[req.IP]; tracked || len(r.ips) < maxTrackedIPs {
-		r.ips[req.IP]++
-	} else {
-		r.res.Stats.OtherIPs++
-	}
+	r.countIP(req.IP)
 	if req.Method == "POST" {
 		r.countPost(req)
 	}
@@ -485,8 +559,7 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 		key := h.Rule + "\x00" + req.IP + "\x00" + req.Path()
 		e, ok := r.events[key]
 		if !ok {
-			if len(r.events) >= maxEvents {
-				r.res.Truncated = true
+			if !r.admit(h.Severity) {
 				continue
 			}
 			e = &Event{
@@ -505,6 +578,52 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 	}
 }
 
+// admit decides whether a new event fits. Up to maxEvents anything does. Past it, an event of
+// high or critical severity evicts the least severe and least frequent event below high, so
+// noise sent first cannot push out the event that matters; with nothing to evict, urgent events
+// may grow the list up to twice the limit.
+func (r *runState) admit(severity string) bool {
+	if len(r.events) < maxEvents {
+		return true
+	}
+	r.res.Truncated = true
+	urgent := weblog.SeverityRank(weblog.SeverityHigh)
+	if weblog.SeverityRank(severity) < urgent {
+		return false
+	}
+	victim := ""
+	for k, e := range r.events {
+		rank := weblog.SeverityRank(e.Severity)
+		if rank >= urgent {
+			continue
+		}
+		if v := r.events[victim]; victim == "" || rank < weblog.SeverityRank(v.Severity) || (rank == weblog.SeverityRank(v.Severity) && e.Count < v.Count) {
+			victim = k
+		}
+	}
+	if victim != "" {
+		delete(r.events, victim)
+		return true
+	}
+	return len(r.events) < 2*maxEvents
+}
+
+// countIP keeps approximate per-IP counts with the Misra-Gries summary: when the table is
+// full, every count drops by one and empty entries leave. Heavy hitters stay whatever the
+// order of arrival, and the table never exceeds maxTrackedIPs.
+func (r *runState) countIP(ip string) {
+	if _, tracked := r.ips[ip]; tracked || len(r.ips) < maxTrackedIPs {
+		r.ips[ip]++
+		return
+	}
+	r.res.Stats.OtherIPs++
+	for k := range r.ips {
+		if r.ips[k]--; r.ips[k] == 0 {
+			delete(r.ips, k)
+		}
+	}
+}
+
 func (r *runState) countPost(req *weblog.Request) {
 	t, ok := r.posts[req.Path()]
 	if !ok {
@@ -517,8 +636,9 @@ func (r *runState) countPost(req *weblog.Request) {
 	}
 	t.requests++
 	if _, seen := t.ips[req.IP]; !seen {
-		if len(t.ips) < maxIPsPerPost {
+		if len(t.ips) < maxIPsPerPost && r.postPairs < maxPostPairs {
 			t.ips[req.IP] = struct{}{}
+			r.postPairs++
 		} else {
 			t.moreIPs = true
 		}
@@ -533,8 +653,7 @@ func (r *runState) errorLine(log, line string) {
 		key := "php_error\x00" + marker + "\x00" + log
 		e, ok := r.events[key]
 		if !ok {
-			if len(r.events) >= maxEvents {
-				r.res.Truncated = true
+			if !r.admit(weblog.SeverityMedium) {
 				return
 			}
 			e = &Event{Rule: "suspicious_php_error", Severity: weblog.SeverityMedium, Log: "/" + log, Evidence: AttackerControlled{Line: weblog.RedactLine(line)}}

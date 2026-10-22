@@ -90,6 +90,7 @@ func TestRules(t *testing.T) {
 		{req("GET", "/p?id=1%20UNION%20SELECT%201,2", 200, "-"), []string{"sql_injection:medium"}},
 		{req("GET", "/", 200, "${jndi:ldap://x/a}"), []string{"injection_probe:medium"}},
 		{req("GET", "/", 404, "sqlmap/1.7"), []string{"scanner_user_agent:low"}},
+		{req("GET", "/media/x.php.jpg", 200, "-"), []string{"script_in_upload_path:critical"}},
 		{req("GET", "/catalog/product/view", 200, "Mozilla"), nil},
 		{req("POST", "/checkout/cart/add", 200, "Mozilla"), nil},
 	}
@@ -159,6 +160,9 @@ func TestRedact(t *testing.T) {
 		"/x.php?cmd=whoami&api_key=abc":                        "/x.php?cmd=whoami&api_key=[redacted]",
 		"/plain/path":                                          "/plain/path",
 		"/flag?debug&x=":                                       "/flag?debug&x=",
+		"/password/reset/9f8e7d6c5b4a39281706f5e4d3c2b1a0":     "/password/reset/[redacted]",
+		"/f?file=../../tmp/sess_a1b2c3d4e5f6a7b8c9d0e1f2a3b4":  "/f?file=../../tmp/[redacted]",
+		"/products/stainless-steel-water-bottle-large":         "/products/stainless-steel-water-bottle-large",
 	}
 	for in, want := range tests {
 		if got := RedactURI(in); got != want {
@@ -171,5 +175,29 @@ func TestRedact(t *testing.T) {
 	}
 	if got := RedactURI("/" + strings.Repeat("a", 1000)); len(got) > maxEvidenceLen+3 {
 		t.Errorf("evidence not truncated: %d bytes", len(got))
+	}
+}
+
+// The per-IP tables evict instead of refusing: an attacker who sends from many addresses
+// first must not switch off the rules for the addresses that come after.
+func TestBruteForceAfterManyAddresses(t *testing.T) {
+	a := NewAnalyzer()
+	base := req("POST", "/wp-login.php", 200, "-")
+	for i := range maxTrackedIPs + 10 {
+		r := *base
+		r.IP = fmt.Sprintf("2001:db8::%x", i)
+		a.Analyze(&r)
+	}
+	fired := false
+	for i := range bruteForceLimit + 1 {
+		r := *base
+		r.IP = "198.51.100.77"
+		r.Time = r.Time.Add(time.Duration(i) * time.Second)
+		for _, h := range a.Analyze(&r) {
+			fired = fired || h.Rule == "login_bruteforce"
+		}
+	}
+	if !fired || len(a.logins) > maxTrackedIPs {
+		t.Errorf("fired %v, tracked %d", fired, len(a.logins))
 	}
 }

@@ -95,8 +95,13 @@ log grezzi.
 riga successiva senza tenere i byte in memoria), per file e per giro, e con mappe limitate durante
 la scansione. Con l'offset salva l'hash degli ultimi 4 KB letti: al giro dopo, se quei byte sono
 cambiati o il file è più corto dell'offset, il log è stato riscritto o troncato nello stesso
-inode, ed è un evento. Alla rotazione rilegge la coda del vecchio file (`.1`) dall'offset salvato;
-se non può, lo dice. Le posizioni nuove restano in sospeso finché il chiamante non conferma la
+inode, ed è un evento. Alla rotazione cerca il vecchio file fra i fratelli per inode (`.1`, `dateext`,
+nomi con data di Caddy) e ne rilegge la coda dall'offset salvato; un file svuotato in place con
+una copia accanto il cui contenuto coincide con l'impronta salvata è `copytruncate`, non un
+troncamento. Se il file precedente non si trova, lo dice. Un tratto senza a capo più lungo del
+limite per giro viene saltato con un'issue, invece di fermare l'offset. Gli eventi hanno un tetto
+con riserva per gravità (un evento high o critical sfratta i più bassi), gli IP sono contati con
+il riassunto di Misra-Gries e le tabelle per IP delle regole sfrattano invece di rifiutare. Le posizioni nuove restano in sospeso finché il chiamante non conferma la
 consegna dello snapshot con `Commit`: un giro perso viene riletto.
 
 ## Struttura dei package

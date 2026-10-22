@@ -95,9 +95,8 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	// SessionReaper (CVE-2025-54236): a session file uploaded through the customer address
 	// attribute endpoint, then loaded by a guest cart REST call that fails with 500.
 	if r.Method == "POST" && sessionReaperRe.MatchString(p) {
-		if _, tracked := a.uploads[r.IP]; tracked || len(a.uploads) < maxTrackedIPs {
-			a.uploads[r.IP] = r.Time
-		}
+		evictOne(a.uploads, r.IP)
+		a.uploads[r.IP] = r.Time
 		hit("sessionreaper_upload", SeverityHigh)
 	}
 	if guestCartRe.MatchString(p) && r.Status >= 500 {
@@ -155,10 +154,8 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 // rule fires once when the limit is reached rather than on every attempt after it.
 // At most bruteForceLimit+1 attempts are kept per IP: that is all the rule needs.
 func (a *Analyzer) countLogin(ip string, t time.Time) int {
-	attempts, tracked := a.logins[ip]
-	if !tracked && len(a.logins) >= maxTrackedIPs {
-		return 0
-	}
+	attempts := a.logins[ip]
+	evictOne(a.logins, ip)
 	recent := attempts[:0]
 	for _, at := range attempts {
 		if t.Sub(at) <= bruteForceWindow {
@@ -175,13 +172,29 @@ func (a *Analyzer) countLogin(ip string, t time.Time) int {
 	return len(recent)
 }
 
+// evictOne makes room for key when the table is full by dropping an arbitrary other entry:
+// refusing new addresses instead would let an attacker blind the rules by sending from many
+// addresses first.
+func evictOne[V any](m map[string]V, key string) {
+	if _, tracked := m[key]; tracked || len(m) < maxTrackedIPs {
+		return
+	}
+	for k := range m {
+		delete(m, k)
+		return
+	}
+}
+
 func isLogin(p string) bool {
 	return slices.ContainsFunc(loginEndpoints, func(e string) bool { return p == e || strings.HasPrefix(p, e+"/") })
 }
 
+// hasScriptSegment matches a script extension on any segment, and double extensions such as
+// x.php.jpg that some server configurations still hand to the interpreter.
 func hasScriptSegment(p string) bool {
 	return slices.ContainsFunc(strings.Split(p, "/"), func(seg string) bool {
-		return slices.Contains(scriptExtensions, path.Ext(seg))
+		return slices.Contains(scriptExtensions, path.Ext(seg)) ||
+			slices.ContainsFunc(scriptExtensions, func(ext string) bool { return strings.Contains(seg, ext+".") })
 	})
 }
 

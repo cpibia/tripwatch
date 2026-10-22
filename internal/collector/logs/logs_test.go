@@ -218,9 +218,17 @@ func TestMemoryIsBoundedUnderAnonymousFlood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := range 500_000 {
+	// Half the lines spread over distinct paths, half over few paths with many addresses each:
+	// both must stay bounded.
+	for i := range 250_000 {
 		ip := fmt.Sprintf("2001:db8::%x:%x", i>>16, i&0xffff)
 		if _, err := f.WriteString(logLine(ip, "POST", fmt.Sprintf("/x%d.php?t=%d", i, i), 404)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 250_000 {
+		ip := fmt.Sprintf("2001:db8:1::%x:%x", i>>16, i&0xffff)
+		if _, err := f.WriteString(logLine(ip, "POST", fmt.Sprintf("/form%d", i%1000), 404)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -268,5 +276,100 @@ func TestEventsKeepAttackerTextApartAndRedacted(t *testing.T) {
 	e := res.Events[0]
 	if strings.Contains(e.Evidence.Request, "SECRET123") || !strings.Contains(e.Evidence.Request, "../../etc/passwd") {
 		t.Errorf("evidence = %q", e.Evidence.Request)
+	}
+}
+
+// Noise sent first must not push the event that matters out of the bounded list.
+func TestUrgentEventsSurviveNoise(t *testing.T) {
+	h := newHost(t)
+	var b strings.Builder
+	for i := range maxEvents + 500 {
+		fmt.Fprintf(&b, "2001:db8::%x - - [14/Feb/2026:18:48:01 +0000] \"GET /p%d HTTP/1.1\" 404 1 \"-\" \"nikto\"\n", i, i)
+	}
+	b.WriteString(logLine("203.0.113.66", "GET", "/media/catalog/x.php", 200))
+	h.writeLog(b.String())
+
+	res := h.run()
+	if !slices.ContainsFunc(res.Events, func(e Event) bool { return e.Rule == "script_in_upload_path" && e.Severity == "critical" }) {
+		t.Errorf("web shell event lost among %d events", len(res.Events))
+	}
+	if !res.Truncated {
+		t.Error("dropped noise must be declared")
+	}
+}
+
+// A stretch without line ends longer than the per-run limit is skipped, not read forever.
+func TestHoleWithoutNewlines(t *testing.T) {
+	h := newHost(t)
+	h.c.MaxBytes = 64 << 10
+	h.writeLog(logLine("198.51.100.2", "GET", "/", 200))
+	h.run()
+	if err := os.Truncate(filepath.Join(h.root, accessLog), int64(len(logLine("198.51.100.2", "GET", "/", 200)))+200<<10); err != nil {
+		t.Fatal(err)
+	}
+	h.appendLog("\n" + logLine("203.0.113.7", "GET", "/.env", 200))
+
+	var events []string
+	var issues []string
+	for range 6 {
+		res := h.run()
+		events = append(events, eventRules(res)...)
+		issues = append(issues, res.Issues...)
+	}
+	if !slices.Contains(events, "sensitive_file") {
+		t.Errorf("the line after the hole was never read: events %v, issues %v", events, issues)
+	}
+	if !slices.ContainsFunc(issues, func(s string) bool { return strings.Contains(s, "without a line end skipped") }) {
+		t.Errorf("issues = %v", issues)
+	}
+}
+
+// With dateext the previous file is access.log-20261022, not access.log.1.
+func TestDateextRotation(t *testing.T) {
+	h := newHost(t)
+	h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
+	h.run()
+	h.appendLog(logLine("203.0.113.7", "GET", "/media/late.php", 200))
+	if err := os.Rename(filepath.Join(h.root, accessLog), filepath.Join(h.root, accessLog+"-20261022")); err != nil {
+		t.Fatal(err)
+	}
+	h.writeLog(logLine("203.0.113.8", "GET", "/", 200))
+
+	res := h.run()
+	if !slices.Contains(eventRules(res), "script_in_upload_path") || len(res.Issues) != 0 {
+		t.Errorf("events %v, issues %v", eventRules(res), res.Issues)
+	}
+}
+
+// copytruncate copies the log and empties it in place: that is a rotation, not tampering.
+func TestCopyTruncate(t *testing.T) {
+	h := newHost(t)
+	h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
+	h.run()
+	h.appendLog(logLine("203.0.113.7", "GET", "/media/late.php", 200))
+	data, err := os.ReadFile(filepath.Join(h.root, accessLog))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.root, accessLog+".1"), data, 0o600); err != nil { //nolint:gosec // test fixture under t.TempDir
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(h.root, accessLog), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	res := h.run()
+	if rules := eventRules(res); !slices.Contains(rules, "script_in_upload_path") || slices.Contains(rules, "log_truncated") {
+		t.Errorf("events %v", rules)
+	}
+}
+
+func TestFirstRunTailIsDeclared(t *testing.T) {
+	h := newHost(t)
+	h.c.FirstRunBytes = 100
+	h.writeLog(strings.Repeat(logLine("198.51.100.2", "GET", "/", 200), 10))
+	res := h.run()
+	if !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "no saved position") }) {
+		t.Errorf("issues = %v", res.Issues)
 	}
 }

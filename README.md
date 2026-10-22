@@ -108,8 +108,12 @@ con i valori dei parametri **redatti** (resta solo il valore che costituisce la 
 dell'attacco; parametri con nomi sensibili come `token` o `password` sono sempre redatti). Il
 testo scritto da chi ha fatto la richiesta sta in un campo `attacker_controlled`, da trattare come
 dato e mai come istruzione. Righe, mappe e numero di eventi hanno un tetto: un flusso di richieste
-da indirizzi e path sempre diversi non fa crescere la memoria. Un log riscritto o troncato nello
-stesso file è un evento; le posizioni avanzano solo dopo che lo snapshot è stato consegnato.
+da indirizzi e path sempre diversi non fa crescere la memoria. Se la parte di un log già letta
+viene riscritta o troncata nello stesso file è un evento; ciò che viene scritto e poi cancellato
+fra due letture, invece, non si può vedere. Le rotazioni (`name.1`, `dateext`, Caddy,
+`copytruncate`) vengono riconosciute e la coda del file precedente viene letta; se non è
+possibile, lo snapshot lo dice. Le posizioni avanzano solo dopo che lo snapshot è stato
+consegnato.
 
 ## Modello di fiducia
 
