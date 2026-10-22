@@ -70,7 +70,7 @@ func TestCompromisedHost(t *testing.T) {
 		"high privileged-change:new:/usr/lib/.syslib/sh2:bb",
 		"high persistence:unit-exec:/etc/systemd/system/sync.service:ExecStart=/var/www/.cache/sync/syncd",
 		"critical web:script_in_upload_dir:/var/www/shop/pub/media/x.php",
-		"critical weblog:script_in_upload_path:/media/x.php/var/log/nginx/access.log",
+		"critical weblog:script_in_upload_path:/media/x.php|/media/x.php/var/log/nginx/access.log",
 		"critical apps-change:admin:/var/www/shop:9",
 		"high apps:script:/var/www/shop:config design/footer:cdn.example.net",
 	} {

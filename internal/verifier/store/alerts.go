@@ -56,14 +56,25 @@ const (
 	floodPrefix      = "flood:"
 )
 
-// group is the rule part of a fingerprint, "kind:rule", which aggregation counts by.
-func group(fingerprint string) string {
+// group is the part of a fingerprint that aggregation counts by, with the bounds of the range of
+// fingerprints in it. A fingerprint may name its group explicitly up to a "|" (the web log
+// rules put the script there, so noise sent to one script does not share a group with another);
+// otherwise the group is "kind:rule".
+func group(fingerprint string) (g, lo, hi string) {
+	if i := strings.IndexByte(fingerprint, '|'); i >= 0 {
+		g = fingerprint[:i]
+		return g, g + "|", g + "}"
+	}
 	parts := strings.SplitN(fingerprint, ":", 3)
 	if len(parts) < 3 {
-		return fingerprint
+		return fingerprint, fingerprint + ":", fingerprint + ";"
 	}
-	return parts[0] + ":" + parts[1]
+	g = parts[0] + ":" + parts[1]
+	return g, g + ":", g + ";"
 }
+
+// renotifyAfter is how often an aggregate of serious alerts that keeps growing is mailed again.
+const renotifyAfter = time.Hour
 
 func clip(s string, n int) string {
 	if len(s) <= n {
@@ -90,18 +101,26 @@ func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if a.Fingerprint != FloodFingerprint && !strings.HasPrefix(a.Fingerprint, floodPrefix) {
-			g := group(a.Fingerprint)
+			g, lo, hi := group(a.Fingerprint)
 			var inGroup int
 			// The range on the fingerprint uses the (host_id, fingerprint) index.
 			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE host_id = ? AND fingerprint >= ? AND fingerprint < ?
-				AND severity = ? AND status != 'resolved'`, a.HostID, g+":", g+";", a.Severity).Scan(&inGroup); err != nil {
+				AND severity = ? AND status != 'resolved'`, a.HostID, lo, hi, a.Severity).Scan(&inGroup); err != nil {
 				return false, err
 			}
 			if inGroup >= MaxOpenPerGroup {
-				return s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: floodPrefix + a.Severity + ":" + g, Severity: a.Severity, Kind: a.Kind,
+				flood := floodPrefix + a.Severity + ":" + g
+				fresh, err := s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: flood, Severity: a.Severity, Kind: a.Kind,
 					Title:  clip("Molti allarmi della stessa regola: "+a.Title, MaxTitle),
 					Detail: "Il server ha già " + strconv.Itoa(inGroup) + " allarmi aperti di questa regola e gravità: i successivi sono raccolti qui. Ultimo arrivato:\n" + a.Detail,
 				}, now)
+				// A serious aggregate that keeps growing is mailed again, at most once an hour,
+				// so what arrives after the first email is not silent.
+				if err == nil && (a.Severity == "critical" || a.Severity == "high") {
+					_, err = s.db.ExecContext(ctx, `UPDATE alerts SET notified_at = 0 WHERE host_id = ? AND fingerprint = ? AND notified_at > 0 AND notified_at < ?`,
+						a.HostID, flood, now.Add(-renotifyAfter).Unix())
+				}
+				return fresh, err
 			}
 			if a.Severity != "critical" && a.Severity != "high" {
 				var open int

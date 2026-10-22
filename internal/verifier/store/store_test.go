@@ -433,3 +433,44 @@ func TestRaiseCountsUseOpenIndexes(t *testing.T) {
 		}
 	}
 }
+
+// Noise sent to one script does not mute another script of the same rule, and an aggregate that
+// keeps growing is mailed again after an hour.
+func TestScriptGroupsAndAggregateRenotify(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	raise := func(fp string, at time.Time) bool {
+		t.Helper()
+		fresh, err := s.Raise(ctx, Alert{HostID: "h", Fingerprint: fp, Severity: "critical", Kind: "weblog", Title: "cmd"}, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fresh
+	}
+	for i := range MaxOpenPerGroup + 1 {
+		raise("weblog:command_in_parameters:/index.php|/index.php?cmd=id&n="+strconv.Itoa(i), t0)
+	}
+	if !raise("weblog:command_in_parameters:/wp-content/uploads/x.php|/wp-content/uploads/x.php?cmd=id", t0) {
+		t.Fatal("the real script was swallowed by noise sent to another one")
+	}
+	flood := "flood:critical:weblog:command_in_parameters:/index.php"
+	agg, _ := s.Alerts(ctx, AlertFilter{HostID: "h", Statuses: []string{StatusOpen}})
+	var id int64
+	for _, a := range agg {
+		if a.Fingerprint == flood {
+			id = a.ID
+		}
+	}
+	if id == 0 {
+		t.Fatal("no aggregate for the noisy script")
+	}
+	_ = s.MarkNotified(ctx, []int64{id}, t0)
+	raise("weblog:command_in_parameters:/index.php|/index.php?cmd=id&n=x1", t0.Add(10*time.Minute))
+	if a, _ := s.Alert(ctx, id); a.NotifiedAt.IsZero() {
+		t.Fatal("the aggregate was mailed again within the hour")
+	}
+	raise("weblog:command_in_parameters:/index.php|/index.php?cmd=id&n=x2", t0.Add(2*time.Hour))
+	if a, _ := s.Alert(ctx, id); !a.NotifiedAt.IsZero() {
+		t.Fatal("a growing aggregate is never mailed again")
+	}
+}

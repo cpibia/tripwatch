@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector/web"
+	"github.com/cpibia/tripwatch/internal/weblog"
 )
 
 // Finding is an alert to raise. State findings describe a condition that holds in the current
@@ -302,7 +303,10 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			// Log events are new by construction (each run reads only new lines), so they count
 			// from the first snapshot on.
-			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d richieste da %d indirizzi (primo %s), log %s.\nTesto della richiesta, scritto da chi l'ha inviata: %s",
+			// The script the request reached names the alert's group: noise sent to other
+			// scripts does not crowd out the one that matters.
+			script := weblog.ScriptPath(path.Clean("/" + strings.SplitN(e.Evidence.Request, "?", 2)[0]))
+			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d richieste da %d indirizzi (primo %s), log %s.\nTesto della richiesta, scritto da chi l'ha inviata: %s",
 				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, e.Evidence.Request)})
 		}
 		// A flood that pushed serious events out of the bounded list is itself an alert: it may
