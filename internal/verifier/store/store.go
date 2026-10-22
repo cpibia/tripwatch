@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS hosts (
 	last_digest    BLOB,
 	last_seen      INTEGER NOT NULL DEFAULT 0,
 	last_heartbeat INTEGER NOT NULL DEFAULT 0,
-	last_snapshot  INTEGER NOT NULL DEFAULT 0
+	last_snapshot  INTEGER NOT NULL DEFAULT 0,
+	cert_serial    TEXT NOT NULL DEFAULT '',
+	prev_serial    TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS snapshots (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,6 +124,17 @@ func Open(path string) (*Store, error) {
 
 // migrate adds the columns that databases created by earlier versions lack.
 func migrate(db *sql.DB) error {
+	for _, col := range []string{"cert_serial", "prev_serial"} {
+		var n int
+		if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = ?`, col).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts ADD COLUMN `+col+` TEXT NOT NULL DEFAULT ''`); err != nil { //nolint:gosec // column names from the list above
+				return err
+			}
+		}
+	}
 	var n int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('snapshots') WHERE name = 'keep'`).Scan(&n); err != nil {
 		return err
@@ -144,6 +157,10 @@ type Host struct {
 	LastSeen      time.Time
 	LastHeartbeat time.Time
 	LastSnapshot  time.Time
+	// CertSerial is the serial of the host's current client certificate; PrevSerial the one it
+	// replaced, still accepted until the new one is first used. Empty means not recorded.
+	CertSerial string
+	PrevSerial string
 }
 
 // Enroll registers a host and its signing key, or replaces the key of an existing host and
@@ -151,7 +168,25 @@ type Host struct {
 func (s *Store) Enroll(ctx context.Context, id string, pub ed25519.PublicKey, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (id, public_key, enrolled_at) VALUES (?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET public_key = excluded.public_key, enrolled_at = excluded.enrolled_at,
-		revoked = 0, last_seq = 0, last_digest = NULL`, id, []byte(pub), now.Unix())
+		revoked = 0, last_seq = 0, last_digest = NULL, cert_serial = '', prev_serial = ''`, id, []byte(pub), now.Unix())
+	return err
+}
+
+// SetCertificate records a newly issued client certificate of a host. On renewal the previous
+// one stays accepted until the new one is used, so a lost answer does not lock the sensor out;
+// on enrollment (renewal false) every earlier certificate stops working at once.
+func (s *Store) SetCertificate(ctx context.Context, id, serial string, renewal bool) error {
+	q := `UPDATE hosts SET prev_serial = '', cert_serial = ? WHERE id = ?`
+	if renewal {
+		q = `UPDATE hosts SET prev_serial = cert_serial, cert_serial = ? WHERE id = ?`
+	}
+	_, err := s.db.ExecContext(ctx, q, serial, id)
+	return err
+}
+
+// CertificateUsed forgets the previous certificate once the current one has been presented.
+func (s *Store) CertificateUsed(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET prev_serial = '' WHERE id = ? AND prev_serial != ''`, id)
 	return err
 }
 
@@ -184,7 +219,7 @@ func (s *Store) Hosts(ctx context.Context) ([]Host, error) {
 func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, error) {
 	//nolint:gosec // where is a constant clause from this package; values are bound
 	rows, err := s.db.QueryContext(ctx, `SELECT id, public_key, enrolled_at, revoked, last_seq, last_digest,
-		last_seen, last_heartbeat, last_snapshot FROM hosts `+where, args...)
+		last_seen, last_heartbeat, last_snapshot, cert_serial, prev_serial FROM hosts `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +229,7 @@ func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, e
 		var h Host
 		var pub, digest []byte
 		var enrolled, seen, heartbeat, snapshot int64
-		if err := rows.Scan(&h.ID, &pub, &enrolled, &h.Revoked, &h.Chain.Sequence, &digest, &seen, &heartbeat, &snapshot); err != nil {
+		if err := rows.Scan(&h.ID, &pub, &enrolled, &h.Revoked, &h.Chain.Sequence, &digest, &seen, &heartbeat, &snapshot, &h.CertSerial, &h.PrevSerial); err != nil {
 			return nil, err
 		}
 		h.PublicKey, h.Chain.LastDigest = pub, digest

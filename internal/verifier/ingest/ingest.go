@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -91,6 +92,32 @@ func (s *steadyReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
 	s.left -= n
 	return n, err
+}
+
+// currentCertificate accepts only the host's current client certificate, or the one it replaced
+// until the current one is first used. A certificate from an earlier enrollment or renewal is
+// refused and raises an alert: someone holds a copy of it.
+func (s *Server) currentCertificate(ctx context.Context, w http.ResponseWriter, host store.Host, presented *x509.Certificate, now time.Time) bool {
+	serial := presented.SerialNumber.Text(16)
+	switch {
+	case host.CertSerial == "" || serial == host.CertSerial:
+		if host.PrevSerial != "" && serial == host.CertSerial {
+			if err := s.Store.CertificateUsed(ctx, host.ID); err != nil {
+				s.Log.Error("forget previous certificate", "host", host.ID, "err", err)
+			}
+		}
+		return true
+	case serial == host.PrevSerial:
+		return true
+	}
+	if _, err := s.Store.Raise(ctx, store.Alert{HostID: host.ID, Fingerprint: "cert:stale:" + serial, Severity: "high", Kind: "chain",
+		Title:  "Certificato superato usato per questo server",
+		Detail: fmt.Sprintf("Una connessione ha presentato il certificato numero %s, che non vale più: il server è stato registrato di nuovo o il certificato è stato rinnovato. Qualcuno ne conserva una copia.", serial),
+	}, now); err != nil {
+		s.Log.Error("raise stale certificate alert", "host", host.ID, "err", err)
+	}
+	http.Error(w, "certificate no longer valid for this host", http.StatusForbidden)
+	return false
 }
 
 // alive notes a host that reached the verifier but whose envelope had to wait.
@@ -186,6 +213,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.currentCertificate(ctx, w, host, r.TLS.PeerCertificates[0], now) {
+		return
+	}
 	if kind == protocol.KindSnapshot {
 		recent, err := s.Store.CountSnapshots(ctx, identity, now.Add(-SnapshotWindow))
 		if err != nil {
@@ -336,6 +366,14 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	serial, err := pki.Serial(certPEM)
+	if err == nil {
+		err = s.Store.SetCertificate(r.Context(), host, serial, false)
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	s.Log.Info("host enrolled with a token", "host", host, "token_by", by)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(EnrollResponse{HostID: host, CA: string(s.CA.PEM), Cert: string(certPEM)})
@@ -362,6 +400,9 @@ func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	if !s.currentCertificate(r.Context(), w, host, presented, now) {
+		return
+	}
 	if s.CA == nil || presented.NotAfter.Sub(now) > pki.RenewWindow {
 		http.Error(w, "renewal not due", http.StatusConflict)
 		return
@@ -370,6 +411,21 @@ func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, err)
 		return
+	}
+	serial, err := pki.Serial(certPEM)
+	if err == nil {
+		err = s.Store.SetCertificate(r.Context(), identity, serial, true)
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	// Visible, so that a renewal made with a stolen certificate does not pass unnoticed.
+	if _, err := s.Store.Raise(r.Context(), store.Alert{HostID: identity, Fingerprint: "cert:renewed:" + serial, Severity: "medium", Kind: "sensor-event",
+		Title:  "Certificato client rinnovato",
+		Detail: fmt.Sprintf("Il sensore ha rinnovato il suo certificato client, che scadeva il %s. È normale una volta ogni due anni; un rinnovo inatteso significa che qualcuno usa il certificato di questo server.", presented.NotAfter.Format("2006-01-02")),
+	}, now); err != nil {
+		s.Log.Error("raise renewal alert", "host", identity, "err", err)
 	}
 	s.Log.Info("client certificate renewed", "host", identity, "expired", presented.NotAfter)
 	w.Header().Set("Content-Type", "application/json")

@@ -527,3 +527,16 @@ func (t EnrollToken) PinnedTLS(serverName string) *tls.Config {
 		},
 	}
 }
+
+// Serial returns the serial number of a PEM certificate, as recorded for its host.
+func Serial(certPEM []byte) (string, error) {
+	b, _ := pem.Decode(certPEM)
+	if b == nil {
+		return "", errors.New("pki: invalid PEM")
+	}
+	c, err := x509.ParseCertificate(b.Bytes)
+	if err != nil {
+		return "", err
+	}
+	return c.SerialNumber.Text(16), nil
+}

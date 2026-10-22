@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -496,5 +497,53 @@ func TestRefusedSnapshotCountsAsAlive(t *testing.T) {
 	}
 	if hst, _ := h.store.Host(ctx, "web-01"); !hst.LastHeartbeat.Equal(h.clock) {
 		t.Fatalf("last heartbeat %v, want %v", hst.LastHeartbeat, h.clock)
+	}
+}
+
+// After a new enrollment the old certificate stops working at once, with an alert; after a
+// renewal the old one works until the new one is first used.
+func TestOnlyTheCurrentCertificateIsAccepted(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	enroll := func() pki.Bundle {
+		t.Helper()
+		secret, _, _ := h.store.CreateEnrollToken(ctx, "web-11", "ops@example.net", now)
+		b, err := transport.Enroll(t.Context(), pki.EnrollToken{URL: h.srv.URL + Path, Secret: secret, CA: h.ca.Fingerprint()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	old := enroll()
+	if err := h.client(old, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	current := enroll()
+	if err := h.client(old, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) {
+		t.Fatalf("the certificate of the previous enrollment still works: %v", err)
+	}
+	alerts, _ := h.store.Alerts(ctx, store.AlertFilter{HostID: "web-11"})
+	if !slices.ContainsFunc(alerts, func(a store.Alert) bool { return strings.HasPrefix(a.Fingerprint, "cert:stale:") }) {
+		t.Fatalf("no alert for the stale certificate: %+v", alerts)
+	}
+
+	// Renewal: the previous certificate stays valid until the renewed one is used.
+	id, _ := current.ClientIdentity(t.TempDir())
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: id.TLS()}, Timeout: 5 * time.Second}
+	h.clock = id.NotAfter().Add(-30 * 24 * time.Hour)
+	if renewed, err := transport.RenewIfDue(t.Context(), hc, current.VerifierURL, id, h.clock); !renewed || err != nil {
+		t.Fatalf("renewal: %v %v", renewed, err)
+	}
+	stateDir := t.TempDir()
+	if err := h.client(current, stateDir).Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+		t.Fatalf("the replaced certificate was refused before the new one was used: %v", err)
+	}
+	renewedKey, _ := current.SigningPrivateKey()
+	renewedClient, _ := transport.New(current.VerifierURL, hc, stateDir, current.HostID, renewedKey)
+	if err := renewedClient.Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+		t.Fatalf("renewed certificate: %v", err)
+	}
+	if err := h.client(current, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, h.clock); !errors.Is(err, transport.ErrRejected) {
+		t.Fatalf("the replaced certificate still works after the renewed one was used: %v", err)
 	}
 }

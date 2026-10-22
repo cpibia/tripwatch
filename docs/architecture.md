@@ -32,7 +32,10 @@ certificato) e manda su `/v1/enroll`, l'unico percorso senza certificato client,
 chiavi pubbliche; riceve il certificato client e compone da sé il pacchetto. Il certificato
 client dura due anni: negli ultimi 60 giorni il sensore ne chiede uno nuovo su
 `/v1/renew`, autenticandosi con quello attuale; il verificatore lo rilascia solo negli ultimi 90
-giorni di validità e solo a un server registrato e non revocato. Il nuovo certificato sta nella
+giorni di validità e solo a un server registrato e non revocato. Ogni server è legato al numero
+di serie del suo certificato attuale: una nuova registrazione rende subito inutilizzabili quelli
+precedenti, un rinnovo lascia valido il vecchio solo finché il nuovo non viene usato, e un
+certificato superato presentato al verificatore solleva un allarme. Il nuovo certificato sta nella
 directory di stato del sensore, il pacchetto in `/etc` resta in sola lettura, e la chiave di
 firma non cambia.
 

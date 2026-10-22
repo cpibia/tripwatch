@@ -273,8 +273,13 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo di accesso non viene da questa console.")
 		return
 	}
-	done, ok := s.logins.begin(r.Context(), email, s.Now)
+	// The wait in line stays well inside the server's write timeout.
+	waitCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	done, ok := s.logins.begin(waitCtx, email, s.Now)
+	cancel()
 	if !ok {
+		data.Error = "Troppi tentativi in corso per questo indirizzo. Riprova tra poco."
+		s.render(w, r, http.StatusTooManyRequests, "login", page{Title: "Accesso", Data: data})
 		return
 	}
 	token, err := s.Store.Login(r.Context(), email, r.PostFormValue("password"), s.Now())
@@ -791,6 +796,10 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 	}
 	if err := s.Store.Enroll(r.Context(), host, pub, now); err != nil {
 		s.internal(w, r, err)
+		return
+	}
+	if serial, err := pki.Serial([]byte(bundle.Cert)); err != nil || s.Store.SetCertificate(r.Context(), host, serial, false) != nil {
+		s.internal(w, r, errors.New("record the certificate of "+host))
 		return
 	}
 	s.Log.Info("host enrolled", "host", host, "by", se.Email, "replaced", existing.ID != "")

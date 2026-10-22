@@ -242,6 +242,13 @@ func enroll(args []string) error {
 	if err := st.Enroll(context.Background(), *host, pub, now); err != nil {
 		return err
 	}
+	serial, err := pki.Serial([]byte(bundle.Cert))
+	if err != nil {
+		return err
+	}
+	if err := st.SetCertificate(context.Background(), *host, serial, false); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
 		return err
