@@ -548,3 +548,15 @@ func TestApacheLongContinuation(t *testing.T) {
 		t.Errorf("issues = %v", issues)
 	}
 }
+
+func TestCaddyRelativeImportFromImportedFile(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/caddy/Caddyfile":             text("import sites/main.caddy\n"),
+		"etc/caddy/sites/main.caddy":      text("import more/*.caddy\n"),
+		"etc/caddy/sites/more/shop.caddy": text("shop.example.com {\n\troot * /srv/shop\n}\n"),
+	}
+	sites, _, issues := CaddySites(fsys)
+	if len(sites) != 1 || sites[0].Root != "/srv/shop" {
+		t.Errorf("sites %+v issues %v", sites, issues)
+	}
+}

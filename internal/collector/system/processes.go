@@ -167,40 +167,75 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 }
 
 var (
-	secretOption = regexp.MustCompile(`(?i)^(--?[a-z0-9_-]*(password|passwd|passphrase|token|secret|apikey|api-key|api_key|credential|private-key)[a-z0-9_-]*)(=(.*))?$`)
+	secretOption = regexp.MustCompile(`(?i)^(--?[a-z0-9_-]*(password|passwd|passphrase|token|secret|apikey|api-key|api_key|credential|private-key)[a-z0-9_-]*)=(.*)$`)
 	secretEnv    = regexp.MustCompile(`(?i)^([a-z0-9_]*(password|passwd|token|secret|api_?key|auth|credential)[a-z0-9_]*)=.+`)
 	urlUserinfo  = regexp.MustCompile(`(://[^:/@\s]+):[^@/\s]+@`)
+	authHeader   = regexp.MustCompile(`(?i)^((proxy-)?authorization|x-api-key|cookie)\s*:.*`)
 )
 
+// Options whose next argument is a secret. Only known ones: hiding the argument after any
+// option with a suspicious name would let a process hide, say, the address it connects to.
+var secretNextArg = map[string][]string{
+	"":          {"--password", "--passwd", "--token", "--secret", "--api-key", "--apikey", "--auth-token", "--access-token", "--client-secret"},
+	"redis-cli": {"-a", "--pass", "--user-pass"},
+	"sshpass":   {"-p"},
+	"mysql":     {"--password"},
+	"curl":      {"-u", "--user", "--proxy-user", "--oauth2-bearer"},
+	"wget":      {"--password", "--http-password", "--ftp-password", "--proxy-password"},
+}
+
 // redactCmdline joins the arguments of a process after removing the secrets commonly passed
-// on the command line: values of password and token options (--password=x or --password x),
-// NAME=value pairs with sensitive names, passwords in URLs, and the -p<password> form of the
-// MySQL and MariaDB clients.
+// on the command line: values of password and token options, NAME=value pairs with sensitive
+// names, passwords in URLs, authorization headers, the -p<password> form of the MySQL and
+// MariaDB clients, and the same inside a shell's -c script.
 func redactCmdline(args []string) string {
-	mysql := len(args) > 0 && strings.Contains(path.Base(args[0]), "mysql") || len(args) > 0 && strings.Contains(path.Base(args[0]), "mariadb")
+	prog := ""
+	if len(args) > 0 {
+		prog = path.Base(args[0])
+	}
+	shell := slices.Contains([]string{"sh", "bash", "dash", "zsh", "ash", "ksh"}, prog)
 	out := make([]string, 0, len(args))
 	hideNext := false
-	for _, a := range args {
-		switch {
-		case hideNext:
+	for i, a := range args {
+		if hideNext {
 			out = append(out, "[redacted]")
 			hideNext = false
 			continue
-		case mysql && strings.HasPrefix(a, "-p") && len(a) > 2:
-			a = "-p[redacted]"
-		case secretOption.MatchString(a):
-			m := secretOption.FindStringSubmatch(a)
-			if m[3] == "" {
-				hideNext = true
-			} else {
-				a = m[1] + "=[redacted]"
-			}
-		case secretEnv.MatchString(a):
-			a = secretEnv.FindStringSubmatch(a)[1] + "=[redacted]"
 		}
-		out = append(out, urlUserinfo.ReplaceAllString(a, "$1:[redacted]@"))
+		if shell && i > 0 && args[i-1] == "-c" {
+			out = append(out, redactCmdline(strings.Fields(a)))
+			continue
+		}
+		a, hideNext = redactArg(prog, a)
+		out = append(out, a)
 	}
 	return strings.TrimSpace(strings.Join(out, " "))
+}
+
+func redactArg(prog, a string) (string, bool) {
+	family := prog
+	if strings.Contains(prog, "mysql") || strings.Contains(prog, "mariadb") {
+		family = "mysql"
+	}
+	if slices.Contains(secretNextArg[family], a) || slices.Contains(secretNextArg[""], a) {
+		return a, true
+	}
+	switch {
+	case family == "mysql" && strings.HasPrefix(a, "-p") && len(a) > 2:
+		return "-p[redacted]", false
+	case family == "sshpass" && strings.HasPrefix(a, "-p") && len(a) > 2:
+		return "-p[redacted]", false
+	case family == "curl" && (strings.HasPrefix(a, "-u") && len(a) > 2):
+		return "-u[redacted]", false
+	case secretOption.MatchString(a):
+		return secretOption.FindStringSubmatch(a)[1] + "=[redacted]", false
+	case secretEnv.MatchString(a):
+		return secretEnv.FindStringSubmatch(a)[1] + "=[redacted]", false
+	case authHeader.MatchString(a):
+		name, _, _ := strings.Cut(a, ":")
+		return name + ": [redacted]", false
+	}
+	return urlUserinfo.ReplaceAllString(a, "$1:[redacted]@"), false
 }
 
 // isKernelThread reads the flags field of /proc/<pid>/stat. The command name in that line is

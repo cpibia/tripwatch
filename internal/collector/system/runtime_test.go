@@ -201,6 +201,7 @@ func dpkgHost() fstest.MapFS {
 		"usr/bin/backdoor":            text("not from any package"),
 		"usr/bin/editor":              link("/etc/alternatives/editor"),
 		"usr/local/bin/sudo":          link("/dev/shm/x"),
+		"usr/local/bin/vi":            link("/etc/alternatives/../../dev/shm/vi"),
 		"usr/sbin/sshd":               text("sshd with a backdoor"),
 		"etc/ssh/moduli":              text("moduli"),
 		"etc/ssh/sshd_config":         text("edited config"),
@@ -230,7 +231,7 @@ func TestPackagesDpkg(t *testing.T) {
 	if !slices.Equal(res.Missing, []string{"/usr/bin/scp"}) {
 		t.Errorf("missing = %v; documentation must be ignored", res.Missing)
 	}
-	if !slices.Equal(res.UnownedLinks, []Link{{Path: "/usr/local/bin/sudo", Target: "/dev/shm/x"}}) {
+	if !slices.Equal(res.UnownedLinks, []Link{{Path: "/usr/local/bin/sudo", Target: "/dev/shm/x"}, {Path: "/usr/local/bin/vi", Target: "/etc/alternatives/../../dev/shm/vi"}}) {
 		t.Errorf("unowned links = %+v; links managed by update-alternatives are skipped", res.UnownedLinks)
 	}
 	if len(res.DatabaseSHA256) != 64 {

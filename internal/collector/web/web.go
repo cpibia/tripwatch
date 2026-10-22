@@ -127,14 +127,23 @@ func (Collector) Name() string { return "web" }
 func (Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.Inspect(src.FS)}
 	budget := &hashBudget{left: MaxHashBytesPerRun}
+	scanners := make([]*scanner, 0, len(res.Inventory.Applications))
 	for _, app := range res.Inventory.Applications {
-		if ctx.Err() != nil {
-			res.Issues = append(res.Issues, fmt.Sprintf("%s not scanned: %v", app.Path, ctx.Err()))
-			continue
-		}
 		s := newScanner(src, app, res.Inventory.Sites, res.Inventory.Applications)
 		s.budget = budget
-		s.scan(ctx)
+		scanners = append(scanners, s)
+	}
+	// Every application's uploads are listed before any file of any application is read.
+	for _, s := range scanners {
+		s.namesPass(ctx)
+	}
+	for _, s := range scanners {
+		if ctx.Err() != nil {
+			s.issues = append(s.issues, fmt.Sprintf("%s: content not scanned: %v", s.report.Path, ctx.Err()))
+			s.report.Truncated = true
+		} else {
+			s.scan(ctx)
+		}
 		res.Apps = append(res.Apps, s.report)
 		res.Issues = append(res.Issues, s.issues...)
 	}
@@ -213,7 +222,6 @@ func (s *scanner) expand(patterns []string) []string {
 }
 
 func (s *scanner) scan(ctx context.Context) {
-	s.namesPass(ctx)
 	s.report.TreeHash = s.walk(ctx, s.root, 0, false, false)
 	s.report.Findings = slices.DeleteFunc(s.report.Findings, func(f Finding) bool { return f.Kind == "" })
 	if s.stopped {
@@ -373,7 +381,7 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 	if e.Type()&fs.ModeSymlink != 0 {
 		target, _ := fs.ReadLink(s.src.FS, name)
 		s.inspectSymlink(name, e, target, true)
-		if !s.followable(name, target) {
+		if !s.followable(name) {
 			s.issues = append(s.issues, fmt.Sprintf("/%s -> %s not followed: target outside the application and its deploy directory", name, target))
 			return
 		}
@@ -393,15 +401,16 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 	s.walkData(ctx, name, inUploads)
 }
 
-// followable allows a linked upload or data directory to point inside the application, or
-// into the directory that holds it and its siblings (releases/5/storage -> ../../shared/storage
-// with release-based deploys), never above that and never into system trees.
-func (s *scanner) followable(name, target string) bool {
-	resolved := target
-	if !path.IsAbs(resolved) {
-		resolved = path.Join("/"+path.Dir(name), target)
+// followable allows a linked upload or data directory to lead inside the application, or into
+// the directory that holds it and its siblings (releases/5/storage -> ../../shared/storage with
+// release-based deploys), never above that and never into system trees. The decision is taken
+// on the fully resolved location, since the target can itself go through further links.
+func (s *scanner) followable(name string) bool {
+	resolved, err := collector.ResolvePath(s.src.FS, name)
+	if err != nil {
+		return false
 	}
-	resolved = path.Clean(resolved)
+	resolved = "/" + resolved
 	root := "/" + s.root
 	if strings.HasPrefix(resolved, root+"/") {
 		return true

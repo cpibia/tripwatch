@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"slices"
@@ -386,10 +387,44 @@ func TestRedactCmdline(t *testing.T) {
 		{[]string{"curl", "https://user:pw@example.com/x"}, "curl https://user:[redacted]@example.com/x"},
 		{[]string{"rsync", "--passive", "-p", "src"}, "rsync --passive -p src"},
 		{[]string{"nginx: master process"}, "nginx: master process"},
+		{[]string{"/bin/sh", "-c", "mysql -uroot -pS3cret db"}, "/bin/sh -c mysql -uroot -p[redacted] db"},
+		{[]string{"redis-cli", "-a", "pw", "-h", "10.0.0.5"}, "redis-cli -a [redacted] -h 10.0.0.5"},
+		{[]string{"sshpass", "-p", "pw", "ssh", "host"}, "sshpass -p [redacted] ssh host"},
+		{[]string{"curl", "-u", "user:pw", "-H", "Authorization: Bearer abc", "https://x"}, "curl -u [redacted] -H Authorization: [redacted] https://x"},
+		{[]string{"agent", "--relay-token-host", "c2.example.net"}, "agent --relay-token-host c2.example.net"},
 	}
 	for _, tt := range tests {
 		if got := redactCmdline(tt.args); got != tt.want {
 			t.Errorf("redactCmdline(%q) = %q, want %q", tt.args, got, tt.want)
 		}
+	}
+}
+
+// Drop-ins that include their own directory must not loop.
+func TestSSHDIncludeCycle(t *testing.T) {
+	fsys := fstest.MapFS{"etc/ssh/sshd_config": text("Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n")}
+	for i := range 7 {
+		fsys[fmt.Sprintf("etc/ssh/sshd_config.d/%d.conf", i)] = text("Include /etc/ssh/sshd_config.d/*.conf\n")
+	}
+	done := make(chan SSHResult, 1)
+	go func() { done <- collect[SSHResult](t, SSH{}, collector.Source{FS: fsys}) }()
+	select {
+	case res := <-done:
+		if res.Settings["port"] != "22" || !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "cycle") }) {
+			t.Errorf("settings %v issues %v", res.Settings, res.Issues)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("include cycle did not terminate")
+	}
+}
+
+func TestManagerConfigFromRun(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/passwd":                       text("root:x:0:0:root:/root:/bin/bash\n"),
+		"run/systemd/system.conf.d/x.conf": text("[Manager]\nDefaultEnvironment = LD_PRELOAD=/dev/shm/l.so\n"),
+	}
+	res := collect[ServicesResult](t, Services{}, collector.Source{FS: fsys})
+	if !slices.Equal(res.Environment, []string{"DefaultEnvironment=LD_PRELOAD=/dev/shm/l.so"}) {
+		t.Errorf("environment = %v", res.Environment)
 	}
 }

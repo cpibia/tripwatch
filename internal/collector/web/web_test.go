@@ -228,7 +228,7 @@ func TestCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := out.(Result)
-	if len(res.Apps) != 0 || !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "not scanned") }) {
+	if len(res.Apps) == 0 || !res.Apps[0].Truncated || !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "not scanned") }) {
 		t.Errorf("apps %d, issues %v", len(res.Apps), res.Issues)
 	}
 }
@@ -632,5 +632,23 @@ func TestNamesPassReportsScriptsBeforeReading(t *testing.T) {
 
 	if len(s.report.Findings) != 1 || s.report.Findings[0].Path != "/var/www/site/uploads/99/zz.php" {
 		t.Errorf("findings after the names pass = %+v", s.report.Findings)
+	}
+}
+
+// A chain of links is judged by where it ends, not by the text of its first target.
+func TestLinkChainOutOfTheApplication(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/app/code/keep.php", "<?php")
+	tr.file("etc/secret.php", "<?php system($_GET['c']);")
+	tr.link("/", "var/www/site/app/code/x")
+	tr.link("../app/code/x", "var/www/site/uploads")
+
+	res := tr.scan()
+	if got := findingsOf(res); slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "secret.php") }) {
+		t.Errorf("followed a chain of links to the host root: %v", got)
+	}
+	if !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "not followed") }) {
+		t.Errorf("issues = %v", res.Issues)
 	}
 }

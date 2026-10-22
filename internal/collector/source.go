@@ -170,3 +170,53 @@ func (is *Issues) Add(err error) {
 		*is = append(*is, err.Error())
 	}
 }
+
+const maxResolveLinks = 40
+
+// ResolvePath follows the symlinks of name inside fsys component by component, the way the
+// kernel would with the observed root as "/", and returns where it leads ("." for the root).
+// It is for decisions that depend on the final location, such as whether a linked directory
+// stays inside an application: comparing the text of a link target is not enough when the
+// target itself goes through further links.
+func ResolvePath(fsys fs.FS, name string) (string, error) {
+	pending := strings.Split(name, "/")
+	cur := ""
+	links := 0
+	for len(pending) > 0 {
+		part := pending[0]
+		pending = pending[1:]
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			if cur = path.Dir(cur); cur == "." {
+				cur = ""
+			}
+			continue
+		}
+		next := path.Join(cur, part)
+		info, err := fs.Lstat(fsys, next)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		if links++; links > maxResolveLinks {
+			return "", fmt.Errorf("resolve %s: too many links", name)
+		}
+		target, err := fs.ReadLink(fsys, next)
+		if err != nil {
+			return "", err
+		}
+		if path.IsAbs(target) {
+			cur = ""
+		}
+		pending = append(strings.Split(strings.TrimPrefix(target, "/"), "/"), pending...)
+	}
+	if cur == "" {
+		return ".", nil
+	}
+	return cur, nil
+}

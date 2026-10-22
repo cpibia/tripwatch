@@ -341,7 +341,7 @@ func unownedExecutables(fsys fs.FS, owned map[string]bool) ([]string, []Link) {
 // alternative reports links managed by update-alternatives, which no package lists as its own.
 func alternative(fsys fs.FS, p string) bool {
 	target, err := fs.ReadLink(fsys, p)
-	return err == nil && strings.HasPrefix(target, "/etc/alternatives/")
+	return err == nil && strings.HasPrefix(path.Clean(target), "/etc/alternatives/")
 }
 
 // hiddenEntries lists dot-named files and directories under /usr, where packages do not put

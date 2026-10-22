@@ -431,3 +431,32 @@ func TestLineAfterNulHole(t *testing.T) {
 		t.Errorf("issues = %v", res.Issues)
 	}
 }
+
+// Thousands of fake criticals from one /64, each address once, on one path: one event, and
+// the real web shell on another path still gets in.
+func TestFloodFromManyAddressesIsOneEvent(t *testing.T) {
+	h := newHost(t)
+	var b strings.Builder
+	for i := range 2500 {
+		b.WriteString(logLine(fmt.Sprintf("2001:db8::%x", i), "GET", "/index.php?c=id", 200))
+	}
+	b.WriteString(logLine("203.0.113.66", "GET", "/media/catalog/x.php", 200))
+	h.writeLog(b.String())
+
+	res := h.run()
+	var flood, shell *Event
+	for i := range res.Events {
+		switch res.Events[i].Evidence.Request {
+		case "/index.php?c=id":
+			flood = &res.Events[i]
+		case "/media/catalog/x.php":
+			shell = &res.Events[i]
+		}
+	}
+	if flood == nil || flood.Count != 2500 || flood.IPs != maxIPsPerEvent || len(flood.SampleIPs) != maxSampleIPs {
+		t.Errorf("flood event = %+v", flood)
+	}
+	if shell == nil || shell.Severity != "critical" {
+		t.Errorf("web shell event = %+v", shell)
+	}
+}

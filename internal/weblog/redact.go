@@ -19,7 +19,7 @@ var nestedSecret = regexp.MustCompile(`(?i)([a-z0-9_]*(?:token|passw|pwd|secret|
 
 // tokenLike matches long runs of letters and digits, the shape of reset tokens, API keys and
 // session identifiers wherever they appear: in a path segment or inside a kept value.
-var tokenLike = regexp.MustCompile(`[A-Za-z0-9_\-]{24,}`)
+var tokenLike = regexp.MustCompile(`[A-Za-z0-9_\-]{16,}`)
 
 // queryInLine finds query strings inside free text such as an error log line.
 var queryInLine = regexp.MustCompile(`\?[^\s"'<>]+`)

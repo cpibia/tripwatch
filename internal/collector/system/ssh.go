@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -88,7 +89,10 @@ func (SSH) Collect(_ context.Context, src collector.Source) (any, error) {
 	return res, nil
 }
 
-const maxSSHDIncludeDepth = 8
+const (
+	maxSSHDIncludeDepth = 8
+	maxSSHDFiles        = 100
+)
 
 // sshdParser follows the configuration as sshd reads it: Include is expanded where it appears
 // (Debian puts it first, so drop-ins win), the first value of a setting wins, and a Match
@@ -97,13 +101,29 @@ type sshdParser struct {
 	src   collector.Source
 	res   *SSHResult
 	match *SSHMatch
+	// chain holds the files being read, to cut include cycles; parsed counts all reads.
+	chain  []string
+	parsed int
 }
 
 func (p *sshdParser) parseFile(name string, depth int) {
-	if depth > maxSSHDIncludeDepth {
+	switch {
+	case depth > maxSSHDIncludeDepth:
 		p.res.Issues = append(p.res.Issues, "sshd: include depth exceeded at /"+name)
 		return
+	case slices.Contains(p.chain, name):
+		p.res.Issues = append(p.res.Issues, "sshd: /"+name+" includes itself, cycle ignored")
+		return
+	case p.parsed >= maxSSHDFiles:
+		if p.parsed == maxSSHDFiles {
+			p.res.Issues = append(p.res.Issues, fmt.Sprintf("sshd: more than %d configuration files, parsing stopped", maxSSHDFiles))
+		}
+		p.parsed++
+		return
 	}
+	p.parsed++
+	p.chain = append(p.chain, name)
+	defer func() { p.chain = p.chain[:len(p.chain)-1] }()
 	lines, err := collector.ReadLines(p.src.FS, name)
 	p.res.Issues.Add(err)
 	if lines == nil {

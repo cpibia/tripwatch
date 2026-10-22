@@ -102,7 +102,8 @@ func caddyLines(fsys fs.FS, name string, budget *configBudget, issues *collector
 		if len(fields) == 2 && fields[0] == "import" {
 			pattern := fields[1]
 			if !path.IsAbs(pattern) {
-				pattern = path.Join("/"+path.Dir(caddyfile), pattern)
+				// Relative to the file holding the import, as Caddy resolves it.
+				pattern = path.Join("/"+path.Dir(name), pattern)
 			}
 			if matches := collector.Glob(fsys, collector.Rel(pattern)); len(matches) > 0 {
 				for _, m := range matches {

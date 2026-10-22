@@ -30,7 +30,9 @@ var generatorDirs = []string{
 
 // Manager configuration: DefaultEnvironment there reaches every service (LD_PRELOAD included).
 var managerConfigs = []string{
-	"etc/systemd/system.conf", "etc/systemd/system.conf.d/*.conf", "etc/systemd/user.conf", "etc/systemd/user.conf.d/*.conf",
+	"etc/systemd/system.conf", "etc/systemd/user.conf",
+	"etc/systemd/system.conf.d/*.conf", "run/systemd/system.conf.d/*.conf", "usr/lib/systemd/system.conf.d/*.conf", "usr/local/lib/systemd/system.conf.d/*.conf",
+	"etc/systemd/user.conf.d/*.conf", "run/systemd/user.conf.d/*.conf", "usr/lib/systemd/user.conf.d/*.conf", "usr/local/lib/systemd/user.conf.d/*.conf",
 }
 
 var unitExtensions = []string{".service", ".timer", ".socket", ".path", ".mount", ".target"}
@@ -98,8 +100,8 @@ func (Services) Collect(ctx context.Context, src collector.Source) (any, error) 
 			lines, err := collector.ReadLines(src.FS, name)
 			res.Issues.Add(err)
 			for _, line := range directives(lines) {
-				if strings.HasPrefix(line, "DefaultEnvironment=") {
-					res.Environment = append(res.Environment, line)
+				if key, value, ok := strings.Cut(line, "="); ok && strings.TrimSpace(key) == "DefaultEnvironment" {
+					res.Environment = append(res.Environment, "DefaultEnvironment="+strings.TrimSpace(value))
 				}
 			}
 		}

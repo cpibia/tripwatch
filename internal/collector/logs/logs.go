@@ -89,20 +89,45 @@ type AttackerControlled struct {
 	Line      string `json:"line,omitempty"`
 }
 
-// Event groups the requests that matched one rule from one IP on one path.
+// Event groups the requests that matched one rule on one path, from any number of addresses:
+// a flood from many addresses is one event, not thousands. IP is the first address seen, IPs
+// how many distinct ones (up to a bound), SampleIPs a few of them.
 type Event struct {
-	Rule     string             `json:"rule"`
-	Severity string             `json:"severity"`
-	IP       string             `json:"ip,omitempty"`
-	Method   string             `json:"method,omitempty"`
-	Status   int                `json:"status,omitempty"`
-	Log      string             `json:"log"`
-	Count    int                `json:"count"`
-	First    time.Time          `json:"first,omitzero"`
-	Last     time.Time          `json:"last,omitzero"`
-	Evidence AttackerControlled `json:"attacker_controlled"`
+	Rule      string             `json:"rule"`
+	Severity  string             `json:"severity"`
+	IP        string             `json:"ip,omitempty"`
+	IPs       int                `json:"ips,omitempty"`
+	SampleIPs []string           `json:"sample_ips,omitempty"`
+	Method    string             `json:"method,omitempty"`
+	Status    int                `json:"status,omitempty"`
+	Log       string             `json:"log"`
+	Count     int                `json:"count"`
+	First     time.Time          `json:"first,omitzero"`
+	Last      time.Time          `json:"last,omitzero"`
+	Evidence  AttackerControlled `json:"attacker_controlled"`
 
-	path string
+	path   string
+	ipSeen map[string]struct{}
+}
+
+const (
+	maxSampleIPs     = 5
+	maxIPsPerEvent   = 1000
+	maxEventsPerRule = maxEvents / 4
+)
+
+func (e *Event) addIP(ip string) {
+	if e.ipSeen == nil {
+		e.ipSeen = map[string]struct{}{}
+	}
+	if _, seen := e.ipSeen[ip]; seen || len(e.ipSeen) >= maxIPsPerEvent {
+		return
+	}
+	e.ipSeen[ip] = struct{}{}
+	e.IPs = len(e.ipSeen)
+	if len(e.SampleIPs) < maxSampleIPs {
+		e.SampleIPs = append(e.SampleIPs, ip)
+	}
 }
 
 type Counter struct {
@@ -125,6 +150,8 @@ type Stats struct {
 	OtherIPs    int            `json:"other_ip_requests,omitempty"`
 	PostTargets []PostTarget   `json:"post_targets"`
 	OtherPosts  int            `json:"other_post_requests,omitempty"`
+	// DroppedEvents counts by severity the events that did not fit the bounded list.
+	DroppedEvents map[string]int `json:"dropped_events,omitempty"`
 }
 
 type Result struct {
@@ -164,7 +191,8 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 	run := &runState{
 		maxBytes: cmp.Or(c.MaxBytes, DefaultMaxBytes), firstRunBytes: cmp.Or(c.FirstRunBytes, DefaultFirstRunBytes),
 		src: src, events: map[string]*Event{}, ips: map[string]int{}, posts: map[string]*postTally{},
-		res: Result{Stats: Stats{Statuses: map[string]int{}}},
+		perRule: map[string]int{}, ruleRanks: map[string][5]int{},
+		res: Result{Stats: Stats{Statuses: map[string]int{}, DroppedEvents: map[string]int{}}},
 	}
 	run.positions = loadPositions(c.StateDir, &run.res.Issues)
 
@@ -297,8 +325,10 @@ type runState struct {
 	ips           map[string]int
 	posts         map[string]*postTally
 	postPairs     int
-	// ranks counts the events held per severity rank.
-	ranks [5]int
+	// ranks counts the events held per severity rank, perRule per rule.
+	ranks     [5]int
+	perRule   map[string]int
+	ruleRanks map[string][5]int
 }
 
 func (r *runState) read(ctx context.Context, name, kind string) error {
@@ -352,7 +382,7 @@ func (r *runState) read(ctx context.Context, name, kind string) error {
 
 func (r *runState) tamper(name, rule, detail string) {
 	key := rule + "\x00" + name
-	if _, seen := r.events[key]; !seen && r.admit(weblog.SeverityHigh) {
+	if _, seen := r.events[key]; !seen && r.admit(weblog.SeverityHigh, rule) {
 		r.events[key] = &Event{Rule: rule, Severity: weblog.SeverityHigh, Log: "/" + name, Count: 1, Evidence: AttackerControlled{Line: detail}}
 	}
 	r.res.Issues = append(r.res.Issues, fmt.Sprintf("/%s: %s (%s), read again from the start", name, strings.ReplaceAll(rule, "_", " "), detail))
@@ -622,10 +652,10 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 	}
 
 	for _, h := range hits {
-		key := h.Rule + "\x00" + req.IP + "\x00" + req.Path()
+		key := h.Rule + "\x00" + req.Path()
 		e, ok := r.events[key]
 		if !ok {
-			if !r.admit(h.Severity) {
+			if !r.admit(h.Severity, h.Rule) {
 				continue
 			}
 			e = &Event{
@@ -637,29 +667,52 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 		}
 		// The worst outcome wins: a later 200 on a probed web shell path raises the event.
 		if weblog.SeverityRank(h.Severity) > weblog.SeverityRank(e.Severity) {
-			r.ranks[weblog.SeverityRank(e.Severity)]--
-			r.ranks[weblog.SeverityRank(h.Severity)]++
+			r.count(e.Rule, weblog.SeverityRank(e.Severity), -1)
+			r.count(e.Rule, weblog.SeverityRank(h.Severity), 1)
 			e.Severity, e.Status, e.Evidence.Request = h.Severity, req.Status, weblog.RedactURI(req.URI)
 		}
 		e.Count++
 		e.Last = req.Time
+		e.addIP(req.IP)
 	}
 }
 
-// admit decides whether a new event of the given severity fits. Up to maxEvents anything
-// does. Past it, the new event takes the place of one strictly less severe (the least frequent
-// among the least severe), so whatever floods the list first, a more severe event still gets
-// in: lows give way to highs, highs to criticals. When nothing less severe is left the new
-// event is dropped, in constant time thanks to the per-severity counts.
-func (r *runState) admit(severity string) bool {
+// admit decides whether a new event fits. No rule may hold more than a quarter of the list,
+// so a flood that triggers one rule on many paths leaves room for the others; past either
+// limit, the new event takes the place of one strictly less severe (of the same rule when the
+// rule is at its limit), the least frequent among the least severe. Otherwise it is dropped
+// and counted in Stats.DroppedEvents. Per-severity counts keep the common case of a flood of
+// equal severity in constant time.
+func (r *runState) admit(severity, rule string) bool {
 	rank := weblog.SeverityRank(severity)
-	if len(r.events) < maxEvents {
-		r.ranks[rank]++
-		return true
+	switch {
+	case r.perRule[rule] >= maxEventsPerRule:
+		if !r.evict(rank, rule) {
+			return r.drop(severity)
+		}
+	case len(r.events) >= maxEvents:
+		if !r.evict(rank, "") {
+			return r.drop(severity)
+		}
 	}
+	r.count(rule, rank, 1)
+	return true
+}
+
+func (r *runState) drop(severity string) bool {
 	r.res.Truncated = true
+	r.res.Stats.DroppedEvents[severity]++
+	return false
+}
+
+// evict removes the least severe event below rank, within rule when one is given.
+func (r *runState) evict(rank int, rule string) bool {
+	ranks := r.ranks
+	if rule != "" {
+		ranks = r.ruleRanks[rule]
+	}
 	lowest := -1
-	for i, n := range r.ranks {
+	for i, n := range ranks {
 		if n > 0 {
 			lowest = i
 			break
@@ -670,14 +723,24 @@ func (r *runState) admit(severity string) bool {
 	}
 	victim := ""
 	for k, e := range r.events {
-		if weblog.SeverityRank(e.Severity) == lowest && (victim == "" || e.Count < r.events[victim].Count) {
+		if (rule == "" || e.Rule == rule) && weblog.SeverityRank(e.Severity) == lowest && (victim == "" || e.Count < r.events[victim].Count) {
 			victim = k
 		}
 	}
+	v := r.events[victim]
+	r.res.Truncated = true
+	r.res.Stats.DroppedEvents[v.Severity]++
+	r.count(v.Rule, lowest, -1)
 	delete(r.events, victim)
-	r.ranks[lowest]--
-	r.ranks[rank]++
 	return true
+}
+
+func (r *runState) count(rule string, rank, delta int) {
+	r.ranks[rank] += delta
+	r.perRule[rule] += delta
+	rr := r.ruleRanks[rule]
+	rr[rank] += delta
+	r.ruleRanks[rule] = rr
 }
 
 // countIP keeps approximate per-IP counts with the Misra-Gries summary: when the table is
@@ -725,7 +788,7 @@ func (r *runState) errorLine(log, line string) {
 		key := "php_error\x00" + marker + "\x00" + log
 		e, ok := r.events[key]
 		if !ok {
-			if !r.admit(weblog.SeverityMedium) {
+			if !r.admit(weblog.SeverityMedium, "suspicious_php_error") {
 				return
 			}
 			e = &Event{Rule: "suspicious_php_error", Severity: weblog.SeverityMedium, Log: "/" + log, Evidence: AttackerControlled{Line: weblog.RedactLine(line)}}
