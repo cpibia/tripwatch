@@ -218,11 +218,17 @@ func TestNoApplications(t *testing.T) {
 	}
 }
 
+// A cancelled scan returns what it has, marked as partial, instead of nothing.
 func TestCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := (Collector{}).Collect(ctx, collector.Source{FS: compromisedShop()}); err == nil {
-		t.Error("cancelled scan did not stop")
+	out, err := (Collector{}).Collect(ctx, collector.Source{FS: compromisedShop()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := out.(Result)
+	if len(res.Apps) != 0 || !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "not scanned") }) {
+		t.Errorf("apps %d, issues %v", len(res.Apps), res.Issues)
 	}
 }
 
@@ -408,5 +414,121 @@ func TestSymlinks(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("findings:\n got  %q\n want %q", got, want)
+	}
+}
+
+type tree struct {
+	t    *testing.T
+	root string
+}
+
+func newTree(t *testing.T) *tree { return &tree{t: t, root: t.TempDir()} }
+
+func (tr *tree) file(p, content string) {
+	tr.t.Helper()
+	full := filepath.Join(tr.root, p)
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+		tr.t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+		tr.t.Fatal(err)
+	}
+}
+
+func (tr *tree) link(target, p string) {
+	tr.t.Helper()
+	if err := os.Symlink(target, filepath.Join(tr.root, p)); err != nil {
+		tr.t.Fatal(err)
+	}
+}
+
+func (tr *tree) scan() Result {
+	tr.t.Helper()
+	out, err := Collector{}.Collect(context.Background(), collector.NewSource(tr.root))
+	if err != nil {
+		tr.t.Fatal(err)
+	}
+	return out.(Result)
+}
+
+func findingsOf(res Result) []string {
+	var out []string
+	for _, a := range res.Apps {
+		for _, f := range a.Findings {
+			out = append(out, f.Kind+" "+f.Path)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// A CMS marker planted inside an upload directory makes that directory look like an
+// application of its own; it must not take the upload directory out of the parent's scan.
+func TestApplicationInsideUploads(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/uploads/wp-includes/version.php", "<?php $wp_version = '6.6';")
+	tr.file("var/www/site/uploads/shell.php", `<?php system($_GET['c']);`)
+
+	got := findingsOf(tr.scan())
+	for _, want := range []string{
+		KindAppInData + " /var/www/site/uploads",
+		KindScriptInUploads + " /var/www/site/uploads/shell.php",
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+}
+
+// An upload directory that is a symlink to a shared directory is scanned through the link.
+func TestSymlinkedUploadDirectoryIsScanned(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/releases/5/index.php", "<?php echo 1;")
+	tr.file("var/www/shared/uploads/2026/shell.php", `<?php system($_GET['c']);`)
+	tr.link("../../shared/uploads", "var/www/releases/5/uploads")
+	tr.link("../uploads", "var/www/shared/uploads/2026/loop")
+
+	got := findingsOf(tr.scan())
+	if !slices.Contains(got, KindScriptInUploads+" /var/www/releases/5/uploads/2026/shell.php") {
+		t.Errorf("findings = %v", got)
+	}
+}
+
+// Upload directories are streamed: one larger than the listing limit is scanned in full.
+func TestHugeUploadDirectoryIsScannedInFull(t *testing.T) {
+	prev := collector.MaxDirEntries
+	collector.MaxDirEntries = 50
+	t.Cleanup(func() { collector.MaxDirEntries = prev })
+
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	for i := range 200 {
+		tr.file(fmt.Sprintf("var/www/site/uploads/img%03d.jpg", i), "\xff\xd8 photo")
+	}
+	tr.file("var/www/site/uploads/zz-shell.php", `<?php system($_GET['c']);`)
+
+	if got := findingsOf(tr.scan()); !slices.Contains(got, KindScriptInUploads+" /var/www/site/uploads/zz-shell.php") {
+		t.Errorf("findings = %v", got)
+	}
+}
+
+// Past the run's hash budget files are fingerprinted, the scan completes, and that is said.
+func TestHashBudget(t *testing.T) {
+	prev := MaxHashBytesPerRun
+	MaxHashBytesPerRun = 100
+	t.Cleanup(func() { MaxHashBytesPerRun = prev })
+
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/lib/a.php", "<?php "+strings.Repeat("a", 200)+";")
+	tr.file("var/www/site/lib/b.php", "<?php "+strings.Repeat("b", 200)+";")
+
+	res := tr.scan()
+	if len(res.Apps) != 1 || res.Apps[0].TreeHash == "" || res.Apps[0].Files != 3 {
+		t.Fatalf("apps = %+v", res.Apps)
+	}
+	if !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "hash budget") }) {
+		t.Errorf("issues = %v", res.Issues)
 	}
 }

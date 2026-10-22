@@ -20,6 +20,10 @@ import (
 	"github.com/cpibia/tripwatch/internal/discovery"
 )
 
+// MaxHashBytesPerRun bounds the bytes hashed by one run across all applications; beyond it
+// files are fingerprinted by size, ctime and inode. Sparse files cost nothing to create.
+var MaxHashBytesPerRun int64 = 8 << 30
+
 // Finding kinds.
 const (
 	KindScriptInUploads = "script_in_upload_dir"
@@ -35,6 +39,9 @@ const (
 	// A symlink leaving the application. Deploy tools link shared directories this way, so it
 	// is a weak signal on its own.
 	KindExternalSymlink = "external_symlink"
+	// An application found inside another one's upload or data directory: uploads are not
+	// where software gets installed.
+	KindAppInData = "application_in_data_dir"
 )
 
 const (
@@ -43,6 +50,8 @@ const (
 	maxFindingsPerApp = 1000
 	maxReachableList  = 500
 	dirHashDepth      = 2
+	// maxFindingHashSize bounds hashing for the file attached to a finding.
+	maxFindingHashSize = 64 << 20
 )
 
 var scriptExtensions = []string{
@@ -103,17 +112,38 @@ type Collector struct{}
 
 func (Collector) Name() string { return "web" }
 
+// Collect scans every application. When the context expires the scan stops where it is and the
+// partial result is returned, marked as truncated, rather than lost.
 func (Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.Inspect(src.FS)}
+	budget := &hashBudget{left: MaxHashBytesPerRun}
 	for _, app := range res.Inventory.Applications {
-		s := newScanner(src, app, res.Inventory.Sites, res.Inventory.Applications)
-		if err := s.scan(ctx); err != nil {
-			return nil, err
+		if ctx.Err() != nil {
+			res.Issues = append(res.Issues, fmt.Sprintf("%s not scanned: %v", app.Path, ctx.Err()))
+			continue
 		}
+		s := newScanner(src, app, res.Inventory.Sites, res.Inventory.Applications)
+		s.budget = budget
+		s.scan(ctx)
 		res.Apps = append(res.Apps, s.report)
 		res.Issues = append(res.Issues, s.issues...)
 	}
 	return res, nil
+}
+
+// hashBudget is shared by the scanners of one run.
+type hashBudget struct {
+	left      int64
+	exhausted bool
+}
+
+func (b *hashBudget) take(n int64) bool {
+	if b.left < n {
+		b.exhausted = true
+		return false
+	}
+	b.left -= n
+	return true
 }
 
 type scanner struct {
@@ -128,6 +158,10 @@ type scanner struct {
 	// nested are the roots of applications inside this one, scanned on their own with their
 	// own profile.
 	nested []string
+	budget *hashBudget
+	// followed holds the directories reached through symlinks, so a link loop is walked once.
+	followed map[string]bool
+	stopped  bool
 }
 
 func newScanner(src collector.Source, app discovery.Application, sites []discovery.Site, apps []discovery.Application) *scanner {
@@ -164,62 +198,73 @@ func (s *scanner) expand(patterns []string) []string {
 	return out
 }
 
-func (s *scanner) scan(ctx context.Context) error {
-	hash, err := s.walk(ctx, s.root, 0, false, false)
-	if err != nil {
-		return err
+func (s *scanner) scan(ctx context.Context) {
+	if s.budget == nil {
+		s.budget = &hashBudget{left: MaxHashBytesPerRun}
 	}
-	s.report.TreeHash = hash
-	return nil
+	s.followed = map[string]bool{}
+	s.report.TreeHash = s.walk(ctx, s.root, 0, false, false)
+	if s.stopped {
+		s.report.Truncated = true
+		s.issues = append(s.issues, fmt.Sprintf("%s: scan stopped before the end (%v), results are partial", s.report.Path, ctx.Err()))
+	}
+	if s.budget.exhausted {
+		s.issues = append(s.issues, fmt.Sprintf("hash budget of %d bytes per run exhausted: later files fingerprinted by size, ctime and inode", MaxHashBytesPerRun))
+	}
+}
+
+func (s *scanner) expired(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		s.stopped = true
+	}
+	return s.stopped
 }
 
 // walk hashes dir as a Merkle tree (name, type and content hash of each child) and inspects
-// every file. Data directories are scanned but left out of the hash, since their content
-// changes at runtime; the hash covers code only.
-func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, inThirdParty bool) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
+// every file. Data directories are handed to walkData: they are inspected but left out of the
+// hash, since their content changes at runtime; the hash covers code only.
+func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, inThirdParty bool) string {
+	if s.expired(ctx) {
+		return ""
 	}
 	entries, err := fs.ReadDir(s.src.FS, dir)
 	if err != nil {
-		s.issues.Add(err)
-		return "", nil
+		// A partial listing (a directory over the entry limit) is still scanned.
+		s.issues = append(s.issues, err.Error())
 	}
 
 	h := sha256.New()
 	for _, e := range entries {
 		name := path.Join(dir, e.Name())
-		if slices.Contains(s.nested, name) {
+		maybeDir := e.IsDir() || e.Type()&fs.ModeSymlink != 0
+		childUploads := inUploads || slices.Contains(s.uploads, name) || (maybeDir && s.genericUploadDir(dir, e.Name()))
+		childThirdParty := inThirdParty || slices.Contains(thirdPartyDirs, e.Name())
+		isData := slices.Contains(s.data, name) || childUploads
+		if slices.Contains(s.nested, name) && !isData {
 			continue
 		}
-		childUploads := inUploads || slices.Contains(s.uploads, name) || (e.IsDir() && s.genericUploadDir(dir, e.Name()))
-		childThirdParty := inThirdParty || slices.Contains(thirdPartyDirs, e.Name())
-		isData := slices.Contains(s.data, name) || (childUploads && !inUploads)
+		if isData {
+			if slices.Contains(s.nested, name) {
+				s.add(KindAppInData, name, e, nil)
+			}
+			s.enterData(ctx, name, e, childUploads)
+			continue
+		}
 
 		var childHash string
 		switch {
 		case e.Type()&fs.ModeSymlink != 0:
 			target, _ := fs.ReadLink(s.src.FS, name)
 			childHash = "link:" + target
-			s.inspectSymlink(name, e, target, childUploads || s.inData(dir))
+			s.inspectSymlink(name, e, target, false)
 		case e.IsDir():
 			if e.Name() == ".git" {
 				continue
 			}
-			if isSuspiciousHidden(e.Name()) && (inUploads || s.inData(dir)) {
-				s.add(KindHiddenInData, name, e, nil)
-			}
-			childHash, err = s.walk(ctx, name, depth+1, childUploads, childThirdParty)
-			if err != nil {
-				return "", err
-			}
+			childHash = s.walk(ctx, name, depth+1, false, childThirdParty)
 		case e.Type().IsRegular():
-			childHash = s.inspectFile(name, e, inUploads, inUploads || s.inData(dir))
+			childHash = s.inspectFile(name, e, false, false, true)
 		default:
-			continue
-		}
-
-		if isData {
 			continue
 		}
 		h.Write([]byte(e.Name() + "\x00" + e.Type().String() + "\x00" + childHash + "\n"))
@@ -229,7 +274,98 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 	if depth <= dirHashDepth && depth > 0 {
 		s.report.DirHashes["/"+dir] = sum
 	}
-	return sum, nil
+	return sum
+}
+
+// enterData handles the root of an upload or data directory, which may itself be a symlink
+// (deploy tools link uploads to a shared directory): it is followed once, confined to the
+// observed root, and its content scanned as data.
+func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inUploads bool) {
+	if e.Type()&fs.ModeSymlink != 0 {
+		target, _ := fs.ReadLink(s.src.FS, name)
+		s.inspectSymlink(name, e, target, true)
+		info, err := fs.Stat(s.src.FS, name)
+		if err != nil || !info.IsDir() {
+			return
+		}
+		id, ok := collector.FileID(info)
+		if ok && s.followed[id] {
+			return
+		}
+		s.followed[id] = true
+	} else if !e.IsDir() {
+		s.inspectFile(name, e, inUploads, true, false)
+		return
+	}
+	s.walkData(ctx, name, inUploads)
+}
+
+// walkData inspects a data directory without hashing it. Entries are streamed in batches, so a
+// directory with millions of uploads is scanned in full without holding its listing.
+func (s *scanner) walkData(ctx context.Context, dir string, inUploads bool) {
+	if s.expired(ctx) {
+		return
+	}
+	f, err := s.src.FS.Open(dir)
+	if err != nil {
+		s.issues.Add(err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	rd, ok := f.(fs.ReadDirFile)
+	if !ok {
+		return
+	}
+	for {
+		batch, err := rd.ReadDir(4096)
+		for _, raw := range batch {
+			if s.expired(ctx) {
+				return
+			}
+			name := path.Join(dir, raw.Name())
+			e := lazyEntry{DirEntry: raw, fsys: s.src.FS, name: name}
+			s.inspectDataEntry(ctx, name, e, inUploads)
+		}
+		if err != nil || len(batch) == 0 {
+			if err != nil && !errors.Is(err, io.EOF) {
+				s.issues.Add(err)
+			}
+			return
+		}
+	}
+}
+
+func (s *scanner) inspectDataEntry(ctx context.Context, name string, e fs.DirEntry, inUploads bool) {
+	if slices.Contains(s.nested, name) {
+		// Not skipped: the parent's rules for uploads still apply to what is inside.
+		s.add(KindAppInData, name, e, nil)
+	}
+	switch {
+	case e.Type()&fs.ModeSymlink != 0:
+		s.enterData(ctx, name, e, inUploads)
+	case e.IsDir():
+		if e.Name() == ".git" {
+			return
+		}
+		if isSuspiciousHidden(e.Name()) {
+			s.add(KindHiddenInData, name, e, nil)
+		}
+		s.walkData(ctx, name, inUploads)
+	case e.Type().IsRegular():
+		s.inspectFile(name, e, inUploads, true, false)
+	}
+}
+
+// lazyEntry answers Info through the observed filesystem's Lstat, so entries streamed from an
+// open directory keep the same path rules as everything else.
+type lazyEntry struct {
+	fs.DirEntry
+	fsys fs.FS
+	name string
+}
+
+func (e lazyEntry) Info() (fs.FileInfo, error) {
+	return fs.Lstat(e.fsys, e.name)
 }
 
 // genericUploadDir applies the generic upload names (uploads, media, files...) when the
@@ -245,14 +381,10 @@ func (s *scanner) genericUploadDir(parent, name string) bool {
 	return s.profile != nil && s.profile.WebRoot != "" && parent == path.Join(s.root, s.profile.WebRoot)
 }
 
-func (s *scanner) inData(dir string) bool {
-	return slices.ContainsFunc(s.data, func(d string) bool { return dir == d || strings.HasPrefix(dir, d+"/") })
-}
-
 // inspectFile hashes one file and runs the content checks that apply to it. Executable code
 // is only out of place in upload directories; caches and other data directories legitimately
 // hold generated PHP, but hidden files there are still reported.
-func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData bool) string {
+func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData, hash bool) string {
 	s.report.Files++
 	base := strings.ToLower(e.Name())
 	ext := path.Ext(base)
@@ -273,6 +405,10 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData bool
 	}
 	needContent := script || image || inUploads || inData
 	if !needContent || info.Size() > maxInMemory {
+		if !hash {
+			s.classify(name, e, s.edges(name, info), false, inUploads, inData)
+			return ""
+		}
 		sum, edges := s.hashLarge(name, info, needContent)
 		if needContent {
 			s.classify(name, e, edges, false, inUploads, inData)
@@ -285,8 +421,12 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData bool
 		s.issues.Add(err)
 		return ""
 	}
-	sum := sha256.Sum256(content)
 	s.classify(name, e, content, true, inUploads, inData)
+	if !hash {
+		return ""
+	}
+	s.budget.take(int64(len(content)))
+	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -368,7 +508,7 @@ func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inDa
 // change time and inode stand in for the hash, an issue records it, and only the edges are
 // read.
 func (s *scanner) hashLarge(name string, info fs.FileInfo, keepEdges bool) (string, []byte) {
-	if info.Size() <= collector.MaxHashSize {
+	if info.Size() <= collector.MaxHashSize && s.budget.take(info.Size()) {
 		return s.hashStream(name, keepEdges)
 	}
 	// The modification time can be set back by the file's owner; the change time and the
@@ -376,26 +516,35 @@ func (s *scanner) hashLarge(name string, info fs.FileInfo, keepEdges bool) (stri
 	ctime, _ := collector.ChangeTime(info)
 	id, _ := collector.FileID(info)
 	surrogate := fmt.Sprintf("unhashed:size:%d:ctime:%d:id:%s", info.Size(), ctime, id)
-	s.issues = append(s.issues, fmt.Sprintf("/%s not hashed: %d bytes, over %d", name, info.Size(), collector.MaxHashSize))
+	if info.Size() > collector.MaxHashSize {
+		s.issues = append(s.issues, fmt.Sprintf("/%s not hashed: %d bytes, over %d", name, info.Size(), collector.MaxHashSize))
+	}
 	if !keepEdges {
 		return surrogate, nil
 	}
+	return surrogate, s.edges(name, info)
+}
 
+// edges reads the head and tail of a file without reading what lies between.
+func (s *scanner) edges(name string, info fs.FileInfo) []byte {
 	f, err := s.src.FS.Open(name)
 	if err != nil {
 		s.issues.Add(err)
-		return surrogate, nil
+		return nil
 	}
 	defer func() { _ = f.Close() }()
 	ra, ok := f.(io.ReaderAt)
 	if !ok {
-		return surrogate, nil
+		return nil
 	}
-	head := make([]byte, edgeScanSize)
+	head := make([]byte, min(edgeScanSize, info.Size()))
 	n, _ := ra.ReadAt(head, 0)
+	if info.Size() <= edgeScanSize {
+		return head[:n]
+	}
 	tail := make([]byte, edgeScanSize)
 	m, _ := ra.ReadAt(tail, info.Size()-edgeScanSize)
-	return surrogate, append(head[:n], tail[:m]...)
+	return append(head[:n], tail[:m]...)
 }
 
 // hashStream hashes a large file without loading it, keeping its first and last bytes for
@@ -438,16 +587,30 @@ func (s *scanner) hashStream(name string, keepEdges bool) (string, []byte) {
 	return hex.EncodeToString(h.Sum(nil)), append(head.Bytes(), tail...)
 }
 
+// describe returns the metadata of a finding's file, hashed only when small and within the
+// run's budget.
+func (s *scanner) describe(name string, e fs.DirEntry) collector.File {
+	info, err := e.Info()
+	if err == nil && info.Mode().IsRegular() && info.Size() <= maxFindingHashSize && s.budget.take(info.Size()) {
+		if f, err := collector.DescribeEntry(s.src, name, e); f.Path != "" {
+			s.issues.Add(err)
+			return f
+		}
+	}
+	f := collector.File{Path: "/" + name}
+	if err == nil {
+		f.Mode, f.Size, f.ModTime = info.Mode().String(), info.Size(), info.ModTime().UTC()
+	}
+	return f
+}
+
 // add records a finding and reports whether it was kept (the list is capped).
 func (s *scanner) add(kind, name string, e fs.DirEntry, sigs []string) bool {
 	if len(s.report.Findings) >= maxFindingsPerApp {
 		s.report.Truncated = true
 		return false
 	}
-	f, err := collector.DescribeEntry(s.src, name, e)
-	if err != nil && f.Path == "" {
-		f = collector.File{Path: "/" + name}
-	}
+	f := s.describe(name, e)
 	s.report.Findings = append(s.report.Findings, Finding{Kind: kind, Signatures: sigs, Reachable: s.reachable(name), File: f})
 	return true
 }

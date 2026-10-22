@@ -128,9 +128,9 @@ func (blockingCollector) Collect(ctx context.Context, _ Source) (any, error) {
 }
 
 func TestRunTimesOutStuckCollectors(t *testing.T) {
-	prev := Timeout
-	Timeout = 50 * time.Millisecond
-	t.Cleanup(func() { Timeout = prev })
+	prevTimeout, prevGrace := Timeout, Grace
+	Timeout, Grace = 50*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { Timeout, Grace = prevTimeout, prevGrace })
 
 	start := time.Now()
 	snap := Run(context.Background(), Source{FS: fstest.MapFS{}}, []Collector{
@@ -146,5 +146,26 @@ func TestRunTimesOutStuckCollectors(t *testing.T) {
 	}
 	if string(snap.Results["after"]) != "1" {
 		t.Error("the collector after the stuck one did not run")
+	}
+}
+
+type partialCollector struct{}
+
+func (partialCollector) Name() string { return "partial" }
+
+func (partialCollector) Collect(ctx context.Context, _ Source) (any, error) {
+	<-ctx.Done()
+	return "partial result", nil
+}
+
+// A collector that stops at its deadline and returns what it has keeps that result.
+func TestRunKeepsPartialResults(t *testing.T) {
+	prevTimeout, prevGrace := Timeout, Grace
+	Timeout, Grace = 20*time.Millisecond, time.Second
+	t.Cleanup(func() { Timeout, Grace = prevTimeout, prevGrace })
+
+	snap := Run(context.Background(), Source{FS: fstest.MapFS{}}, []Collector{partialCollector{}}, time.Now())
+	if string(snap.Results["partial"]) != `"partial result"` || len(snap.Errors) != 0 {
+		t.Errorf("results %s, errors %v", snap.Results["partial"], snap.Errors)
 	}
 }

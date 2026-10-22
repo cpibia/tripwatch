@@ -12,6 +12,9 @@ import (
 // stop the others or the next snapshot.
 var Timeout = 15 * time.Minute
 
+// Grace is how long a collector has, after its deadline, to hand back a partial result.
+var Grace = 30 * time.Second
+
 // Collector gathers one aspect of the machine state. Collectors only observe: judging what
 // is suspicious is the verifier's job.
 type Collector interface {
@@ -61,9 +64,9 @@ type outcome struct {
 	err    error
 }
 
-// collectWithTimeout runs c under a deadline. Collectors check their context while walking,
-// so they stop soon after it expires; if one is stuck in a call that ignores it, Run moves on
-// and the goroutine is left to finish on its own.
+// collectWithTimeout runs c under a deadline. Collectors check their context while walking and
+// may return what they gathered so far; that partial result is waited for during Grace. A
+// collector stuck in a call that ignores the context is abandoned and left to finish alone.
 func collectWithTimeout(ctx context.Context, c Collector, src Source) (any, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
@@ -77,6 +80,14 @@ func collectWithTimeout(ctx context.Context, c Collector, src Source) (any, erro
 	case o := <-done:
 		return o.result, o.err
 	case <-ctx.Done():
+	}
+	select {
+	case o := <-done:
+		if o.err != nil {
+			return nil, fmt.Errorf("%s: %w after %s", c.Name(), o.err, Timeout)
+		}
+		return o.result, nil
+	case <-time.After(Grace):
 		return nil, fmt.Errorf("%s: %w after %s", c.Name(), ctx.Err(), Timeout)
 	}
 }

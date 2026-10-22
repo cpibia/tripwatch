@@ -14,8 +14,9 @@ import (
 // larger is either an attack on the sensor or not what the caller expects.
 const MaxReadSize = 16 << 20
 
-// maxDirEntries bounds ReadDir: a directory with millions of entries is reported, not loaded.
-const maxDirEntries = 200_000
+// MaxDirEntries bounds ReadDir: a directory with millions of entries is reported, not loaded.
+// Collectors that do not need a sorted listing stream large directories instead.
+var MaxDirEntries = 200_000
 
 var (
 	// ErrNotRegular is returned when opening something that is neither a regular file nor a
@@ -23,7 +24,7 @@ var (
 	ErrNotRegular = errors.New("not a regular file or directory")
 	// ErrTooLarge is returned by ReadFile for files over MaxReadSize.
 	ErrTooLarge = errors.New("file too large to read")
-	// ErrTooManyEntries is returned with the first maxDirEntries entries of a larger directory.
+	// ErrTooManyEntries is returned with the first MaxDirEntries entries of a larger directory.
 	ErrTooManyEntries = errors.New("directory has too many entries, listing truncated")
 )
 
@@ -118,8 +119,8 @@ func (r rootFS) ReadDir(name string) ([]fs.DirEntry, error) {
 			readErr = err
 			break
 		}
-		if len(entries) > maxDirEntries {
-			entries = entries[:maxDirEntries]
+		if len(entries) > MaxDirEntries {
+			entries = entries[:MaxDirEntries]
 			readErr = ErrTooManyEntries
 			break
 		}
