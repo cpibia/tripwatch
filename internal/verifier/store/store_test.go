@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -243,7 +244,7 @@ func TestRetentionThinsOlderSnapshots(t *testing.T) {
 		for _, id := range ids {
 			if hour == 30 {
 				evidence = id
-				_ = s.Keep(ctx, id)
+				_ = s.Keep(ctx, id, 0)
 			}
 			_ = s.MarkAnalyzed(ctx, id)
 		}
@@ -472,5 +473,60 @@ func TestScriptGroupsAndAggregateRenotify(t *testing.T) {
 	raise("weblog:command_in_parameters:/index.php|/index.php?cmd=id&n=x2", t0.Add(2*time.Hour))
 	if a, _ := s.Alert(ctx, id); !a.NotifiedAt.IsZero() {
 		t.Fatal("a growing aggregate is never mailed again")
+	}
+}
+
+// Evidence of an alert still open outlives the 30-day retention; once the alert is resolved it
+// goes like the rest.
+func TestEvidenceOfOpenAlertsOutlivesRetention(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	if err := s.Enroll(ctx, "h", pub, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Raise(ctx, Alert{HostID: "h", Fingerprint: "accounts:uid0:backup", Severity: "critical", Kind: "accounts", Title: "root"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	alertID, err := s.AlertID(ctx, "h", "accounts:uid0:backup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer := protocol.NewSealer("h", priv, protocol.ChainState{})
+	var state protocol.ChainState
+	var evidence int64
+	deliver := func(day int) {
+		at := t0.Add(time.Duration(day) * 24 * time.Hour)
+		e := sealer.Seal(protocol.KindSnapshot, []byte(strconv.Itoa(day)), at)
+		next, _ := protocol.Verify(e, "h", pub, state)
+		if err := s.Accept(ctx, e, state, next, at); err != nil {
+			t.Fatal(err)
+		}
+		state = next
+		ids, _ := s.PendingSnapshots(ctx, 10)
+		for _, id := range ids {
+			if day == 1 {
+				evidence = id
+				_ = s.Keep(ctx, id, alertID)
+			}
+			_ = s.MarkAnalyzed(ctx, id)
+		}
+	}
+	has := func(id int64) bool {
+		snaps, _ := s.LatestSnapshots(ctx, "h", 1000)
+		return slices.ContainsFunc(snaps, func(sn Snapshot) bool { return sn.ID == id })
+	}
+	for day := range 36 {
+		deliver(day)
+	}
+	if !has(evidence) {
+		t.Fatal("evidence of an open alert was deleted at 30 days")
+	}
+	if err := s.Resolve(ctx, alertID, "ops@example.net", t0); err != nil {
+		t.Fatal(err)
+	}
+	deliver(36)
+	if has(evidence) {
+		t.Fatal("evidence of a resolved alert outlived the retention")
 	}
 }

@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 	received_at INTEGER NOT NULL,
 	analyzed    INTEGER NOT NULL DEFAULT 0,
 	keep        INTEGER NOT NULL DEFAULT 0,
+	evidence    INTEGER NOT NULL DEFAULT 0,
 	payload     BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS snapshots_pending ON snapshots(analyzed, id);
@@ -130,6 +131,15 @@ func Open(path string) (*Store, error) {
 
 // migrate adds the columns that databases created by earlier versions lack.
 func migrate(db *sql.DB) error {
+	var evidence int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('snapshots') WHERE name = 'evidence'`).Scan(&evidence); err != nil {
+		return err
+	}
+	if evidence == 0 {
+		if _, err := db.ExecContext(context.Background(), `ALTER TABLE snapshots ADD COLUMN evidence INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
 	var used int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('enroll_tokens') WHERE name = 'used_at'`).Scan(&used); err != nil {
 		return err
@@ -323,8 +333,10 @@ func (s *Store) accept(ctx context.Context, e protocol.Envelope, prev, state pro
 			e.HostID, e.Sequence, e.SentAt.Unix(), now.Unix(), e.Payload); err != nil {
 			return err
 		}
+		// Evidence of an alert still open stays past the retention, within the host's quota.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND received_at < ?
-			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)`, e.HostID, now.Add(-Retention).Unix(), e.HostID); err != nil {
+			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
+			AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.id = snapshots.evidence AND a.status != 'resolved')`, e.HostID, now.Add(-Retention).Unix(), e.HostID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND keep = 0 AND received_at < ?
@@ -356,9 +368,10 @@ func (s *Store) PendingSnapshots(ctx context.Context, limit int) ([]int64, error
 	return out, rows.Err()
 }
 
-// Keep marks a snapshot as evidence of an alert, exempt from thinning until Retention.
-func (s *Store) Keep(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1 WHERE id = ?`, id)
+// Keep marks a snapshot as evidence, exempt from thinning until Retention, and past it while
+// the alert it is evidence of (alertID, 0 for none) stays open.
+func (s *Store) Keep(ctx context.Context, id, alertID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1, evidence = CASE WHEN ? != 0 THEN ? ELSE evidence END WHERE id = ?`, alertID, alertID, id)
 	return err
 }
 

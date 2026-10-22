@@ -73,6 +73,25 @@ func group(fingerprint string) (g, lo, hi string) {
 	return g, g + ":", g + ";"
 }
 
+// storedFingerprint bounds a fingerprint as it is stored: a long one keeps its start and a hash.
+func storedFingerprint(fp string) string {
+	if len(fp) <= MaxFingerprint {
+		return fp
+	}
+	sum := sha256.Sum256([]byte(fp))
+	return fp[:64] + ":" + hex.EncodeToString(sum[:])
+}
+
+// AlertID returns the id of a host's alert with the given fingerprint, as passed to Raise.
+func (s *Store) AlertID(ctx context.Context, host, fingerprint string) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM alerts WHERE host_id = ? AND fingerprint = ?`, host, storedFingerprint(fingerprint)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return id, err
+}
+
 // renotifyAfter is how often an aggregate of serious alerts that keeps growing is mailed again.
 const renotifyAfter = time.Hour
 
@@ -92,10 +111,7 @@ func clip(s string, n int) string {
 // is news again. It reports whether the alert is new or reopened.
 func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error) {
 	a.Title, a.Detail, a.Kind = clip(a.Title, MaxTitle), clip(a.Detail, MaxDetail), clip(a.Kind, 64)
-	if len(a.Fingerprint) > MaxFingerprint {
-		sum := sha256.Sum256([]byte(a.Fingerprint))
-		a.Fingerprint = a.Fingerprint[:64] + ":" + hex.EncodeToString(sum[:])
-	}
+	a.Fingerprint = storedFingerprint(a.Fingerprint)
 	var status string
 	err := s.db.QueryRowContext(ctx, `SELECT status FROM alerts WHERE host_id = ? AND fingerprint = ?`, a.HostID, a.Fingerprint).Scan(&status)
 	switch {

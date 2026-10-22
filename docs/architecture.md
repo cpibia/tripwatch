@@ -49,7 +49,7 @@ firma non cambia.
   Una catena rotta o ripartita è un allarme critico.
 - **Archivio** (`internal/verifier/store`): SQLite. Gli snapshot restano tutti per 48 ore; poi,
   fino a 30 giorni, l'ultimo di ogni giorno e quelli che mostrano un cambiamento o una condizione
-  nuova insieme al precedente; il primo di ogni server per sempre come baseline. Oltre 1 GB di
+  nuova insieme al precedente, anche oltre i 30 giorni finché l'allarme più grave che mostrano resta aperto; il primo di ogni server per sempre come baseline. Oltre 1 GB di
   snapshot in 24 ore un server viene verificato ma non conservato, con un allarme. La conservazione è per età e mai per numero, così un
   server compromesso che inonda di snapshot non può spingere fuori le prove; snapshot orari di un
   server stabile sono quasi identici, e diradarli tiene il database a pochi giorni per server.

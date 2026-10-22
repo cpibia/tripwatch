@@ -222,10 +222,13 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			Title:  "Troppe anomalie in un solo snapshot",
 			Detail: fmt.Sprintf("Lo snapshot ne contiene %d: registrate le %d più gravi, le altre %d no. Un cambiamento così esteso va esaminato sul server.", maxFindings+dropped, maxFindings, dropped)})
 	}
-	evidence := false
+	evidence, worst, evidenceOf := false, "", ""
 	for _, f := range findings {
 		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) || !f.State {
-			evidence = true
+			if !evidence || severityRank(f.Severity) < severityRank(worst) {
+				evidence, worst = true, f.Severity
+				evidenceOf = f.Fingerprint
+			}
 		}
 	}
 	// A snapshot that shows a change or a new condition is evidence, and so is the one before
@@ -235,8 +238,11 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 		if prevSnap != nil {
 			keep = append(keep, prevSnap.ID)
 		}
+		// Linked to the most severe alert it shows, the snapshot outlives the retention while
+		// that alert stays open.
+		alertID, _ := a.Store.AlertID(ctx, host, evidenceOf)
 		for _, k := range keep {
-			if err := a.Store.Keep(ctx, k); err != nil {
+			if err := a.Store.Keep(ctx, k, alertID); err != nil {
 				a.Log.Error("keep snapshot", "snapshot", k, "err", err)
 			}
 		}
