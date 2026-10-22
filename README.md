@@ -377,9 +377,8 @@ Una unit systemd con le restrizioni di sicurezza è in [deploy/systemd](deploy/s
 ## Roadmap
 
 1. Eventi in tempo reale via eBPF o auditd, spediti appena accadono.
-2. Installazione senza toolchain: pacchetti `.deb`, `.rpm` e `.apk` firmati e repository APT/YUM,
-   registrazione in un comando con un token monouso del verificatore
-   (`tripwatch-sensor enroll --token ...`), immagine e chart Helm per il DaemonSet; il
+2. Installazione senza toolchain: pacchetti `.deb`, `.rpm` e `.apk` firmati e repository APT/YUM
+   (la registrazione con token monouso c'è già), immagine e chart Helm per il DaemonSet; il
    verificatore confronta il binario in esecuzione con quello della versione pubblicata.
 3. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
 4. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.

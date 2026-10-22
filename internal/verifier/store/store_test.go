@@ -407,3 +407,29 @@ func TestPruneResolved(t *testing.T) {
 		t.Fatalf("left = %+v", left)
 	}
 }
+
+// The bounding counts of Raise use the partial indexes, so resolved alerts cost nothing.
+func TestRaiseCountsUseOpenIndexes(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	for _, q := range []string{
+		`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM alerts WHERE host_id = 'h' AND fingerprint >= 'a:' AND fingerprint < 'a;' AND severity = 'low' AND status != 'resolved'`,
+		`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM alerts WHERE host_id = 'h' AND status != 'resolved'`,
+	} {
+		rows, err := s.db.QueryContext(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan := ""
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			_ = rows.Scan(&id, &parent, &unused, &detail)
+			plan += detail + "\n"
+		}
+		_ = rows.Close()
+		if !strings.Contains(plan, "alerts_open_") {
+			t.Errorf("query does not use a partial index:\n%s\n%s", q, plan)
+		}
+	}
+}

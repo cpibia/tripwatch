@@ -177,13 +177,18 @@ func (s *Store) resolveMissing(ctx context.Context, host, kind string, current [
 	return nil
 }
 
-// ResolvedRetention is how long resolved alerts stay for reference before they are deleted.
-const ResolvedRetention = 90 * 24 * time.Hour
+// Resolved alerts stay for reference: high and critical ones for ResolvedRetention, medium and
+// low ones, which are most of the noise, for MinorResolvedRetention. A condition that comes back
+// after that is raised as new.
+const (
+	ResolvedRetention      = 90 * 24 * time.Hour
+	MinorResolvedRetention = 7 * 24 * time.Hour
+)
 
-// PruneResolved deletes alerts resolved before the retention. A condition that comes back after
-// that is raised as new.
+// PruneResolved deletes resolved alerts past their retention.
 func (s *Store) PruneResolved(ctx context.Context, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE status = 'resolved' AND updated_at < ?`, now.Add(-ResolvedRetention).Unix())
+	_, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE status = 'resolved' AND (updated_at < ?
+		OR (severity NOT IN ('critical', 'high') AND updated_at < ?))`, now.Add(-ResolvedRetention).Unix(), now.Add(-MinorResolvedRetention).Unix())
 	return err
 }
 

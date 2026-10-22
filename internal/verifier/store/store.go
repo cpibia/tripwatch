@@ -74,7 +74,12 @@ CREATE TABLE IF NOT EXISTS alerts (
 	UNIQUE(host_id, fingerprint)
 );
 CREATE INDEX IF NOT EXISTS alerts_status ON alerts(status, severity, updated_at);
-CREATE INDEX IF NOT EXISTS alerts_host_status ON alerts(host_id, status);
+-- Replaced by alerts_open_host, which leaves the resolved alerts out.
+DROP INDEX IF EXISTS alerts_host_status;
+-- Partial indexes over unresolved alerts only: the counts that bound a host's alerts must not
+-- walk the resolved ones, which a noisy host accumulates by the million.
+CREATE INDEX IF NOT EXISTS alerts_open_host ON alerts(host_id) WHERE status != 'resolved';
+CREATE INDEX IF NOT EXISTS alerts_open_group ON alerts(host_id, severity, fingerprint) WHERE status != 'resolved';
 CREATE TABLE IF NOT EXISTS activity (
 	host_id TEXT NOT NULL,
 	minute  INTEGER NOT NULL,
