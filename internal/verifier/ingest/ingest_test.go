@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/tls"
@@ -257,6 +258,7 @@ func TestConcurrentForkAcceptedOnce(t *testing.T) {
 			e := protocol.NewSealer("web-01", key, protocol.ChainState{}).Seal(protocol.KindHeartbeat, []byte(strconv.Itoa(i)), now)
 			body, _ := json.Marshal(e)
 			req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, b.VerifierURL, strings.NewReader(string(body)))
+			req.Header.Set(KindHeader, string(protocol.KindHeartbeat))
 			resp, err := client.Do(req)
 			if err != nil {
 				results <- 0
@@ -274,5 +276,51 @@ func TestConcurrentForkAcceptedOnce(t *testing.T) {
 	}
 	if accepted != 1 {
 		t.Errorf("%d forks accepted, want 1", accepted)
+	}
+}
+
+// Requests are checked against the host and the limits of their declared kind before the body
+// is read: a revoked host, a missing kind or an oversized heartbeat get nowhere.
+func TestRequestsCheckedBeforeTheBody(t *testing.T) {
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	key, _ := b.SigningPrivateKey()
+	tlsConf, _ := b.ClientTLS()
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConf}}
+	post := func(kind string, body []byte) int {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, b.VerifierURL, bytes.NewReader(body))
+		if kind != "" {
+			req.Header.Set(KindHeader, kind)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	heartbeat, _ := json.Marshal(protocol.NewSealer("web-01", key, protocol.ChainState{}).Seal(protocol.KindHeartbeat, nil, now))
+
+	if code := post("", heartbeat); code != http.StatusBadRequest {
+		t.Errorf("no kind: %d", code)
+	}
+	if code := post(string(protocol.KindSnapshot), heartbeat); code != http.StatusBadRequest {
+		t.Errorf("kind mismatch: %d", code)
+	}
+	if code := post(string(protocol.KindHeartbeat), bytes.Repeat([]byte("x"), MaxSmallSize+1)); code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized heartbeat: %d", code)
+	}
+	if hst, _ := h.store.Host(context.Background(), "web-01"); hst.Chain.Sequence != 0 {
+		t.Fatalf("a refused request moved the chain to %d", hst.Chain.Sequence)
+	}
+	if code := post(string(protocol.KindHeartbeat), heartbeat); code != http.StatusOK {
+		t.Errorf("valid heartbeat: %d", code)
+	}
+	if err := h.store.Revoke(context.Background(), "web-01"); err != nil {
+		t.Fatal(err)
+	}
+	if code := post(string(protocol.KindSnapshot), bytes.Repeat([]byte("x"), 8<<20)); code != http.StatusForbidden {
+		t.Errorf("revoked host: %d", code)
 	}
 }

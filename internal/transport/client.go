@@ -105,6 +105,8 @@ func (c *Client) deliver(ctx context.Context, e protocol.Envelope) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Declared ahead of the body so the verifier can apply the kind's limits before reading it.
+	req.Header.Set("Tripwatch-Kind", string(e.Kind))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err

@@ -17,8 +17,16 @@ import (
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
 
-// MaxEnvelopeSize bounds one request: a compressed snapshot of a large server is a few MB.
-const MaxEnvelopeSize = 64 << 20
+// Size limits per envelope kind. A compressed snapshot of a large server is a few MB and its
+// decompressed form is capped at 32 MB by the analysis; heartbeats and events carry little.
+const (
+	MaxSnapshotSize = 48 << 20
+	MaxSmallSize    = 256 << 10
+)
+
+// KindHeader declares the envelope kind before the body, so that a request is checked against
+// the host's state and the size and rate limits of its kind before anything is read.
+const KindHeader = "Tripwatch-Kind"
 
 // Path is where sensors post envelopes.
 const Path = "/v1/envelopes"
@@ -32,6 +40,10 @@ const (
 	SnapshotWindow = 15 * time.Minute
 )
 
+// ConcurrentSnapshots bounds the snapshot bodies held in memory at once, whatever the number of
+// hosts: each costs its size several times over while it is decoded and stored.
+const ConcurrentSnapshots = 2
+
 // Server verifies and stores envelopes. Stored snapshots wait in the database until the
 // analysis worker takes them; Wake only tells it there is work, so a slow analysis never
 // delays a sensor and a restart loses nothing.
@@ -41,15 +53,26 @@ type Server struct {
 	Now   func() time.Time
 	Log   *slog.Logger
 
-	locks sync.Map // host -> *sync.Mutex
+	locks     sync.Map // host -> chan struct{}, a one-slot semaphore
+	snapshots chan struct{}
+	once      sync.Once
 }
 
-// lock serialises reading, verifying and storing the chain of one host.
-func (s *Server) lock(host string) func() {
-	m, _ := s.locks.LoadOrStore(host, &sync.Mutex{})
-	mu := m.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+// acquire takes a one-slot semaphore, or gives up when the request ends.
+func acquire(ctx context.Context, sem chan struct{}) (func(), bool) {
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }, true
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+// lock serialises reading, verifying and storing the chain of one host. A host opening many
+// connections only queues them, without a body read for any.
+func (s *Server) lock(ctx context.Context, host string) (func(), bool) {
+	m, _ := s.locks.LoadOrStore(host, make(chan struct{}, 1))
+	return acquire(ctx, m.(chan struct{}))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -61,21 +84,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "client certificate required", http.StatusUnauthorized)
 		return
 	}
+	s.once.Do(func() { s.snapshots = make(chan struct{}, ConcurrentSnapshots) })
 	identity := r.TLS.PeerCertificates[0].Subject.CommonName
 	now := s.Now()
+	ctx := r.Context()
 
-	var e protocol.Envelope
-	body, err := io.ReadAll(io.LimitReader(r.Body, MaxEnvelopeSize+1))
-	if err != nil || len(body) > MaxEnvelopeSize {
-		http.Error(w, "envelope too large or unreadable", http.StatusRequestEntityTooLarge)
+	kind := protocol.Kind(r.Header.Get(KindHeader))
+	limit := int64(MaxSmallSize)
+	switch kind {
+	case protocol.KindSnapshot:
+		limit = MaxSnapshotSize
+	case protocol.KindHeartbeat, protocol.KindEvent:
+	default:
+		http.Error(w, "missing or unknown "+KindHeader, http.StatusBadRequest)
 		return
 	}
-	if err := json.Unmarshal(body, &e); err != nil {
-		http.Error(w, "malformed envelope", http.StatusBadRequest)
+
+	unlock, ok := s.lock(ctx, identity)
+	if !ok {
 		return
 	}
-
-	defer s.lock(identity)()
+	defer unlock()
 	host, err := s.Store.Host(r.Context(), identity)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && host.Revoked) {
 		http.Error(w, "host not enrolled", http.StatusForbidden)
@@ -86,18 +115,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if e.Kind == protocol.KindSnapshot {
-		recent, err := s.Store.CountSnapshots(r.Context(), identity, now.Add(-SnapshotWindow))
+	if kind == protocol.KindSnapshot {
+		recent, err := s.Store.CountSnapshots(ctx, identity, now.Add(-SnapshotWindow))
 		if err != nil {
 			s.fail(w, err)
 			return
 		}
 		if recent >= SnapshotBurst {
-			// Refused before verification, so the chain does not move: the sensor keeps the
-			// envelope and sends it again later.
+			// Refused before the body is read, so the chain does not move: the sensor keeps
+			// the envelope and sends it again later.
 			http.Error(w, "snapshots too frequent", http.StatusTooManyRequests)
 			return
 		}
+		release, ok := acquire(ctx, s.snapshots)
+		if !ok {
+			return
+		}
+		defer release()
+	}
+
+	var e protocol.Envelope
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err != nil {
+		http.Error(w, "envelope too large or unreadable", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if err := json.Unmarshal(body, &e); err != nil {
+		http.Error(w, "malformed envelope", http.StatusBadRequest)
+		return
+	}
+	if e.Kind != kind {
+		http.Error(w, "envelope kind does not match "+KindHeader, http.StatusBadRequest)
+		return
 	}
 	state, err := protocol.Verify(e, identity, host.PublicKey, host.Chain)
 	switch {
