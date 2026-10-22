@@ -337,3 +337,27 @@ func TestAcceptDroppedKeepsLivenessOnly(t *testing.T) {
 		t.Fatalf("stored bytes = %d", n)
 	}
 }
+
+func TestEnrollTokensWorkOnce(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	secret, expires, err := s.CreateEnrollToken(ctx, "web-01", "ops@example.net", t0)
+	if err != nil || !expires.Equal(t0.Add(EnrollTokenLifetime)) {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ConsumeEnrollToken(ctx, secret, t0.Add(2*EnrollTokenLifetime)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired token accepted: %v", err)
+	}
+	secret, _, _ = s.CreateEnrollToken(ctx, "web-01", "ops@example.net", t0)
+	replaced, _, _ := s.CreateEnrollToken(ctx, "web-01", "ops@example.net", t0)
+	if _, _, err := s.ConsumeEnrollToken(ctx, secret, t0); !errors.Is(err, ErrNotFound) {
+		t.Fatal("a replaced token still works")
+	}
+	host, by, err := s.ConsumeEnrollToken(ctx, replaced, t0)
+	if err != nil || host != "web-01" || by != "ops@example.net" {
+		t.Fatalf("consume = %q %q %v", host, by, err)
+	}
+	if _, _, err := s.ConsumeEnrollToken(ctx, replaced, t0); !errors.Is(err, ErrNotFound) {
+		t.Fatal("a token worked twice")
+	}
+}

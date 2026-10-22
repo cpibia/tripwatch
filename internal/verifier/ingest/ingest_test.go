@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ed25519"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
@@ -56,7 +60,7 @@ func newHarness(t *testing.T) *harness {
 	ingest := &Server{Store: st, CA: ca, Now: func() time.Time { return h.clock }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Wake: wake}
 
 	h.srv = httptest.NewUnstartedServer(ingest)
-	h.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: ca.Pool(), ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}
+	h.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: ca.Pool(), ClientAuth: tls.VerifyClientCertIfGiven, MinVersion: tls.VersionTLS13}
 	h.srv.StartTLS()
 	t.Cleanup(h.srv.Close)
 	return h
@@ -206,14 +210,78 @@ func TestCertificateBoundToHost(t *testing.T) {
 	}
 }
 
+// Without a client certificate only enrollment answers; envelopes and renewal are refused.
 func TestNoClientCertificate(t *testing.T) {
 	h := newHarness(t)
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: h.ca.Pool(), MinVersion: tls.VersionTLS13}}}
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+Path, strings.NewReader("{}"))
-	resp, err := client.Do(req)
-	if err == nil {
+	for _, p := range []string{Path, RenewPath} {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+p, strings.NewReader("{}"))
+		req.Header.Set(KindHeader, string(protocol.KindHeartbeat))
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
 		_ = resp.Body.Close()
-		t.Error("a request without a client certificate was accepted at the TLS layer")
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s without a client certificate: %d", p, resp.StatusCode)
+		}
+	}
+}
+
+func TestEnrollWithToken(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	secret, _, err := h.store.CreateEnrollToken(ctx, "web-09", "ops@example.net", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := pki.EnrollToken{URL: h.srv.URL + Path, Secret: secret, CA: h.ca.Fingerprint()}
+	parsed, err := pki.ParseEnrollToken(token.String())
+	if err != nil || parsed != token {
+		t.Fatalf("token round trip: %+v %v", parsed, err)
+	}
+
+	tlsPub, tlsKey, _ := ed25519.GenerateKey(nil)
+	signPub, signKey, _ := ed25519.GenerateKey(nil)
+	pinned := &http.Client{Transport: &http.Transport{TLSClientConfig: token.PinnedTLS("127.0.0.1")}, Timeout: 5 * time.Second}
+	post := func(c *http.Client, secret string) (*EnrollResponse, int) {
+		t.Helper()
+		body, _ := json.Marshal(EnrollRequest{Secret: secret, TLSKey: tlsPub, SigningKey: signPub}) //nolint:gosec // test token
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+EnrollPath, bytes.NewReader(body))
+		resp, err := c.Do(req)
+		if err != nil {
+			return nil, 0
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out EnrollResponse
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return &out, resp.StatusCode
+	}
+
+	// A token pinning another CA refuses the verifier before the secret leaves.
+	wrong := token
+	wrong.CA = "AAAA"
+	if _, code := post(&http.Client{Transport: &http.Transport{TLSClientConfig: wrong.PinnedTLS("127.0.0.1")}}, secret); code != 0 {
+		t.Fatalf("a verifier with another CA was trusted: %d", code)
+	}
+	if _, code := post(pinned, "guess"); code != http.StatusForbidden {
+		t.Fatalf("wrong secret: %d", code)
+	}
+	res, code := post(pinned, secret)
+	if code != http.StatusOK || res.HostID != "web-09" {
+		t.Fatalf("enroll: %d %+v", code, res)
+	}
+	if _, code := post(pinned, secret); code != http.StatusForbidden {
+		t.Fatalf("token used twice: %d", code)
+	}
+
+	// The bundle the sensor writes from the response works: its own keys, the issued certificate.
+	keyDER, _ := x509.MarshalPKCS8PrivateKey(tlsKey)
+	b := pki.Bundle{HostID: res.HostID, VerifierURL: token.URL, CA: res.CA, Cert: res.Cert,
+		Key:        string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})),
+		SigningKey: base64.StdEncoding.EncodeToString(signKey.Seed())}
+	if err := h.client(b, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatalf("heartbeat with the enrolled bundle: %v", err)
 	}
 }
 

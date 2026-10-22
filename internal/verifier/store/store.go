@@ -78,6 +78,12 @@ CREATE TABLE IF NOT EXISTS activity (
 	kind    TEXT NOT NULL,
 	PRIMARY KEY (host_id, minute, kind)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS enroll_tokens (
+	host_id    TEXT PRIMARY KEY,
+	token_hash BLOB NOT NULL UNIQUE,
+	created_by TEXT NOT NULL,
+	expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS users (
 	email         TEXT PRIMARY KEY,
 	password_hash BLOB NOT NULL,

@@ -125,8 +125,10 @@ func serve(log *slog.Logger) error {
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			ClientCAs:    ca.Pool(),
-			ClientAuth:   tls.RequireAndVerifyClientCert,
-			MinVersion:   tls.VersionTLS13,
+			// Verified when given; required by every path except enrollment, which is how a
+			// host gets its first certificate.
+			ClientAuth: tls.VerifyClientCertIfGiven,
+			MinVersion: tls.VersionTLS13,
 		},
 	}
 

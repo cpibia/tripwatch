@@ -4,6 +4,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,14 +34,10 @@ const KindHeader = "Tripwatch-Kind"
 // Path is where sensors post envelopes; RenewPath is where they renew their client
 // certificate, authenticated by the one they have.
 const (
-	Path      = "/v1/envelopes"
-	RenewPath = "/v1/renew"
+	Path       = "/v1/envelopes"
+	RenewPath  = "/v1/renew"
+	EnrollPath = "/v1/enroll"
 )
-
-// Renewer issues client certificates for enrolled hosts.
-type Renewer interface {
-	RenewClient(hostID string, now time.Time) ([]byte, []byte, error)
-}
 
 // A host may send at most SnapshotBurst snapshots per SnapshotWindow: more would only let a
 // compromised host bury its history. The burst lets a restarted sensor deliver its startup
@@ -65,7 +62,7 @@ const ConcurrentSnapshots = 2
 // delays a sensor and a restart loses nothing.
 type Server struct {
 	Store *store.Store
-	CA    Renewer
+	CA    *pki.CA
 	Wake  chan<- struct{}
 	Now   func() time.Time
 	Log   *slog.Logger
@@ -93,8 +90,13 @@ func (s *Server) lock(ctx context.Context, host string) (func(), bool) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || (r.URL.Path != Path && r.URL.Path != RenewPath) {
+	if r.Method != http.MethodPost || (r.URL.Path != Path && r.URL.Path != RenewPath && r.URL.Path != EnrollPath) {
 		http.NotFound(w, r)
+		return
+	}
+	// Enrollment is the one request made before the host has a certificate.
+	if r.URL.Path == EnrollPath {
+		s.enroll(w, r)
 		return
 	}
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
@@ -236,6 +238,50 @@ func (s *Server) chainAlert(ctx context.Context, host string, e protocol.Envelop
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	s.Log.Error("ingest", "err", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
+// EnrollRequest is what a sensor sends to enroll with a token: the secret, and the public keys
+// it generated; its private keys never leave it.
+type EnrollRequest struct {
+	Secret     string `json:"secret"`
+	TLSKey     []byte `json:"tls_key"`
+	SigningKey []byte `json:"signing_key"`
+}
+
+// EnrollResponse completes the sensor's bundle.
+type EnrollResponse struct {
+	HostID string `json:"host_id"`
+	CA     string `json:"ca"`
+	Cert   string `json:"cert"`
+}
+
+// enroll registers a host with a one-time token made in the interface. The token is consumed
+// before anything else, so a guess or a replay costs nothing and works for no one.
+func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
+	var req EnrollRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil ||
+		len(req.TLSKey) != ed25519.PublicKeySize || len(req.SigningKey) != ed25519.PublicKeySize {
+		http.Error(w, "malformed enrollment request", http.StatusBadRequest)
+		return
+	}
+	now := s.Now()
+	host, by, err := s.Store.ConsumeEnrollToken(r.Context(), req.Secret, now)
+	if err != nil {
+		http.Error(w, "token unknown, used or expired", http.StatusForbidden)
+		return
+	}
+	certPEM, err := s.CA.IssueClient(host, ed25519.PublicKey(req.TLSKey), now)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.Store.Enroll(r.Context(), host, ed25519.PublicKey(req.SigningKey), now); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.Log.Info("host enrolled with a token", "host", host, "token_by", by)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(EnrollResponse{HostID: host, CA: string(s.CA.PEM), Cert: string(certPEM)})
 }
 
 // renew issues a new client certificate to an enrolled host whose current one, the one this

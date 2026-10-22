@@ -5,6 +5,7 @@ package pki
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -102,7 +103,7 @@ func (ca *CA) ServerCertificate(dir string, names []string, now time.Time) (tls.
 		keyPEM, err := os.ReadFile(filepath.Join(dir, serverKeyFile)) //nolint:gosec // see above
 		if err == nil {
 			if cert, _, err := parsePair(certPEM, keyPEM); err == nil && sameNames(cert, names) && now.Add(30*24*time.Hour).Before(cert.NotAfter) {
-				return tls.X509KeyPair(certPEM, keyPEM)
+				return ca.withChain(certPEM, keyPEM)
 			}
 		}
 	}
@@ -113,7 +114,42 @@ func (ca *CA) ServerCertificate(dir string, names []string, now time.Time) (tls.
 	if err := writeFiles(dir, serverCertFile, certPEM, serverKeyFile, keyPEM); err != nil {
 		return tls.Certificate{}, err
 	}
-	return tls.X509KeyPair(certPEM, keyPEM)
+	return ca.withChain(certPEM, keyPEM)
+}
+
+// withChain sends the CA certificate after the server's own: a sensor enrolling with a token
+// knows only the CA's fingerprint, and checks it against the chain before sending anything.
+func (ca *CA) withChain(certPEM, keyPEM []byte) (tls.Certificate, error) {
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return cert, err
+	}
+	cert.Certificate = append(cert.Certificate, ca.Cert.Raw)
+	return cert, nil
+}
+
+// Fingerprint identifies the CA in enrollment tokens: the SHA-256 of its certificate.
+func (ca *CA) Fingerprint() string {
+	sum := sha256.Sum256(ca.Cert.Raw)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// IssueClient issues a client certificate for a key the host generated itself, so that its
+// private key never leaves it.
+func (ca *CA) IssueClient(hostID string, pub ed25519.PublicKey, now time.Time) ([]byte, error) {
+	tmpl := &x509.Certificate{
+		SerialNumber: serial(),
+		Subject:      pkix.Name{CommonName: hostID},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(certValidity),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.Cert, pub, ca.key)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
 }
 
 func sameNames(cert *x509.Certificate, names []string) bool {
@@ -427,6 +463,58 @@ func (id *Identity) TLS() *tls.Config {
 			defer id.mu.Unlock()
 			c := id.cert
 			return &c, nil
+		},
+	}
+}
+
+// EnrollToken is what an operator copies to a new host: where the verifier is, the one-time
+// secret, and the fingerprint of the CA the sensor must find in the verifier's chain before it
+// sends the secret.
+type EnrollToken struct {
+	URL    string `json:"u"`
+	Secret string `json:"s"`
+	CA     string `json:"f"`
+}
+
+const tokenPrefix = "tw1."
+
+func (t EnrollToken) String() string {
+	data, _ := json.Marshal(t) //nolint:gosec // the token is the secret's intended carrier
+	return tokenPrefix + base64.RawURLEncoding.EncodeToString(data)
+}
+
+// ParseEnrollToken reads a token as printed by String.
+func ParseEnrollToken(s string) (EnrollToken, error) {
+	var t EnrollToken
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(strings.TrimSpace(s), tokenPrefix))
+	if err != nil || !strings.HasPrefix(strings.TrimSpace(s), tokenPrefix) {
+		return t, errors.New("not an enrollment token")
+	}
+	if err := json.Unmarshal(raw, &t); err != nil || t.Secret == "" || t.CA == "" || !strings.HasPrefix(t.URL, "https://") {
+		return t, errors.New("malformed enrollment token")
+	}
+	return t, nil
+}
+
+// PinnedTLS trusts exactly the CA whose fingerprint the token carries: the chain the verifier
+// presents must end in that CA and its leaf must be valid for the verifier's name.
+func (t EnrollToken) PinnedTLS(serverName string) *tls.Config {
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: true, //nolint:gosec // replaced by VerifyConnection, which pins the CA from the token
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) < 2 {
+				return errors.New("verifier did not present its CA")
+			}
+			ca := cs.PeerCertificates[len(cs.PeerCertificates)-1]
+			sum := sha256.Sum256(ca.Raw)
+			if base64.RawURLEncoding.EncodeToString(sum[:]) != t.CA {
+				return errors.New("verifier CA does not match the token")
+			}
+			pool := x509.NewCertPool()
+			pool.AddCert(ca)
+			_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{Roots: pool, DNSName: serverName})
+			return err
 		},
 	}
 }
