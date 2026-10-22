@@ -646,3 +646,25 @@ func TestLostRenewalsDoNotLockOut(t *testing.T) {
 		t.Fatalf("locked out after two lost renewals: %v", err)
 	}
 }
+
+// Taking a snapshot slot for an upload that then fails costs the host the slots for a while.
+func TestFailedUploadIsPenalised(t *testing.T) {
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	id, _ := b.ClientIdentity("")
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: id.TLS()}, Timeout: 5 * time.Second}
+	codes := []int{}
+	for range 2 {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, b.VerifierURL, strings.NewReader("not json"))
+		req.Header.Set(KindHeader, string(protocol.KindSnapshot))
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		codes = append(codes, resp.StatusCode)
+	}
+	if codes[0] != http.StatusBadRequest || codes[1] != http.StatusServiceUnavailable {
+		t.Fatalf("statuses %v, want the failure and then the penalty", codes)
+	}
+}

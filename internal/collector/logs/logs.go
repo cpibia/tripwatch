@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"math/rand/v2"
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
@@ -732,7 +733,7 @@ func (r *runState) sampleDropped(d Dropped) {
 	if rank > r.sampleRank {
 		*samples, r.sampleSeen, r.sampleRank = nil, 0, rank
 	}
-	if slices.ContainsFunc(*samples, func(x Dropped) bool { return x.IP == d.IP }) {
+	if src := sourceOf(d.IP); slices.ContainsFunc(*samples, func(x Dropped) bool { return sourceOf(x.IP) == src }) {
 		return
 	}
 	r.sampleSeen++
@@ -744,6 +745,20 @@ func (r *runState) sampleDropped(d Dropped) {
 			(*samples)[j] = d
 		}
 	}
+}
+
+// sourceOf groups addresses by who controls them: an IPv6 /64 is one network, often one host,
+// and costs nothing to fill with addresses.
+func sourceOf(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || !addr.Is6() || addr.Is4In6() {
+		return ip
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
 }
 
 func (r *runState) drop(d Dropped) bool {

@@ -311,9 +311,11 @@ docker compose exec verifier /tripwatch-verifier user -email collega@example.net
 L'interfaccia è in italiano, con tema chiaro e scuro (segue il sistema, oppure si sceglie dal
 menu), si aggiorna da sola ogni minuto e funziona anche da telefono. Le pagine non eseguono script
 o stili inline (Content Security Policy rigida), i moduli sono protetti da token CSRF e i
-tentativi di accesso per lo stesso indirizzo passano uno alla volta, con un ritardo che cresce
-dopo cinque errori: indovinare la password diventa lentissimo, ma nessuno può bloccare l'accesso
-di un collega.
+tentativi di accesso per lo stesso indirizzo email e la stessa sorgente passano uno alla volta,
+con un ritardo che cresce dopo cinque errori fino a 15 secondi: indovinare la password diventa
+lentissimo, ma chi prova da un'altra parte non rallenta l'accesso di un collega. Dietro il reverse
+proxy la sorgente viene da `X-Forwarded-For` (`TRIPWATCH_TRUST_PROXY=true`, già nel file di
+esempio).
 
 ### Email
 

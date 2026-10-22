@@ -51,7 +51,7 @@ func newHarness(t *testing.T) *harness {
 	if err := st.SetUser(context.Background(), email, password, now); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute, LoginBackoff: 10 * time.Millisecond,
+	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute, LoginBackoff: 10 * time.Millisecond, TrustForwardedFor: true,
 		Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
@@ -485,5 +485,35 @@ func TestPanelFollowsTheSelectedAlert(t *testing.T) {
 	}
 	if _, body = h.get("/?a=999"); !strings.Contains(body, "Da guardare per primo") {
 		t.Error("an unknown selection does not fall back to the most urgent alert")
+	}
+}
+
+// Failures from one source do not slow down a sign-in from another.
+func TestLoginDelayFollowsTheSource(t *testing.T) {
+	h := newHarness(t)
+	post := func(from, pw string) (int, time.Duration) {
+		t.Helper()
+		form := url.Values{"email": {email}, "password": {pw}}
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+"/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.Header.Set("X-Forwarded-For", "10.9.9.9, "+from)
+		start := time.Now()
+		res, err := h.http.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode, time.Since(start)
+	}
+	for range 12 {
+		post("198.51.100.1", "wrong-password-here")
+	}
+	if _, took := post("198.51.100.1", "wrong-password-here"); took < 150*time.Millisecond {
+		t.Fatalf("the guessing source is not slowed down: %v", took)
+	}
+	code, took := post("203.0.113.5", password)
+	if code != http.StatusSeeOther || took > 2*time.Second {
+		t.Fatalf("the colleague's sign-in: status %d after %v", code, took)
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -146,9 +145,13 @@ func (s *Server) alive(ctx context.Context, host string, now time.Time) {
 	}
 }
 
-// SlowPenalty keeps a host whose snapshot upload timed out away from the snapshot slots for a
-// while, so a few slow hosts cannot hold them in turn.
-const SlowPenalty = 15 * time.Minute
+// SlowPenalty keeps a host away from the snapshot slots for a while after it held one longer
+// than SlowHold or took one for an upload that failed, so a few hosts cannot hold them in turn.
+// A large snapshot on a good link takes seconds.
+const (
+	SlowPenalty = 15 * time.Minute
+	SlowHold    = 30 * time.Second
+)
 
 // HeartbeatGap is the pause between two accepted heartbeats that raises an alert, with the
 // sensor's default interval of one minute: one missed beat, with room for delivery delays.
@@ -227,7 +230,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	overQuota := false
+	overQuota, stored := false, false
 	unlock, ok := s.lock(ctx, identity)
 	if !ok {
 		return
@@ -284,17 +287,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "verifier busy, retry later", http.StatusServiceUnavailable)
 			return
 		}
-		defer release()
+		taken := time.Now()
+		defer func() {
+			release()
+			// Holding a slot long, or taking one for an upload that then fails, costs the
+			// host the slots for a while, however the upload ended.
+			if held := time.Since(taken); held > SlowHold || !stored {
+				s.slow.Store(identity, time.Now().Add(SlowPenalty))
+				s.Log.Warn("snapshot slot held without result or too long", "host", identity, "held", held.Round(time.Second))
+			}
+		}()
 	}
 
 	var e protocol.Envelope
 	body, err := io.ReadAll(&steadyReader{r: http.MaxBytesReader(w, r.Body, limit), rc: http.NewResponseController(w), end: time.Now().Add(MaxBodyTime)})
 	if err != nil {
-		var ne net.Error
-		if kind == protocol.KindSnapshot && errors.As(err, &ne) && ne.Timeout() {
-			s.slow.Store(identity, now.Add(SlowPenalty))
-			s.Log.Warn("snapshot upload too slow", "host", identity)
-		}
 		http.Error(w, "envelope too large or unreadable", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -311,6 +318,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 	case errors.Is(err, protocol.ErrReplay) && e.Sequence == host.Chain.Sequence && bytes.Equal(e.Digest(), host.Chain.LastDigest):
 		// The sensor resent the envelope whose acknowledgement it did not receive.
+		stored = true
 		writeAck(w, host.Chain.Sequence)
 		return
 	default:
@@ -324,6 +332,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
+		stored = true
 		if _, err := s.Store.Raise(ctx, store.Alert{HostID: identity, Fingerprint: "snapshot:quota", Severity: "high", Kind: "sensor",
 			Title:  "Snapshot non conservati: quota giornaliera superata",
 			Detail: fmt.Sprintf("Il server ha superato la quota di snapshot (%d MB in 24 ore, %d MB in tutto). Gli snapshot oltre la quota vengono verificati ma non conservati né analizzati: un sensore integro non ne produce così tanti.", DailySnapshotBytes>>20, TotalSnapshotBytes>>20),
@@ -337,6 +346,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	stored = true
 	if e.Kind == protocol.KindEvent {
 		s.event(ctx, identity, e, now)
 	}
@@ -395,9 +405,9 @@ type EnrollResponse struct {
 // enroll registers a host with a one-time token made in the interface. The token is consumed
 // before anything else, so a guess or a replay costs nothing and works for no one.
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
-	// Anonymous: one at a time, and a refusal costs the caller a pause. Secrets cannot be
-	// guessed; this keeps a flood of requests off the database the sensors write to.
-	// The body is read first, within a short deadline, so a slow anonymous client cannot hold
+	// Anonymous: the token is checked one request at a time, and a refusal costs the caller a
+	// pause. Secrets cannot be guessed; this keeps a flood of requests off the database the
+	// sensors write to. The body is read first, within a short deadline, so a slow anonymous client cannot hold
 	// the single slot.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(ChunkTime))
 	var req EnrollRequest
@@ -410,9 +420,9 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer release()
 	now := s.Now()
 	host, by, err := s.Store.ConsumeEnrollToken(r.Context(), req.Secret, now)
+	release()
 	if errors.Is(err, store.ErrTokenReused) {
 		// Whoever used the token first, someone else holds it too: one of the two is not the
 		// sensor the operator meant to enroll.
@@ -422,6 +432,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		}, now)
 	}
 	if err != nil {
+		// The pause is outside the slot: it slows the caller, not the others.
 		time.Sleep(200 * time.Millisecond)
 		http.Error(w, "token unknown, used or expired", http.StatusForbidden)
 		return
@@ -501,7 +512,7 @@ func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Visible, so that a renewal made with a stolen certificate does not pass unnoticed.
-	if _, err := s.Store.Raise(r.Context(), store.Alert{HostID: identity, Fingerprint: "cert:renewed:" + serial, Severity: "medium", Kind: "sensor-event",
+	if _, err := s.Store.Raise(r.Context(), store.Alert{HostID: identity, Fingerprint: "cert:renewed:" + serial, Severity: "high", Kind: "sensor-event",
 		Title:  "Certificato client rinnovato",
 		Detail: fmt.Sprintf("Il sensore ha rinnovato il suo certificato client, che scadeva il %s. È normale una volta ogni due anni; un rinnovo inatteso significa che qualcuno usa il certificato di questo server.", presented.NotAfter.Format("2006-01-02")),
 	}, now); err != nil {

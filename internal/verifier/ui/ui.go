@@ -14,6 +14,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -61,8 +62,11 @@ type Config struct {
 	SilenceAfter  time.Duration
 	// LoginBackoff is the first delay after repeated failed logins; zero means one second.
 	LoginBackoff time.Duration
-	Now          func() time.Time
-	Log          *slog.Logger
+	// TrustForwardedFor takes the client address from X-Forwarded-For, as set by the reverse
+	// proxy in front of the interface; only for an interface the proxy alone can reach.
+	TrustForwardedFor bool
+	Now               func() time.Time
+	Log               *slog.Logger
 }
 
 type server struct {
@@ -74,9 +78,9 @@ type server struct {
 
 // New returns the web interface handler.
 func New(c Config) (http.Handler, error) {
-	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(5, time.Second, 30*time.Second, time.Hour)}
+	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(5, time.Second, 15*time.Second, time.Hour)}
 	if c.LoginBackoff > 0 {
-		s.logins = newLimiter(5, c.LoginBackoff, 30*c.LoginBackoff, time.Hour)
+		s.logins = newLimiter(5, c.LoginBackoff, 15*c.LoginBackoff, time.Hour)
 	}
 	for _, name := range []string{"login", "overview", "host", "alerts", "alert", "enroll", "error"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
@@ -245,6 +249,24 @@ func themeOf(r *http.Request) string {
 	return ""
 }
 
+// source is the client address of a request: the proxy's last X-Forwarded-For entry when the
+// proxy is trusted, otherwise the connection's address.
+func (s *server) source(r *http.Request) string {
+	if s.TrustForwardedFor {
+		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
+			parts := strings.Split(xff[len(xff)-1], ",")
+			if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
+				return last
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // localPath accepts only paths on this site as redirect targets.
 func localPath(p, fallback string) string {
 	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsAny(p, "\\\r\n") {
@@ -273,9 +295,11 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo di accesso non viene da questa console.")
 		return
 	}
-	// The wait in line stays well inside the server's write timeout.
-	waitCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	done, ok := s.logins.begin(waitCtx, email, s.Now)
+	// Failures count per email and source: someone guessing from elsewhere slows only their own
+	// attempts, never the colleague's. The wait in line, at most one delay ceiling of 15 s plus
+	// the check, stays inside the server's write timeout.
+	waitCtx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	done, ok := s.logins.begin(waitCtx, email+"\x00"+s.source(r), s.Now)
 	cancel()
 	if !ok {
 		data.Error = "Troppi tentativi in corso per questo indirizzo. Riprova tra poco."

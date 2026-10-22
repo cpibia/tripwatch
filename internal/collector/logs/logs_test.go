@@ -534,3 +534,12 @@ func TestDroppedSamplesOnePerAddress(t *testing.T) {
 		t.Error("the web shell request is neither kept nor sampled")
 	}
 }
+
+func TestSourceOf(t *testing.T) {
+	if sourceOf("2001:db8::1") != sourceOf("2001:db8::ffff") || sourceOf("2001:db8::1") == sourceOf("2001:db8:0:1::1") {
+		t.Error("IPv6 addresses are not grouped by /64")
+	}
+	if sourceOf("198.51.100.7") != "198.51.100.7" || sourceOf("junk") != "junk" {
+		t.Error("IPv4 or unparsable addresses changed")
+	}
+}
