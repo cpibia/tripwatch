@@ -10,10 +10,7 @@ import (
 type (
 	accountT = system.Account
 	keyT     = system.AuthorizedKey
-	sudoersT = system.SudoersFile
-	cronT    = system.CronTable
 	unitT    = system.Unit
-	socketT  = system.Socket
 	fileT    = collector.File
 	adminT   = apps.Admin
 )

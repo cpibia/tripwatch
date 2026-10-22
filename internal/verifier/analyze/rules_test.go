@@ -2,8 +2,10 @@ package analyze
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 	"github.com/cpibia/tripwatch/internal/collector/apps"
@@ -92,5 +94,27 @@ func TestFirstSnapshot(t *testing.T) {
 	}
 	if slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "-change:") }) {
 		t.Errorf("change findings on a first snapshot: %v", got)
+	}
+}
+
+// Comparing two large snapshots stays linear: 80,000 sudo rules, all different between the two,
+// took 18 seconds with the list scans this replaced.
+func TestEvaluateIsLinear(t *testing.T) {
+	rules := func(prefix string) []string {
+		out := make([]string, 80_000)
+		for i := range out {
+			out[i] = prefix + strconv.Itoa(i) + " ALL=(ALL) NOPASSWD: ALL"
+		}
+		return out
+	}
+	prev := State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{{Rules: rules("a")}}}}
+	cur := State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{{Rules: rules("b")}}}}
+	start := time.Now()
+	findings := Evaluate(&prev, cur)
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("Evaluate took %v", took)
+	}
+	if len(findings) != 80_000 {
+		t.Fatalf("%d findings", len(findings))
 	}
 }

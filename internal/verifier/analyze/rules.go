@@ -34,6 +34,29 @@ func suspiciousPath(p string) bool {
 	return slices.ContainsFunc(strings.Split(p, "/"), func(seg string) bool { return strings.HasPrefix(seg, ".") && seg != "." && seg != ".." })
 }
 
+// set is a membership test built once per snapshot: comparing two snapshots stays linear in
+// their size, however many entries a hostile sensor sends.
+type set map[string]struct{}
+
+func (s set) add(keys ...string) {
+	for _, k := range keys {
+		s[k] = struct{}{}
+	}
+}
+
+func (s set) has(k string) bool {
+	_, ok := s[k]
+	return ok
+}
+
+func setOf[T any](items []T, key func(T) string) set {
+	s := make(set, len(items))
+	for _, it := range items {
+		s[key(it)] = struct{}{}
+	}
+	return s
+}
+
 // Evaluate returns the findings of cur, comparing with prev when there is one. On the first
 // snapshot of a host only state rules apply: everything would otherwise be "new".
 func Evaluate(prev *State, cur State) []Finding {
@@ -66,8 +89,9 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 		}
 		if prev != nil && prev.Accounts != nil {
+			known := setOf(prev.Accounts.Accounts, func(p accountT) string { return p.Name })
 			for _, acc := range a.Accounts {
-				if !slices.ContainsFunc(prev.Accounts.Accounts, func(p accountT) bool { return p.Name == acc.Name }) {
+				if !known.has(acc.Name) {
 					change("accounts-change", "new:"+acc.Name, "high", "Nuovo account: "+acc.Name,
 						fmt.Sprintf("UID %d, home %s, shell %s.", acc.UID, acc.Home, acc.Shell))
 				}
@@ -82,8 +106,12 @@ func Evaluate(prev *State, cur State) []Finding {
 		if s.Settings["passwordauthentication"] == "yes" {
 			state("ssh", "password-auth", "medium", "SSH: autenticazione con password attiva", "PasswordAuthentication yes: le chiavi sono più difficili da indovinare.")
 		}
+		var known set
+		if prev != nil && prev.SSH != nil {
+			known = setOf(prev.SSH.Keys, func(p keyT) string { return p.User + "\x00" + p.Fingerprint })
+		}
 		for _, k := range s.Keys {
-			if prev != nil && prev.SSH != nil && !slices.ContainsFunc(prev.SSH.Keys, func(p keyT) bool { return p.Fingerprint == k.Fingerprint && p.User == k.User }) {
+			if known != nil && !known.has(k.User+"\x00"+k.Fingerprint) {
 				change("ssh-change", "key:"+k.User+":"+k.Fingerprint, "high", "Nuova chiave SSH per "+k.User,
 					fmt.Sprintf("%s %s (%s) in %s.", k.Type, k.Fingerprint, k.Comment, k.File))
 			}
@@ -91,9 +119,13 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if s := cur.Sudoers; s != nil && prev != nil && prev.Sudoers != nil {
+		known := set{}
+		for _, p := range prev.Sudoers.Files {
+			known.add(p.Rules...)
+		}
 		for _, f := range s.Files {
 			for _, rule := range f.Rules {
-				if !slices.ContainsFunc(prev.Sudoers.Files, func(p sudoersT) bool { return slices.Contains(p.Rules, rule) }) {
+				if !known.has(rule) {
 					change("persistence-change", "sudo:"+f.Path+":"+rule, "high", "Nuova regola sudo", rule+" in "+f.Path)
 				}
 			}
@@ -101,12 +133,19 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if s := cur.Scheduled; s != nil {
+		var known set
+		if prev != nil && prev.Scheduled != nil {
+			known = set{}
+			for _, p := range prev.Scheduled.Tables {
+				known.add(p.Entries...)
+			}
+		}
 		for _, t := range s.Tables {
 			if t.Immutable {
 				state("persistence", "immutable-cron:"+t.Path, "critical", "Crontab protetto con chattr +i", t.Path+": il file non si può modificare né cancellare, nemmeno da root, finché non si toglie l'attributo.")
 			}
 			for _, e := range t.Entries {
-				if prev != nil && prev.Scheduled != nil && !slices.ContainsFunc(prev.Scheduled.Tables, func(p cronT) bool { return slices.Contains(p.Entries, e) }) {
+				if known != nil && !known.has(e) {
 					change("persistence-change", "cron:"+t.Path+":"+e, "high", "Nuova riga di cron", e+"\nin "+t.Path)
 				}
 			}
@@ -114,6 +153,11 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if s := cur.Services; s != nil {
+		var knownUnits, knownGenerators set
+		if prev != nil && prev.Services != nil {
+			knownUnits = setOf(prev.Services.Units, func(p unitT) string { return p.Path })
+			knownGenerators = setOf(prev.Services.Generators, func(p fileT) string { return p.Path })
+		}
 		for _, env := range s.Environment {
 			if strings.Contains(env, "LD_PRELOAD") {
 				state("persistence", "default-env:"+env, "critical", "Libreria iniettata in tutti i servizi", env)
@@ -128,12 +172,12 @@ func Evaluate(prev *State, cur State) []Finding {
 					state("persistence", "unit-exec:"+u.Path+":"+x, "high", "Servizio che esegue da una cartella insolita", x+"\nin "+u.Path)
 				}
 			}
-			if prev != nil && prev.Services != nil && !slices.ContainsFunc(prev.Services.Units, func(p unitT) bool { return p.Path == u.Path }) {
+			if knownUnits != nil && !knownUnits.has(u.Path) {
 				change("persistence-change", "unit:"+u.Path, "medium", "Nuovo servizio systemd", u.Path+"\n"+strings.Join(u.Exec, "\n"))
 			}
 		}
 		for _, g := range s.Generators {
-			if prev != nil && prev.Services != nil && !slices.ContainsFunc(prev.Services.Generators, func(p fileT) bool { return p.Path == g.Path }) {
+			if knownGenerators != nil && !knownGenerators.has(g.Path) {
 				change("persistence-change", "generator:"+g.Path, "high", "Nuovo generator systemd", g.Path+": viene eseguito da root a ogni avvio.")
 			}
 		}
@@ -160,8 +204,14 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if s := cur.Sockets; s != nil && prev != nil && prev.Sockets != nil {
+		known := set{}
+		for _, p := range prev.Sockets.Sockets {
+			if p.State == "listen" {
+				known.add(p.Proto + "\x00" + p.Local)
+			}
+		}
 		for _, so := range s.Sockets {
-			if so.State == "listen" && !slices.ContainsFunc(prev.Sockets.Sockets, func(p socketT) bool { return p.State == "listen" && p.Local == so.Local && p.Proto == so.Proto }) {
+			if so.State == "listen" && !known.has(so.Proto+"\x00"+so.Local) {
 				change("network-change", "listen:"+so.Proto+":"+so.Local, "medium", "Nuova porta in ascolto: "+so.Local, fmt.Sprintf("%s %s, processo %s (PID %d).", so.Proto, so.Local, so.Process, so.PID))
 			}
 		}
@@ -177,8 +227,10 @@ func Evaluate(prev *State, cur State) []Finding {
 			state("packages", "hidden:"+h, "high", "Elemento nascosto in /usr: "+h, "Nessun pacchetto installa file con il nome che comincia per punto sotto /usr.")
 		}
 		if prev != nil && prev.Packages != nil {
+			known := set{}
+			known.add(prev.Packages.Unowned...)
 			for _, u := range p.Unowned {
-				if !slices.Contains(prev.Packages.Unowned, u) {
+				if !known.has(u) {
 					change("packages-change", "unowned:"+u, "medium", "Nuovo eseguibile fuori dai pacchetti: "+u, "")
 				}
 			}
@@ -190,6 +242,10 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if p := cur.Privileged; p != nil {
+		var known set
+		if prev != nil && prev.Privileged != nil {
+			known = setOf(prev.Privileged.Files, func(q fileT) string { return q.Path + "\x00" + q.SHA256 })
+		}
 		for _, f := range p.Files {
 			switch {
 			case f.Immutable || f.AppendOnly:
@@ -197,13 +253,19 @@ func Evaluate(prev *State, cur State) []Finding {
 			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
 				state("privileged", "setid:"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", hash "+f.SHA256+".")
 			}
-			if prev != nil && prev.Privileged != nil && !slices.ContainsFunc(prev.Privileged.Files, func(q fileT) bool { return q.Path == f.Path && q.SHA256 == f.SHA256 }) {
+			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
 				change("privileged-change", "new:"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+".")
 			}
 		}
 	}
 
 	if w := cur.Web; w != nil {
+		prevApps := map[string]web.AppReport{}
+		if prev != nil && prev.Web != nil {
+			for _, pa := range prev.Web.Apps {
+				prevApps[pa.Path] = pa
+			}
+		}
 		for _, app := range w.Apps {
 			for _, f := range app.Findings {
 				sev, title := webFinding(f)
@@ -219,15 +281,10 @@ func Evaluate(prev *State, cur State) []Finding {
 				}
 				state("web", f.Kind+":"+f.Path, sev, title, detail)
 			}
-			if prev != nil && prev.Web != nil {
-				for _, pa := range prev.Web.Apps {
-					if pa.Path != app.Path {
-						continue
-					}
-					for dir, sum := range app.DirHashes {
-						if old, ok := pa.DirHashes[dir]; ok && old != sum {
-							change("web-change", "code:"+dir+":"+sum, "medium", "Codice cambiato in "+dir, "Se non c'è stato un deploy, qualcuno ha modificato il codice dell'applicazione "+app.Path+".")
-						}
+			if pa, ok := prevApps[app.Path]; ok {
+				for dir, sum := range app.DirHashes {
+					if old, ok := pa.DirHashes[dir]; ok && old != sum {
+						change("web-change", "code:"+dir+":"+sum, "medium", "Codice cambiato in "+dir, "Se non c'è stato un deploy, qualcuno ha modificato il codice dell'applicazione "+app.Path+".")
 					}
 				}
 			}
