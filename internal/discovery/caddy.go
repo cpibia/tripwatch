@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"io/fs"
+	"path"
 	"slices"
 	"strings"
 
@@ -14,17 +15,17 @@ const caddyfile = "etc/caddy/Caddyfile"
 // interpreted: root, php_fastcgi, reverse_proxy and log output files.
 func CaddySites(fsys fs.FS) ([]Site, []string, collector.Issues) {
 	var issues collector.Issues
-	data, err := fs.ReadFile(fsys, caddyfile)
-	if err != nil {
-		issues.Add(err)
+	if !exists(fsys, caddyfile) {
 		return nil, nil, issues
 	}
+	budget := newConfigBudget("caddy")
+	lines := caddyLines(fsys, caddyfile, budget, &issues)
 
 	var sites []Site
 	var site *Site
 	depth := 0
 	inLog := false
-	for _, raw := range strings.Split(string(data), "\n") {
+	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
 		if i := strings.Index(line, " #"); i >= 0 {
 			line = strings.TrimSpace(line[:i])
@@ -76,5 +77,41 @@ func CaddySites(fsys fs.FS) ([]Site, []string, collector.Issues) {
 			depth++
 		}
 	}
-	return sites, []string{caddyfile}, issues
+	return sites, budget.files, issues
+}
+
+// caddyLines returns the lines of a Caddyfile with import directives naming files replaced by
+// the content of those files. Imports of snippets, which name no file, stay as they are.
+func caddyLines(fsys fs.FS, name string, budget *configBudget, issues *collector.Issues) []string {
+	if !budget.enter(name, issues) {
+		return nil
+	}
+	defer budget.leave(name)
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		issues.Add(err)
+		return nil
+	}
+	if !budget.consume(len(data), issues) {
+		return nil
+	}
+
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "import" {
+			pattern := fields[1]
+			if !path.IsAbs(pattern) {
+				pattern = path.Join("/"+path.Dir(caddyfile), pattern)
+			}
+			if matches := collector.Glob(fsys, collector.Rel(pattern)); len(matches) > 0 {
+				for _, m := range matches {
+					out = append(out, caddyLines(fsys, m, budget, issues)...)
+				}
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return out
 }

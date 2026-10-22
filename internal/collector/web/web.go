@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -42,6 +43,9 @@ const (
 	// An application found inside another one's upload or data directory: uploads are not
 	// where software gets installed.
 	KindAppInData = "application_in_data_dir"
+	// A per-directory server configuration (.htaccess, .user.ini) where uploads live: it can
+	// turn an uploaded image into an executable script.
+	KindOverrideInData = "override_in_data_dir"
 )
 
 const (
@@ -60,6 +64,12 @@ var scriptExtensions = []string{
 }
 
 var imageExtensions = []string{".gif", ".jpg", ".jpeg", ".png", ".ico", ".webp", ".bmp", ".svg", ".tif", ".tiff"}
+
+// handlerDirective matches per-directory settings that make the server execute files as PHP:
+// mapping a type or handler to PHP (the same directives that disable execution, such as
+// AddHandler cgi-script with Options -ExecCGI, do not match), or prepending a file to every
+// script.
+var handlerDirective = regexp.MustCompile(`(?im)^\s*(Add(Type|Handler)\s+\S*(php|x-httpd)\S*|SetHandler\s+("?proxy:|\S*php)|ForceType\s+\S*php|php_value\s+auto_(prepend|append)_file|php_flag\s+engine\s+(on|1)|auto_(prepend|append)_file\s*=)`)
 
 // Server configuration files that change how the web server treats a directory.
 var overrideNames = []string{".htaccess", ".user.ini", "web.config"}
@@ -394,6 +404,13 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData, has
 	if slices.Contains(overrideNames, base) {
 		if f, err := collector.DescribeEntry(s.src, name, e); err == nil {
 			s.report.Overrides = append(s.report.Overrides, f)
+		}
+		if inUploads || inData {
+			var sigs []string
+			if data, err := fs.ReadFile(s.src.FS, name); err == nil && handlerDirective.Match(data) {
+				sigs = []string{"handler_directive"}
+			}
+			s.add(KindOverrideInData, name, e, sigs)
 		}
 	}
 

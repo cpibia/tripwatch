@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -29,8 +30,17 @@ type AuthorizedKey struct {
 	Options     string `json:"options,omitempty"`
 }
 
+// SSHMatch is a Match block: its settings apply only to the connections it matches, so they
+// are reported as written rather than merged into the global settings.
+type SSHMatch struct {
+	File     string   `json:"file"`
+	Criteria string   `json:"criteria"`
+	Lines    []string `json:"lines"`
+}
+
 type SSHResult struct {
 	Settings map[string]string `json:"settings"`
+	Matches  []SSHMatch        `json:"matches,omitempty"`
 	Keys     []AuthorizedKey   `json:"keys"`
 	Files    []collector.File  `json:"files"`
 	Issues   collector.Issues  `json:"issues,omitempty"`
@@ -43,14 +53,8 @@ func (SSH) Name() string { return "ssh" }
 
 func (SSH) Collect(_ context.Context, src collector.Source) (any, error) {
 	res := SSHResult{Settings: map[string]string{}}
-
-	configs := append([]string{"etc/ssh/sshd_config"}, collector.Glob(src.FS, "etc/ssh/sshd_config.d/*.conf")...)
-	for _, name := range configs {
-		lines, err := collector.ReadLines(src.FS, name)
-		res.Issues.Add(err)
-		parseSSHDConfig(lines, res.Settings)
-		res.Files = appendDescribed(res.Files, &res.Issues, src, name)
-	}
+	p := sshdParser{src: src, res: &res}
+	p.parseFile("etc/ssh/sshd_config", 0)
 
 	accounts, err := readAccounts(src, &res.Issues)
 	if err != nil {
@@ -84,9 +88,30 @@ func (SSH) Collect(_ context.Context, src collector.Source) (any, error) {
 	return res, nil
 }
 
-// parseSSHDConfig keeps the first value of each setting, as sshd does, and ignores Match
-// blocks, which apply only to some connections.
-func parseSSHDConfig(lines []string, settings map[string]string) {
+const maxSSHDIncludeDepth = 8
+
+// sshdParser follows the configuration as sshd reads it: Include is expanded where it appears
+// (Debian puts it first, so drop-ins win), the first value of a setting wins, and a Match
+// block lasts until the next Match or the end of the file that opened it.
+type sshdParser struct {
+	src   collector.Source
+	res   *SSHResult
+	match *SSHMatch
+}
+
+func (p *sshdParser) parseFile(name string, depth int) {
+	if depth > maxSSHDIncludeDepth {
+		p.res.Issues = append(p.res.Issues, "sshd: include depth exceeded at /"+name)
+		return
+	}
+	lines, err := collector.ReadLines(p.src.FS, name)
+	p.res.Issues.Add(err)
+	if lines == nil {
+		return
+	}
+	p.res.Files = appendDescribed(p.res.Files, &p.res.Issues, p.src, name)
+
+	outer := p.match
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -94,18 +119,39 @@ func parseSSHDConfig(lines []string, settings map[string]string) {
 		}
 		key, value, _ := strings.Cut(strings.Join(strings.Fields(line), " "), " ")
 		key = strings.ToLower(strings.TrimSuffix(key, "="))
-		if key == "match" {
-			return
-		}
 		value = strings.TrimSpace(strings.TrimPrefix(value, "="))
-		for _, s := range sshdSettings {
-			if key == s {
-				if _, seen := settings[key]; !seen {
-					settings[key] = value
+
+		switch {
+		case key == "include":
+			for _, pattern := range strings.Fields(value) {
+				if !path.IsAbs(pattern) {
+					pattern = path.Join("/etc/ssh", pattern)
 				}
-				break
+				for _, inc := range collector.Glob(p.src.FS, collector.Rel(pattern)) {
+					p.parseFile(inc, depth+1)
+				}
+			}
+		case key == "match":
+			p.closeMatch()
+			p.match = &SSHMatch{File: "/" + name, Criteria: value}
+		case p.match != nil:
+			p.match.Lines = append(p.match.Lines, line)
+		case slices.Contains(sshdSettings, key):
+			if _, seen := p.res.Settings[key]; !seen {
+				p.res.Settings[key] = value
 			}
 		}
+	}
+	if p.match != outer {
+		p.closeMatch()
+		p.match = outer
+	}
+}
+
+func (p *sshdParser) closeMatch() {
+	if p.match != nil {
+		p.res.Matches = append(p.res.Matches, *p.match)
+		p.match = nil
 	}
 }
 

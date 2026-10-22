@@ -171,11 +171,18 @@ func (lx *nginxLexer) next() (string, bool) {
 		return "", false
 	}
 	var cur strings.Builder
-	inWord := false
+	inWord, inVar := false, false
 	s := lx.src
 	for ; lx.pos < len(s); lx.pos++ {
 		c := s[lx.pos]
 		switch {
+		case c == '{' && inWord && lx.pos > 0 && s[lx.pos-1] == '$':
+			// ${name}: the braces belong to the variable, not to a block.
+			inVar = true
+			cur.WriteByte(c)
+		case c == '}' && inVar:
+			inVar = false
+			cur.WriteByte(c)
 		case c == '#' && !inWord:
 			for lx.pos < len(s) && s[lx.pos] != '\n' {
 				lx.pos++
@@ -234,10 +241,10 @@ func nginxServers(tree []directive, prefix string) []Site {
 		httpLogs := logPaths(http.Block, "access_log", prefix)
 		httpErrs := logPaths(http.Block, "error_log", prefix)
 		for _, server := range blocks(http.Block, "server") {
-			vars := map[string]string{}
+			var vars []nginxVar
 			for _, d := range server.Block {
 				if d.Name == "set" && len(d.Args) == 2 {
-					vars[d.Args[0]] = d.Args[1]
+					vars = append(vars, nginxVar{d.Args[0], d.Args[1]})
 				}
 			}
 			expand := func(s string) string { return expandVars(s, vars) }
@@ -263,14 +270,14 @@ func nginxServers(tree []directive, prefix string) []Site {
 			}
 			site.Root = absolute(expand(root), prefix)
 
-			site.AccessLogs = logPaths(server.Block, "access_log", prefix)
+			site.AccessLogs = expandAll(logPaths(server.Block, "access_log", prefix), expand)
 			if len(site.AccessLogs) == 0 {
 				site.AccessLogs = httpLogs
 			}
 			if len(site.AccessLogs) == 0 {
 				site.AccessLogs = []string{defaultNginxLog}
 			}
-			site.ErrorLogs = logPaths(server.Block, "error_log", prefix)
+			site.ErrorLogs = expandAll(logPaths(server.Block, "error_log", prefix), expand)
 			if len(site.ErrorLogs) == 0 {
 				site.ErrorLogs = httpErrs
 			}
@@ -355,10 +362,24 @@ func logPaths(tree []directive, name, prefix string) []string {
 	return out
 }
 
-func expandVars(s string, vars map[string]string) string {
-	for name, value := range vars {
-		s = strings.ReplaceAll(s, "${"+strings.TrimPrefix(name, "$")+"}", value)
-		s = strings.ReplaceAll(s, name, value)
+type nginxVar struct{ name, value string }
+
+func expandAll(list []string, expand func(string) string) []string {
+	for i, v := range list {
+		list[i] = expand(v)
+	}
+	return list
+}
+
+// expandVars substitutes server-level set variables. Longer names go first so that $ROOT does
+// not eat the start of $ROOT_DIR, and the order is fixed so the result is the same on every
+// run.
+func expandVars(s string, vars []nginxVar) string {
+	sorted := slices.Clone(vars)
+	slices.SortStableFunc(sorted, func(a, b nginxVar) int { return len(b.name) - len(a.name) })
+	for _, v := range sorted {
+		s = strings.ReplaceAll(s, "${"+strings.TrimPrefix(v.name, "$")+"}", v.value)
+		s = strings.ReplaceAll(s, v.name, v.value)
 	}
 	return s
 }

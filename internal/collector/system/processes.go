@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -141,7 +143,7 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 	p.Comm = strings.TrimSpace(string(comm))
 
 	cmdline, _ := fs.ReadFile(fsys, dir+"cmdline")
-	p.Cmdline = strings.TrimSpace(string(bytes.ReplaceAll(cmdline, []byte{0}, []byte{' '})))
+	p.Cmdline = redactCmdline(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"))
 
 	p.kernel = isKernelThread(fsys, dir, p.PPID, pid)
 	if exe, err := fs.ReadLink(fsys, dir+"exe"); err == nil {
@@ -162,6 +164,43 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 		}
 	}
 	return p, true
+}
+
+var (
+	secretOption = regexp.MustCompile(`(?i)^(--?[a-z0-9_-]*(password|passwd|passphrase|token|secret|apikey|api-key|api_key|credential|private-key)[a-z0-9_-]*)(=(.*))?$`)
+	secretEnv    = regexp.MustCompile(`(?i)^([a-z0-9_]*(password|passwd|token|secret|api_?key|auth|credential)[a-z0-9_]*)=.+`)
+	urlUserinfo  = regexp.MustCompile(`(://[^:/@\s]+):[^@/\s]+@`)
+)
+
+// redactCmdline joins the arguments of a process after removing the secrets commonly passed
+// on the command line: values of password and token options (--password=x or --password x),
+// NAME=value pairs with sensitive names, passwords in URLs, and the -p<password> form of the
+// MySQL and MariaDB clients.
+func redactCmdline(args []string) string {
+	mysql := len(args) > 0 && strings.Contains(path.Base(args[0]), "mysql") || len(args) > 0 && strings.Contains(path.Base(args[0]), "mariadb")
+	out := make([]string, 0, len(args))
+	hideNext := false
+	for _, a := range args {
+		switch {
+		case hideNext:
+			out = append(out, "[redacted]")
+			hideNext = false
+			continue
+		case mysql && strings.HasPrefix(a, "-p") && len(a) > 2:
+			a = "-p[redacted]"
+		case secretOption.MatchString(a):
+			m := secretOption.FindStringSubmatch(a)
+			if m[3] == "" {
+				hideNext = true
+			} else {
+				a = m[1] + "=[redacted]"
+			}
+		case secretEnv.MatchString(a):
+			a = secretEnv.FindStringSubmatch(a)[1] + "=[redacted]"
+		}
+		out = append(out, urlUserinfo.ReplaceAllString(a, "$1:[redacted]@"))
+	}
+	return strings.TrimSpace(strings.Join(out, " "))
 }
 
 // isKernelThread reads the flags field of /proc/<pid>/stat. The command name in that line is

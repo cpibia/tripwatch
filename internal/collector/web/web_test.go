@@ -532,3 +532,24 @@ func TestHashBudget(t *testing.T) {
 		t.Errorf("issues = %v", res.Issues)
 	}
 }
+
+func TestOverridesInUploads(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/uploads/.htaccess", "AddType application/x-httpd-php .jpg\n")
+	tr.file("var/www/site/media/.htaccess", "Options -Indexes\nAddHandler cgi-script .php .pl\nOptions -ExecCGI\nphp_flag engine 0\n")
+
+	res := tr.scan()
+	got := map[string][]string{}
+	for _, f := range res.Apps[0].Findings {
+		if f.Kind == KindOverrideInData {
+			got[f.Path] = f.Signatures
+		}
+	}
+	if !slices.Equal(got["/var/www/site/uploads/.htaccess"], []string{"handler_directive"}) {
+		t.Errorf("executable mapping: %v", got)
+	}
+	if sigs, ok := got["/var/www/site/media/.htaccess"]; !ok || len(sigs) != 0 {
+		t.Errorf("hardening .htaccess must be a finding without handler_directive: %v", got)
+	}
+}

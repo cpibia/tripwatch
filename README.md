@@ -41,15 +41,15 @@ firmato prodotto dalla build (confrontato con il lockfile: `composer.lock`, `pac
 | Collector | Cosa riporta |
 |---|---|
 | `accounts` | utenti, UID, gruppi e stato della password (impostata, bloccata, vuota); l'hash della password non viene mai raccolto |
-| `ssh` | impostazioni di sshd e tutte le chiavi autorizzate di tutti gli account, con fingerprint, commento e opzioni come `command=` |
+| `ssh` | impostazioni di sshd lette come le legge sshd (`Include` seguiti dove compaiono, primo valore vincente), blocchi `Match` riportati per intero, tutte le chiavi autorizzate di tutti gli account con fingerprint, commento e opzioni come `command=` |
 | `sudoers` | regole di sudo, comprese le direttive `#include` e `#includedir` |
 | `scheduled` | crontab di sistema e degli utenti, script di `cron.daily` e simili, job di `at` in attesa |
-| `services` | unit systemd e drop-in di override, di sistema e per utente, con i comandi `Exec*` e i link di attivazione |
+| `services` | unit systemd e drop-in di override, di sistema, transitorie e per utente, con i comandi `Exec*` e i link di attivazione; generator; `system.conf` e `user.conf` con le loro `DefaultEnvironment` |
 | `hooks` | `ld.so.preload`, `rc.local`, `profile.d`, PAM, `update-motd.d`, hook dei gestori di pacchetti, file rc della shell di ogni account |
-| `processes` | ogni processo con eseguibile (segnalato se cancellato dal disco), hash, cartella di lavoro e `LD_PRELOAD`; i thread del kernel sono solo contati, i processi che ne imitano il nome vengono elencati |
+| `processes` | ogni processo con eseguibile (segnalato se cancellato dal disco), hash, cartella di lavoro, `LD_PRELOAD` e namespace; command line con password, token e credenziali redatti; i thread del kernel (flag del kernel) sono solo contati, i processi che ne imitano il nome vengono elencati |
 | `sockets` | socket in ascolto, connessioni aperte e tentativi in uscita in corso, in ogni namespace di rete (container compresi), associati al processo |
-| `packages` | file di sistema che non corrispondono più al database dei pacchetti (dpkg, apk), eseguibili che nessun pacchetto possiede, elementi nascosti sotto `/usr` |
-| `privileged` | scansione dell'intero filesystem per binari setuid e setgid, file con capability Linux, file immutabili e append-only |
+| `packages` | file di sistema che non corrispondono più al database dei pacchetti (dpkg, apk), impronta del database stesso, eseguibili e symlink che nessun pacchetto possiede, elementi nascosti sotto `/usr` |
+| `privileged` | scansione dell'intero filesystem (comprese le cartelle scrivibili da tutti in `/run` e `/dev/shm`) per binari setuid e setgid, file con capability Linux, file immutabili e append-only |
 | `weblog` | log di accesso e di errore dei web server, letti in modo incrementale: eventi d'attacco raggruppati per regola, IP e path, statistiche su IP e destinazioni delle POST |
 | `web` | inventario dei siti e delle applicazioni, e per ogni applicazione: albero di hash del codice, script nelle cartelle di upload, immagini poliglotte, firme di webshell, file nascosti, script che il web server esegue davvero |
 
@@ -85,7 +85,15 @@ Per ogni applicazione il collector `web` produce:
   tolto i commenti dal sorgente; i blob codificati molto lunghi sono riportati a parte come
   indizio debole;
 - **file nascosti** fra gli script e nelle cartelle di dati;
-- i file di configurazione per cartella (`.htaccess`, `.user.ini`, `web.config`) con il loro hash.
+- i file di configurazione per cartella (`.htaccess`, `.user.ini`, `web.config`) con il loro hash, e
+  un finding quando stanno in una cartella di upload, con l'indicazione delle direttive che fanno
+  eseguire file come script;
+- applicazioni annidate in una cartella di upload o di dati, e symlink sospetti.
+
+`reachable` dice se un file sarebbe eseguito secondo la configurazione su disco. È un indizio, mai
+un motivo per abbassare la gravità di un finding: chi controlla la configurazione può cambiarla.
+Le configurazioni modificate dopo l'avvio del web server vengono segnalate, perché quella in
+esecuzione può essere diversa.
 
 Il collector è stato provato su applicazioni reali di stack diversi, fino a oltre 170.000 file per
 applicazione. I falsi positivi rimasti sono file di librerie che contengono davvero quei pattern
@@ -144,6 +152,19 @@ prima di arrivare a root. In quella fase l'attaccante non ha i permessi per ferm
 modificarne i file, e i file che può creare non bastano a bloccarlo.
 
 Il design completo è in [docs/architecture.md](docs/architecture.md).
+
+## Limiti noti
+
+- Lo storage dei container (`/var/lib/docker` e simili) non viene ancora esaminato: arriverà con
+  il collector dei container, che confronterà i container in esecuzione con le loro immagini.
+- Il sensore produce snapshot: ciò che nasce e sparisce fra due esecuzioni non si vede finché non
+  ci sarà il flusso di eventi in tempo reale.
+- Il database dei pacchetti sull'host fa da riferimento: con root un attaccante può aggiornare un
+  checksum per coprire un binario sostituito. La sua impronta cambia e il verificatore lo vedrà
+  fra due snapshot; il confronto con i metadati firmati dei repository è una scelta ancora da
+  fare.
+- Il sensore fuori da Linux serve solo allo sviluppo: il confinamento dei symlink si basa su
+  interfacce Linux.
 
 ## Build
 

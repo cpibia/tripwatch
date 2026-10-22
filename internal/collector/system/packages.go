@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"  //nolint:gosec // dpkg records MD5 checksums; it is used to compare, not to protect
 	"crypto/sha1" //nolint:gosec // apk records SHA-1 checksums; same reason
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -44,14 +45,21 @@ type ModifiedFile struct {
 }
 
 type PackagesResult struct {
-	Manager  string           `json:"manager"`
-	Packages int              `json:"packages"`
-	Checked  int              `json:"checked"`
-	Modified []ModifiedFile   `json:"modified"`
-	Missing  []string         `json:"missing,omitempty"`
-	Unowned  []string         `json:"unowned"`
-	Hidden   []string         `json:"hidden"`
-	Issues   collector.Issues `json:"issues,omitempty"`
+	Manager string `json:"manager"`
+	// DatabaseSHA256 fingerprints the package database itself (status and checksum lists): with
+	// root an attacker can update a checksum to match a replaced file, but not without changing
+	// this between two snapshots.
+	DatabaseSHA256 string         `json:"database_sha256,omitempty"`
+	Packages       int            `json:"packages"`
+	Checked        int            `json:"checked"`
+	Modified       []ModifiedFile `json:"modified"`
+	Missing        []string       `json:"missing,omitempty"`
+	Unowned        []string       `json:"unowned"`
+	// UnownedLinks are symlinks in the binary directories that no package installed, such as a
+	// sudo in /usr/local/bin, which comes first in PATH, pointing to a payload.
+	UnownedLinks []Link           `json:"unowned_links"`
+	Hidden       []string         `json:"hidden"`
+	Issues       collector.Issues `json:"issues,omitempty"`
 }
 
 // expectedFile is a file a package installed, with the checksum the package manager recorded.
@@ -114,7 +122,8 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 		}
 	}
 
-	res.Unowned = unownedExecutables(src.FS, owned)
+	res.Unowned, res.UnownedLinks = unownedExecutables(src.FS, owned)
+	res.DatabaseSHA256 = databaseHash(src.FS, res.Manager, &res.Issues)
 	res.Hidden = hiddenEntries(src.FS)
 	return res, nil
 }
@@ -277,8 +286,35 @@ func addOwned(owned map[string]bool, p string) {
 	}
 }
 
-func unownedExecutables(fsys fs.FS, owned map[string]bool) []string {
+var databaseFiles = map[string][]string{
+	ManagerDpkg: {"var/lib/dpkg/status", "var/lib/dpkg/diversions", "var/lib/dpkg/info/*.md5sums", "var/lib/dpkg/info/*.list"},
+	ManagerApk:  {"lib/apk/db/installed"},
+}
+
+// databaseHash hashes the database files in a fixed order, each with its name.
+func databaseHash(fsys fs.FS, manager string, issues *collector.Issues) string {
+	patterns, ok := databaseFiles[manager]
+	if !ok {
+		return ""
+	}
+	h := sha256.New()
+	for _, pattern := range patterns {
+		for _, name := range collector.Glob(fsys, pattern) {
+			data, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				issues.Add(err)
+				continue
+			}
+			sum := sha256.Sum256(data)
+			_, _ = fmt.Fprintf(h, "%s %x\n", name, sum)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func unownedExecutables(fsys fs.FS, owned map[string]bool) ([]string, []Link) {
 	out := []string{}
+	links := []Link{}
 	for _, dir := range binDirs {
 		if isSymlink(fsys, dir) {
 			continue
@@ -289,12 +325,23 @@ func unownedExecutables(fsys fs.FS, owned map[string]bool) []string {
 		}
 		for _, e := range entries {
 			p := path.Join(dir, e.Name())
-			if e.Type().IsRegular() && !owned[p] {
+			switch {
+			case owned[p] || alternative(fsys, p):
+			case e.Type().IsRegular():
 				out = append(out, "/"+p)
+			case e.Type()&fs.ModeSymlink != 0:
+				target, _ := fs.ReadLink(fsys, p)
+				links = append(links, Link{Path: "/" + p, Target: target})
 			}
 		}
 	}
-	return out
+	return out, links
+}
+
+// alternative reports links managed by update-alternatives, which no package lists as its own.
+func alternative(fsys fs.FS, p string) bool {
+	target, err := fs.ReadLink(fsys, p)
+	return err == nil && strings.HasPrefix(target, "/etc/alternatives/")
 }
 
 // hiddenEntries lists dot-named files and directories under /usr, where packages do not put

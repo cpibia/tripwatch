@@ -9,11 +9,13 @@ import (
 )
 
 // DefaultSkip lists pseudo filesystems and container storage. Container layers are full of
-// legitimate setuid binaries and are checked against their image by a dedicated collector.
+// legitimate setuid binaries; comparing them with their images is the job of the container
+// collector on the roadmap, and until then container storage is not covered here.
 var DefaultSkip = []string{"proc", "sys", "dev", "run", "var/lib/docker", "var/lib/containerd", "var/lib/containers"}
 
-// DefaultExtra lists paths inside skipped trees that attackers use and must still be walked.
-var DefaultExtra = []string{"dev/shm"}
+// DefaultExtra lists paths inside skipped trees that unprivileged users can write to, and so
+// attackers use: they are walked even though their parents are skipped.
+var DefaultExtra = []string{"dev/shm", "run/lock", "run/shm", "run/user"}
 
 const maxWalkIssues = 50
 

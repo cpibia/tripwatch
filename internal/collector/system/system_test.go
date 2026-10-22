@@ -38,8 +38,8 @@ func compromisedHost() collector.Source {
 			"svcadmin::19000::::::\n"),
 		"etc/group": text("root:x:0:\nsudo:x:27:alice,svcadmin\n"),
 
-		"etc/ssh/sshd_config": text("# comment\nPort 22\nPermitRootLogin yes\n" +
-			"Match User backup\n  PermitRootLogin no\n"),
+		"etc/ssh/sshd_config": text("# comment\nInclude /etc/ssh/sshd_config.d/*.conf\nPort 22\nPermitRootLogin yes\n" +
+			"Match Address 203.0.113.7\n  PermitRootLogin yes\n  PasswordAuthentication yes\n"),
 		"etc/ssh/sshd_config.d/10-local.conf": text("PermitRootLogin prohibit-password\nPasswordAuthentication no\n"),
 		"root/.ssh/authorized_keys":           text("# admins\n" + attackerKey + "\n"),
 		"var/lib/svcadmin/.ssh/authorized_keys": text(
@@ -58,10 +58,14 @@ func compromisedHost() collector.Source {
 		"etc/systemd/system/nginx.service.d/override.conf": text("[Service]\nExecStartPost=/bin/sh /tmp/x\n"),
 		"etc/systemd/system/multi-user.target.wants/network-sync.service": &fstest.MapFile{
 			Data: []byte("/etc/systemd/system/network-sync.service"), Mode: fs.ModeSymlink},
-		"lib":                                  &fstest.MapFile{Data: []byte("usr/lib"), Mode: fs.ModeSymlink},
-		"usr/lib/systemd/system/ssh.service":   text("[Service]\nExecStart=/usr/sbin/sshd -D\n"),
-		"usr/lib/systemd/system/README":        text("not a unit\n"),
-		"var/www/.config/systemd/user/x.timer": text("[Timer]\nOnCalendar=hourly\n"),
+		"lib":                                         &fstest.MapFile{Data: []byte("usr/lib"), Mode: fs.ModeSymlink},
+		"usr/lib/systemd/system/ssh.service":          text("[Service]\nExecStart=/usr/sbin/sshd -D\n"),
+		"usr/lib/systemd/system/README":               text("not a unit\n"),
+		"var/www/.config/systemd/user/x.timer":        text("[Timer]\nOnCalendar=hourly\n"),
+		"run/systemd/transient/run-r1.service":        text("[Service]\nExecStart=/tmp/.x\n"),
+		"var/www/.local/share/systemd/user/y.service": text("[Service]\nExecStart=/var/www/.y\n"),
+		"etc/systemd/system-generators/net-helper":    &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o755},
+		"etc/systemd/system.conf":                     text("[Manager]\n#DefaultEnvironment=\nDefaultEnvironment=LD_PRELOAD=/usr/lib/libx.so\n"),
 
 		"etc/ld.so.preload":  text("/usr/lib/libprocesshider.so\n"),
 		"etc/profile.d/x.sh": text("export A=1\n"),
@@ -167,8 +171,12 @@ func TestEmptyFilesystem(t *testing.T) {
 func TestSSH(t *testing.T) {
 	res := collect[SSHResult](t, SSH{}, compromisedHost())
 
-	if res.Settings["permitrootlogin"] != "yes" {
-		t.Errorf("PermitRootLogin = %q, want the first value, before Match and drop-ins", res.Settings["permitrootlogin"])
+	if res.Settings["permitrootlogin"] != "prohibit-password" {
+		t.Errorf("PermitRootLogin = %q, want the drop-in's, included before the main file's value", res.Settings["permitrootlogin"])
+	}
+	wantMatch := SSHMatch{File: "/etc/ssh/sshd_config", Criteria: "Address 203.0.113.7", Lines: []string{"PermitRootLogin yes", "PasswordAuthentication yes"}}
+	if len(res.Matches) != 1 || res.Matches[0].Criteria != wantMatch.Criteria || !slices.Equal(res.Matches[0].Lines, wantMatch.Lines) {
+		t.Errorf("matches = %+v", res.Matches)
 	}
 	if res.Settings["passwordauthentication"] != "no" || res.Settings["port"] != "22" {
 		t.Errorf("settings = %v", res.Settings)
@@ -280,6 +288,18 @@ func TestServices(t *testing.T) {
 	if _, ok := units["/usr/lib/systemd/system/README"]; ok {
 		t.Error("non-unit file collected")
 	}
+	for _, p := range []string{"/run/systemd/transient/run-r1.service", "/var/www/.local/share/systemd/user/y.service"} {
+		if _, ok := units[p]; !ok {
+			t.Errorf("%s not collected", p)
+		}
+		delete(units, p)
+	}
+	if len(res.Generators) != 1 || res.Generators[0].Path != "/etc/systemd/system-generators/net-helper" {
+		t.Errorf("generators = %+v", res.Generators)
+	}
+	if !slices.Equal(res.Environment, []string{"DefaultEnvironment=LD_PRELOAD=/usr/lib/libx.so"}) {
+		t.Errorf("default environment = %v", res.Environment)
+	}
 	if len(units) != 4 {
 		t.Errorf("units = %v; lib symlinked to usr/lib must not be walked twice", slices.Sorted(maps.Keys(units)))
 	}
@@ -351,6 +371,25 @@ func TestAll(t *testing.T) {
 	for _, c := range All() {
 		if _, ok := snap.Results[c.Name()]; !ok {
 			t.Errorf("no result for %s", c.Name())
+		}
+	}
+}
+
+func TestRedactCmdline(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"/usr/bin/mysql", "-uroot", "-pS3cret", "shop"}, "/usr/bin/mysql -uroot -p[redacted] shop"},
+		{[]string{"app", "--db-password=x", "--api-key", "abc", "--port", "80"}, "app --db-password=[redacted] --api-key [redacted] --port 80"},
+		{[]string{"env", "AWS_SECRET_ACCESS_KEY=abc", "LANG=C"}, "env AWS_SECRET_ACCESS_KEY=[redacted] LANG=C"},
+		{[]string{"curl", "https://user:pw@example.com/x"}, "curl https://user:[redacted]@example.com/x"},
+		{[]string{"rsync", "--passive", "-p", "src"}, "rsync --passive -p src"},
+		{[]string{"nginx: master process"}, "nginx: master process"},
+	}
+	for _, tt := range tests {
+		if got := redactCmdline(tt.args); got != tt.want {
+			t.Errorf("redactCmdline(%q) = %q, want %q", tt.args, got, tt.want)
 		}
 	}
 }

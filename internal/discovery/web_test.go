@@ -490,3 +490,45 @@ func TestNginxCycleIssuesDeduplicated(t *testing.T) {
 		t.Errorf("%d cycle issues for 7 files", cycles)
 	}
 }
+
+func TestStaleConfig(t *testing.T) {
+	boot := time.Unix(1_700_000_000, 0)
+	fsys := fstest.MapFS{
+		"proc/stat":            text("cpu 1 2 3\nbtime 1700000000\n"),
+		"proc/10/comm":         text("nginx\n"),
+		"proc/10/stat":         text("10 (nginx) S 1 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 360000 0 0"),
+		"proc/11/comm":         text("nginx\n"),
+		"proc/11/stat":         text("11 (nginx) S 10 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 720000 0 0"),
+		"etc/nginx/nginx.conf": &fstest.MapFile{Data: []byte("http { include sites/*; }"), ModTime: boot.Add(30 * time.Minute)},
+		"etc/nginx/sites/a":    &fstest.MapFile{Data: []byte("server { root /srv; }"), ModTime: boot.Add(90 * time.Minute)},
+	}
+	// The master started an hour after boot; the worker later does not move that.
+	inv := Inspect(fsys)
+	if !slices.Equal(inv.StaleConfig, []string{"/etc/nginx/sites/a"}) {
+		t.Errorf("stale = %v", inv.StaleConfig)
+	}
+}
+
+func TestCaddyImport(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/caddy/Caddyfile":        text("(common) {\n\theader -Server\n}\nimport sites/*.caddy\n"),
+		"etc/caddy/sites/shop.caddy": text("shop.example.com {\n\timport common\n\troot * /srv/shop\n\tphp_fastcgi unix//run/php.sock\n}\n"),
+	}
+	sites, files, issues := CaddySites(fsys)
+	if len(issues) != 0 || len(sites) != 1 || sites[0].Root != "/srv/shop" || !sites[0].Executes("/a.php") {
+		t.Fatalf("sites %+v, issues %v", sites, issues)
+	}
+	if !slices.Equal(files, []string{"etc/caddy/Caddyfile", "etc/caddy/sites/shop.caddy"}) {
+		t.Errorf("files = %v", files)
+	}
+}
+
+func TestNginxVariablesExpandDeterministically(t *testing.T) {
+	conf := "http { server { set $ROOT /a; set $ROOT_DIR /b; root $ROOT_DIR/pub; access_log ${ROOT}/log; } }"
+	for range 20 {
+		sites, _, _ := NginxSites(fstest.MapFS{"etc/nginx/nginx.conf": text(conf)})
+		if sites[0].Root != "/b/pub" || sites[0].AccessLogs[0] != "/a/log" {
+			t.Fatalf("root %q logs %v", sites[0].Root, sites[0].AccessLogs)
+		}
+	}
+}

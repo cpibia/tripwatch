@@ -27,7 +27,7 @@ func TestChainAcceptsConsecutiveEnvelopes(t *testing.T) {
 	for i := range 3 {
 		e := sealer.Seal(KindHeartbeat, nil, testTime.Add(time.Duration(i)*time.Minute))
 		var err error
-		if state, err = Verify(e, pub, state); err != nil {
+		if state, err = Verify(e, "web-01", pub, state); err != nil {
 			t.Fatalf("envelope %d rejected: %v", e.Sequence, err)
 		}
 	}
@@ -55,7 +55,7 @@ func TestSignatureSurvivesJSONRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Verify(received, pub, ChainState{}); err != nil {
+	if _, err := Verify(received, "web-01", pub, ChainState{}); err != nil {
 		t.Fatalf("round-tripped envelope rejected: %v", err)
 	}
 }
@@ -92,11 +92,13 @@ func TestVerifyRejects(t *testing.T) {
 		{"restart from zero state", NewSealer("web-01", priv, ChainState{}).Seal(KindHeartbeat, nil, testTime), pub, afterFirst, ErrReplay},
 		{"dropped envelope", third, pub, afterFirst, ErrSequenceGap},
 		{"forked chain", forked, pub, afterFirst, ErrChainBroken},
+		{"other host", NewSealer("web-02", priv, afterFirst).Seal(KindHeartbeat, nil, testTime), pub, afterFirst, ErrWrongHost},
+		{"unknown kind", NewSealer("web-01", priv, afterFirst).Seal(Kind("command"), nil, testTime), pub, afterFirst, ErrUnknownKind},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Verify(tt.e, tt.pub, tt.state)
+			got, err := Verify(tt.e, "web-01", tt.pub, tt.state)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}

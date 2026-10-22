@@ -200,6 +200,7 @@ func dpkgHost() fstest.MapFS {
 		"usr/bin/x":                   text("replaced by the diverting package"),
 		"usr/bin/backdoor":            text("not from any package"),
 		"usr/bin/editor":              link("/etc/alternatives/editor"),
+		"usr/local/bin/sudo":          link("/dev/shm/x"),
 		"usr/sbin/sshd":               text("sshd with a backdoor"),
 		"etc/ssh/moduli":              text("moduli"),
 		"etc/ssh/sshd_config":         text("edited config"),
@@ -228,6 +229,12 @@ func TestPackagesDpkg(t *testing.T) {
 	}
 	if !slices.Equal(res.Missing, []string{"/usr/bin/scp"}) {
 		t.Errorf("missing = %v; documentation must be ignored", res.Missing)
+	}
+	if !slices.Equal(res.UnownedLinks, []Link{{Path: "/usr/local/bin/sudo", Target: "/dev/shm/x"}}) {
+		t.Errorf("unowned links = %+v; links managed by update-alternatives are skipped", res.UnownedLinks)
+	}
+	if len(res.DatabaseSHA256) != 64 {
+		t.Errorf("database hash = %q", res.DatabaseSHA256)
 	}
 	if !slices.Equal(res.Unowned, []string{"/usr/bin/backdoor"}) {
 		t.Errorf("unowned = %v; merged-/usr and diverted paths are owned, symlinks are skipped", res.Unowned)
@@ -326,5 +333,20 @@ func TestProcessesKernelThreadFlag(t *testing.T) {
 	}
 	if len(res.Issues) == 0 {
 		t.Error("an unreadable exe link must be reported as an issue")
+	}
+}
+
+// Updating a checksum to match a replaced file hides it from verification, but not from the
+// database fingerprint.
+func TestPackageDatabaseFingerprint(t *testing.T) {
+	before := collect[PackagesResult](t, Packages{}, collector.Source{FS: dpkgHost()})
+	tampered := dpkgHost()
+	tampered["var/lib/dpkg/info/openssh-server.md5sums"] = text(md5hex("sshd with a backdoor") + "  usr/sbin/sshd\n")
+	after := collect[PackagesResult](t, Packages{}, collector.Source{FS: tampered})
+	if slices.ContainsFunc(after.Modified, func(m ModifiedFile) bool { return m.Path == "/usr/sbin/sshd" }) {
+		t.Fatal("fixture: the checksum update should hide the modified binary")
+	}
+	if before.DatabaseSHA256 == after.DatabaseSHA256 {
+		t.Error("the database fingerprint did not change")
 	}
 }

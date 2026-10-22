@@ -82,7 +82,7 @@ func (Hooks) Collect(ctx context.Context, src collector.Source) (any, error) {
 	preload, err := collector.ReadLines(src.FS, "etc/ld.so.preload")
 	res.Issues.Add(err)
 	if len(preload) > 0 {
-		res.Preload = directives(preload, "#")
+		res.Preload = directives(preload)
 	}
 	return res, nil
 }

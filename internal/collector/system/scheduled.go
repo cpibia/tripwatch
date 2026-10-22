@@ -62,15 +62,15 @@ func (res *ScheduledResult) addTable(src collector.Source, name, owner string) {
 	}
 	lines, err := collector.ReadLines(src.FS, name)
 	res.Issues.Add(err)
-	res.Tables = append(res.Tables, CronTable{File: f, Owner: owner, Entries: directives(lines, "#")})
+	res.Tables = append(res.Tables, CronTable{File: f, Owner: owner, Entries: directives(lines)})
 }
 
-// directives returns the non-empty lines that are not comments.
-func directives(lines []string, comment string) []string {
+// directives returns the non-empty lines that are not # comments.
+func directives(lines []string) []string {
 	out := []string{}
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, comment) {
+		if line != "" && !strings.HasPrefix(line, "#") {
 			out = append(out, line)
 		}
 	}

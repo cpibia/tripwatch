@@ -12,11 +12,25 @@ import (
 var systemUnitDirs = []string{
 	"etc/systemd/system",
 	"run/systemd/system",
+	"run/systemd/transient",
 	"usr/lib/systemd/system",
 	"lib/systemd/system",
 	"usr/local/lib/systemd/system",
 	"etc/systemd/user",
 	"usr/lib/systemd/user",
+}
+
+// Generators are executables systemd runs as root at every boot and daemon-reload to write
+// units on the fly.
+var generatorDirs = []string{
+	"etc/systemd/system-generators", "usr/lib/systemd/system-generators", "lib/systemd/system-generators",
+	"usr/local/lib/systemd/system-generators", "run/systemd/system-generators",
+	"etc/systemd/user-generators", "usr/lib/systemd/user-generators", "usr/local/lib/systemd/user-generators",
+}
+
+// Manager configuration: DefaultEnvironment there reaches every service (LD_PRELOAD included).
+var managerConfigs = []string{
+	"etc/systemd/system.conf", "etc/systemd/system.conf.d/*.conf", "etc/systemd/user.conf", "etc/systemd/user.conf.d/*.conf",
 }
 
 var unitExtensions = []string{".service", ".timer", ".socket", ".path", ".mount", ".target"}
@@ -36,9 +50,13 @@ type Link struct {
 }
 
 type ServicesResult struct {
-	Units  []Unit           `json:"units"`
-	Links  []Link           `json:"links"`
-	Issues collector.Issues `json:"issues,omitempty"`
+	Units      []Unit           `json:"units"`
+	Links      []Link           `json:"links"`
+	Generators []collector.File `json:"generators"`
+	// Manager holds systemd.conf and user.conf files; Environment their DefaultEnvironment.
+	Manager     []collector.File `json:"manager"`
+	Environment []string         `json:"default_environment,omitempty"`
+	Issues      collector.Issues `json:"issues,omitempty"`
 }
 
 // Services collects systemd units, drop-ins and enablement links, system-wide and per user.
@@ -63,7 +81,28 @@ func (Services) Collect(ctx context.Context, src collector.Source) (any, error) 
 		dirs = append(dirs, dir)
 	}
 	for _, home := range homes(accounts) {
-		dirs = append(dirs, path.Join(home, ".config/systemd/user"))
+		dirs = append(dirs, path.Join(home, ".config/systemd/user"), path.Join(home, ".local/share/systemd/user"))
+	}
+
+	for _, dir := range generatorDirs {
+		if strings.HasPrefix(dir, "lib/") && isSymlink(src.FS, "lib") {
+			continue
+		}
+		for _, name := range collector.Glob(src.FS, dir+"/*") {
+			res.Generators = appendDescribed(res.Generators, &res.Issues, src, name)
+		}
+	}
+	for _, pattern := range managerConfigs {
+		for _, name := range collector.Glob(src.FS, pattern) {
+			res.Manager = appendDescribed(res.Manager, &res.Issues, src, name)
+			lines, err := collector.ReadLines(src.FS, name)
+			res.Issues.Add(err)
+			for _, line := range directives(lines) {
+				if strings.HasPrefix(line, "DefaultEnvironment=") {
+					res.Environment = append(res.Environment, line)
+				}
+			}
+		}
 	}
 
 	for _, dir := range dirs {
@@ -104,7 +143,7 @@ func (res *ServicesResult) addUnit(src collector.Source, name string, d fs.DirEn
 	res.Issues.Add(err)
 
 	u := Unit{File: f}
-	for _, line := range directives(lines, "#") {
+	for _, line := range directives(lines) {
 		if strings.HasPrefix(line, ";") {
 			continue
 		}
