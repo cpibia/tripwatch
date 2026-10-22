@@ -355,20 +355,42 @@ func (s *Store) accept(ctx context.Context, e protocol.Envelope, prev, state pro
 			return err
 		}
 		// Evidence of an alert still open stays past the retention, within the host's quota.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND received_at < ?
-			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
-			AND NOT EXISTS (SELECT 1 FROM snapshot_evidence ev JOIN alerts a ON a.id = ev.alert_id
-				WHERE ev.snapshot_id = snapshots.id AND a.status != 'resolved')`, e.HostID, now.Add(-Retention).Unix(), e.HostID); err != nil {
-			return err
+		var gone []int64
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND received_at < ?
+				AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
+				AND NOT EXISTS (SELECT 1 FROM snapshot_evidence ev JOIN alerts a ON a.id = ev.alert_id
+					WHERE ev.snapshot_id = snapshots.id AND a.status != 'resolved') RETURNING id`,
+				[]any{e.HostID, now.Add(-Retention).Unix(), e.HostID}},
+			{`DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND keep = 0 AND received_at < ?
+				AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
+				AND id NOT IN (SELECT MAX(id) FROM snapshots WHERE host_id = ? GROUP BY received_at / 86400) RETURNING id`,
+				[]any{e.HostID, now.Add(-DenseRetention).Unix(), e.HostID, e.HostID}},
+		} {
+			rows, err := tx.QueryContext(ctx, q.sql, q.args...)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				gone = append(gone, id)
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND keep = 0 AND received_at < ?
-			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
-			AND id NOT IN (SELECT MAX(id) FROM snapshots WHERE host_id = ? GROUP BY received_at / 86400)`,
-			e.HostID, now.Add(-DenseRetention).Unix(), e.HostID, e.HostID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshot_evidence WHERE snapshot_id NOT IN (SELECT id FROM snapshots)`); err != nil {
-			return err
+		// Only the links of the snapshots just deleted, through the primary key.
+		for _, id := range gone {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM snapshot_evidence WHERE snapshot_id = ?`, id); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()

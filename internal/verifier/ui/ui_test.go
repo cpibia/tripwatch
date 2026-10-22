@@ -531,14 +531,14 @@ func TestLoginLink(t *testing.T) {
 	if _, err := h.store.CreateLoginLink(context.Background(), "nobody@example.net", now); err == nil {
 		t.Fatal("a link was made for an email that is not a user")
 	}
-	res, _ := h.get("/login/link?t=" + token)
+	res, _ := h.post("/login/link", url.Values{"t": {token}})
 	if res.StatusCode != http.StatusSeeOther || !strings.Contains(strings.Join(res.Header.Values("Set-Cookie"), ";"), deviceCookie+"=") {
 		t.Fatalf("link: status %d, cookies %v", res.StatusCode, res.Header.Values("Set-Cookie"))
 	}
 	if res, _ := h.get("/"); res.StatusCode != http.StatusOK {
 		t.Fatalf("not signed in after the link: %d", res.StatusCode)
 	}
-	if res, _ := h.get("/login/link?t=" + token); res.StatusCode != http.StatusForbidden {
+	if res, _ := h.post("/login/link", url.Values{"t": {token}}); res.StatusCode != http.StatusForbidden {
 		t.Fatalf("the link worked twice: %d", res.StatusCode)
 	}
 }
@@ -560,5 +560,49 @@ func TestUnknownEmailsHaveTheirOwnLane(t *testing.T) {
 	}
 	if other := took("someone-else@example.net"); other > known*2+100*time.Millisecond {
 		t.Fatalf("unknown emails share a lane: %v", other)
+	}
+}
+
+// Opening a sign-in link shows a button; only submitting it uses the link.
+func TestLoginLinkNeedsAClick(t *testing.T) {
+	h := newHarness(t)
+	token, _ := h.store.CreateLoginLink(context.Background(), email, now)
+	res, body := h.get("/login/link?t=" + token)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, `name="t" value="`+token+`"`) || len(res.Header.Values("Set-Cookie")) != 0 {
+		t.Fatalf("opening the link: status %d, cookies %v", res.StatusCode, res.Header.Values("Set-Cookie"))
+	}
+	if res, _ := h.post("/login/link", url.Values{"t": {token}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("submitting the link: %d", res.StatusCode)
+	}
+	if res, _ := h.post("/login/link", url.Values{"t": {token}}); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("the link worked twice: %d", res.StatusCode)
+	}
+}
+
+func TestPasswordResetCancelsLinksAndDevicesAreBounded(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	token, _ := h.store.CreateLoginLink(ctx, email, now)
+	if err := h.store.SetUser(ctx, email, password, now); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := h.post("/login/link", url.Values{"t": {token}}); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("a link made before the reset still works: %d", res.StatusCode)
+	}
+	var first string
+	for i := range store.MaxDevices + 5 {
+		d, err := h.store.CreateDevice(ctx, email, now.Add(time.Duration(i)*time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = d
+		}
+	}
+	if _, err := h.store.DeviceEmail(ctx, first, now); err == nil {
+		t.Fatal("the oldest browser is still known past the bound")
+	}
+	if n, err := h.store.RevokeDevices(ctx, email); err != nil || n != store.MaxDevices {
+		t.Fatalf("revoked %d browsers, %v", n, err)
 	}
 }

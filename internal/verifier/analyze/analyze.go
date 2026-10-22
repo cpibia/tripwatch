@@ -224,13 +224,15 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	}
 	var evidenceOf []string
 	for _, f := range findings {
-		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) || !f.State {
+		// Evidence is the snapshot where an alert starts (or comes back), not every later one
+		// that shows it again: a repeated log request would otherwise keep every snapshot.
+		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) {
 			evidenceOf = append(evidenceOf, f.Fingerprint)
 		}
 	}
 	evidence := len(evidenceOf) > 0
-	// A snapshot that shows a change or a new condition is evidence, and so is the one before
-	// it, which shows the host as it was: both are kept beyond the thinning.
+	// A snapshot that raises a new alert is evidence, and so is the one before it, which shows the
+	// host as it was: both are kept beyond the thinning.
 	if evidence {
 		keep := []int64{id}
 		if prevSnap != nil {

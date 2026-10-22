@@ -200,3 +200,24 @@ func TestChangeKeepsBothSnapshots(t *testing.T) {
 		t.Fatalf("the snapshots around the change were thinned: kept %d snapshots", len(snaps))
 	}
 }
+
+// A log request repeated in every snapshot raises its alert once: only the snapshot where it
+// started (and the one before) outlives the retention, not every snapshot that shows it again.
+func TestRepeatedEventDoesNotKeepEverySnapshot(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	payload := gz(t, `{"snapshot":{"results":{"weblog":{"events":[{"rule":"command_in_parameters","severity":"critical","log":"/var/log/nginx/access.log","attacker_controlled":{"request":"/index.php?c=id"}}]}}}}`)
+	for range 40 {
+		h.deliver(protocol.KindSnapshot, payload)
+		ids, _ := h.store.PendingSnapshots(ctx, 10)
+		for _, id := range ids {
+			h.an.RunSnapshot(ctx, id)
+			_ = h.store.MarkAnalyzed(ctx, id)
+		}
+		h.clock = h.clock.Add(24 * time.Hour)
+	}
+	snaps, _ := h.store.LatestSnapshots(ctx, "web-01", 1000)
+	if len(snaps) > 33 {
+		t.Fatalf("%d of 40 daily snapshots kept: the repeated event pins them past 30 days", len(snaps))
+	}
+}

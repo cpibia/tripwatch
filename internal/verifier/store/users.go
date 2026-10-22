@@ -34,11 +34,27 @@ func (s *Store) SetUser(ctx context.Context, email, password string, now time.Ti
 	_, err = s.db.ExecContext(ctx, `INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)
 		ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash`, email, hash, now.Unix())
 	if err == nil {
-		// A new password ends every existing session of that user. Known browsers stay: they
-		// only give a faster line to sign in, never access without the password.
+		// A new password ends every existing session of that user and every sign-in link not
+		// used yet. Known browsers stay: they only give a faster line to sign in, never access
+		// without the password; RevokeDevices forgets them.
 		_, err = s.db.ExecContext(ctx, `DELETE FROM sessions WHERE email = ?`, email)
 	}
+	if err == nil {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM login_links WHERE email = ?`, email)
+	}
 	return err
+}
+
+// MaxDevices bounds the browsers a user is known from; the oldest goes first.
+const MaxDevices = 10
+
+// RevokeDevices forgets every browser a user signed in from.
+func (s *Store) RevokeDevices(ctx context.Context, email string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE email = ?`, email)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // LoginLinkLifetime bounds how long a sign-in link made from the command line stays valid.
@@ -94,7 +110,11 @@ func (s *Store) CreateDevice(ctx context.Context, email string, now time.Time) (
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
-	_, err := s.db.ExecContext(ctx, `INSERT INTO devices (token_hash, email, expires_at) VALUES (?, ?, ?)`, sum[:], email, now.Add(DeviceLifetime).Unix())
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO devices (token_hash, email, expires_at) VALUES (?, ?, ?)`, sum[:], email, now.Add(DeviceLifetime).Unix()); err != nil {
+		return "", err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE email = ? AND rowid NOT IN
+		(SELECT rowid FROM devices WHERE email = ? ORDER BY expires_at DESC LIMIT ?)`, email, email, MaxDevices)
 	return token, err
 }
 

@@ -1,0 +1,11 @@
+{{define "content"}}
+<div class="login">
+  <p class="wordmark">{{template "glyph"}}<span>tripwatch</span></p>
+  <h1>Accesso con link</h1>
+  <p class="note">Il link vale una volta sola. Entrando, questo browser diventa uno di quelli da cui l'accesso non viene rallentato.</p>
+  <form method="post" action="/login/link" class="form">
+    <input type="hidden" name="t" value="{{.Data}}">
+    <button class="primary" type="submit">Entra</button>
+  </form>
+</div>
+{{end}}

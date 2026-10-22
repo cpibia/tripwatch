@@ -8,6 +8,7 @@
 //	tripwatch-verifier revoke -host web-01
 //	tripwatch-verifier user -email ops@example.com   (password on standard input)
 //	tripwatch-verifier login-link -email ops@example.com
+//	tripwatch-verifier revoke-browsers -email ops@example.com
 //	tripwatch-verifier healthcheck
 package main
 
@@ -63,8 +64,10 @@ func main() {
 		err = healthcheck()
 	case "login-link":
 		err = loginLink(args)
+	case "revoke-browsers":
+		err = revokeBrowsers(args)
 	default:
-		err = fmt.Errorf("unknown command %q (serve, enroll, revoke, user, login-link, healthcheck)", cmd)
+		err = fmt.Errorf("unknown command %q (serve, enroll, revoke, user, login-link, revoke-browsers, healthcheck)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tripwatch-verifier:", err)
@@ -328,6 +331,28 @@ func loginLink(args []string) error {
 		return err
 	}
 	fmt.Printf("%s/login/link?t=%s\n(valid once, for %s)\n", strings.TrimSuffix(os.Getenv("TRIPWATCH_PUBLIC_UI_URL"), "/"), token, store.LoginLinkLifetime)
+	return nil
+}
+
+// revokeBrowsers forgets the browsers a user signed in from: after a password leak, so that
+// whoever had it cannot keep the fast sign-in lanes of the browsers they used.
+func revokeBrowsers(args []string) error {
+	fs := flag.NewFlagSet("revoke-browsers", flag.ExitOnError)
+	email := fs.String("email", "", "user whose known browsers to forget")
+	_ = fs.Parse(args)
+	if *email == "" {
+		return errors.New("revoke-browsers needs -email")
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	n, err := st.RevokeDevices(context.Background(), strings.ToLower(strings.TrimSpace(*email)))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%d browsers forgotten\n", n)
 	return nil
 }
 

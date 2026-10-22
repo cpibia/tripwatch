@@ -303,6 +303,15 @@ monouso valido dieci minuti, che rende anche quel browser noto:
 docker compose exec verifier /tripwatch-verifier login-link -email ops@example.net
 ```
 
+Il link apre una pagina con un pulsante, e la sessione nasce solo premendolo: le anteprime delle
+chat e gli scanner della posta che aprono il link non lo consumano. Un cambio password annulla i
+link non ancora usati. Dopo una password trapelata, i browser da cui era stata usata si dimenticano
+con:
+
+```sh
+docker compose exec verifier /tripwatch-verifier revoke-browsers -email ops@example.net
+```
+
 ### Interfaccia
 
 - **Panoramica.** Un quadro da sala controllo: tutto è grigio finché qualcosa devia. In alto i

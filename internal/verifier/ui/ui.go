@@ -79,7 +79,7 @@ func New(c Config) (http.Handler, error) {
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(5, c.LoginBackoff, 15*c.LoginBackoff, time.Hour)
 	}
-	for _, name := range []string{"login", "overview", "host", "alerts", "alert", "enroll", "error"} {
+	for _, name := range []string{"login", "link", "overview", "host", "alerts", "alert", "enroll", "error"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
@@ -97,7 +97,8 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /static/", s.serveStatic)
 	mux.HandleFunc("GET /login", s.loginForm)
 	mux.HandleFunc("POST /login", s.login)
-	mux.HandleFunc("GET /login/link", s.loginLink)
+	mux.HandleFunc("GET /login/link", s.loginLinkForm)
+	mux.HandleFunc("POST /login/link", s.loginLink)
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
 	mux.HandleFunc("POST /theme", s.authed(s.theme))
 	mux.HandleFunc("GET /{$}", s.authed(s.overview))
@@ -336,10 +337,21 @@ func (s *server) loginLane(r *http.Request, email string) (string, error) {
 	return "email:" + email, nil
 }
 
+// loginLinkForm shows a button for a one-time link: opening the link must not use it, since
+// link previews in chat and mail scanners open links too.
+func (s *server) loginLinkForm(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, http.StatusOK, "link", page{Title: "Accesso con link", Data: r.URL.Query().Get("t")})
+}
+
 // loginLink signs in with a one-time link made by `tripwatch-verifier login-link`, and makes the
 // browser a known one: the way in when the email's line is held by an attack.
 func (s *server) loginLink(w http.ResponseWriter, r *http.Request) {
-	email, token, err := s.Store.ConsumeLoginLink(r.Context(), r.URL.Query().Get("t"), s.Now())
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if !sameOrigin(r) {
+		s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo di accesso non viene da questa console.")
+		return
+	}
+	email, token, err := s.Store.ConsumeLoginLink(r.Context(), r.PostFormValue("t"), s.Now())
 	if errors.Is(err, store.ErrNotFound) {
 		s.fail(w, r, http.StatusForbidden, "Link non valido", "Il link di accesso è già stato usato o è scaduto. Creane un altro dal verificatore.")
 		return
@@ -891,27 +903,38 @@ type attempts struct {
 
 func newAttempts() *attempts { return &attempts{turn: make(chan struct{}, 1)} }
 
-// evictOne drops stale idle lanes from a full table; in the table of unknown emails it drops
-// one idle lane anyway, so flooding it with made-up emails only pushes made-up emails out.
-func (l *limiter) evictOne(table map[string]*attempts, force bool, now func() time.Time) {
-	var victim string
+// evictOne drops stale idle lanes from a full table. In the table of unknown emails it also
+// drops an idle lane without recent failures, so that flooding it with made-up emails pushes
+// out only lanes that carry no delay: a lane slowed by failures keeps its delay, as a user's
+// does, and the delays still do not tell which emails exist. Lanes with failures go only past
+// a much larger bound, and memory stays bounded.
+func (l *limiter) evictOne(table map[string]*attempts, unknown bool, now func() time.Time) {
+	var calm, busy string
 	for k, e := range table {
 		select {
 		case e.turn <- struct{}{}:
 			stale := now().Sub(e.last) > l.window
+			failing := e.fails > 0 && !stale
 			<-e.turn
-			if stale {
+			switch {
+			case stale:
 				delete(table, k)
-				continue
-			}
-			if victim == "" {
-				victim = k
+			case !failing && calm == "":
+				calm = k
+			case failing && busy == "":
+				busy = k
 			}
 		default:
 		}
 	}
-	if force && len(table) >= maxLimiterEntries && victim != "" {
-		delete(table, victim)
+	if !unknown || len(table) < maxLimiterEntries {
+		return
+	}
+	switch {
+	case calm != "":
+		delete(table, calm)
+	case busy != "" && len(table) >= 20*maxLimiterEntries:
+		delete(table, busy)
 	}
 }
 
