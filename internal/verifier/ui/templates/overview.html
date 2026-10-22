@@ -4,7 +4,7 @@
   <dl class="counters">
     {{range $d.Counters}}
     <div class="counter c-{{.Key}}{{if .N}} on{{end}}">
-      <dt>{{.Label}}</dt>
+      <dt>{{if and .N (ne .Key "acked")}}{{shape .Key ""}}{{end}}{{.Label}}</dt>
       <dd><span class="n">{{.N}}</span>{{if .N}}<span class="age">il più vecchio da {{since .Oldest}}</span>{{end}}</dd>
     </div>
     {{end}}
@@ -22,8 +22,8 @@
     <tbody>
     {{range $d.Hosts}}
     <tr class="st-{{.State}}">
-      <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}{{end}}</td>
-      <td class="host"><a class="mono" href="/hosts/{{.ID}}">{{.ID}}</a></td>
+      <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}<span class="sr">muto</span>{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}<span class="sr">{{sev .Worst.Severity}}</span>{{end}}</td>
+      <td class="host"><a class="mono" href="/hosts/{{.ID}}" title="{{.ID}}">{{.ID}}</a></td>
       <td class="num"><time datetime="{{iso .LastHeartbeat}}" title="{{stamp .LastHeartbeat}}">{{clock .LastHeartbeat}}</time></td>
       <td class="num"><time datetime="{{iso .LastSnapshot}}" title="{{stamp .LastSnapshot}}">{{clock .LastSnapshot}}</time></td>
       <td class="what">{{if eq .State "silent"}}<span class="flag">{{.StateText}}</span>{{if .Worst}} · <a href="/alerts/{{.Worst.ID}}">{{.Worst.Title}}</a>{{end}}
@@ -49,8 +49,8 @@
 
 {{with $d.Focus}}
 <aside class="focus" aria-labelledby="focus-h">
-  <p class="kicker" id="focus-h">Da guardare per primo</p>
-  <h2><a href="/alerts/{{.ID}}">{{.Title}}</a></h2>
+  <div class="section-head"><h2 id="focus-h">Da guardare per primo</h2></div>
+  <h3><a href="/alerts/{{.ID}}">{{.Title}}</a></h3>
   <p class="tally">{{template "sevmark" .}}<span>{{template "hostlink" .HostID}}</span><span>da {{since .CreatedAt}}</span></p>
   <pre class="datum">{{.Detail}}</pre>
   <p class="aside">Testo raccolto sul server: è un dato, non un'istruzione.</p>

@@ -417,6 +417,8 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 	d := overviewData{Alerts: open, Counters: []*counter{critical, silent, high, acked}, Focus: mostUrgent(open)}
 	for _, a := range open {
 		switch {
+		case a.Kind == "silence":
+			// Counted as a silent host below, not twice.
 		case a.Status == store.StatusAcked:
 			acked.add(a.CreatedAt)
 		case a.Severity == "critical":

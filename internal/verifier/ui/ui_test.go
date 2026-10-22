@@ -245,7 +245,7 @@ func TestOverviewShowsSilentHostFirst(t *testing.T) {
 	if quiet < 0 || alive < 0 || quiet > alive {
 		t.Fatal("the silent host is not listed before the responding one")
 	}
-	if !regexp.MustCompile(`c-silent on">\s*<dt>muti</dt>\s*<dd><span class="n">1</span>`).MatchString(body) {
+	if !regexp.MustCompile(`c-silent on">\s*<dt><svg[^>]*>.*?</svg>muti</dt>\s*<dd><span class="n">1</span>`).MatchString(body) {
 		t.Fatal("the counters do not count the silent host")
 	}
 }

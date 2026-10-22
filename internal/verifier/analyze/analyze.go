@@ -235,7 +235,7 @@ func (a *Analyzer) Silent(ctx context.Context, limit, snapshotLimit time.Duratio
 			current = append(current, fp)
 			a.raise(ctx, store.Alert{HostID: h.ID, Fingerprint: fp, Severity: "critical", Kind: "silence",
 				Title:  "Il sensore non risponde",
-				Detail: fmt.Sprintf("Nessun battito da %s (ultimo: %s). Il sensore è fermo, il server è irraggiungibile, oppure qualcuno lo ha spento.", now.Sub(last).Round(time.Minute), formatTime(last))})
+				Detail: fmt.Sprintf("Nessun battito da %s (ultimo: %s). Il sensore è fermo, il server è irraggiungibile, oppure qualcuno lo ha spento.", span(now.Sub(last)), formatTime(last))})
 		}
 		lastSnap := h.LastSnapshot
 		if lastSnap.IsZero() {
@@ -246,12 +246,23 @@ func (a *Analyzer) Silent(ctx context.Context, limit, snapshotLimit time.Duratio
 			current = append(current, fp)
 			a.raise(ctx, store.Alert{HostID: h.ID, Fingerprint: fp, Severity: "high", Kind: "silence",
 				Title:  "Il sensore risponde ma non invia snapshot",
-				Detail: fmt.Sprintf("Battiti regolari, ma nessuno snapshot da %s (ultimo: %s). La raccolta è bloccata, oppure il sensore è stato manomesso per mandare solo segnali di vita.", now.Sub(lastSnap).Round(time.Minute), formatTime(lastSnap))})
+				Detail: fmt.Sprintf("Battiti regolari, ma nessuno snapshot da %s (ultimo: %s). La raccolta è bloccata, oppure il sensore è stato manomesso per mandare solo segnali di vita.", span(now.Sub(lastSnap)), formatTime(lastSnap))})
 		}
 		if err := a.Store.ResolveGone(ctx, h.ID, "silence", current, now); err != nil {
 			a.Log.Error("resolve silence", "host", h.ID, "err", err)
 		}
 	}
+}
+
+// span writes a duration for the alert text, in minutes, hours or days.
+func span(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%d min", int(d/time.Minute))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d h %d min", int(d/time.Hour), int(d%time.Hour/time.Minute))
+	}
+	return fmt.Sprintf("%d giorni", int(d/(24*time.Hour)))
 }
 
 func formatTime(t time.Time) string {
