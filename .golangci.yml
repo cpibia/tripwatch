@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+    - revive
+    - unconvert
+    - unparam
+  exclusions:
+    rules:
+      # Doc comments are written where they add information, not on every exported name.
+      - linters: [revive]
+        text: "^exported:"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

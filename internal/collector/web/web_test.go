@@ -1,0 +1,284 @@
+package web
+
+import (
+	"bytes"
+	"context"
+	"slices"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"github.com/cpibia/tripwatch/internal/collector"
+)
+
+func text(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s), Mode: 0o644} }
+
+const nginxConf = `
+http {
+    server {
+        server_name www.commerce.example.com;
+        root /var/www/commerce/pub;
+        location /media/custom_options/ { deny all; }
+        location ~ ^/(index|get|errors/503|adminer)\.php$ { fastcgi_pass fastcgi_backend; }
+        location ~* \.php$ { deny all; }
+    }
+}
+`
+
+// compromisedShop reproduces the web artefacts of a real Magento compromise.
+func compromisedShop() fstest.MapFS {
+	gif := append([]byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04"), []byte("<?php system($_GET['c']); ?>")...)
+	encoded := strings.Repeat("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=", 200)
+
+	fsys := fstest.MapFS{
+		"etc/nginx/nginx.conf":                                            text(nginxConf),
+		"var/www/commerce/bin/magento":                                    text("#!/usr/bin/env php"),
+		"var/www/commerce/app/etc/di.xml":                                 text("<config/>"),
+		"var/www/commerce/app/code/Acme/Fonts.php":                        text("<?php\n$font = '" + encoded + "';\n"),
+		"var/www/commerce/pub/index.php":                                  text("<?php require __DIR__ . '/../app/bootstrap.php';"),
+		"var/www/commerce/pub/adminer.php":                                text("<?php // database admin tool"),
+		"var/www/commerce/pub/.htaccess":                                  text("Options -Indexes"),
+		"var/www/commerce/pub/errors/503.php":                             text(`<?php if (isset($_POST['cmd'])) { system($_POST['cmd']); }`),
+		"var/www/commerce/pub/helper.php":                                 text(`<?php eval(base64_decode($_GET['cm']));`),
+		"var/www/commerce/pub/media/custom_options/quote/s/e/a1.php8":     text(`<?php echo 1;`),
+		"var/www/commerce/pub/media/custom_options/quote/g/e/image_1.gif": {Data: gif, Mode: 0o644},
+		"var/www/commerce/pub/media/customer_address/s/e/sess_4c1d": text(
+			`_sf2_attributes|a:1:{s:1:"x";O:31:"GuzzleHttp\Cookie\FileCookieJar":1:{}}` +
+				`[{"Expires":1,"Discard":false,"Value":"<?php eval($_POST[1]); ?>"}]`),
+		"var/www/commerce/pub/media/catalog/product/a.jpg":                                       {Data: []byte("\xff\xd8\xff\xe0 JFIF clean image"), Mode: 0o644},
+		"var/www/commerce/pub/media/wysiwyg/js/app.js":                                           text("fetch('/get.php')"),
+		"var/www/commerce/var/log/.data.tmp":                                                     text("card data"),
+		"var/www/commerce/var/log/system.log":                                                    text("log"),
+		"var/www/commerce/vendor/magento/module-checkout/Model/PaymentInformationManagement.php": text("<?php class PaymentInformationManagement {}"),
+		"var/www/commerce/vendor/acme/files/Handler.php":                                         text("<?php class Handler {}"),
+		"var/www/commerce/vendor/acme/lib/.loader.php":                                           text("<?php include 'x';"),
+		"var/www/commerce/.git/HEAD":                                                             text("ref: refs/heads/main"),
+		"var/www/commerce/generated/link":                                                        {Data: []byte("../vendor"), Mode: 0o777 | 1<<27},
+	}
+	return fsys
+}
+
+func run(t *testing.T, fsys fstest.MapFS) Result {
+	t.Helper()
+	out, err := Collector{}.Collect(context.Background(), collector.Source{FS: fsys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.(Result)
+}
+
+func commerceReport(t *testing.T, res Result) AppReport {
+	t.Helper()
+	for _, a := range res.Apps {
+		if a.Path == "/var/www/commerce" {
+			return a
+		}
+	}
+	t.Fatalf("commerce not found among %d apps", len(res.Apps))
+	return AppReport{}
+}
+
+func TestFindings(t *testing.T) {
+	app := commerceReport(t, run(t, compromisedShop()))
+
+	type finding struct {
+		kind, path string
+		sigs       string
+		reachable  bool
+	}
+	var got []finding
+	for _, f := range app.Findings {
+		got = append(got, finding{f.Kind, f.Path, strings.Join(f.Signatures, ","), f.Reachable})
+	}
+	want := []finding{
+		{KindEncodedBlob, "/var/www/commerce/app/code/Acme/Fonts.php", "", false},
+		{KindPolyglotImage, "/var/www/commerce/pub/media/custom_options/quote/g/e/image_1.gif", "", false},
+		{KindScriptInUploads, "/var/www/commerce/pub/media/custom_options/quote/s/e/a1.php8", "", false},
+		{KindCodeInUploads, "/var/www/commerce/pub/media/customer_address/s/e/sess_4c1d", "eval_request_input,cookie_jar_dropper", false},
+		{KindSignature, "/var/www/commerce/pub/errors/503.php", "exec_request_input", true},
+		{KindSignature, "/var/www/commerce/pub/helper.php", "eval_decoded_payload,eval_request_input", false},
+		{KindHiddenInData, "/var/www/commerce/var/log/.data.tmp", "", false},
+		{KindHiddenScript, "/var/www/commerce/vendor/acme/lib/.loader.php", "", false},
+	}
+	slices.SortFunc(got, func(a, b finding) int { return strings.Compare(a.path, b.path) })
+	slices.SortFunc(want, func(a, b finding) int { return strings.Compare(a.path, b.path) })
+	if !slices.Equal(got, want) {
+		t.Errorf("findings:\n got  %+v\n want %+v", got, want)
+	}
+
+	wantReachable := []string{"/var/www/commerce/pub/adminer.php", "/var/www/commerce/pub/errors/503.php", "/var/www/commerce/pub/index.php"}
+	if !slices.Equal(app.Reachable, wantReachable) || app.ReachableCount != 3 {
+		t.Errorf("reachable = %v (%d), want %v", app.Reachable, app.ReachableCount, wantReachable)
+	}
+	if len(app.Overrides) != 1 || app.Overrides[0].Path != "/var/www/commerce/pub/.htaccess" {
+		t.Errorf("overrides = %+v", app.Overrides)
+	}
+	if app.Framework != "magento" || !slices.Equal(app.Sites, []string{"www.commerce.example.com"}) {
+		t.Errorf("app = %+v", app.Application)
+	}
+}
+
+func TestTreeHashCoversCodeNotData(t *testing.T) {
+	base := commerceReport(t, run(t, compromisedShop()))
+	if len(base.TreeHash) != 64 || base.DirHashes["/var/www/commerce/vendor"] == "" {
+		t.Fatalf("tree hash %q, dir hashes %v", base.TreeHash, base.DirHashes)
+	}
+	if _, ok := base.DirHashes["/var/www/commerce/vendor/magento/module-checkout"]; ok {
+		t.Error("directory hashes deeper than two levels must not be reported")
+	}
+
+	skimmed := compromisedShop()
+	skimmed["var/www/commerce/vendor/magento/module-checkout/Model/PaymentInformationManagement.php"] = text(
+		"<?php class PaymentInformationManagement {} /*injected*/")
+	changed := commerceReport(t, run(t, skimmed))
+	if changed.TreeHash == base.TreeHash || changed.DirHashes["/var/www/commerce/vendor"] == base.DirHashes["/var/www/commerce/vendor"] {
+		t.Error("a modified vendor file must change the tree hash")
+	}
+	if changed.DirHashes["/var/www/commerce/pub"] != base.DirHashes["/var/www/commerce/pub"] {
+		t.Error("an unrelated directory hash changed")
+	}
+
+	uploaded := compromisedShop()
+	uploaded["var/www/commerce/pub/media/catalog/product/b.jpg"] = text("\xff\xd8 new product photo")
+	uploaded["var/www/commerce/var/log/system.log"] = text("more log lines")
+	if got := commerceReport(t, run(t, uploaded)); got.TreeHash != base.TreeHash {
+		t.Error("uploads and logs must not change the code tree hash")
+	}
+}
+
+func TestLargePolyglotIsCaught(t *testing.T) {
+	big := bytes.Repeat([]byte{0xAB}, maxInMemory+1024)
+	fsys := compromisedShop()
+	fsys["var/www/commerce/pub/media/big.png"] = &fstest.MapFile{Data: append(append([]byte("\x89PNG"), big...), []byte("<?php system('id');")...), Mode: 0o644}
+	fsys["var/www/commerce/pub/media/clean.png"] = &fstest.MapFile{Data: append([]byte("\x89PNG"), big...), Mode: 0o644}
+
+	app := commerceReport(t, run(t, fsys))
+	var polyglots []string
+	for _, f := range app.Findings {
+		if f.Kind == KindPolyglotImage {
+			polyglots = append(polyglots, f.Path)
+		}
+	}
+	if !slices.Contains(polyglots, "/var/www/commerce/pub/media/big.png") || slices.Contains(polyglots, "/var/www/commerce/pub/media/clean.png") {
+		t.Errorf("polyglots = %v", polyglots)
+	}
+}
+
+func TestSignaturesIgnoreOrdinaryCode(t *testing.T) {
+	clean := []string{
+		`<?php $id = (int) $_GET['id']; echo htmlspecialchars($id);`,
+		`<?php exec('ls -la', $out); // fixed command`,
+		`<?php $data = base64_decode($payload); eval_config($data);`,
+		`<?php preg_replace('/\s+/i', ' ', $s);`,
+		`<?php $cb = $_POST['callback'] ?? 'json';`,
+		"<?php\n/**\n * Reads `$_POST['menu']` and calls eval(base64_decode()) never.\n */\nfunction save() {}",
+		"<?php // system($_GET['x']) is what an attacker would write\n# eval(gzinflate(x))\n$a = 1;",
+		`<?php $msg = 'use // and # freely'; $url = "http://x/#a";`,
+	}
+	for _, c := range clean {
+		if sigs := matchSignatures([]byte(c), true); len(sigs) != 0 {
+			t.Errorf("%q matched %v", c, sigs)
+		}
+	}
+
+	malicious := map[string]string{
+		`<?php @eval(@base64_decode('ZWNobyAx'));`:      "eval_decoded_payload",
+		`<?php PassThru($_REQUEST['x']);`:               "exec_request_input",
+		`<?php assert($_COOKIE['a']);`:                  "eval_request_input",
+		`<?php $_GET['f']($_GET['a']);`:                 "request_input_as_function",
+		"<?php echo `$_POST[c]`;":                       "backtick_request_input",
+		`<?php preg_replace('/.*/e', $_POST['x'], '');`: "preg_replace_eval",
+	}
+	for code, want := range malicious {
+		if sigs := matchSignatures([]byte(code), true); !slices.Contains(sigs, want) {
+			t.Errorf("%q matched %v, want %s", code, sigs, want)
+		}
+	}
+}
+
+func TestIsScript(t *testing.T) {
+	for name, want := range map[string]bool{
+		"shell.php": true, "x.phtml": true, "x.phar": true, "seg.php..png": true, "a.php.jpg": true,
+		"index.jsp": true, "default.aspx": true, "photo.jpg": false, "style.css": false, "php.png": false,
+		".psr-container.php.stub": false, "notes.php.txt": true,
+	} {
+		if got := isScript(name); got != want {
+			t.Errorf("isScript(%q) = %v", name, got)
+		}
+	}
+}
+
+func TestNoApplications(t *testing.T) {
+	res := run(t, fstest.MapFS{})
+	if len(res.Apps) != 0 {
+		t.Errorf("apps = %+v", res.Apps)
+	}
+}
+
+func TestCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (Collector{}).Collect(ctx, collector.Source{FS: compromisedShop()}); err == nil {
+		t.Error("cancelled scan did not stop")
+	}
+}
+
+func TestStripPHPComments(t *testing.T) {
+	src := "<?php\n$a = 'x // not a comment'; // comment\n/* block\n eval($_GET[1]) */$b = \"#[x]\"; # hash\n#[Attribute]\nclass X {} ?>tail"
+	want := "<?php\n$a = 'x // not a comment'; \n$b = \"#[x]\"; \n#[Attribute]\nclass X {} ?>tail"
+	if got := string(stripPHPComments([]byte(src))); got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if got := string(stripPHPComments([]byte("<?php /* never closed"))); got != "<?php " {
+		t.Errorf("unterminated comment: %q", got)
+	}
+}
+
+func TestIsPlaceholder(t *testing.T) {
+	for content, want := range map[string]bool{
+		"<?php\n// Silence is golden.\n":        true,
+		"<?php /* nothing */ ?>":                true,
+		"":                                      true,
+		"<?php echo 1;":                         false,
+		"<?php // Silence\nsystem($_GET['c']);": false,
+	} {
+		if got := isPlaceholder([]byte(content)); got != want {
+			t.Errorf("isPlaceholder(%q) = %v", content, got)
+		}
+	}
+}
+
+// Generic upload names only mean "uploads" right under the application or web root, and
+// never for a stack whose profile names its upload directories.
+func TestGenericUploadDirs(t *testing.T) {
+	fsys := fstest.MapFS{
+		"var/www/site/index.php":                          text("<?php echo 'home';"),
+		"var/www/site/uploads/avatar.php":                 text("<?php echo 1;"),
+		"var/www/site/uploads/index.php":                  text("<?php // Silence is golden."),
+		"var/www/site/uploads/.cache.dat":                 text("x"),
+		"var/www/site/lib/templates/media/uploader.phtml": text("<?php echo $block->x();"),
+		"var/www/site/plugins/x/assets/img/index.php":     text("<?php echo 2;"),
+		"var/www/blog/wp-includes/version.php":            text("<?php $wp_version = '6.6';"),
+		"var/www/blog/wp-content/cache/page/index.php":    text("<?php echo 'cached';"),
+		"var/www/blog/wp-content/uploads/2026/10/x.php":   text("<?php echo 3;"),
+		"var/www/blog/media/legit.php":                    text("<?php echo 4;"),
+	}
+	res := run(t, fsys)
+
+	var got []string
+	for _, a := range res.Apps {
+		for _, f := range a.Findings {
+			got = append(got, f.Kind+" "+f.Path)
+		}
+	}
+	slices.Sort(got)
+	want := []string{
+		KindScriptInUploads + " /var/www/blog/wp-content/uploads/2026/10/x.php",
+		KindHiddenInData + " /var/www/site/uploads/.cache.dat",
+		KindScriptInUploads + " /var/www/site/uploads/avatar.php",
+	}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("findings:\n got  %v\n want %v", got, want)
+	}
+}
