@@ -399,3 +399,30 @@ $databases['default']['default'] = ['database' => 'd', 'username' => 'u', 'passw
 		t.Errorf("warnings = %v", res.Apps[0].Warnings)
 	}
 }
+
+// Drupal 7 includes settings.local.php after settings.php: a local file written by another user
+// makes the configuration untrusted even when settings.php belongs to root.
+func TestDrupal7LocalSettingsAreChecked(t *testing.T) {
+	var seen dbConfig
+	fsys := fstest.MapFS{
+		"var/www/site/includes/bootstrap.inc": text("define('VERSION', '7.101');"),
+		"var/www/site/misc/drupal.js":         text("var Drupal = {};"),
+		"var/www/site/sites/default/settings.php": &fstest.MapFile{Mode: 0o644, Sys: &syscall.Stat_t{Uid: 0}, Data: []byte(`<?php
+$databases['default']['default'] = array('database' => 'd', 'username' => 'u', 'password' => 'p', 'host' => 'localhost', 'driver' => 'mysql');`)},
+		"var/www/site/sites/default/settings.local.php": &fstest.MapFile{Mode: 0o644, Sys: &syscall.Stat_t{Uid: 33}, Data: []byte(`<?php
+$databases['default']['default'] = array('database' => 'd', 'username' => 'u', 'password' => getenv('ROOT_SECRET') ?: 'none', 'host' => 'localhost', 'driver' => 'mysql');`)},
+		"proc/1/comm":    text("php-fpm\n"),
+		"proc/1/status":  text("Name:\tphp-fpm\nPPid:\t0\nUid:\t0\t0\t0\t0\n"),
+		"proc/1/environ": text("ROOT_SECRET=s3cret\x00"),
+	}
+	res := collect(t, fsys, Collector{Connect: connectTo(&fakeDB{}, &seen)})
+	if len(res.Apps) != 1 || res.Apps[0].Framework != "drupal7" {
+		t.Fatalf("apps = %+v", res.Apps)
+	}
+	if seen.Password == "s3cret" {
+		t.Error("root's environment reached a configuration another user can write")
+	}
+	if !slices.ContainsFunc(res.Apps[0].Warnings, func(w string) bool { return strings.Contains(w, "settings.local.php") }) {
+		t.Errorf("warnings = %v", res.Apps[0].Warnings)
+	}
+}

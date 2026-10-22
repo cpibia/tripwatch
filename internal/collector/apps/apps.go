@@ -7,11 +7,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"regexp"
 	"slices"
 	"strings"
+	"testing/fstest"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -168,20 +170,17 @@ func profile(ctx context.Context, src collector.Source, app discovery.Applicatio
 	// A configuration someone other than root can write may not borrow root's environment:
 	// it could name any variable as its password. Only the values written in it count then,
 	// which its author knows anyway.
-	trusted := true
-	for _, f := range configFiles[app.Framework] {
-		if info, err := fs.Stat(src.FS, path.Join(root, f)); err == nil {
-			if uid, ok := collector.Owner(info); ok && (uid != 0 || info.Mode().Perm()&0o022 != 0) {
-				trusted = false
-				p.Warnings = append(p.Warnings, fmt.Sprintf("%s is writable by a user other than root (uid %d): the database it names, and so the administrators and scripts reported, can be forged by that user; environment variables are not used for it", f, uid))
-			}
-		}
+	// Each file is opened once: ownership is checked on the open file and the parser reads the
+	// same bytes, so the file cannot be swapped between the check and the read.
+	files, untrusted := loadConfigFiles(src.FS, root, app.Framework)
+	for _, u := range untrusted {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%s is writable by a user other than root (uid %d): the database it names, and so the administrators and scripts reported, can be forged by that user; environment variables are not used for it", u.name, u.uid))
 	}
 	cfgEnv := env
-	if !trusted {
+	if len(untrusted) > 0 {
 		cfgEnv = map[string]string{}
 	}
-	cfg := readConfig(src.FS, root, app.Framework, cfgEnv, &p.Issues)
+	cfg := readConfig(files, root, app.Framework, cfgEnv, &p.Issues)
 	p.Settings, p.Warnings, p.Extensions = cfg.Settings, append(p.Warnings, cfg.Warnings...), cfg.Modules
 	if cfg.DB == nil {
 		return p
@@ -213,13 +212,60 @@ func profile(ctx context.Context, src collector.Source, app discovery.Applicatio
 	return p
 }
 
-// configFiles are where each framework keeps its database settings.
+// configFiles are where each framework keeps its database settings, relative to the
+// application; "../" names the directory above it, where WordPress also looks.
 var configFiles = map[string][]string{
-	"wordpress": {"wp-config.php"},
+	"wordpress": {"wp-config.php", "../wp-config.php"},
 	"magento":   {"app/etc/env.php"},
 	"drupal":    {"sites/default/settings.php", "sites/default/settings.local.php"},
-	"drupal7":   {"sites/default/settings.php"},
+	"drupal7":   {"sites/default/settings.php", "sites/default/settings.local.php"},
 	"laravel":   {".env"},
+}
+
+// otherConfigFiles are read for settings that do not decide the database.
+var otherConfigFiles = map[string][]string{
+	"magento": {"app/etc/config.php"},
+}
+
+const maxConfigSize = 1 << 20
+
+type untrustedFile struct {
+	name string
+	uid  uint32
+}
+
+// loadConfigFiles reads a framework's configuration files into memory, each from one open
+// descriptor, and reports those that decide the database but are not root's alone.
+func loadConfigFiles(fsys fs.FS, root, framework string) (fstest.MapFS, []untrustedFile) {
+	files := fstest.MapFS{}
+	var untrusted []untrustedFile
+	load := func(rel string, decides bool) {
+		name := path.Join(root, rel)
+		f, err := fsys.Open(name)
+		if err != nil {
+			return
+		}
+		defer func() { _ = f.Close() }()
+		info, err := f.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			return
+		}
+		data, err := io.ReadAll(io.LimitReader(f, maxConfigSize))
+		if err != nil {
+			return
+		}
+		files[name] = &fstest.MapFile{Data: data, Mode: info.Mode(), ModTime: info.ModTime()}
+		if uid, ok := collector.Owner(info); decides && ok && (uid != 0 || info.Mode().Perm()&0o022 != 0) {
+			untrusted = append(untrusted, untrustedFile{rel, uid})
+		}
+	}
+	for _, rel := range configFiles[framework] {
+		load(rel, true)
+	}
+	for _, rel := range otherConfigFiles[framework] {
+		load(rel, false)
+	}
+	return files, untrusted
 }
 
 func run(ctx context.Context, db querier, p *Profile, q string, args ...any) []map[string]string {
