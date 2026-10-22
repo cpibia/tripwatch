@@ -120,6 +120,17 @@ func (s *Server) currentCertificate(ctx context.Context, w http.ResponseWriter, 
 	return false
 }
 
+func (s *Server) raise(ctx context.Context, a store.Alert, now time.Time) {
+	if _, err := s.Store.Raise(ctx, a, now); err != nil {
+		s.Log.Error("raise alert", "host", a.HostID, "fingerprint", a.Fingerprint, "err", err)
+	}
+}
+
+func (s *Server) enrollSem() chan struct{} {
+	s.enrollOnce.Do(func() { s.enrolling = make(chan struct{}, 1) })
+	return s.enrolling
+}
+
 // alive notes a host that reached the verifier but whose envelope had to wait.
 func (s *Server) alive(ctx context.Context, host string, now time.Time) {
 	if err := s.Store.Alive(ctx, host, now); err != nil {
@@ -141,9 +152,11 @@ type Server struct {
 	Now   func() time.Time
 	Log   *slog.Logger
 
-	locks     sync.Map // host -> chan struct{}, a one-slot semaphore
-	snapshots chan struct{}
-	once      sync.Once
+	locks      sync.Map // host -> chan struct{}, a one-slot semaphore
+	snapshots  chan struct{}
+	once       sync.Once
+	enrolling  chan struct{}
+	enrollOnce sync.Once
 }
 
 // acquire takes a one-slot semaphore, or gives up when the request ends.
@@ -345,6 +358,13 @@ type EnrollResponse struct {
 // enroll registers a host with a one-time token made in the interface. The token is consumed
 // before anything else, so a guess or a replay costs nothing and works for no one.
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
+	// Anonymous: one at a time, and a refusal costs the caller a pause. Secrets cannot be
+	// guessed; this keeps a flood of requests off the database the sensors write to.
+	release, ok := acquire(r.Context(), s.enrollSem())
+	if !ok {
+		return
+	}
+	defer release()
 	var req EnrollRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil ||
 		len(req.TLSKey) != ed25519.PublicKeySize || len(req.SigningKey) != ed25519.PublicKeySize {
@@ -353,7 +373,16 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.Now()
 	host, by, err := s.Store.ConsumeEnrollToken(r.Context(), req.Secret, now)
+	if errors.Is(err, store.ErrTokenReused) {
+		// Whoever used the token first, someone else holds it too: one of the two is not the
+		// sensor the operator meant to enroll.
+		s.raise(r.Context(), store.Alert{HostID: host, Fingerprint: "enroll:token-reused:" + strconv.FormatInt(now.Unix(), 10), Severity: "critical", Kind: "chain",
+			Title:  "Token di registrazione usato due volte",
+			Detail: "Il token creato da " + by + " per questo server è stato presentato di nuovo dopo essere stato usato. Qualcuno lo ha copiato: il server registrato con il primo uso potrebbe non essere quello vero. Revoca il server e registralo di nuovo.",
+		}, now)
+	}
 	if err != nil {
+		time.Sleep(200 * time.Millisecond)
 		http.Error(w, "token unknown, used or expired", http.StatusForbidden)
 		return
 	}
@@ -375,12 +404,16 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("host enrolled with a token", "host", host, "token_by", by)
+	s.raise(r.Context(), store.Alert{HostID: host, Fingerprint: "enroll:done:" + serial, Severity: "high", Kind: "sensor-event",
+		Title:  "Server registrato",
+		Detail: "Il server si è registrato con il token creato da " + by + ". Se non è stato appena installato da voi, qualcuno ha usato il token al suo posto.",
+	}, now)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(EnrollResponse{HostID: host, CA: string(s.CA.PEM), Cert: string(certPEM)})
 }
 
-// renew issues a new client certificate to an enrolled host whose current one, the one this
-// connection was made with, expires within the renewal window. Earlier requests are refused,
+// renew issues a new client certificate, for a key the sensor generated, to an enrolled host
+// whose current one, the one this connection was made with, expires within the renewal window. Earlier requests are refused,
 // so a host cannot mint certificates at will.
 func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 	presented := r.TLS.PeerCertificates[0]
@@ -407,7 +440,14 @@ func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "renewal not due", http.StatusConflict)
 		return
 	}
-	certPEM, keyPEM, err := s.CA.RenewClient(identity, now)
+	var req struct {
+		TLSKey []byte `json:"tls_key"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil || len(req.TLSKey) != ed25519.PublicKeySize {
+		http.Error(w, "renewal needs the new public key", http.StatusBadRequest)
+		return
+	}
+	certPEM, err := s.CA.IssueClient(identity, ed25519.PublicKey(req.TLSKey), now)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -429,7 +469,7 @@ func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("client certificate renewed", "host", identity, "expired", presented.NotAfter)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"cert": string(certPEM), "key": string(keyPEM)})
+	_ = json.NewEncoder(w).Encode(map[string]string{"cert": string(certPEM)})
 }
 
 // event turns the events a sensor reports into alerts. A start is worth one even when it is

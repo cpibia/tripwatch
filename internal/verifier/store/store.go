@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS enroll_tokens (
 	host_id    TEXT PRIMARY KEY,
 	token_hash BLOB NOT NULL UNIQUE,
 	created_by TEXT NOT NULL,
-	expires_at INTEGER NOT NULL
+	expires_at INTEGER NOT NULL,
+	used_at    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS users (
 	email         TEXT PRIMARY KEY,
@@ -124,6 +125,15 @@ func Open(path string) (*Store, error) {
 
 // migrate adds the columns that databases created by earlier versions lack.
 func migrate(db *sql.DB) error {
+	var used int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('enroll_tokens') WHERE name = 'used_at'`).Scan(&used); err != nil {
+		return err
+	}
+	if used == 0 {
+		if _, err := db.ExecContext(context.Background(), `ALTER TABLE enroll_tokens ADD COLUMN used_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
 	for _, col := range []string{"cert_serial", "prev_serial"} {
 		var n int
 		if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = ?`, col).Scan(&n); err != nil {
@@ -191,6 +201,10 @@ func (s *Store) CertificateUsed(ctx context.Context, id string) error {
 }
 
 func (s *Store) Revoke(ctx context.Context, id string) error {
+	// A token made for the host must not bring it back.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM enroll_tokens WHERE host_id = ? AND used_at = 0`, id); err != nil {
+		return err
+	}
 	res, err := s.db.ExecContext(ctx, `UPDATE hosts SET revoked = 1 WHERE id = ?`, id)
 	if err != nil {
 		return err

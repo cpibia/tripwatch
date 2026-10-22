@@ -173,7 +173,16 @@ func RenewIfDue(ctx context.Context, hc *http.Client, verifierURL string, id *pk
 		return false, err
 	}
 	u.Path, u.RawQuery = "/v1/renew", ""
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+	// The new TLS key is made here; only its public half goes to the verifier.
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return false, err
+	}
+	reqBody, err := json.Marshal(map[string][]byte{"tls_key": pub})
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(reqBody))
 	if err != nil {
 		return false, err
 	}
@@ -186,11 +195,15 @@ func RenewIfDue(ctx context.Context, hc *http.Client, verifierURL string, id *pk
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("verifier answered %s: %s", resp.Status, bytes.TrimSpace(body))
 	}
-	var r struct{ Cert, Key string }
+	var r struct{ Cert string }
 	if err := json.Unmarshal(body, &r); err != nil {
 		return false, err
 	}
-	return true, id.Replace([]byte(r.Cert), []byte(r.Key))
+	keyPEM, err := pki.EncodeKey(key)
+	if err != nil {
+		return false, err
+	}
+	return true, id.Replace([]byte(r.Cert), keyPEM)
 }
 
 // Enroll registers this host with a one-time token and returns its bundle. The TLS key and the

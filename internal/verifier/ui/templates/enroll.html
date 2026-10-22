@@ -5,9 +5,8 @@
 {{if $d.Token}}
 <section class="issued" aria-labelledby="token-h">
   <div class="section-head"><h2 id="token-h">Token per <span class="mono">{{$d.Host}}</span></h2><p class="aside">vale una volta sola, fino alle {{clock $d.Expires}}</p></div>
-  <p class="note">Esegui sul server, come root, dopo aver installato il binario del sensore. Le chiavi vengono generate lì e non lasciano il server; il token non compare più dopo questa pagina.</p>
-  <pre class="datum command" id="command">tripwatch-sensor enroll -token {{$d.Token}}
-systemctl enable --now tripwatch-sensor</pre>
+  <p class="note">Esegui sul server, come root, dopo aver installato il binario del sensore. Il token passa sullo standard input, dove gli altri utenti del server non lo vedono; le chiavi vengono generate lì e non lasciano il server; il token non compare più dopo questa pagina.</p>
+  <pre class="datum command" id="command">echo '{{$d.Token}}' | tripwatch-sensor enroll -token-file - &amp;&amp; systemctl enable --now tripwatch-sensor</pre>
   <p class="actions"><button type="button" data-copy="command">Copia i comandi</button> <a href="/enroll">Registra un altro server</a></p>
 </section>
 {{else}}

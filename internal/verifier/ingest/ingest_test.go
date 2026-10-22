@@ -275,6 +275,14 @@ func TestEnrollWithToken(t *testing.T) {
 	if _, code := post(pinned, secret); code != http.StatusForbidden {
 		t.Fatalf("token used twice: %d", code)
 	}
+	alerts, _ := h.store.Alerts(ctx, store.AlertFilter{HostID: "web-09"})
+	titles := map[string]string{}
+	for _, al := range alerts {
+		titles[al.Title] = al.Severity
+	}
+	if titles["Server registrato"] != "high" || titles["Token di registrazione usato due volte"] != "critical" {
+		t.Fatalf("alerts = %v", titles)
+	}
 
 	// The bundle the sensor writes from the response works: its own keys, the issued certificate.
 	keyDER, _ := x509.MarshalPKCS8PrivateKey(tlsKey)

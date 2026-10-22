@@ -195,12 +195,6 @@ func (ca *CA) Enroll(hostID, verifierURL string, now time.Time) (Bundle, ed25519
 // RenewWindow is how long before expiry a client certificate may be renewed.
 const RenewWindow = 90 * 24 * time.Hour
 
-// RenewClient issues a new client certificate and TLS key for an enrolled host. The signing key
-// of the host does not change.
-func (ca *CA) RenewClient(hostID string, now time.Time) ([]byte, []byte, error) {
-	return ca.issue(hostID, nil, x509.ExtKeyUsageClientAuth, now)
-}
-
 func (ca *CA) issue(cn string, names []string, usage x509.ExtKeyUsage, now time.Time) ([]byte, []byte, error) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

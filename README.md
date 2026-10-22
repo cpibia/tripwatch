@@ -326,14 +326,17 @@ Il modo consigliato è il token: dall'interfaccia ("Registra server") si sceglie
 e si ottiene un comando da eseguire sul server, come root:
 
 ```sh
-tripwatch-sensor enroll -token tw1....
-sudo systemctl enable --now tripwatch-sensor
+echo 'tw1....' | tripwatch-sensor enroll -token-file - && systemctl enable --now tripwatch-sensor
 ```
 
 Il sensore genera da sé chiave TLS e chiave di firma, verifica che il verificatore sia quello
 giusto confrontando la sua CA con l'impronta contenuta nel token, e solo allora invia il segreto
 e le chiavi pubbliche; le chiavi private non lasciano mai il server. Il token vale un'ora e una
-volta sola, e il verificatore ne conserva solo l'hash.
+volta sola, e il verificatore ne conserva solo l'hash. Il token passa sullo standard input
+perché gli argomenti di un processo li legge qualunque utente del server; ogni registrazione
+solleva un allarme, e un token presentato di nuovo dopo l'uso ne solleva uno critico, perché
+vuol dire che qualcuno ne ha una copia. Anche al rinnovo del certificato la chiave nuova nasce
+sul server.
 
 In alternativa il verificatore genera un pacchetto con le chiavi già dentro, dall'interfaccia o
 da riga di comando:

@@ -4,7 +4,7 @@
 // With -bundle it runs as a daemon: a heartbeat every -heartbeat, a snapshot every -interval.
 // Without, it prints one snapshot as JSON and exits.
 //
-//	tripwatch-sensor enroll -token tw1....   (writes /etc/tripwatch/bundle.json)
+//	echo tw1.... | tripwatch-sensor enroll -token-file -   (writes /etc/tripwatch/bundle.json)
 package main
 
 import (
@@ -15,6 +15,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -100,10 +101,27 @@ func main() {
 // readable by root only. The keys are generated here and never leave the host.
 func enroll(args []string) error {
 	fs := flag.NewFlagSet("enroll", flag.ExitOnError)
-	token := fs.String("token", "", "enrollment token shown by the verifier's interface")
+	tokenFile := fs.String("token-file", "", "file holding the enrollment token shown by the verifier's interface, or - for standard input")
+	legacy := fs.String("token", "", "refused: a token on the command line is readable by every local user")
 	out := fs.String("out", "/etc/tripwatch/bundle.json", "where to write the bundle")
 	_ = fs.Parse(args)
-	t, err := pki.ParseEnrollToken(*token)
+	if *legacy != "" {
+		return errors.New("-token is refused, since any local user can read a process's arguments: pass the token on standard input with -token-file -")
+	}
+	if *tokenFile == "" {
+		return errors.New("enroll needs -token-file (- for standard input)")
+	}
+	var raw []byte
+	var err error
+	if *tokenFile == "-" {
+		raw, err = io.ReadAll(io.LimitReader(os.Stdin, 4096))
+	} else {
+		raw, err = os.ReadFile(*tokenFile) //nolint:gosec // path given by the operator
+	}
+	if err != nil {
+		return err
+	}
+	t, err := pki.ParseEnrollToken(string(raw))
 	if err != nil {
 		return err
 	}
@@ -132,7 +150,14 @@ func enroll(args []string) error {
 		_ = f.Close()
 		return err
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
 	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := pki.SyncDir(filepath.Dir(*out)); err != nil {
 		return err
 	}
 	fmt.Printf("Enrolled as %s. Start the sensor: systemctl enable --now tripwatch-sensor\n", b.HostID)

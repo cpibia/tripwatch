@@ -374,8 +374,18 @@ func TestEnrollTokensWorkOnce(t *testing.T) {
 	if err != nil || host != "web-01" || by != "ops@example.net" {
 		t.Fatalf("consume = %q %q %v", host, by, err)
 	}
-	if _, _, err := s.ConsumeEnrollToken(ctx, replaced, t0); !errors.Is(err, ErrNotFound) {
-		t.Fatal("a token worked twice")
+	if host, _, err := s.ConsumeEnrollToken(ctx, replaced, t0); !errors.Is(err, ErrTokenReused) || host != "web-01" {
+		t.Fatalf("a used token presented again: %q %v, want the reuse reported with its host", host, err)
+	}
+	// Revoking a host cancels the token waiting for it.
+	pending, _, _ := s.CreateEnrollToken(ctx, "web-02", "ops@example.net", t0)
+	pub, _, _ := ed25519.GenerateKey(nil)
+	_ = s.Enroll(ctx, "web-02", pub, t0)
+	if err := s.Revoke(ctx, "web-02"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ConsumeEnrollToken(ctx, pending, t0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the token of a revoked host still works: %v", err)
 	}
 }
 
