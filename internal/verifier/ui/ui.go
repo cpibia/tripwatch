@@ -59,8 +59,10 @@ type Config struct {
 	// SecureCookies marks cookies HTTPS-only; on whenever the interface is reached over HTTPS.
 	SecureCookies bool
 	SilenceAfter  time.Duration
-	Now           func() time.Time
-	Log           *slog.Logger
+	// LoginBackoff is the first delay after repeated failed logins; zero means one second.
+	LoginBackoff time.Duration
+	Now          func() time.Time
+	Log          *slog.Logger
 }
 
 type server struct {
@@ -72,7 +74,10 @@ type server struct {
 
 // New returns the web interface handler.
 func New(c Config) (http.Handler, error) {
-	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(10, 15*time.Minute)}
+	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(5, time.Second, 30*time.Second, time.Hour)}
+	if c.LoginBackoff > 0 {
+		s.logins = newLimiter(5, c.LoginBackoff, 30*c.LoginBackoff, time.Hour)
+	}
 	for _, name := range []string{"login", "overview", "host", "alerts", "alert", "enroll", "error"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
@@ -268,14 +273,13 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo di accesso non viene da questa console.")
 		return
 	}
-	if !s.logins.allow(email, s.Now()) {
-		data.Error = "Troppi tentativi falliti per questo indirizzo. Riprova tra qualche minuto."
-		s.render(w, r, http.StatusTooManyRequests, "login", page{Title: "Accesso", Data: data})
+	done, ok := s.logins.begin(r.Context(), email, s.Now)
+	if !ok {
 		return
 	}
 	token, err := s.Store.Login(r.Context(), email, r.PostFormValue("password"), s.Now())
+	done(err == nil)
 	if errors.Is(err, store.ErrBadCredentials) {
-		s.logins.fail(email, s.Now())
 		s.Log.Warn("failed login", "email", email)
 		data.Error = "Email o password non corretti."
 		s.render(w, r, http.StatusUnauthorized, "login", page{Title: "Accesso", Data: data})
@@ -285,7 +289,6 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
-	s.logins.reset(email)
 	s.Log.Info("login", "email", email)
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
 	http.Redirect(w, r, data.Next, http.StatusSeeOther) //nolint:gosec // data.Next went through localPath
@@ -781,59 +784,82 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 	_, _ = w.Write(append(body, '\n'))
 }
 
-// limiter counts failed logins per email and refuses further attempts once max is reached
-// within the window.
+// limiter slows down guessing without ever locking a user out: attempts for one email run one
+// at a time, and after a few failures each waits longer, up to a ceiling. Running attempts in
+// parallel gains nothing, and an attacker hammering the administrator's email only makes the
+// administrator's own sign-in slower, never impossible.
 type limiter struct {
-	mu     sync.Mutex
-	max    int
-	window time.Duration
-	fails  map[string][]time.Time
+	mu      sync.Mutex
+	free    int           // failures allowed before delays start
+	base    time.Duration // first delay
+	ceiling time.Duration
+	window  time.Duration // failures older than this are forgotten
+	entries map[string]*attempts
+	shared  *attempts // used for new emails once the table is full
 }
 
-func newLimiter(maxFails int, window time.Duration) *limiter {
-	return &limiter{max: maxFails, window: window, fails: map[string][]time.Time{}}
+type attempts struct {
+	mu    sync.Mutex
+	fails int
+	last  time.Time
 }
 
-func (l *limiter) recent(key string, now time.Time) []time.Time {
-	kept := l.fails[key][:0]
-	for _, t := range l.fails[key] {
-		if now.Sub(t) < l.window {
-			kept = append(kept, t)
-		}
-	}
-	if len(kept) == 0 {
-		delete(l.fails, key)
-		return nil
-	}
-	l.fails[key] = kept
-	return kept
+const maxLimiterEntries = 100_000
+
+func newLimiter(free int, base, ceiling, window time.Duration) *limiter {
+	return &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}, shared: &attempts{}}
 }
 
-func (l *limiter) allow(key string, now time.Time) bool {
+// begin waits for the turn of key and the delay its failures earned. The caller calls done with
+// the outcome. It returns false if ctx ended while waiting.
+func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (done func(ok bool), started bool) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.recent(key, now)) < l.max
-}
-
-func (l *limiter) fail(key string, now time.Time) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	// Bounded memory: guessing many different emails must not grow the map without end. Each
-	// failed attempt costs a bcrypt comparison, so cycling enough emails to evict a given one
-	// takes far longer than the window it would buy.
-	if _, ok := l.fails[key]; !ok && len(l.fails) >= 10_000 {
-		for k := range l.fails {
-			if l.recent(k, now) != nil {
-				delete(l.fails, k)
+	a, ok := l.entries[key]
+	if !ok {
+		if len(l.entries) >= maxLimiterEntries {
+			for k, e := range l.entries {
+				if e.mu.TryLock() {
+					if now().Sub(e.last) > l.window {
+						delete(l.entries, k)
+					}
+					e.mu.Unlock()
+				}
 			}
-			break
+		}
+		// Past the bound, unknown emails share one entry: they wait in a single line.
+		a = l.shared
+		if len(l.entries) < maxLimiterEntries {
+			a = &attempts{}
+			l.entries[key] = a
 		}
 	}
-	l.fails[key] = append(l.recent(key, now), now)
-}
+	l.mu.Unlock()
 
-func (l *limiter) reset(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.fails, key)
+	a.mu.Lock()
+	if now().Sub(a.last) > l.window {
+		a.fails = 0
+	}
+	if extra := a.fails - l.free; extra >= 0 {
+		delay := l.ceiling
+		if extra < 16 && l.base<<extra < l.ceiling {
+			delay = l.base << extra
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			a.mu.Unlock()
+			return nil, false
+		}
+	}
+	return func(ok bool) {
+		if ok {
+			a.fails = 0
+		} else {
+			a.fails++
+			a.last = now()
+		}
+		a.mu.Unlock()
+	}, true
 }

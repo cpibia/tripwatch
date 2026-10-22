@@ -52,7 +52,7 @@ certificato e la chiave TLS del server e una chiave Ed25519 di firma, distinta d
 - **Interfaccia** (`internal/verifier/ui`): HTML reso dal server, template e asset incorporati nel
   binario, nessuna build frontend. Il colore compare solo sulle deviazioni e ogni gravità ha anche una forma. Sessioni da 12 ore con
   token conservati solo come hash, token CSRF derivato dalla sessione, controllo dell'origine dei
-  moduli, limite ai tentativi di accesso, Content Security Policy senza script né stili inline:
+  moduli, tentativi di accesso in fila per indirizzo con ritardo crescente (mai un blocco), Content Security Policy senza script né stili inline:
   i testi raccolti sui server possono essere scritti da un attaccante e vengono sempre mostrati
   come dati.
 

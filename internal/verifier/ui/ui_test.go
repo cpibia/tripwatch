@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func newHarness(t *testing.T) *harness {
 	if err := st.SetUser(context.Background(), email, password, now); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute,
+	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute, LoginBackoff: 10 * time.Millisecond,
 		Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
@@ -134,14 +135,27 @@ func TestLogin(t *testing.T) {
 	}
 }
 
-func TestLoginLimiter(t *testing.T) {
+func TestLoginLimiterSlowsDownWithoutLockingOut(t *testing.T) {
 	h := newHarness(t)
-	for range 10 {
-		h.post("/login", url.Values{"email": {email}, "password": {"wrong-password-here"}})
+	// Parallel guesses run one at a time and, past the free failures, each waits longer.
+	var wg sync.WaitGroup
+	start := time.Now()
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h.post("/login", url.Values{"email": {email}, "password": {"wrong-password-here"}})
+		}()
 	}
+	wg.Wait()
+	// Failures 6, 7 and 8 wait 10, 20 and 40 ms in the test configuration.
+	if took := time.Since(start); took < 70*time.Millisecond {
+		t.Fatalf("eight parallel failures took %v: not serialised or not delayed", took)
+	}
+	// The right password still gets in.
 	res, _ := h.post("/login", url.Values{"email": {email}, "password": {password}})
-	if res.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("after 10 failures the right password got status %d, want 429", res.StatusCode)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the user is locked out: status %d", res.StatusCode)
 	}
 }
 
