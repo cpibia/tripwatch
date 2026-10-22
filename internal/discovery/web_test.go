@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -447,5 +448,45 @@ func TestDefaultIndexDoesNotHideApplications(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("applications = %v, want %v", got, want)
+	}
+}
+
+// A configuration made of millions of tiny directives fits the byte budget; the directive
+// budget must stop it before memory follows.
+func TestNginxManyDirectivesBounded(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/nginx/nginx.conf": text("http { include /etc/nginx/big.conf; server { root /srv; } }"),
+		"etc/nginx/big.conf":   text(strings.Repeat("a;", 1_900_000)),
+		"etc/nginx/big2.conf":  text(strings.Repeat("a;", 1_900_000)),
+		"etc/nginx/other.conf": text("include /etc/nginx/big2.conf;"),
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, _, issues := NginxSites(fsys)
+	runtime.ReadMemStats(&after)
+
+	if !slices.ContainsFunc(issues, func(s string) bool { return strings.Contains(s, "directives") }) {
+		t.Errorf("issues = %v, want the directive budget reported", issues)
+	}
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 64<<20 {
+		t.Errorf("parsing allocated %d MB", grown>>20)
+	}
+}
+
+func TestNginxCycleIssuesDeduplicated(t *testing.T) {
+	fsys := fstest.MapFS{"etc/nginx/nginx.conf": text("http { include /var/www/app/*.conf; }")}
+	for i := range 7 {
+		fsys[fmt.Sprintf("var/www/app/%d.conf", i)] = text("include /var/www/app/*.conf;")
+	}
+	_, _, issues := NginxSites(fsys)
+	cycles := 0
+	for _, s := range issues {
+		if strings.Contains(s, "includes itself") {
+			cycles++
+		}
+	}
+	if cycles > 7 {
+		t.Errorf("%d cycle issues for 7 files", cycles)
 	}
 }

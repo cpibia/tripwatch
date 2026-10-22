@@ -21,9 +21,12 @@ var nginxConfigs = []string{
 // an attacker writes to (some applications ship a server config inside their own tree), and
 // without a budget a few files that include each other fan out exponentially.
 const (
-	maxConfigFiles  = 500
-	maxConfigBytes  = 32 << 20
-	maxBlockNesting = 64
+	maxConfigFiles      = 500
+	maxConfigBytes      = 4 << 20
+	maxConfigDirectives = 50_000
+	maxDirectiveArgs    = 64
+	maxTokenLength      = 4096
+	maxBlockNesting     = 64
 )
 
 const (
@@ -78,23 +81,29 @@ func (p *nginxParser) parseFile(name string, depth int) []directive {
 	if !p.budget.consume(len(data), p.issues) {
 		return nil
 	}
-	tokens := tokenizeNginx(string(data))
-	tree, _ := p.parseBlock(tokens, name, depth)
+	tree := p.parseBlock(&nginxLexer{src: string(data)}, name, depth)
 	return tree
 }
 
 // parseBlock consumes tokens up to the closing brace of the current block and expands
-// include directives in place.
-func (p *nginxParser) parseBlock(tokens []string, file string, depth int) ([]directive, []string) {
+// include directives in place. Tokens are pulled one at a time and every directive counts
+// against the budget, so memory follows the budget and not the size of a hostile file.
+func (p *nginxParser) parseBlock(lx *nginxLexer, file string, depth int) []directive {
 	var out []directive
 	var stmt []string
-	for len(tokens) > 0 {
-		tok := tokens[0]
-		tokens = tokens[1:]
+	for {
+		tok, ok := lx.next()
+		if !ok {
+			return out
+		}
 		switch tok {
 		case ";":
 			if len(stmt) == 0 {
 				continue
+			}
+			if !p.budget.directive(p.issues) {
+				lx.stop()
+				return out
 			}
 			d := directive{Name: stmt[0], Args: stmt[1:], File: "/" + file}
 			stmt = nil
@@ -107,23 +116,29 @@ func (p *nginxParser) parseBlock(tokens []string, file string, depth int) ([]dir
 			if len(stmt) == 0 {
 				stmt = []string{""}
 			}
+			if !p.budget.directive(p.issues) {
+				lx.stop()
+				return out
+			}
 			d := directive{Name: stmt[0], Args: stmt[1:], File: "/" + file}
 			stmt = nil
 			if p.nesting >= maxBlockNesting {
 				*p.issues = append(*p.issues, fmt.Sprintf("nginx: blocks nested deeper than %d in /%s, rest of the file ignored", maxBlockNesting, file))
-				return out, nil
+				lx.stop()
+				return out
 			}
 			p.nesting++
-			d.Block, tokens = p.parseBlock(tokens, file, depth)
+			d.Block = p.parseBlock(lx, file, depth)
 			p.nesting--
 			out = append(out, d)
 		case "}":
-			return out, tokens
+			return out
 		default:
-			stmt = append(stmt, tok)
+			if len(stmt) < maxDirectiveArgs {
+				stmt = append(stmt, tok)
+			}
 		}
 	}
-	return out, tokens
 }
 
 func (p *nginxParser) include(pattern string, depth int) []directive {
@@ -141,52 +156,75 @@ func (p *nginxParser) include(pattern string, depth int) []directive {
 	return out
 }
 
-// tokenizeNginx splits a configuration into words and the punctuation ; { }, handling
-// quotes, escapes and comments.
-func tokenizeNginx(s string) []string {
-	var tokens []string
+// nginxLexer splits a configuration into words and the punctuation ; { }, handling quotes,
+// escapes and comments, one token at a time.
+type nginxLexer struct {
+	src  string
+	pos  int
+	done bool
+}
+
+func (lx *nginxLexer) stop() { lx.done = true }
+
+func (lx *nginxLexer) next() (string, bool) {
+	if lx.done {
+		return "", false
+	}
 	var cur strings.Builder
 	inWord := false
-	flush := func() {
-		if inWord {
-			tokens = append(tokens, cur.String())
-			cur.Reset()
-			inWord = false
-		}
-	}
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+	s := lx.src
+	for ; lx.pos < len(s); lx.pos++ {
+		c := s[lx.pos]
 		switch {
 		case c == '#' && !inWord:
-			for i < len(s) && s[i] != '\n' {
-				i++
+			for lx.pos < len(s) && s[lx.pos] != '\n' {
+				lx.pos++
 			}
 		case c == '"' || c == '\'':
 			quote := c
 			inWord = true
-			for i++; i < len(s) && s[i] != quote; i++ {
-				if s[i] == '\\' && i+1 < len(s) {
-					i++
+			for lx.pos++; lx.pos < len(s) && s[lx.pos] != quote; lx.pos++ {
+				if s[lx.pos] == '\\' && lx.pos+1 < len(s) {
+					lx.pos++
 				}
-				cur.WriteByte(s[i])
+				cur.WriteByte(s[lx.pos])
 			}
 		case c == ';' || c == '{' || c == '}':
-			flush()
-			tokens = append(tokens, string(c))
+			if inWord {
+				return cur.String(), true
+			}
+			lx.pos++
+			return string(c), true
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
-			flush()
-		case c == '\\' && i+1 < len(s):
-			i++
-			cur.WriteByte(s[i])
+			if inWord {
+				lx.pos++
+				return cur.String(), true
+			}
+		case c == '\\' && lx.pos+1 < len(s):
+			lx.pos++
+			cur.WriteByte(s[lx.pos])
 			inWord = true
 		default:
-			cur.WriteByte(c)
+			if cur.Len() < maxTokenLength {
+				cur.WriteByte(c)
+			}
 			inWord = true
 		}
 	}
-	flush()
-	return tokens
+	if inWord {
+		return cur.String(), true
+	}
+	return "", false
+}
+
+// tokenizeNginx returns all the tokens of s.
+func tokenizeNginx(s string) []string {
+	lx := &nginxLexer{src: s}
+	var out []string
+	for tok, ok := lx.next(); ok; tok, ok = lx.next() {
+		out = append(out, tok)
+	}
+	return out
 }
 
 func nginxServers(tree []directive, prefix string) []Site {
