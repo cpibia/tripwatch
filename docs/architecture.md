@@ -84,6 +84,21 @@ I nomi generici di upload (`uploads`, `media`, `files`...) valgono solo sotto la
 dell'applicazione o della web root e solo se il profilo non indica dove vanno gli upload: più in
 basso sono normali cartelle di codice.
 
+## Log dei web server
+
+`internal/weblog` non fa I/O: trasforma una riga in una richiesta normalizzata (formato combined e
+JSON di Caddy, path decodificato due volte contro il doppio encoding) e applica le regole, con
+uno stato per IP limitato per correlare le catene. Lo stesso codice servirà al verificatore sui
+log grezzi.
+
+`internal/collector/logs` legge i file con un tetto per riga (`MaxLineLength`, oltre si salta alla
+riga successiva senza tenere i byte in memoria), per file e per giro, e con mappe limitate durante
+la scansione. Con l'offset salva l'hash degli ultimi 4 KB letti: al giro dopo, se quei byte sono
+cambiati o il file è più corto dell'offset, il log è stato riscritto o troncato nello stesso
+inode, ed è un evento. Alla rotazione rilegge la coda del vecchio file (`.1`) dall'offset salvato;
+se non può, lo dice. Le posizioni nuove restano in sospeso finché il chiamante non conferma la
+consegna dello snapshot con `Commit`: un giro perso viene riletto.
+
 ## Struttura dei package
 
 | Package | Ruolo |
@@ -93,9 +108,11 @@ basso sono normali cartelle di codice.
 | `internal/collector` | contratto dei collector, snapshot, descrizione dei file (hash, proprietario, flag dell'inode) |
 | `internal/collector/system` | account, SSH, sudoers, cron e at, unit systemd, hook di avvio, processi, socket, verifica dei pacchetti, file privilegiati |
 | `internal/collector/web` | per ogni applicazione: albero di hash del codice, upload, poliglotte, firme di webshell, file nascosti, script raggiungibili |
+| `internal/weblog` | parsing dei log di accesso, regole d'attacco, redazione delle richieste |
+| `internal/collector/logs` | lettura incrementale e limitata dei log, eventi, statistiche, posizioni con commit |
 | `internal/buildinfo` | versione inserita al momento della build |
 
-Previsti: `internal/collector/weblog` (log dei web server), profili applicativi con accesso al
+Previsti: profili applicativi con accesso al
 database, `internal/verifier/...` (ricezione su mTLS, archivio, regole, allarmi, interfaccia web,
 email) distribuito come stack `docker-compose`, `internal/collector/...` per i container,
 `deploy/` (systemd, DaemonSet Kubernetes).

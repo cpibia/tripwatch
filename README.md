@@ -50,6 +50,7 @@ firmato prodotto dalla build (confrontato con il lockfile: `composer.lock`, `pac
 | `sockets` | socket in ascolto, connessioni aperte e tentativi in uscita in corso, in ogni namespace di rete (container compresi), associati al processo |
 | `packages` | file di sistema che non corrispondono più al database dei pacchetti (dpkg, apk), eseguibili che nessun pacchetto possiede, elementi nascosti sotto `/usr` |
 | `privileged` | scansione dell'intero filesystem per binari setuid e setgid, file con capability Linux, file immutabili e append-only |
+| `weblog` | log di accesso e di errore dei web server, letti in modo incrementale: eventi d'attacco raggruppati per regola, IP e path, statistiche su IP e destinazioni delle POST |
 | `web` | inventario dei siti e delle applicazioni, e per ogni applicazione: albero di hash del codice, script nelle cartelle di upload, immagini poliglotte, firme di webshell, file nascosti, script che il web server esegue davvero |
 
 Il sensore rileva anche l'ambiente in cui gira (host, container, Kubernetes, Fargate) e i runtime
@@ -90,6 +91,25 @@ Il collector è stato provato su applicazioni reali di stack diversi, fino a olt
 applicazione. I falsi positivi rimasti sono file di librerie che contengono davvero quei pattern
 (per esempio strumenti di analisi del codice che cercano proprio `preg_replace` con `/e`): la
 baseline del verificatore li riconoscerà come noti dopo il primo snapshot.
+
+## Log dei web server
+
+Il collector `weblog` legge i log indicati dalle configurazioni di nginx, Apache e Caddy e quelli
+nelle posizioni standard, riprendendo da dove si era fermato. I formati riconosciuti sono il
+combined di nginx e Apache (anche con campi aggiuntivi in coda) e il JSON di Caddy. Le regole
+cercano script richiesti nelle cartelle di upload, nomi di webshell note, comandi nei parametri,
+POST verso file statici o verso endpoint che servono solo file, accesso a file sensibili (`.env`,
+`.git`, backup), path traversal, SQL injection, sonde di injection, scanner noti, brute force sui
+login pubblici e catene di exploit note, correlate per IP. La gravità di uno script nelle upload
+non dipende dallo status HTTP, che decide lo script stesso.
+
+Cosa finisce nello snapshot: IP, metodo, path, status, user agent e, per gli eventi, la richiesta
+con i valori dei parametri **redatti** (resta solo il valore che costituisce la prova
+dell'attacco; parametri con nomi sensibili come `token` o `password` sono sempre redatti). Il
+testo scritto da chi ha fatto la richiesta sta in un campo `attacker_controlled`, da trattare come
+dato e mai come istruzione. Righe, mappe e numero di eventi hanno un tetto: un flusso di richieste
+da indirizzi e path sempre diversi non fa crescere la memoria. Un log riscritto o troncato nello
+stesso file è un evento; le posizioni avanzano solo dopo che lo snapshot è stato consegnato.
 
 ## Modello di fiducia
 
@@ -141,6 +161,9 @@ Finché il verificatore non è pronto, il sensore stampa lo snapshot in JSON:
 sudo ./tripwatch-sensor > snapshot.json
 ```
 
+Le posizioni raggiunte nei log vengono salvate in `-state-dir` (predefinito `/var/lib/tripwatch`)
+solo dopo che lo snapshot è stato scritto per intero.
+
 Su un nodo Kubernetes si monta la root dell'host nel pod e si indica al sensore dove si trova:
 
 ```sh
@@ -151,24 +174,21 @@ Una unit systemd con le restrizioni di sicurezza è in [deploy/systemd](deploy/s
 
 ## Roadmap
 
-1. Log dei web server: lettura incrementale dei log trovati dalla scoperta, formato unico per
-   nginx, Apache e Caddy, regole sugli attacchi (upload seguito da esecuzione, POST verso script
-   in cartelle statiche, scanner, catene di exploit note di CMS e framework).
-2. Profili applicativi: amministratori nel database, configurazioni salvate nel database che
+1. Profili applicativi: amministratori nel database, configurazioni salvate nel database che
    iniettano script nelle pagine, moduli e plugin attivi.
-3. Verificatore come stack `docker-compose`: interfaccia web curata con l'elenco dei server, lo
+2. Verificatore come stack `docker-compose`: interfaccia web curata con l'elenco dei server, lo
    stato di ciascuno, gli allarmi e il dettaglio dei finding; notifiche email; ricezione su mTLS;
    baseline, confronto e regole.
-4. Trasporto nel sensore: snapshot e battiti dentro buste firmate, eventi in tempo reale via eBPF
+3. Trasporto nel sensore: snapshot e battiti dentro buste firmate, eventi in tempo reale via eBPF
    o auditd.
-5. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
-6. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
-7. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
-8. Controlli dall'esterno e canary token.
-9. Verifica dei pacchetti rpm.
+4. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
+5. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
+6. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
+7. Controlli dall'esterno e canary token.
+8. Verifica dei pacchetti rpm.
 
 ## Stato
 
 Sviluppo iniziale. Sono implementati e testati il protocollo delle buste, la scoperta
-dell'ambiente e dello stack web, i collector di sistema e il collector web. In corso: log dei web
-server; poi profili applicativi e verificatore.
+dell'ambiente e dello stack web, i collector di sistema, il collector web e quello dei log. Prossimi
+passi: profili applicativi e verificatore.
