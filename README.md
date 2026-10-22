@@ -242,6 +242,9 @@ Il design completo è in [docs/architecture.md](docs/architecture.md).
   interfacce Linux.
 - Con un battito al minuto, un sensore sospeso per meno di 100 secondi non si distingue da un
   ritardo di rete e non dà allarme; pause più lunghe sì, anche se poi i battiti riprendono.
+- Chi accede alla console da un browser mai usato prima, mentre qualcuno sta tentando password
+  sulla sua stessa email, aspetta in fila con quei tentativi (al massimo 25 secondi, poi riprova);
+  dai browser già usati l'accesso non viene mai rallentato.
 
 ## Build
 
