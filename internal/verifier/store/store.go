@@ -389,6 +389,17 @@ func (s *Store) Activity(ctx context.Context, host string, since time.Time) ([]M
 	return out, rows.Err()
 }
 
+// Alive records that a host reached the verifier over mutual TLS with its certificate, even if
+// its envelope could not be taken yet (snapshot over the rate, verifier busy): the sensor is
+// running, and must not look silent while its pending snapshot waits.
+func (s *Store) Alive(ctx context.Context, host string, now time.Time) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE hosts SET last_seen = ?, last_heartbeat = ? WHERE id = ?`, now.Unix(), now.Unix(), host); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO activity (host_id, minute, kind) VALUES (?, ?, ?)`, host, now.Unix()/60, string(protocol.KindHeartbeat))
+	return err
+}
+
 // CountSnapshots returns how many snapshots of a host arrived since the given time.
 func (s *Store) CountSnapshots(ctx context.Context, host string, since time.Time) (int, error) {
 	var n int

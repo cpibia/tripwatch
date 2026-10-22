@@ -53,6 +53,53 @@ const (
 // a few to a few tens of MB a day; the quota only stops a host filling the verifier's disk.
 const DailySnapshotBytes = 1 << 30
 
+// TotalSnapshotBytes bounds everything a host keeps stored, evidence included, which otherwise
+// stays for 30 days whatever its size.
+const TotalSnapshotBytes = 4 << 30
+
+// A body must keep arriving: each 64 KB within ChunkTime, all of it within MaxBodyTime. A host
+// trickling bytes would otherwise hold a snapshot slot for the whole read timeout. A sensor
+// waits at most SnapshotWait for a slot before it is told to retry.
+const (
+	ChunkTime    = 10 * time.Second
+	MaxBodyTime  = 90 * time.Second
+	SnapshotWait = 30 * time.Second
+)
+
+// steadyReader moves the connection's read deadline forward one chunk at a time, never past end.
+type steadyReader struct {
+	r    io.Reader
+	rc   *http.ResponseController
+	end  time.Time
+	left int
+}
+
+func (s *steadyReader) Read(p []byte) (int, error) {
+	if s.left <= 0 {
+		deadline := time.Now().Add(ChunkTime)
+		if deadline.After(s.end) {
+			deadline = s.end
+		}
+		// Not every connection supports deadlines (tests over plain handlers); the server's
+		// read timeout still applies then.
+		_ = s.rc.SetReadDeadline(deadline)
+		s.left = 64 << 10
+	}
+	if len(p) > s.left {
+		p = p[:s.left]
+	}
+	n, err := s.r.Read(p)
+	s.left -= n
+	return n, err
+}
+
+// alive notes a host that reached the verifier but whose envelope had to wait.
+func (s *Server) alive(ctx context.Context, host string, now time.Time) {
+	if err := s.Store.Alive(ctx, host, now); err != nil {
+		s.Log.Error("record liveness", "host", host, "err", err)
+	}
+}
+
 // ConcurrentSnapshots bounds the snapshot bodies held in memory at once, whatever the number of
 // hosts: each costs its size several times over while it is decoded and stored.
 const ConcurrentSnapshots = 2
@@ -148,24 +195,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if recent >= SnapshotBurst {
 			// Refused before the body is read, so the chain does not move: the sensor keeps
 			// the envelope and sends it again later.
+			s.alive(ctx, identity, now)
 			http.Error(w, "snapshots too frequent", http.StatusTooManyRequests)
 			return
 		}
-		stored, err := s.Store.SnapshotBytes(ctx, identity, now.Add(-24*time.Hour))
+		daily, err := s.Store.SnapshotBytes(ctx, identity, now.Add(-24*time.Hour))
 		if err != nil {
 			s.fail(w, err)
 			return
 		}
-		overQuota = stored >= DailySnapshotBytes
-		release, ok := acquire(ctx, s.snapshots)
+		total, err := s.Store.SnapshotBytes(ctx, identity, time.Time{})
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		overQuota = daily >= DailySnapshotBytes || total >= TotalSnapshotBytes
+		waitCtx, cancel := context.WithTimeout(ctx, SnapshotWait)
+		release, ok := acquire(waitCtx, s.snapshots)
+		cancel()
 		if !ok {
+			s.alive(ctx, identity, now)
+			http.Error(w, "verifier busy, retry later", http.StatusServiceUnavailable)
 			return
 		}
 		defer release()
 	}
 
 	var e protocol.Envelope
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	body, err := io.ReadAll(&steadyReader{r: http.MaxBytesReader(w, r.Body, limit), rc: http.NewResponseController(w), end: time.Now().Add(MaxBodyTime)})
 	if err != nil {
 		http.Error(w, "envelope too large or unreadable", http.StatusRequestEntityTooLarge)
 		return
@@ -198,7 +255,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, err := s.Store.Raise(ctx, store.Alert{HostID: identity, Fingerprint: "snapshot:quota", Severity: "high", Kind: "sensor",
 			Title:  "Snapshot non conservati: quota giornaliera superata",
-			Detail: fmt.Sprintf("Il server ha inviato più di %d MB di snapshot nelle ultime 24 ore. Gli snapshot oltre la quota vengono verificati ma non conservati né analizzati: un sensore integro non ne produce così tanti.", DailySnapshotBytes>>20),
+			Detail: fmt.Sprintf("Il server ha superato la quota di snapshot (%d MB in 24 ore, %d MB in tutto). Gli snapshot oltre la quota vengono verificati ma non conservati né analizzati: un sensore integro non ne produce così tanti.", DailySnapshotBytes>>20, TotalSnapshotBytes>>20),
 		}, now); err != nil {
 			s.Log.Error("raise quota alert", "host", identity, "err", err)
 		}

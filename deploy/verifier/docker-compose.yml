@@ -13,6 +13,9 @@ services:
     image: tripwatch-verifier:local
     restart: unless-stopped
     env_file: .env
+    environment:
+      # The Go runtime collects harder near this, below the container's memory limit.
+      GOMEMLIMIT: 700MiB
     ports:
       - "${TRIPWATCH_INGEST_PORT:-8443}:8443"
       - "127.0.0.1:${TRIPWATCH_UI_PORT:-8080}:8080"

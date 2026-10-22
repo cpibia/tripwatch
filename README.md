@@ -280,8 +280,8 @@ snapshot delle ultime 48 ore; poi, fino a 30 giorni, l'ultimo di ogni giorno e q
 mostrano un cambiamento insieme al precedente; il primo di ogni server per sempre. Con snapshot
 compressi da qualche centinaio di KB si arriva a circa 40 MB per server, quindi 50 server stanno
 in un paio di GB; battiti e allarmi pesano poco. Un server che supera 1 GB di snapshot in un
-giorno resta vivo per il verificatore, ma gli snapshot oltre la quota non vengono conservati e
-compare un allarme; allo stesso modo un server non può tenere aperti più di 2000 allarmi.
+giorno, o 4 GB conservati in tutto, resta vivo per il verificatore, ma gli snapshot oltre la quota
+non vengono conservati e compare un allarme; allo stesso modo un server non può tenere aperti più di 2000 allarmi.
 
 Altri utenti o una nuova password:
 

@@ -478,3 +478,23 @@ func TestTransportEnroll(t *testing.T) {
 		t.Fatalf("heartbeat: %v", err)
 	}
 }
+
+// A snapshot refused for its rate still shows the sensor alive: its pending snapshot blocks the
+// heartbeats queued behind it, and the host must not look silent meanwhile.
+func TestRefusedSnapshotCountsAsAlive(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	for i := range SnapshotBurst {
+		if err := c.Send(ctx, protocol.KindSnapshot, []byte(`{"x":`+strconv.Itoa(i)+`}`), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.clock = now.Add(10 * time.Minute)
+	if err := c.Send(ctx, protocol.KindSnapshot, []byte(`{"x":9}`), h.clock); err == nil {
+		t.Fatal("snapshot over the burst accepted")
+	}
+	if hst, _ := h.store.Host(ctx, "web-01"); !hst.LastHeartbeat.Equal(h.clock) {
+		t.Fatalf("last heartbeat %v, want %v", hst.LastHeartbeat, h.clock)
+	}
+}
