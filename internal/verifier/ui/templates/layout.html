@@ -1,0 +1,46 @@
+{{define "layout"}}<!doctype html>
+<html lang="it"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}} · tripwatch</title>
+<link rel="icon" href="/static/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css?v={{version}}">
+<script src="/static/app.js?v={{version}}" defer></script>
+</head>
+<body{{if .Refresh}} data-refresh="60"{{end}}>
+{{if .User}}
+<div class="shell">
+<nav class="rail" aria-label="Sezioni">
+  <a class="wordmark" href="/" aria-label="tripwatch, panoramica">{{template "glyph"}}<span>tripwatch</span></a>
+  <ul class="nav">
+    <li><a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Panoramica</a></li>
+    <li><a href="/alerts"{{if eq .Nav "alerts"}} aria-current="page"{{end}}>Allarmi</a></li>
+    <li><a href="/enroll"{{if eq .Nav "enroll"}} aria-current="page"{{end}}>Registra server</a></li>
+  </ul>
+  <div class="rail-foot">
+    <p class="who" title="{{.User}}">{{.User}}</p>
+    <p class="notify">{{if .Notify}}Email attive{{else}}Email non configurate{{end}}</p>
+    <form method="post" action="/theme">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Path}}">
+      <button class="link" type="submit">Tema: {{if eq .Theme "light"}}chiaro{{else if eq .Theme "dark"}}scuro{{else}}di sistema{{end}}</button>
+    </form>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="link" type="submit">Esci</button>
+    </form>
+  </div>
+</nav>
+<main class="main" id="main">
+{{template "content" .}}
+</main>
+</div>
+{{else}}
+<main class="bare" id="main">
+{{template "content" .}}
+</main>
+{{end}}
+</body>
+</html>{{end}}

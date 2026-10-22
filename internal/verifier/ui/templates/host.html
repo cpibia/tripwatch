@@ -1,0 +1,59 @@
+{{define "content"}}{{$d := .Data}}{{$h := $d.Row}}
+<header class="head">
+  <p class="crumb"><a href="/">Panoramica</a></p>
+  <h1 class="mono">{{$h.ID}}</h1>
+  <p class="tally st-{{$h.State}}"><span class="state-line">{{if eq $h.State "silent"}}{{shape "silent" ""}}{{else if $h.Worst}}{{shape $h.Worst.Severity $h.Worst.Status}}{{end}}{{$h.StateText}}{{if not $h.Since.IsZero}} da {{since $h.Since}}{{end}}</span>{{if $h.Open}}<span>{{$h.Open}} {{plural $h.Open "allarme da gestire" "allarmi da gestire"}}</span>{{end}}</p>
+</header>
+
+<dl class="facts">
+  <div><dt>Ultimo battito</dt><dd><time datetime="{{iso $h.LastHeartbeat}}" title="{{stamp $h.LastHeartbeat}}">{{clock $h.LastHeartbeat}}</time></dd></div>
+  <div><dt>Ultimo snapshot</dt><dd><time datetime="{{iso $h.LastSnapshot}}" title="{{stamp $h.LastSnapshot}}">{{clock $h.LastSnapshot}}</time></dd></div>
+  <div><dt>Registrato</dt><dd><time datetime="{{iso $h.EnrolledAt}}" title="{{stamp $h.EnrolledAt}}">{{clock $h.EnrolledAt}}</time></dd></div>
+  <div><dt>Buste nella catena</dt><dd>{{$h.Chain.Sequence}}</dd></div>
+</dl>
+
+<section aria-labelledby="alerts-h">
+  <div class="section-head"><h2 id="alerts-h">Allarmi</h2><p class="aside">tutti gli stati, i più gravi in alto</p></div>
+  {{if $d.Alerts}}{{template "alerttable" (hosttable $d.Alerts .CSRF .Path)}}
+  {{else}}<p class="empty">Nessun allarme per questo server.</p>{{end}}
+</section>
+
+<div class="pair">
+<section aria-labelledby="silence-h">
+  <div class="section-head"><h2 id="silence-h">Silenzi</h2><p class="aside">ultimi 7 giorni, senza battiti per più di {{dur $d.SilenceAfter}}</p></div>
+  {{if $d.Silences}}
+  <table class="grid">
+    <thead><tr><th scope="col">Dal</th><th scope="col">Al</th><th scope="col" class="num">Durata</th></tr></thead>
+    <tbody>{{range $d.Silences}}
+    <tr{{if .Ongoing}} class="st-silent"{{end}}><td class="num-l"><time datetime="{{iso .From}}" title="{{stamp .From}}">{{clock .From}}</time></td><td class="num-l">{{if .Ongoing}}<span class="flag">in corso</span>{{else}}<time datetime="{{iso .To}}" title="{{stamp .To}}">{{clock .To}}</time>{{end}}</td><td class="num">{{dur .Duration}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="empty">Nessun silenzio: il sensore ha risposto ogni minuto.</p>{{end}}
+</section>
+
+<section aria-labelledby="snap-h">
+  <div class="section-head"><h2 id="snap-h">Snapshot ricevuti</h2><p class="aside">gli ultimi 30</p></div>
+  {{if $d.Snapshots}}
+  <table class="grid">
+    <thead><tr><th scope="col" class="num">Busta</th><th scope="col" class="num">Ricevuto</th><th scope="col" class="num">Dimensione</th><th scope="col">Analisi</th></tr></thead>
+    <tbody>{{range $d.Snapshots}}
+    <tr><td class="num">{{.Sequence}}</td><td class="num"><time datetime="{{iso .ReceivedAt}}" title="Inviato {{stamp .TakenAt}}, ricevuto {{stamp .ReceivedAt}}">{{clock .ReceivedAt}}</time></td><td class="num">{{size .Size}}</td><td>{{if .Analyzed}}fatta{{else}}in coda{{end}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="empty">Nessuno snapshot ricevuto finora.</p>{{end}}
+</section>
+</div>
+
+{{if not $h.Revoked}}
+<section class="danger" aria-labelledby="revoke-h">
+  <div class="section-head"><h2 id="revoke-h">Revoca</h2></div>
+  <p>Il verificatore rifiuterà ogni busta di questo server. Per farlo tornare serve una nuova registrazione, con chiavi nuove.</p>
+  <form method="post" action="/hosts/{{$h.ID}}/revoke" class="form inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="confirm">Scrivi <span class="mono">{{$h.ID}}</span> per confermare</label>
+    <input id="confirm" name="confirm" type="text" autocomplete="off" spellcheck="false" required>
+    <button class="danger" type="submit">Revoca il server</button>
+  </form>
+</section>
+{{end}}
+{{end}}

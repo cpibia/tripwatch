@@ -10,6 +10,10 @@ linters:
     - revive
     - unconvert
     - unparam
+  settings:
+    misspell:
+      # User-facing text of the verifier is Italian; these words are correct there.
+      ignore-rules: [cancellato, modificato, persistente, registrato]
   exclusions:
     rules:
       # Doc comments are written where they add information, not on every exported name.

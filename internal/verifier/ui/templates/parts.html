@@ -1,0 +1,35 @@
+{{define "glyph"}}<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path class="g-frame" d="M0.5 0.5H15.5V15.5H0.5Z"/><path class="g-mark" d="M8 4L12 11.5H4Z"/></svg>{{end}}
+
+{{define "sevmark"}}<span class="sev sev-{{.Severity}}{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape .Severity .Status}}{{sev .Severity}}</span>{{end}}
+
+{{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verificatore</span>{{else}}<a class="mono" href="/hosts/{{.}}">{{.}}</a>{{end}}{{end}}
+
+{{define "alertrows"}}
+{{range .Alerts}}
+<tr class="row-{{.Status}}">
+  <td>{{template "sevmark" .}}</td>
+  {{if not $.OneHost}}<td class="host">{{template "hostlink" .HostID}}</td>{{end}}
+  <td class="what"><a href="/alerts/{{.ID}}">{{.Title}}</a></td>
+  <td class="num"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
+  <td class="num">{{if gt .Occurrences 1}}{{.Occurrences}}×{{end}}</td>
+  <td class="state">{{status .Status}}{{if .AckedBy}}<span class="by">{{.AckedBy}}</span>{{end}}</td>
+  <td class="act">{{template "actions" (actx . $.CSRF $.Back)}}</td>
+</tr>
+{{end}}
+{{end}}
+
+{{define "actions"}}{{$a := .Alert}}{{if ne $a.Status "resolved"}}<div class="actions">
+{{if eq $a.Status "open"}}<form method="post" action="/alerts/{{$a.ID}}/ack"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Prendi in carico</button></form>{{end}}
+<form method="post" action="/alerts/{{$a.ID}}/resolve"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Risolvi</button></form>
+</div>{{end}}{{end}}
+
+{{define "alerttable"}}
+<table class="grid alerts">
+<thead><tr><th scope="col">Gravità</th>{{if not .OneHost}}<th scope="col">Server</th>{{end}}<th scope="col">Allarme</th><th scope="col" class="num">Inizio</th><th scope="col" class="num"><span class="sr">Rilevazioni</span></th><th scope="col">Stato</th><th scope="col"><span class="sr">Azioni</span></th></tr></thead>
+<tbody>{{template "alertrows" .}}</tbody>
+</table>
+{{end}}
+
+{{define "legend"}}<ul class="legend" aria-label="Legenda dei segni">
+<li>{{shape "silent" ""}}muto</li><li>{{shape "critical" ""}}critico</li><li>{{shape "high" ""}}alto</li><li>{{shape "medium" ""}}medio</li><li>{{shape "low" ""}}basso</li><li>{{shape "critical" "acknowledged"}}preso in carico</li>
+</ul>{{end}}

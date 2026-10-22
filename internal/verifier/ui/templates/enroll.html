@@ -1,0 +1,24 @@
+{{define "content"}}{{$d := .Data}}
+<header class="head">
+  <h1>Registra un server</h1>
+</header>
+<div class="split">
+<form method="post" action="/enroll" class="form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  <label for="host">Nome del server</label>
+  <input id="host" name="host" type="text" required pattern="[a-z0-9][a-z0-9.\-]{0,62}" maxlength="63" autocomplete="off" spellcheck="false" autocapitalize="none" value="{{$d.Host}}" aria-describedby="host-help" autofocus>
+  <p class="help" id="host-help">Minuscole, cifre, punti e trattini. Diventa il nome del certificato e compare in ogni allarme.</p>
+  {{if $d.Existing}}
+  <label class="check"><input type="checkbox" name="replace" value="yes" required> Registralo di nuovo: le chiavi attuali smettono di valere e la catena riparte da zero.</label>
+  {{end}}
+  <button class="primary" type="submit">Genera il pacchetto</button>
+</form>
+<ol class="steps">
+  <li>Il pacchetto si scarica una sola volta: il verificatore non ne conserva copia. Contiene le chiavi private del server, trattalo come una password.</li>
+  <li>Copialo sul server in <span class="mono">/etc/tripwatch/bundle.json</span>, proprietario root, permessi <span class="mono">600</span>.</li>
+  <li>Avvia il sensore con <span class="mono">systemctl enable --now tripwatch-sensor</span>. Il primo battito arriva entro un minuto e la traccia compare nella panoramica.</li>
+  <li>Il sensore si collega a <span class="mono">{{$d.IngestURL}}</span>.</li>
+</ol>
+</div>
+{{end}}

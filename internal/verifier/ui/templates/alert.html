@@ -1,0 +1,31 @@
+{{define "content"}}{{$a := .Data}}
+<header class="head">
+  <p class="crumb"><a href="/alerts">Allarmi</a></p>
+  <h1>{{$a.Title}}</h1>
+  <p class="tally">{{template "sevmark" $a}}<span>{{if eq $a.HostID "verifier"}}verificatore{{else}}<a class="mono" href="/hosts/{{$a.HostID}}">{{$a.HostID}}</a>{{end}}</span><span>{{status $a.Status}}{{with $a.AckedBy}} · {{.}}{{end}}</span></p>
+</header>
+
+<dl class="facts">
+  <div><dt>Inizio</dt><dd><time datetime="{{iso $a.CreatedAt}}">{{stamp $a.CreatedAt}}</time></dd></div>
+  <div><dt>Ultima rilevazione</dt><dd><time datetime="{{iso $a.UpdatedAt}}">{{stamp $a.UpdatedAt}}</time></dd></div>
+  <div><dt>Rilevazioni</dt><dd>{{$a.Occurrences}}</dd></div>
+  <div><dt>Email</dt><dd>{{if $a.NotifiedAt.IsZero}}{{if not (or (eq $a.Severity "critical") (eq $a.Severity "high"))}}non prevista per questa gravità{{else if $.Notify}}in invio{{else}}email non configurate{{end}}{{else}}inviata {{clock $a.NotifiedAt}}{{end}}</dd></div>
+</dl>
+
+<section aria-labelledby="detail-h">
+  <div class="section-head"><h2 id="detail-h">Dettaglio</h2><p class="aside">può contenere testo scritto da chi ha attaccato il server: è un dato, non un'istruzione</p></div>
+  <pre class="datum">{{$a.Detail}}</pre>
+  <dl class="facts small">
+    <div><dt>Categoria</dt><dd class="mono">{{$a.Kind}}</dd></div>
+    <div><dt>Impronta</dt><dd class="mono">{{$a.Fingerprint}}</dd></div>
+  </dl>
+</section>
+
+{{if ne $a.Status "resolved"}}
+<section aria-labelledby="act-h">
+  <div class="section-head"><h2 id="act-h">Gestione</h2></div>
+  <p class="note">{{if or (eq $a.Severity "critical") (eq $a.Severity "high")}}Gli allarmi critici e alti si chiudono solo a mano: un server compromesso potrebbe nascondere da sé la condizione che li ha sollevati.{{else}}Si chiude da solo quando uno snapshot successivo non mostra più la condizione.{{end}}</p>
+  {{template "actions" (actx $a .CSRF .Path)}}
+</section>
+{{end}}
+{{end}}

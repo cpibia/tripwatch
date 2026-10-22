@@ -1,0 +1,15 @@
+{{define "content"}}
+<div class="login">
+  <p class="wordmark">{{template "glyph"}}<span>tripwatch</span></p>
+  <h1>Accesso alla console</h1>
+  {{with .Data.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  <form method="post" action="/login" class="form">
+    <input type="hidden" name="next" value="{{.Data.Next}}">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required value="{{.Data.Email}}"{{if not .Data.Email}} autofocus{{end}}>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required{{if .Data.Email}} autofocus{{end}}>
+    <button class="primary" type="submit">Entra</button>
+  </form>
+</div>
+{{end}}

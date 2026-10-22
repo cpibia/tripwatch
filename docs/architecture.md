@@ -9,13 +9,48 @@ che si attivano quando la scoperta automatica trova la tecnologia corrispondente
 ## Componenti
 
 **Sensore** (`cmd/tripwatch-sensor`): un binario statico su ogni macchina monitorata. Osserva e
-riferisce, non decide mai. Oggi produce uno snapshot completo dello stato a ogni esecuzione. Con
-il trasporto, gli eventi critici (utenti, chiavi, sudoers, setuid, nuove unit e righe di cron,
-moduli del kernel) verranno inviati appena accadono e un battito dimostrerà che il sensore è vivo.
+riferisce, non decide mai. Come servizio invia un battito al minuto e uno snapshot completo ogni
+ora, dentro buste firmate. In futuro gli eventi critici (utenti, chiavi, sudoers, setuid, nuove
+unit e righe di cron, moduli del kernel) partiranno appena accadono.
 
 **Verificatore** (`cmd/tripwatch-verifier`): gira su una macchina dedicata. Tiene baseline e
 manifest di build fuori dai server monitorati, confronta, applica le regole e genera gli allarmi.
 Non ha credenziali per le macchine monitorate: sono i sensori a inviargli i dati.
+
+## Trasporto
+
+Il sensore spedisce in push al verificatore su TLS 1.3 con certificato client
+(`internal/transport`). Ogni busta viene sigillata, salvata su disco con `fsync` e rinomina
+atomica, e solo dopo spedita: se la conferma si perde, al riavvio parte la stessa busta, che il
+verificatore riconosce e accetta una volta sola. Il pacchetto di registrazione contiene la CA, il
+certificato e la chiave TLS del server e una chiave Ed25519 di firma, distinta da quella TLS.
+
+## Verificatore
+
+- **Ricezione** (`internal/verifier/ingest`): il nome comune del certificato client deve essere
+  l'identità dichiarata nella busta; firma e catena si verificano con la chiave registrata. Le
+  buste dello stesso server passano una alla volta e la posizione nella catena si aggiorna solo se
+  è ancora quella verificata, quindi due buste non possono estendere lo stesso anello. Uno
+  snapshot arrivato prima di 5 minuti dal precedente viene rifiutato prima di qualsiasi lavoro.
+  Una catena rotta o ripartita è un allarme critico.
+- **Archivio** (`internal/verifier/store`): SQLite. Gli snapshot restano 30 giorni, il primo di
+  ogni server per sempre come baseline; la conservazione è per età, così un server compromesso che
+  inonda di snapshot non può spingere fuori le prove. Ogni minuto in cui arriva un battito o uno
+  snapshot viene annotato per 7 giorni: da qui l'interfaccia ricava i silenzi di ogni server.
+- **Analisi** (`internal/verifier/analyze`): una coda nel database, analizzata in ordine. Ogni
+  snapshot è decompresso con limiti di dimensione, numero di valori e profondità, poi confrontato
+  con il precedente. Le regole producono condizioni (stato pericoloso in sé, chiuse quando
+  spariscono, tranne critiche e alte) e cambiamenti. Ogni minuto un controllo solleva l'allarme
+  per i server muti e per quelli che mandano battiti ma non più snapshot.
+- **Allarmi**: un'impronta per condizione e server; la stessa condizione aggiorna l'allarme
+  esistente invece di crearne uno nuovo e lo riapre se era risolto.
+- **Notifiche** (`internal/verifier/notify`): critici e alti per email, un messaggio per giro.
+- **Interfaccia** (`internal/verifier/ui`): HTML reso dal server, template e asset incorporati nel
+  binario, nessuna build frontend. Il colore compare solo sulle deviazioni e ogni gravità ha anche una forma. Sessioni da 12 ore con
+  token conservati solo come hash, token CSRF derivato dalla sessione, controllo dell'origine dei
+  moduli, limite ai tentativi di accesso, Content Security Policy senza script né stili inline:
+  i testi raccolti sui server possono essere scritti da un attaccante e vengono sempre mostrati
+  come dati.
 
 ## Fonti di verità
 
@@ -34,6 +69,8 @@ non cerca di impedirlo, lo rende visibile:
 
 - le buste sono firmate e collegate in una catena di hash (`internal/protocol`): messaggi persi,
   ripetuti o biforcati vengono rilevati, e un battito mancante è un allarme;
+- gli allarmi critici e alti si chiudono solo a mano, perché un server compromesso potrebbe
+  ripulire la condizione che li ha sollevati;
 - gli eventi di escalation dei privilegi partono prima che l'attaccante possa agire sul sensore;
 - i controlli che non girano sul server (pagine scaricate dall'esterno, API del provider, canary
   token, snapshot del disco verificati a freddo) non si possono silenziare da lì.
@@ -142,8 +179,14 @@ dall'ambiente dei processi PHP e dei loro antenati. Le query passano da un'inter
 | `internal/weblog` | parsing dei log di accesso, regole d'attacco, redazione delle richieste |
 | `internal/collector/logs` | lettura incrementale e limitata dei log, eventi, statistiche, posizioni con commit |
 | `internal/collector/apps` | configurazione e database delle applicazioni: amministratori, script salvati, estensioni, impostazioni |
+| `internal/transport` | sigillo, salvataggio e spedizione delle buste dal sensore |
+| `internal/verifier/pki` | CA privata, certificato del server, pacchetti di registrazione |
+| `internal/verifier/ingest` | ricezione su mTLS e verifica della catena |
+| `internal/verifier/store` | archivio SQLite: server, snapshot, attività, allarmi, utenti, sessioni |
+| `internal/verifier/analyze` | decodifica limitata degli snapshot, regole, silenzio dei sensori |
+| `internal/verifier/notify` | email degli allarmi |
+| `internal/verifier/ui` | interfaccia web |
 | `internal/buildinfo` | versione inserita al momento della build |
 
-Previsti: `internal/verifier/...` (ricezione su mTLS, archivio, regole, allarmi, interfaccia web,
-email) distribuito come stack `docker-compose`, `internal/collector/...` per i container,
-`deploy/` (systemd, DaemonSet Kubernetes).
+`deploy/verifier` contiene Dockerfile e `docker-compose.yml` del verificatore, `deploy/systemd` la
+unit del sensore. Previsti: `internal/collector/...` per i container, un DaemonSet Kubernetes.

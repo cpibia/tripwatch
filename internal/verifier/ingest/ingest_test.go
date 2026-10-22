@@ -1,0 +1,278 @@
+package ingest
+
+import (
+	"context"
+	"crypto"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cpibia/tripwatch/internal/protocol"
+	"github.com/cpibia/tripwatch/internal/transport"
+	"github.com/cpibia/tripwatch/internal/verifier/pki"
+	"github.com/cpibia/tripwatch/internal/verifier/store"
+)
+
+var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+
+type harness struct {
+	t     *testing.T
+	ca    *pki.CA
+	store *store.Store
+	srv   *httptest.Server
+	wake  chan struct{}
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	dir := t.TempDir()
+	ca, err := pki.LoadOrCreate(dir, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	cert, err := ca.ServerCertificate(dir, []string{"127.0.0.1"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wake := make(chan struct{}, 1)
+	h := &harness{t: t, ca: ca, store: st, wake: wake}
+	ingest := &Server{Store: st, Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Wake: wake}
+
+	h.srv = httptest.NewUnstartedServer(ingest)
+	h.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: ca.Pool(), ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}
+	h.srv.StartTLS()
+	t.Cleanup(h.srv.Close)
+	return h
+}
+
+// sensor enrolls host and returns a transport client for it, with its own state directory.
+func (h *harness) sensor(host string) (*transport.Client, pki.Bundle) {
+	h.t.Helper()
+	b, pub, err := h.ca.Enroll(host, h.srv.URL+Path, now)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := h.store.Enroll(context.Background(), host, pub, now); err != nil {
+		h.t.Fatal(err)
+	}
+	return h.client(b, h.t.TempDir()), b
+}
+
+func (h *harness) client(b pki.Bundle, stateDir string) *transport.Client {
+	h.t.Helper()
+	tlsConf, err := b.ClientTLS()
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	key, err := b.SigningPrivateKey()
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	c, err := transport.New(b.VerifierURL, &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConf}, Timeout: 5 * time.Second}, stateDir, b.HostID, key)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return c
+}
+
+// alerts returns the alerts of web-01, the host every test enrolls.
+func (h *harness) alerts() []store.Alert {
+	h.t.Helper()
+	a, err := h.store.Alerts(context.Background(), store.AlertFilter{HostID: "web-01"})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return a
+}
+
+func TestDeliveryAndChain(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Send(ctx, protocol.KindSnapshot, []byte(`{"x":1}`), now); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-h.wake:
+	default:
+		t.Fatal("the analysis worker was not woken")
+	}
+	if pending, err := h.store.PendingSnapshots(ctx, 10); err != nil || len(pending) != 1 {
+		t.Errorf("pending = %v, %v", pending, err)
+	}
+	// A restarted sensor may send its startup snapshot right away, but past the burst further
+	// snapshots are refused without moving the chain.
+	for i := 2; i <= SnapshotBurst; i++ {
+		if err := c.Send(ctx, protocol.KindSnapshot, []byte(`{"x":`+strconv.Itoa(i)+`}`), now); err != nil {
+			t.Fatalf("snapshot %d within the burst: %v", i, err)
+		}
+	}
+	if err := c.Send(ctx, protocol.KindSnapshot, []byte(`{"x":9}`), now); err == nil || errors.Is(err, transport.ErrRejected) {
+		t.Errorf("err = %v, want a retryable refusal", err)
+	}
+
+	hst, err := h.store.Host(ctx, "web-01")
+	if err != nil || hst.Chain.Sequence != 1+SnapshotBurst || hst.LastHeartbeat.IsZero() || hst.LastSnapshot.IsZero() {
+		t.Errorf("host = %+v, %v", hst, err)
+	}
+	snaps, err := h.store.LatestSnapshots(ctx, "web-01", 5)
+	if err != nil || len(snaps) != SnapshotBurst || string(snaps[0].Payload) != `{"x":3}` {
+		t.Errorf("snapshots = %+v, %v", snaps, err)
+	}
+	if a := h.alerts(); len(a) != 0 {
+		t.Errorf("alerts = %+v", a)
+	}
+}
+
+// A sensor whose state was wiped starts its chain again: the verifier refuses it and raises a
+// critical alert, since that is also what a stolen key would look like.
+func TestRestartedChainIsRejected(t *testing.T) {
+	h := newHarness(t)
+	c, b := h.sensor("web-01")
+	ctx := context.Background()
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := h.client(b, t.TempDir())
+	err := fresh.Send(ctx, protocol.KindHeartbeat, nil, now.Add(time.Minute))
+	if !errors.Is(err, transport.ErrRejected) {
+		t.Fatalf("err = %v, want rejection", err)
+	}
+	alerts := h.alerts()
+	if len(alerts) != 1 || alerts[0].Severity != "critical" || alerts[0].Kind != "chain" {
+		t.Errorf("alerts = %+v", alerts)
+	}
+}
+
+func TestRevokedHostIsRefused(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	if err := h.store.Revoke(context.Background(), "web-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Send(context.Background(), protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// A certificate is bound to its host: web-01's certificate cannot report as web-02.
+func TestCertificateBoundToHost(t *testing.T) {
+	h := newHarness(t)
+	_, b1 := h.sensor("web-01")
+	_, b2 := h.sensor("web-02")
+	mixed := b2
+	mixed.Cert, mixed.Key = b1.Cert, b1.Key
+	c := h.client(mixed, t.TempDir())
+	if err := c.Send(context.Background(), protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) {
+		t.Errorf("err = %v", err)
+	}
+	if len(h.alerts()) != 1 {
+		t.Errorf("alerts on web-01 = %+v", h.alerts())
+	}
+}
+
+func TestNoClientCertificate(t *testing.T) {
+	h := newHarness(t)
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: h.ca.Pool(), MinVersion: tls.VersionTLS13}}}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+Path, strings.NewReader("{}"))
+	resp, err := client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Error("a request without a client certificate was accepted at the TLS layer")
+	}
+}
+
+// The envelope whose acknowledgement was lost is sent again identically and accepted once.
+func TestResendAfterLostAcknowledgement(t *testing.T) {
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	dir := t.TempDir()
+	c := h.client(b, dir)
+	ctx := context.Background()
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a crash after sending, before the state recorded the acknowledgement: put the
+	// last envelope back as pending.
+	key, _ := b.SigningPrivateKey()
+	sealer := protocol.NewSealer("web-01", key, protocol.ChainState{})
+	again := sealer.Seal(protocol.KindHeartbeat, nil, now)
+	writePending(t, dir, key.Public(), sealer.State(), again)
+
+	restarted := h.client(b, dir)
+	if err := restarted.Send(ctx, protocol.KindHeartbeat, nil, now.Add(time.Minute)); err != nil {
+		t.Fatalf("resend refused: %v", err)
+	}
+	if hst, _ := h.store.Host(ctx, "web-01"); hst.Chain.Sequence != 2 {
+		t.Errorf("sequence = %d, want 2", hst.Chain.Sequence)
+	}
+	if a := h.alerts(); len(a) != 0 {
+		t.Errorf("alerts = %+v", a)
+	}
+}
+
+func writePending(t *testing.T, dir string, key crypto.PublicKey, state protocol.ChainState, e protocol.Envelope) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"key": key, "state": state, "pending": e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "transport-state.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Concurrent envelopes forking the same chain position: exactly one is accepted.
+func TestConcurrentForkAcceptedOnce(t *testing.T) {
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	key, _ := b.SigningPrivateKey()
+	tlsConf, _ := b.ClientTLS()
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConf}}
+
+	const n = 20
+	results := make(chan int, n)
+	for i := range n {
+		go func() {
+			e := protocol.NewSealer("web-01", key, protocol.ChainState{}).Seal(protocol.KindHeartbeat, []byte(strconv.Itoa(i)), now)
+			body, _ := json.Marshal(e)
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, b.VerifierURL, strings.NewReader(string(body)))
+			resp, err := client.Do(req)
+			if err != nil {
+				results <- 0
+				return
+			}
+			_ = resp.Body.Close()
+			results <- resp.StatusCode
+		}()
+	}
+	accepted := 0
+	for range n {
+		if <-results == http.StatusOK {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Errorf("%d forks accepted, want 1", accepted)
+	}
+}

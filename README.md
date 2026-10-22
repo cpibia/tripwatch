@@ -23,9 +23,8 @@ corrispondente. Funziona su host normali, host Docker, nodi Kubernetes e AWS Far
 ```
 
 - **Il sensore osserva e basta.** È un binario Go statico senza dipendenze, quindi gira anche su
-  distribuzioni vecchie o non aggiornate. Oggi produce uno snapshot completo dello stato a ogni
-  esecuzione; con il trasporto (vedi la roadmap) invierà anche gli eventi critici appena accadono
-  e un battito che dimostra che è vivo.
+  distribuzioni vecchie o non aggiornate. Invia un battito ogni minuto e uno snapshot completo
+  dello stato ogni ora; gli eventi critici in tempo reale sono nella roadmap.
 - **Il verificatore decide, fuori dal server.** Baseline e manifest di build stanno dove un
   attaccante con root su un server monitorato non può riscriverli. Il verificatore non ha
   credenziali per entrare nei server: sono i sensori a inviare i dati.
@@ -172,9 +171,13 @@ tripwatch non finge il contrario, ma punta a rendere visibili entrambe le cose. 
   rifiutati), le letture hanno un tetto, i file enormi vengono letti solo in testa e in coda, ogni
   collector ha un timeout e, su Linux, i symlink si risolvono dentro la root osservata.
 
-Con il trasporto e il verificatore arriveranno:
+- il battito scopre un sensore fermo entro pochi minuti, e un sensore che manda battiti ma non
+  più snapshot solleva un allarme a sé;
+- gli allarmi critici e alti non si chiudono da soli quando la condizione sparisce: un server
+  compromesso potrebbe ripulire e far tacere i propri allarmi, quindi li chiude una persona.
 
-- il battito, che scopre un sensore fermo entro pochi minuti;
+Arriveranno:
+
 - gli eventi di escalation dei privilegi spediti appena accadono, prima che l'attaccante possa
   agire sul sensore (fino ad allora ciò che accade fra due snapshot, come un processo che dura
   pochi secondi, non viene visto);
@@ -215,16 +218,88 @@ make cover   # test con la soglia di coverage
 make lint    # go vet e golangci-lint
 ```
 
-## Esecuzione
+## Verificatore
 
-Finché il verificatore non è pronto, il sensore stampa lo snapshot in JSON:
+Il verificatore gira su una macchina dedicata, fuori dai server monitorati, come stack
+`docker-compose`. Espone due porte:
+
+- `8443`, l'ingresso dei sensori: TLS 1.3 con certificato client obbligatorio, firmato dalla CA
+  privata del verificatore. Va raggiunto dai server monitorati.
+- `8080`, l'interfaccia web in HTTP, pubblicata solo su `127.0.0.1`: va esposta dietro un reverse
+  proxy HTTPS (nginx, Caddy, Traefik) o raggiunta con un tunnel SSH.
+
+```sh
+cd deploy/verifier
+cp .env.example .env      # nomi, URL pubblici, primo utente, SMTP
+docker compose up -d --build
+```
+
+Al primo avvio il verificatore crea la CA, il certificato del server per i nomi in
+`TRIPWATCH_HOSTNAMES` e il primo utente da `TRIPWATCH_ADMIN_EMAIL` e `TRIPWATCH_ADMIN_PASSWORD`
+(almeno 12 caratteri; dopo il primo accesso la password si può togliere dal file). Tutto lo stato
+(database SQLite, CA, baseline) sta nel volume `data`: va incluso nei backup, perché perderlo
+significa registrare di nuovo ogni server. Il container gira senza root, con filesystem in sola
+lettura e nessuna capability.
+
+Altri utenti o una nuova password:
+
+```sh
+docker compose exec verifier /tripwatch-verifier user -email collega@example.net
+```
+
+### Interfaccia
+
+- **Panoramica.** Un quadro da sala controllo: tutto è grigio finché qualcosa devia. In alto i
+  contatori (critici, muti, alti, in carico, ognuno con l'età del più vecchio); sotto, la tabella
+  dei server con chi devia in cima e il più vecchio per primo; poi gli allarmi da gestire. Su
+  schermi larghi, a lato, il dettaglio dell'allarme da guardare per primo con le sue azioni. Ogni
+  gravità ha una forma oltre al colore (rombo muto, triangolo critico, quadrato alto, cerchio
+  medio, cerchio vuoto basso), e un server muto è un segno presente con la riga tratteggiata,
+  non una riga spenta.
+- **Server.** Stato, tutti gli allarmi, i silenzi degli ultimi 7 giorni con la durata, gli ultimi
+  snapshot ricevuti, la revoca.
+- **Allarmi.** Da gestire, presi in carico, risolti. Ogni allarme si può prendere in carico e
+  risolvere; il dettaglio mostra il testo raccolto dal server come dato, senza interpretarlo.
+- **Registra server.** Genera il pacchetto del server (certificato, chiave TLS, chiave di firma)
+  e lo scarica una sola volta: il verificatore non ne conserva copia.
+
+L'interfaccia è in italiano, con tema chiaro e scuro (segue il sistema, oppure si sceglie dal
+menu), si aggiorna da sola ogni minuto e funziona anche da telefono. Le pagine non eseguono script
+o stili inline (Content Security Policy rigida), i moduli sono protetti da token CSRF, i tentativi
+di accesso falliti sono limitati per indirizzo.
+
+### Email
+
+Con `TRIPWATCH_SMTP_HOST` impostato, gli allarmi critici e alti arrivano per email, raggruppati in
+un messaggio per giro, con il link al dettaglio. Se l'invio fallisce, l'interfaccia lo mostra come
+allarme del verificatore.
+
+## Esecuzione del sensore
+
+Si registra il server dall'interfaccia, oppure da riga di comando:
+
+```sh
+(umask 077; docker compose exec -T verifier /tripwatch-verifier enroll -host web-01 -out - > web-01.json)
+```
+
+Poi si copia il pacchetto sul server e si avvia il servizio:
+
+```sh
+sudo install -o root -g root -m 600 web-01.json /etc/tripwatch/bundle.json
+sudo systemctl enable --now tripwatch-sensor
+```
+
+Il sensore rifiuta un pacchetto che non appartiene al suo utente, leggibile da altri utenti o con
+un indirizzo del verificatore non `https`. Lo stato fra un avvio e l'altro
+(posizione nella catena, busta in attesa di conferma, posizioni nei log) sta in `-state-dir`
+(predefinito `/var/lib/tripwatch`); ogni busta viene salvata prima di essere spedita e rispedita
+identica se la conferma si perde.
+
+Senza `-bundle` il sensore stampa uno snapshot in JSON ed esce, utile per vedere cosa raccoglie:
 
 ```sh
 sudo ./tripwatch-sensor > snapshot.json
 ```
-
-Le posizioni raggiunte nei log vengono salvate in `-state-dir` (predefinito `/var/lib/tripwatch`)
-solo dopo che lo snapshot è stato scritto per intero.
 
 Su un nodo Kubernetes si monta la root dell'host nel pod e si indica al sensore dove si trova:
 
@@ -236,20 +311,17 @@ Una unit systemd con le restrizioni di sicurezza è in [deploy/systemd](deploy/s
 
 ## Roadmap
 
-1. Verificatore come stack `docker-compose`: interfaccia web curata con l'elenco dei server, lo
-   stato di ciascuno, gli allarmi e il dettaglio dei finding; notifiche email; ricezione su mTLS;
-   baseline, confronto e regole.
-2. Trasporto nel sensore: snapshot e battiti dentro buste firmate, eventi in tempo reale via eBPF
-   o auditd.
-3. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
-4. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
-5. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
-6. Controlli dall'esterno e canary token.
-7. Verifica dei pacchetti rpm.
-8. Database PostgreSQL per i profili applicativi (Django, Rails, Drupal su PostgreSQL).
+1. Eventi in tempo reale via eBPF o auditd, spediti appena accadono.
+2. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
+3. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
+4. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
+5. Controlli dall'esterno e canary token.
+6. Verifica dei pacchetti rpm.
+7. Database PostgreSQL per i profili applicativi (Django, Rails, Drupal su PostgreSQL).
 
 ## Stato
 
-Sviluppo iniziale. Sono implementati e testati il protocollo delle buste, la scoperta
-dell'ambiente e dello stack web, i collector di sistema, web, dei log e delle applicazioni. Il
-prossimo passo è il verificatore.
+Sviluppo iniziale, utilizzabile end-to-end. Sono implementati e testati il protocollo delle
+buste, la scoperta dell'ambiente e dello stack web, i collector di sistema, web, dei log e delle
+applicazioni, il sensore come servizio, il verificatore con regole, allarmi, email e interfaccia
+web. Il prossimo passo sono gli eventi in tempo reale.
