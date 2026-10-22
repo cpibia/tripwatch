@@ -14,7 +14,6 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,6 +33,7 @@ var assets embed.FS
 const (
 	sessionCookie = "tw_session"
 	themeCookie   = "tw_theme"
+	deviceCookie  = "tw_device"
 )
 
 // hostPattern is the shape accepted for a new host name: it becomes a certificate common name
@@ -62,11 +62,8 @@ type Config struct {
 	SilenceAfter  time.Duration
 	// LoginBackoff is the first delay after repeated failed logins; zero means one second.
 	LoginBackoff time.Duration
-	// TrustForwardedFor takes the client address from X-Forwarded-For, as set by the reverse
-	// proxy in front of the interface; only for an interface the proxy alone can reach.
-	TrustForwardedFor bool
-	Now               func() time.Time
-	Log               *slog.Logger
+	Now          func() time.Time
+	Log          *slog.Logger
 }
 
 type server struct {
@@ -249,24 +246,6 @@ func themeOf(r *http.Request) string {
 	return ""
 }
 
-// source is the client address of a request: the proxy's last X-Forwarded-For entry when the
-// proxy is trusted, otherwise the connection's address.
-func (s *server) source(r *http.Request) string {
-	if s.TrustForwardedFor {
-		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-			parts := strings.Split(xff[len(xff)-1], ",")
-			if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
-				return last
-			}
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 // localPath accepts only paths on this site as redirect targets.
 func localPath(p, fallback string) string {
 	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsAny(p, "\\\r\n") {
@@ -295,11 +274,15 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo di accesso non viene da questa console.")
 		return
 	}
-	// Failures count per email and source: someone guessing from elsewhere slows only their own
-	// attempts, never the colleague's. The wait in line, at most one delay ceiling of 15 s plus
-	// the check, stays inside the server's write timeout.
+	lane, err := s.loginLane(r, email)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	// The wait in line, at most one delay ceiling of 15 s plus the check, stays inside the
+	// server's write timeout.
 	waitCtx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	done, ok := s.logins.begin(waitCtx, email+"\x00"+s.source(r), s.Now)
+	done, ok := s.logins.begin(waitCtx, lane, s.Now)
 	cancel()
 	if !ok {
 		data.Error = "Troppi tentativi in corso per questo indirizzo. Riprova tra poco."
@@ -320,7 +303,32 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("login", "email", email)
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
+	if !strings.HasPrefix(lane, "device:") {
+		if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
+			s.cookie(w, deviceCookie, device, store.DeviceLifetime)
+		}
+	}
 	http.Redirect(w, r, data.Next, http.StatusSeeOther) //nolint:gosec // data.Next went through localPath
+}
+
+// loginLane is the line a sign-in attempt waits in, and whose failures slow it down. A browser
+// the user signed in from before has a lane of its own, which guessing from anywhere else
+// cannot slow: the right password from a known browser is never delayed by an attack. Every
+// other attempt for a user's email shares one lane, whatever its source, so guessing in
+// parallel or from many addresses gains nothing. Emails that are not users share a single
+// lane: they cannot succeed, and must not fill the limiter's table.
+func (s *server) loginLane(r *http.Request, email string) (string, error) {
+	if c, err := r.Cookie(deviceCookie); err == nil {
+		if owner, err := s.Store.DeviceEmail(r.Context(), c.Value, s.Now()); err == nil && owner == email {
+			sum := sha256.Sum256([]byte(c.Value))
+			return "device:" + base64.RawURLEncoding.EncodeToString(sum[:12]), nil
+		}
+	}
+	exists, err := s.Store.UserExists(r.Context(), email)
+	if err != nil || !exists {
+		return "", err
+	}
+	return "email:" + email, nil
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request, se session) {
@@ -838,10 +846,8 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 	_, _ = w.Write(append(body, '\n'))
 }
 
-// limiter slows down guessing without ever locking a user out: attempts for one email run one
-// at a time, and after a few failures each waits longer, up to a ceiling. Running attempts in
-// parallel gains nothing, and an attacker hammering the administrator's email only makes the
-// administrator's own sign-in slower, never impossible.
+// limiter slows down guessing without ever locking a user out: the attempts of one lane (see
+// loginLane) run one at a time, and after a few failures each waits longer, up to a ceiling.
 type limiter struct {
 	mu      sync.Mutex
 	free    int           // failures allowed before delays start
@@ -849,7 +855,7 @@ type limiter struct {
 	ceiling time.Duration
 	window  time.Duration // failures older than this are forgotten
 	entries map[string]*attempts
-	shared  *attempts // used for new emails once the table is full
+	shared  *attempts // the lane of emails that are not users
 }
 
 type attempts struct {
@@ -860,7 +866,7 @@ type attempts struct {
 
 func newAttempts() *attempts { return &attempts{turn: make(chan struct{}, 1)} }
 
-const maxLimiterEntries = 100_000
+const maxLimiterEntries = 10_000
 
 func newLimiter(free int, base, ceiling, window time.Duration) *limiter {
 	return &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}, shared: newAttempts()}
@@ -871,7 +877,12 @@ func newLimiter(free int, base, ceiling, window time.Duration) *limiter {
 func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (done func(ok bool), started bool) {
 	l.mu.Lock()
 	a, ok := l.entries[key]
-	if !ok {
+	switch {
+	case key == "":
+		a = l.shared
+	case !ok:
+		// Lanes exist only for real users and their known browsers, so the table stays small;
+		// stale ones are still dropped now and then.
 		if len(l.entries) >= maxLimiterEntries {
 			for k, e := range l.entries {
 				select {
@@ -884,12 +895,8 @@ func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (
 				}
 			}
 		}
-		// Past the bound, unknown emails share one entry: they wait in a single line.
-		a = l.shared
-		if len(l.entries) < maxLimiterEntries {
-			a = newAttempts()
-			l.entries[key] = a
-		}
+		a = newAttempts()
+		l.entries[key] = a
 	}
 	l.mu.Unlock()
 

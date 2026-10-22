@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS enroll_tokens (
 	expires_at INTEGER NOT NULL,
 	used_at    INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS devices (
+	token_hash BLOB PRIMARY KEY,
+	email      TEXT NOT NULL,
+	expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS users (
 	email         TEXT PRIMARY KEY,
 	password_hash BLOB NOT NULL,
@@ -370,8 +375,22 @@ func (s *Store) PendingSnapshots(ctx context.Context, limit int) ([]int64, error
 
 // Keep marks a snapshot as evidence, exempt from thinning until Retention, and past it while
 // the alert it is evidence of (alertID, 0 for none) stays open.
+//
+// A snapshot linked to an alert keeps that link unless the new alert is more severe, or the
+// linked one was resolved: a later, lesser alert cannot take the evidence away from a critical
+// one still open.
 func (s *Store) Keep(ctx context.Context, id, alertID int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1, evidence = CASE WHEN ? != 0 THEN ? ELSE evidence END WHERE id = ?`, alertID, alertID, id)
+	rank := func(ref string) string {
+		return `(SELECT CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END FROM alerts WHERE id = ` + ref + `)`
+	}
+	//nolint:gosec // the concatenated parts are constants
+	_, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1, evidence = CASE
+		WHEN ?1 = 0 THEN evidence
+		WHEN evidence = 0 THEN ?1
+		WHEN NOT EXISTS (SELECT 1 FROM alerts WHERE id = snapshots.evidence AND status != 'resolved') THEN ?1
+		WHEN `+rank("?1")+` < `+rank("snapshots.evidence")+` THEN ?1
+		ELSE evidence END
+		WHERE id = ?2`, alertID, id)
 	return err
 }
 

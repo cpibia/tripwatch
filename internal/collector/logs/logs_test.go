@@ -536,10 +536,10 @@ func TestDroppedSamplesOnePerAddress(t *testing.T) {
 }
 
 func TestSourceOf(t *testing.T) {
-	if sourceOf("2001:db8::1") != sourceOf("2001:db8::ffff") || sourceOf("2001:db8::1") == sourceOf("2001:db8:0:1::1") {
-		t.Error("IPv6 addresses are not grouped by /64")
+	if sourceOf("2001:db8::1") != sourceOf("2001:db8:0:ffff::1") || sourceOf("2001:db8::1") == sourceOf("2001:db8:1::1") {
+		t.Error("IPv6 addresses are not grouped by /48")
 	}
-	if sourceOf("198.51.100.7") != "198.51.100.7" || sourceOf("junk") != "junk" {
-		t.Error("IPv4 or unparsable addresses changed")
+	if sourceOf("198.51.100.7") != sourceOf("198.51.100.200") || sourceOf("198.51.100.7") == sourceOf("198.51.101.7") || sourceOf("junk") != "junk" {
+		t.Error("IPv4 addresses are not grouped by /24")
 	}
 }

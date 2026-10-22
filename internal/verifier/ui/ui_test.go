@@ -51,7 +51,7 @@ func newHarness(t *testing.T) *harness {
 	if err := st.SetUser(context.Background(), email, password, now); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute, LoginBackoff: 10 * time.Millisecond, TrustForwardedFor: true,
+	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute, LoginBackoff: 10 * time.Millisecond,
 		Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
@@ -488,32 +488,35 @@ func TestPanelFollowsTheSelectedAlert(t *testing.T) {
 	}
 }
 
-// Failures from one source do not slow down a sign-in from another.
-func TestLoginDelayFollowsTheSource(t *testing.T) {
+// A browser the user signed in from keeps its own lane: guessing from anywhere else, in
+// parallel and from any number of addresses, does not slow it down.
+func TestKnownBrowserIsNeverSlowed(t *testing.T) {
 	h := newHarness(t)
-	post := func(from, pw string) (int, time.Duration) {
-		t.Helper()
-		form := url.Values{"email": {email}, "password": {pw}}
+	h.login() // the harness client becomes a known browser
+	attacker := func() {
+		form := url.Values{"email": {email}, "password": {"wrong-password-here"}}
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+"/login", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
-		req.Header.Set("X-Forwarded-For", "10.9.9.9, "+from)
-		start := time.Now()
-		res, err := h.http.Do(req)
-		if err != nil {
-			t.Fatal(err)
+		res, err := http.DefaultClient.Do(req)
+		if err == nil {
+			_ = res.Body.Close()
 		}
-		_ = res.Body.Close()
-		return res.StatusCode, time.Since(start)
 	}
-	for range 12 {
-		post("198.51.100.1", "wrong-password-here")
+	var wg sync.WaitGroup
+	start := time.Now()
+	for range 10 {
+		wg.Add(1)
+		go func() { defer wg.Done(); attacker() }()
 	}
-	if _, took := post("198.51.100.1", "wrong-password-here"); took < 150*time.Millisecond {
-		t.Fatalf("the guessing source is not slowed down: %v", took)
+	wg.Wait()
+	// The unknown attempts share the email's lane: failures 6 to 10 wait 10 to 160 ms in turn.
+	if took := time.Since(start); took < 250*time.Millisecond {
+		t.Fatalf("parallel guesses were not serialised and delayed: %v", took)
 	}
-	code, took := post("203.0.113.5", password)
-	if code != http.StatusSeeOther || took > 2*time.Second {
-		t.Fatalf("the colleague's sign-in: status %d after %v", code, took)
+	start = time.Now()
+	res, _ := h.post("/login", url.Values{"email": {email}, "password": {password}})
+	if res.StatusCode != http.StatusSeeOther || time.Since(start) > time.Second {
+		t.Fatalf("the known browser: status %d after %v", res.StatusCode, time.Since(start))
 	}
 }

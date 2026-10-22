@@ -747,14 +747,18 @@ func (r *runState) sampleDropped(d Dropped) {
 	}
 }
 
-// sourceOf groups addresses by who controls them: an IPv6 /64 is one network, often one host,
-// and costs nothing to fill with addresses.
+// sourceOf groups addresses by who controls them: an IPv4 /24 or an IPv6 /48, the block a
+// tunnel broker or a cheap server hands out, counts as one source.
 func sourceOf(ip string) string {
 	addr, err := netip.ParseAddr(ip)
-	if err != nil || !addr.Is6() || addr.Is4In6() {
+	if err != nil {
 		return ip
 	}
-	prefix, err := addr.Prefix(64)
+	bits := 24
+	if addr.Is6() && !addr.Is4In6() {
+		bits = 48
+	}
+	prefix, err := addr.Unmap().Prefix(bits)
 	if err != nil {
 		return ip
 	}
