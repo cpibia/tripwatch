@@ -199,6 +199,14 @@ func (s *Store) SetCertificate(ctx context.Context, id, serial string, renewal b
 	return err
 }
 
+// RenewCertificate records a renewed certificate. The one the renewal was asked with stays
+// valid until the new one is used: if the answer is lost, the sensor still holds a certificate
+// that works, however many renewals were lost in a row.
+func (s *Store) RenewCertificate(ctx context.Context, id, serial, presented string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET prev_serial = ?, cert_serial = ? WHERE id = ?`, presented, serial, id)
+	return err
+}
+
 // CertificateUsed forgets the previous certificate once the current one has been presented.
 func (s *Store) CertificateUsed(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET prev_serial = '' WHERE id = ? AND prev_serial != ''`, id)

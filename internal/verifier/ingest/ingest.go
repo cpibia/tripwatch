@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -100,7 +101,14 @@ func (s *steadyReader) Read(p []byte) (int, error) {
 func (s *Server) currentCertificate(ctx context.Context, w http.ResponseWriter, host store.Host, presented *x509.Certificate, now time.Time) bool {
 	serial := presented.SerialNumber.Text(16)
 	switch {
-	case host.CertSerial == "" || serial == host.CertSerial:
+	case host.CertSerial == "":
+		// Enrolled before certificates were recorded: the first one presented becomes the
+		// host's, and any other is refused from then on.
+		if err := s.Store.SetCertificate(ctx, host.ID, serial, false); err != nil {
+			s.Log.Error("record certificate", "host", host.ID, "err", err)
+		}
+		return true
+	case serial == host.CertSerial:
 		if host.PrevSerial != "" && serial == host.CertSerial {
 			if err := s.Store.CertificateUsed(ctx, host.ID); err != nil {
 				s.Log.Error("forget previous certificate", "host", host.ID, "err", err)
@@ -138,9 +146,13 @@ func (s *Server) alive(ctx context.Context, host string, now time.Time) {
 	}
 }
 
+// SlowPenalty keeps a host whose snapshot upload timed out away from the snapshot slots for a
+// while, so a few slow hosts cannot hold them in turn.
+const SlowPenalty = 15 * time.Minute
+
 // HeartbeatGap is the pause between two accepted heartbeats that raises an alert, with the
-// sensor's default interval of one minute: a missed beat or more.
-const HeartbeatGap = 150 * time.Second
+// sensor's default interval of one minute: one missed beat, with room for delivery delays.
+const HeartbeatGap = 100 * time.Second
 
 // ConcurrentSnapshots bounds the snapshot bodies held in memory at once, whatever the number of
 // hosts: each costs its size several times over while it is decoded and stored.
@@ -160,6 +172,7 @@ type Server struct {
 	snapshots  chan struct{}
 	once       sync.Once
 	enrolling  chan struct{}
+	slow       sync.Map // host -> time.Time until which its snapshots wait
 	enrollOnce sync.Once
 }
 
@@ -257,6 +270,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		overQuota = daily >= DailySnapshotBytes || total >= TotalSnapshotBytes
+		if until, ok := s.slow.Load(identity); ok && now.Before(until.(time.Time)) {
+			// Its last upload was too slow: it waits out the penalty without taking a slot.
+			s.alive(ctx, identity, now)
+			http.Error(w, "previous upload too slow, retry later", http.StatusServiceUnavailable)
+			return
+		}
 		waitCtx, cancel := context.WithTimeout(ctx, SnapshotWait)
 		release, ok := acquire(waitCtx, s.snapshots)
 		cancel()
@@ -271,6 +290,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var e protocol.Envelope
 	body, err := io.ReadAll(&steadyReader{r: http.MaxBytesReader(w, r.Body, limit), rc: http.NewResponseController(w), end: time.Now().Add(MaxBodyTime)})
 	if err != nil {
+		var ne net.Error
+		if kind == protocol.KindSnapshot && errors.As(err, &ne) && ne.Timeout() {
+			s.slow.Store(identity, now.Add(SlowPenalty))
+			s.Log.Warn("snapshot upload too slow", "host", identity)
+		}
 		http.Error(w, "envelope too large or unreadable", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -373,17 +397,20 @@ type EnrollResponse struct {
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	// Anonymous: one at a time, and a refusal costs the caller a pause. Secrets cannot be
 	// guessed; this keeps a flood of requests off the database the sensors write to.
-	release, ok := acquire(r.Context(), s.enrollSem())
-	if !ok {
-		return
-	}
-	defer release()
+	// The body is read first, within a short deadline, so a slow anonymous client cannot hold
+	// the single slot.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(ChunkTime))
 	var req EnrollRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil ||
 		len(req.TLSKey) != ed25519.PublicKeySize || len(req.SigningKey) != ed25519.PublicKeySize {
 		http.Error(w, "malformed enrollment request", http.StatusBadRequest)
 		return
 	}
+	release, ok := acquire(r.Context(), s.enrollSem())
+	if !ok {
+		return
+	}
+	defer release()
 	now := s.Now()
 	host, by, err := s.Store.ConsumeEnrollToken(r.Context(), req.Secret, now)
 	if errors.Is(err, store.ErrTokenReused) {
@@ -467,7 +494,7 @@ func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 	}
 	serial, err := pki.Serial(certPEM)
 	if err == nil {
-		err = s.Store.SetCertificate(r.Context(), identity, serial, true)
+		err = s.Store.RenewCertificate(r.Context(), identity, serial, presented.SerialNumber.Text(16))
 	}
 	if err != nil {
 		s.fail(w, err)

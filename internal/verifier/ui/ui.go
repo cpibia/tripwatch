@@ -829,15 +829,17 @@ type limiter struct {
 }
 
 type attempts struct {
-	mu    sync.Mutex
+	turn  chan struct{} // one-slot semaphore: whose turn it is, given up when the request ends
 	fails int
 	last  time.Time
 }
 
+func newAttempts() *attempts { return &attempts{turn: make(chan struct{}, 1)} }
+
 const maxLimiterEntries = 100_000
 
 func newLimiter(free int, base, ceiling, window time.Duration) *limiter {
-	return &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}, shared: &attempts{}}
+	return &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}, shared: newAttempts()}
 }
 
 // begin waits for the turn of key and the delay its failures earned. The caller calls done with
@@ -848,24 +850,30 @@ func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (
 	if !ok {
 		if len(l.entries) >= maxLimiterEntries {
 			for k, e := range l.entries {
-				if e.mu.TryLock() {
+				select {
+				case e.turn <- struct{}{}:
 					if now().Sub(e.last) > l.window {
 						delete(l.entries, k)
 					}
-					e.mu.Unlock()
+					<-e.turn
+				default:
 				}
 			}
 		}
 		// Past the bound, unknown emails share one entry: they wait in a single line.
 		a = l.shared
 		if len(l.entries) < maxLimiterEntries {
-			a = &attempts{}
+			a = newAttempts()
 			l.entries[key] = a
 		}
 	}
 	l.mu.Unlock()
 
-	a.mu.Lock()
+	select {
+	case a.turn <- struct{}{}:
+	case <-ctx.Done():
+		return nil, false
+	}
 	if now().Sub(a.last) > l.window {
 		a.fails = 0
 	}
@@ -879,7 +887,7 @@ func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			a.mu.Unlock()
+			<-a.turn
 			return nil, false
 		}
 	}
@@ -890,6 +898,6 @@ func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (
 			a.fails++
 			a.last = now()
 		}
-		a.mu.Unlock()
+		<-a.turn
 	}, true
 }

@@ -206,7 +206,7 @@ tripwatch non finge il contrario, ma punta a rendere visibili entrambe le cose. 
 
 - il battito scopre un sensore fermo entro pochi minuti, e un sensore che manda battiti ma non
   più snapshot solleva un allarme a sé; ogni avvio del sensore arriva come evento firmato e
-  ogni pausa tra due battiti oltre i due minuti e mezzo diventa un allarme, così anche un arresto
+  ogni pausa tra due battiti oltre i 100 secondi diventa un allarme, così anche un arresto
   o una sospensione più brevi della soglia di silenzio lasciano traccia;
 - gli allarmi critici e alti non si chiudono da soli quando la condizione sparisce: un server
   compromesso potrebbe ripulire e far tacere i propri allarmi, quindi li chiude una persona.

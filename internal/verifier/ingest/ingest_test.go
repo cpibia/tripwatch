@@ -578,3 +578,71 @@ func TestHeartbeatGapRaisesAnAlert(t *testing.T) {
 		t.Fatalf("alerts = %+v", a)
 	}
 }
+
+// An upload that stalls past the chunk time is cut, and the host's next snapshot is turned away
+// without waiting for a slot.
+func TestSlowUploadIsPenalised(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for the chunk deadline")
+	}
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	id, _ := b.ClientIdentity("")
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: id.TLS()}, Timeout: 30 * time.Second}
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write([]byte(`{"host_id":`))
+		time.Sleep(ChunkTime + time.Second)
+		_ = pw.Close()
+	}()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, b.VerifierURL, pr)
+	req.Header.Set(KindHeader, string(protocol.KindSnapshot))
+	if resp, err := hc.Do(req); err == nil {
+		_ = resp.Body.Close()
+	}
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodPost, b.VerifierURL, strings.NewReader("{}"))
+	req.Header.Set(KindHeader, string(protocol.KindSnapshot))
+	resp, err := hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("snapshot after a stalled upload: %d, want 503", resp.StatusCode)
+	}
+}
+
+// A host enrolled before certificates were recorded is bound to the first one it presents.
+func TestFirstCertificateIsBound(t *testing.T) {
+	h := newHarness(t)
+	c, b := h.sensor("web-01")
+	ctx := context.Background()
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	other, _, _ := h.ca.Enroll("web-01", b.VerifierURL, now)
+	other.SigningKey = b.SigningKey
+	if err := h.client(other, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) {
+		t.Fatalf("a second certificate for the host was accepted: %v", err)
+	}
+}
+
+// Renewal answers lost twice in a row leave the sensor with a certificate that still works.
+func TestLostRenewalsDoNotLockOut(t *testing.T) {
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	ctx := context.Background()
+	id, _ := b.ClientIdentity("")
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: id.TLS()}, Timeout: 5 * time.Second}
+	h.clock = id.NotAfter().Add(-30 * 24 * time.Hour)
+	for range 2 {
+		// The answer never reaches the sensor: it keeps its identity.
+		lost, _ := b.ClientIdentity("")
+		if _, err := transport.RenewIfDue(t.Context(), hc, b.VerifierURL, lost, h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.client(b, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+		t.Fatalf("locked out after two lost renewals: %v", err)
+	}
+}
