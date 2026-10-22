@@ -43,6 +43,7 @@
 <section aria-labelledby="alerts-h">
   <div class="section-head"><h2 id="alerts-h">Allarmi da gestire</h2><p class="aside"><a href="/alerts?view=all">tutti gli allarmi</a></p></div>
   {{if $d.Alerts}}{{template "alerttable" (picktable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
+  {{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Sono mostrati i primi {{$d.Limit}}, i più gravi e recenti: <a href="/alerts">tutti gli allarmi da gestire</a>.</p>{{end}}
   {{else}}<p class="empty">Nessun allarme aperto o preso in carico.</p>{{end}}
 </section>
 </div>

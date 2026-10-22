@@ -2,9 +2,13 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"strconv"
 	"time"
+	"unicode/utf8"
 )
 
 // Alert statuses.
@@ -30,14 +34,55 @@ type Alert struct {
 	NotifiedAt  time.Time
 }
 
+// Bounds on what one host can put in the alert table. Titles and details come in part from the
+// host, which may be compromised; a host with thousands of distinct findings is reported as one
+// flood alert instead of filling the table, the overview and the mailbox.
+const (
+	MaxTitle       = 300
+	MaxDetail      = 8 << 10
+	MaxFingerprint = 512
+	MaxOpenPerHost = 2000
+)
+
+// FloodFingerprint marks the alert that stands for the findings of a host beyond MaxOpenPerHost.
+const FloodFingerprint = "alerts:flood"
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	// Cut on a rune boundary so the text stays valid UTF-8.
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
+}
+
 // Raise records an alert. The same fingerprint on the same host updates the existing alert
 // instead of adding one, and reopens it if it had been resolved: a condition that comes back
 // is news again. It reports whether the alert is new or reopened.
 func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error) {
+	a.Title, a.Detail, a.Kind = clip(a.Title, MaxTitle), clip(a.Detail, MaxDetail), clip(a.Kind, 64)
+	if len(a.Fingerprint) > MaxFingerprint {
+		sum := sha256.Sum256([]byte(a.Fingerprint))
+		a.Fingerprint = a.Fingerprint[:64] + ":" + hex.EncodeToString(sum[:])
+	}
 	var status string
 	err := s.db.QueryRowContext(ctx, `SELECT status FROM alerts WHERE host_id = ? AND fingerprint = ?`, a.HostID, a.Fingerprint).Scan(&status)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		if a.Fingerprint != FloodFingerprint {
+			var open int
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE host_id = ? AND status != 'resolved'`, a.HostID).Scan(&open); err != nil {
+				return false, err
+			}
+			if open >= MaxOpenPerHost {
+				return s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: FloodFingerprint, Severity: "critical", Kind: "verifier",
+					Title:  "Troppi allarmi aperti su questo server",
+					Detail: "Il server ha già " + strconv.Itoa(open) + " allarmi aperti: i nuovi non vengono registrati finché non se ne chiudono. Un server che produce così tante anomalie va esaminato direttamente. Ultimo scartato: " + a.Title,
+				}, now)
+			}
+		}
 		_, err = s.db.ExecContext(ctx, `INSERT INTO alerts (host_id, fingerprint, severity, kind, title, detail, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, a.HostID, a.Fingerprint, a.Severity, a.Kind, a.Title, a.Detail, now.Unix(), now.Unix())
 		return true, err
@@ -125,15 +170,23 @@ func (s *Store) Ack(ctx context.Context, id int64, by string, now time.Time) err
 
 // AlertFilter selects alerts; zero values mean no restriction.
 type AlertFilter struct {
-	ID       int64
-	HostID   string
-	Statuses []string
-	Since    time.Time
-	Limit    int
+	ID         int64
+	HostID     string
+	Statuses   []string
+	Severities []string
+	Unnotified bool
+	Since      time.Time
+	Limit      int
+	// Oldest orders by creation, oldest first, within each severity instead of newest update.
+	Oldest bool
 }
 
 // Alert returns one alert by id.
 func (s *Store) Alert(ctx context.Context, id int64) (Alert, error) {
+	if id <= 0 {
+		// Zero means "no restriction" to the filter, not an alert.
+		return Alert{}, ErrNotFound
+	}
 	out, err := s.Alerts(ctx, AlertFilter{ID: id})
 	if err != nil {
 		return Alert{}, err
@@ -160,13 +213,27 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 		q += ` AND host_id = ?`
 		args = append(args, f.HostID)
 	}
+	if len(f.Severities) > 0 {
+		q += ` AND severity IN (?` + repeat(",?", len(f.Severities)-1) + `)` //nolint:gosec // placeholders only; values are bound
+		for _, sev := range f.Severities {
+			args = append(args, sev)
+		}
+	}
+	if f.Unnotified {
+		q += ` AND notified_at = 0`
+	}
 	if len(f.Statuses) > 0 {
 		q += ` AND status IN (?` + repeat(",?", len(f.Statuses)-1) + `)` //nolint:gosec // placeholders only; values are bound
 		for _, st := range f.Statuses {
 			args = append(args, st)
 		}
 	}
-	q += ` ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, updated_at DESC`
+	q += ` ORDER BY ` + severityOrder
+	if f.Oldest {
+		q += `, created_at, id`
+	} else {
+		q += `, updated_at DESC, id DESC`
+	}
 	if f.Limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, f.Limit)
@@ -190,23 +257,14 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 	return out, rows.Err()
 }
 
-// Unnotified returns alerts of the given severities not yet sent by email, whatever their
-// status: an alert that resolved itself before the next round must still be sent.
-func (s *Store) Unnotified(ctx context.Context, severities []string) ([]Alert, error) {
-	all, err := s.Alerts(ctx, AlertFilter{})
-	if err != nil {
-		return nil, err
+// Unnotified returns up to limit alerts of the given severities not yet sent by email, the most
+// severe and oldest first, whatever their status: an alert that resolved itself before the
+// next round must still be sent.
+func (s *Store) Unnotified(ctx context.Context, severities []string, limit int) ([]Alert, error) {
+	if len(severities) == 0 {
+		return nil, nil
 	}
-	var out []Alert
-	for _, a := range all {
-		for _, sev := range severities {
-			if a.Severity == sev && a.NotifiedAt.IsZero() {
-				out = append(out, a)
-				break
-			}
-		}
-	}
-	return out, nil
+	return s.Alerts(ctx, AlertFilter{Severities: severities, Unnotified: true, Limit: limit, Oldest: true})
 }
 
 func (s *Store) MarkNotified(ctx context.Context, ids []int64, now time.Time) error {
@@ -216,6 +274,72 @@ func (s *Store) MarkNotified(ctx context.Context, ids []int64, now time.Time) er
 		}
 	}
 	return nil
+}
+
+const severityOrder = `CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
+
+// HostSummary is what the overview needs of a host's unresolved alerts: how many, and the one
+// to show, the most severe untaken one and the oldest among equals.
+type HostSummary struct {
+	Open  int
+	Worst Alert
+}
+
+// Summaries returns the summary of every host with unresolved alerts, computed in the database
+// so that one host's thousands of alerts cannot hide the others.
+func (s *Store) Summaries(ctx context.Context) (map[string]HostSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at,
+		occurrences, COALESCE(acked_by, ''), notified_at, n FROM (
+			SELECT *, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY status = 'open' DESC, `+severityOrder+`, created_at, id) AS rn,
+				COUNT(*) OVER (PARTITION BY host_id) AS n
+			FROM alerts WHERE status != 'resolved'
+		) WHERE rn = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]HostSummary{}
+	for rows.Next() {
+		var a Alert
+		var created, updated, notified int64
+		var n int
+		if err := rows.Scan(&a.ID, &a.HostID, &a.Fingerprint, &a.Severity, &a.Kind, &a.Title, &a.Detail, &a.Status,
+			&created, &updated, &a.Occurrences, &a.AckedBy, &notified, &n); err != nil {
+			return nil, err
+		}
+		a.CreatedAt, a.UpdatedAt, a.NotifiedAt = unix(created), unix(updated), unix(notified)
+		out[a.HostID] = HostSummary{Open: n, Worst: a}
+	}
+	return out, rows.Err()
+}
+
+// Tally counts unresolved alerts by kind of counter for the overview, with the oldest of each.
+type Tally struct {
+	N      int
+	Oldest time.Time
+}
+
+// Tallies counts unresolved alerts: "acknowledged" for those someone took, and otherwise by
+// severity; silence alerts are left out, the overview counts silent hosts itself.
+func (s *Store) Tallies(ctx context.Context) (map[string]Tally, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN status = 'acknowledged' THEN 'acknowledged' ELSE severity END AS k,
+		COUNT(*), MIN(created_at) FROM alerts WHERE status != 'resolved' AND kind != 'silence' GROUP BY k`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]Tally{}
+	for rows.Next() {
+		var k string
+		var t Tally
+		var oldest int64
+		if err := rows.Scan(&k, &t.N, &oldest); err != nil {
+			return nil, err
+		}
+		t.Oldest = unix(oldest)
+		out[k] = t
+	}
+	return out, rows.Err()
 }
 
 func repeat(s string, n int) string {

@@ -327,17 +327,29 @@ type hostRow struct {
 // More is the number of unresolved alerts besides the one shown.
 func (r hostRow) More() int { return max(r.Open-1, 0) }
 
-func (s *server) hostRow(h store.Host, alerts []store.Alert) hostRow {
-	now := s.Now()
-	row := hostRow{Host: h}
-	var mine []store.Alert
+// summarize is the store's per-host summary for a list of one host's alerts.
+func summarize(alerts []store.Alert) (store.HostSummary, bool) {
+	worst := mostUrgent(alerts)
+	if worst == nil {
+		return store.HostSummary{}, false
+	}
+	n := 0
 	for _, a := range alerts {
-		if a.HostID == h.ID && a.Status != store.StatusResolved {
-			mine = append(mine, a)
+		if a.Status != store.StatusResolved {
+			n++
 		}
 	}
-	row.Open = len(mine)
-	row.Worst = mostUrgent(mine)
+	return store.HostSummary{Open: n, Worst: *worst}, true
+}
+
+func (s *server) hostRow(h store.Host, sum store.HostSummary, has bool) hostRow {
+	now := s.Now()
+	row := hostRow{Host: h}
+	if has {
+		row.Open = sum.Open
+		worst := sum.Worst
+		row.Worst = &worst
+	}
 	last := h.LastHeartbeat
 	switch {
 	case h.Revoked:
@@ -394,10 +406,15 @@ type overviewData struct {
 	Hosts    []hostRow
 	Alerts   []store.Alert
 	Counters []*counter
+	Limit    int
 	Focus    focus
 	Base     string
 	Healthy  int
 }
+
+// overviewAlerts bounds the alert table of the overview; counters and host rows are computed
+// over all alerts.
+const overviewAlerts = 200
 
 func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 	ctx := r.Context()
@@ -406,35 +423,40 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	open, err := s.Store.Alerts(ctx, store.AlertFilter{Statuses: []string{store.StatusOpen, store.StatusAcked}, Limit: 500})
+	open, err := s.Store.Alerts(ctx, store.AlertFilter{Statuses: []string{store.StatusOpen, store.StatusAcked}, Limit: overviewAlerts})
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
-	critical := &counter{Key: "critical", Label: "critici"}
+	summaries, err := s.Store.Summaries(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	tallies, err := s.Store.Tallies(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	// The default panel is chosen among every host's worst alert, not among the listed ones,
+	// which a single host could fill.
+	worsts := make([]store.Alert, 0, len(summaries))
+	for _, sum := range summaries {
+		worsts = append(worsts, sum.Worst)
+	}
+	panel, err := s.picked(r, worsts, se.csrf())
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	critical := &counter{Key: "critical", Label: "critici", N: tallies["critical"].N, Oldest: tallies["critical"].Oldest}
 	silent := &counter{Key: "silent", Label: "muti"}
-	high := &counter{Key: "high", Label: "alti"}
-	acked := &counter{Key: "acked", Label: "in carico"}
-	panel, err := s.picked(r, open, se.csrf())
-	if err != nil {
-		s.internal(w, r, err)
-		return
-	}
-	d := overviewData{Alerts: open, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r)}
-	for _, a := range open {
-		switch {
-		case a.Kind == "silence":
-			// Counted as a silent host below, not twice.
-		case a.Status == store.StatusAcked:
-			acked.add(a.CreatedAt)
-		case a.Severity == "critical":
-			critical.add(a.CreatedAt)
-		case a.Severity == "high":
-			high.add(a.CreatedAt)
-		}
-	}
+	high := &counter{Key: "high", Label: "alti", N: tallies["high"].N, Oldest: tallies["high"].Oldest}
+	acked := &counter{Key: "acked", Label: "in carico", N: tallies["acknowledged"].N, Oldest: tallies["acknowledged"].Oldest}
+	d := overviewData{Alerts: open, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r)}
 	for _, h := range hosts {
-		row := s.hostRow(h, open)
+		sum, has := summaries[h.ID]
+		row := s.hostRow(h, sum, has)
 		switch row.State {
 		case "silent":
 			silent.add(row.Since)
@@ -490,7 +512,8 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	d := hostData{Row: s.hostRow(h, alerts), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
+	sum, has := summarize(alerts)
+	d := hostData{Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
 		Silences: silences(marks, h.EnrolledAt, now, store.ActivityRetention, s.SilenceAfter)}
 	if h.Revoked && len(d.Silences) > 0 && d.Silences[0].Ongoing {
 		d.Silences = d.Silences[1:]

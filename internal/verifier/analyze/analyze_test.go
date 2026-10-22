@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -145,5 +146,23 @@ func TestSilentSensor(t *testing.T) {
 	h.an.Silent(ctx, 3*time.Minute, 3*time.Hour)
 	if a, ok := h.open()["sensor:silent"]; ok {
 		t.Fatalf("revoked host reported silent: %+v", a)
+	}
+}
+
+func TestFindingsPerSnapshotAreBounded(t *testing.T) {
+	h := newHarness(t)
+	accounts := `{"name":"root","uid":0}`
+	for i := range 300 {
+		accounts += fmt.Sprintf(`,{"name":"r%d","uid":0}`, i)
+	}
+	h.deliver(protocol.KindSnapshot, gz(t, `{"snapshot":{"results":{"accounts":{"accounts":[`+accounts+`]}}}}`))
+	ids, _ := h.store.PendingSnapshots(context.Background(), 1)
+	h.an.RunSnapshot(context.Background(), ids[0])
+	alerts := h.open()
+	if len(alerts) != maxFindings+1 {
+		t.Fatalf("%d alerts, want %d plus the summary", len(alerts), maxFindings)
+	}
+	if _, ok := alerts["snapshot:too-many-findings"]; !ok {
+		t.Fatal("no summary of the dropped findings")
 	}
 }

@@ -5,8 +5,11 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cpibia/tripwatch/internal/protocol"
 )
@@ -58,7 +61,7 @@ func TestAlertsDedupeAndSeverityRules(t *testing.T) {
 	// Resolved before the notifier ran: still to be sent.
 	raise("c", "high")
 	_ = s.ResolveGone(ctx, "h", "web", nil, t0)
-	pending, _ := s.Unnotified(ctx, []string{"critical", "high"})
+	pending, _ := s.Unnotified(ctx, []string{"critical", "high"}, 100)
 	if len(pending) != 2 {
 		t.Errorf("unnotified = %+v", pending)
 	}
@@ -191,14 +194,14 @@ func TestAlertLifecycle(t *testing.T) {
 	if err := s.Ack(ctx, id, "ops@example.net", t0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second ack: %v", err)
 	}
-	un, _ := s.Unnotified(ctx, []string{"high"})
+	un, _ := s.Unnotified(ctx, []string{"high"}, 10)
 	if len(un) != 1 {
 		t.Fatalf("unnotified = %+v", un)
 	}
 	if err := s.MarkNotified(ctx, []int64{id}, t0); err != nil {
 		t.Fatal(err)
 	}
-	if un, _ := s.Unnotified(ctx, []string{"high"}); len(un) != 0 {
+	if un, _ := s.Unnotified(ctx, []string{"high"}, 10); len(un) != 0 {
 		t.Fatalf("still unnotified: %+v", un)
 	}
 	if err := s.Resolve(ctx, id, "ops@example.net", t0); err != nil {
@@ -257,5 +260,53 @@ func TestRetentionThinsOlderSnapshots(t *testing.T) {
 	}
 	if !kept[evidence] || snaps[len(snaps)-1].Payload[0] != 0 {
 		t.Error("evidence or baseline thinned out")
+	}
+}
+
+// One host's flood of findings is bounded and cannot hide another host's alert.
+func TestAlertFloodIsBounded(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	long := strings.Repeat("é", MaxDetail)
+	for i := range MaxOpenPerHost + 50 {
+		if _, err := s.Raise(ctx, Alert{HostID: "noisy", Fingerprint: "f" + strconv.Itoa(i) + strings.Repeat("x", 600), Severity: "critical", Kind: "web",
+			Title: strings.Repeat("t", 1000), Detail: long}, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Raise(ctx, Alert{HostID: "quiet", Fingerprint: "one", Severity: "high", Kind: "ssh", Title: "key"}, t0); err != nil {
+		t.Fatal(err)
+	}
+
+	sums, err := s.Summaries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sums["noisy"].Open != MaxOpenPerHost+1 {
+		t.Errorf("noisy host has %d open alerts, want the cap plus the flood alert", sums["noisy"].Open)
+	}
+	if q := sums["quiet"]; q.Open != 1 || q.Worst.Title != "key" {
+		t.Errorf("the quiet host's alert is hidden: %+v", q)
+	}
+	flood, err := s.Alerts(ctx, AlertFilter{HostID: "noisy", Statuses: []string{StatusOpen}, Limit: 1, Oldest: false})
+	if err != nil || len(flood) != 1 {
+		t.Fatal(err)
+	}
+	all, _ := s.Alerts(ctx, AlertFilter{HostID: "noisy", Limit: 5})
+	for _, a := range all {
+		if len(a.Title) > MaxTitle+len("…") || len(a.Detail) > MaxDetail+len("…") || len(a.Fingerprint) > MaxFingerprint || !utf8.ValidString(a.Detail) {
+			t.Fatalf("unbounded or broken fields: title %d, detail %d, fingerprint %d", len(a.Title), len(a.Detail), len(a.Fingerprint))
+		}
+	}
+	if _, err := s.Alert(ctx, 0); err == nil {
+		t.Fatal("alert 0 exists")
+	}
+	un, err := s.Unnotified(ctx, []string{"critical", "high"}, 10)
+	if err != nil || len(un) != 10 || un[0].Severity != "critical" {
+		t.Fatalf("unnotified = %d alerts, %v", len(un), err)
+	}
+	tallies, err := s.Tallies(ctx)
+	if err != nil || tallies["critical"].N != MaxOpenPerHost+1 || tallies["high"].N != 1 {
+		t.Fatalf("tallies = %+v, %v", tallies, err)
 	}
 }

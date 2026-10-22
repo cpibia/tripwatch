@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -31,6 +32,21 @@ const (
 	maxSnapshotValues = 500_000
 	maxSnapshotDepth  = 32
 )
+
+// maxFindings bounds the alerts one snapshot can raise.
+const maxFindings = 200
+
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 0
+	case "high":
+		return 1
+	case "medium":
+		return 2
+	}
+	return 3
+}
 
 // Report is what the sensor sends: the environment and the snapshot of every collector.
 type Report struct {
@@ -192,13 +208,24 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 
 	findings := Evaluate(prev, state)
 	current := map[string][]string{}
+	for _, f := range findings {
+		if f.State {
+			current[f.Kind] = append(current[f.Kind], f.Fingerprint)
+		}
+	}
+	// A snapshot raises at most maxFindings alerts, the most severe first; the rest are
+	// summarised in one, so a hostile snapshot cannot flood the table and the mailbox.
+	if len(findings) > maxFindings {
+		slices.SortStableFunc(findings, func(x, y Finding) int { return severityRank(x.Severity) - severityRank(y.Severity) })
+		dropped := len(findings) - maxFindings
+		findings = append(findings[:maxFindings], Finding{Kind: "sensor", Fingerprint: "snapshot:too-many-findings", Severity: "high",
+			Title:  "Troppe anomalie in un solo snapshot",
+			Detail: fmt.Sprintf("Lo snapshot ne contiene %d: registrate le %d più gravi, le altre %d no. Un cambiamento così esteso va esaminato sul server.", maxFindings+dropped, maxFindings, dropped)})
+	}
 	evidence := false
 	for _, f := range findings {
 		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) {
 			evidence = true
-		}
-		if f.State {
-			current[f.Kind] = append(current[f.Kind], f.Fingerprint)
 		}
 	}
 	// The snapshot that first showed a condition is evidence: kept beyond the thinning.

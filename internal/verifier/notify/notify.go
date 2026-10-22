@@ -44,7 +44,7 @@ func (n *Notifier) Round(ctx context.Context) {
 	if !n.Mailer.Enabled() {
 		return
 	}
-	alerts, err := n.Store.Unnotified(ctx, Severities)
+	alerts, err := n.Store.Unnotified(ctx, Severities, perMessage)
 	if err != nil || len(alerts) == 0 {
 		if err != nil {
 			n.Log.Error("load alerts to notify", "err", err)
@@ -77,6 +77,13 @@ func (n *Notifier) Round(ctx context.Context) {
 	}
 }
 
+// perMessage bounds one email: the rest go in the next rounds, a minute apart, so a host raising
+// thousands of alerts delays its own mail without making a message the server refuses.
+const perMessage = 50
+
+// detailInMail bounds each alert's text in the message; the full text is in the interface.
+const detailInMail = 2 << 10
+
 // Compose writes the message: the most severe alerts first, with host and detail.
 func Compose(alerts []store.Alert, baseURL string) (string, string) {
 	critical := 0
@@ -94,7 +101,11 @@ func Compose(alerts []store.Alert, baseURL string) (string, string) {
 
 	var b strings.Builder
 	for _, a := range alerts {
-		fmt.Fprintf(&b, "%s · %s · %s\n%s\n", strings.ToUpper(a.Severity), a.HostID, a.Title, indent(a.Detail))
+		detail := a.Detail
+		if len(detail) > detailInMail {
+			detail = strings.ToValidUTF8(detail[:detailInMail], "") + " [...]"
+		}
+		fmt.Fprintf(&b, "%s · %s · %s\n%s\n", strings.ToUpper(a.Severity), a.HostID, a.Title, indent(detail))
 		if baseURL != "" {
 			fmt.Fprintf(&b, "  %s/alerts/%d\n", strings.TrimSuffix(baseURL, "/"), a.ID)
 		}

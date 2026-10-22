@@ -180,8 +180,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) chainAlert(ctx context.Context, host string, e protocol.Envelope, err error, now time.Time) {
 	_, raiseErr := s.Store.Raise(ctx, store.Alert{
 		HostID: host, Fingerprint: "chain:" + err.Error(), Severity: "critical", Kind: "chain",
-		Title:  "Envelope rejected: " + err.Error(),
-		Detail: fmt.Sprintf("Sequence %d, kind %s, sent at %s. The chain of this host does not accept it: the signing key may be used by someone else, or the sensor was reinstalled without enrolling again.", e.Sequence, e.Kind, e.SentAt.Format(time.RFC3339)),
+		Title:  "Busta rifiutata: " + err.Error(),
+		Detail: fmt.Sprintf("Busta numero %d, tipo %s, inviata il %s. La catena di questo server non la accetta: la chiave di firma può essere usata da qualcun altro, oppure il sensore è stato reinstallato senza registrarlo di nuovo.", e.Sequence, e.Kind, e.SentAt.Format(time.RFC3339)),
 	}, now)
 	if raiseErr != nil {
 		s.Log.Error("raise chain alert", "host", host, "err", raiseErr)
