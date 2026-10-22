@@ -242,9 +242,10 @@ Il design completo è in [docs/architecture.md](docs/architecture.md).
   interfacce Linux.
 - Con un battito al minuto, un sensore sospeso per meno di 100 secondi non si distingue da un
   ritardo di rete e non dà allarme; pause più lunghe sì, anche se poi i battiti riprendono.
-- Chi accede alla console da un browser mai usato prima, mentre qualcuno sta tentando password
-  sulla sua stessa email, aspetta in fila con quei tentativi (al massimo 25 secondi, poi riprova);
-  dai browser già usati l'accesso non viene mai rallentato.
+- Chi accede alla console da un browser mai usato prima, mentre qualcuno tenta password sulla sua
+  stessa email senza sosta, resta in fila con quei tentativi e può non riuscire a entrare finché
+  l'attacco dura. Dai browser già usati l'accesso non viene mai rallentato; per gli altri c'è il
+  link monouso descritto sotto.
 
 ## Build
 
@@ -293,6 +294,13 @@ Altri utenti o una nuova password:
 
 ```sh
 docker compose exec verifier /tripwatch-verifier user -email collega@example.net
+```
+
+Per entrare da un browser nuovo quando l'accesso normale è bloccato da tentativi altrui, un link
+monouso valido dieci minuti, che rende anche quel browser noto:
+
+```sh
+docker compose exec verifier /tripwatch-verifier login-link -email ops@example.net
 ```
 
 ### Interfaccia

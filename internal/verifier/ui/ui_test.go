@@ -520,3 +520,45 @@ func TestKnownBrowserIsNeverSlowed(t *testing.T) {
 		t.Fatalf("the known browser: status %d after %v", res.StatusCode, time.Since(start))
 	}
 }
+
+// A one-time link lets the user in from a new browser, makes it a known one, and works once.
+func TestLoginLink(t *testing.T) {
+	h := newHarness(t)
+	token, err := h.store.CreateLoginLink(context.Background(), email, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.CreateLoginLink(context.Background(), "nobody@example.net", now); err == nil {
+		t.Fatal("a link was made for an email that is not a user")
+	}
+	res, _ := h.get("/login/link?t=" + token)
+	if res.StatusCode != http.StatusSeeOther || !strings.Contains(strings.Join(res.Header.Values("Set-Cookie"), ";"), deviceCookie+"=") {
+		t.Fatalf("link: status %d, cookies %v", res.StatusCode, res.Header.Values("Set-Cookie"))
+	}
+	if res, _ := h.get("/"); res.StatusCode != http.StatusOK {
+		t.Fatalf("not signed in after the link: %d", res.StatusCode)
+	}
+	if res, _ := h.get("/login/link?t=" + token); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("the link worked twice: %d", res.StatusCode)
+	}
+}
+
+// An email that is not a user is slowed down like one that is: the delays do not tell them apart.
+func TestUnknownEmailsHaveTheirOwnLane(t *testing.T) {
+	h := newHarness(t)
+	took := func(addr string) time.Duration {
+		for range 6 {
+			h.post("/login", url.Values{"email": {addr}, "password": {"wrong-password-here"}})
+		}
+		start := time.Now()
+		h.post("/login", url.Values{"email": {addr}, "password": {"wrong-password-here"}})
+		return time.Since(start)
+	}
+	known, unknown := took(email), took("nobody@example.net")
+	if unknown < known/2 || unknown > known*2+100*time.Millisecond {
+		t.Fatalf("delays tell users apart: user %v, unknown %v", known, unknown)
+	}
+	if other := took("someone-else@example.net"); other > known*2+100*time.Millisecond {
+		t.Fatalf("unknown emails share a lane: %v", other)
+	}
+}

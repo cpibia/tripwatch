@@ -97,6 +97,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /static/", s.serveStatic)
 	mux.HandleFunc("GET /login", s.loginForm)
 	mux.HandleFunc("POST /login", s.login)
+	mux.HandleFunc("GET /login/link", s.loginLink)
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
 	mux.HandleFunc("POST /theme", s.authed(s.theme))
 	mux.HandleFunc("GET /{$}", s.authed(s.overview))
@@ -314,9 +315,10 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 // loginLane is the line a sign-in attempt waits in, and whose failures slow it down. A browser
 // the user signed in from before has a lane of its own, which guessing from anywhere else
 // cannot slow: the right password from a known browser is never delayed by an attack. Every
-// other attempt for a user's email shares one lane, whatever its source, so guessing in
-// parallel or from many addresses gains nothing. Emails that are not users share a single
-// lane: they cannot succeed, and must not fill the limiter's table.
+// other attempt for an email shares one lane, whatever its source, so guessing in parallel or
+// from many addresses gains nothing. Emails that are not users get a lane each too, so that
+// the delays do not tell which emails exist; their lanes live in a bounded table of their own,
+// where they can only push each other out.
 func (s *server) loginLane(r *http.Request, email string) (string, error) {
 	if c, err := r.Cookie(deviceCookie); err == nil {
 		if owner, err := s.Store.DeviceEmail(r.Context(), c.Value, s.Now()); err == nil && owner == email {
@@ -325,10 +327,33 @@ func (s *server) loginLane(r *http.Request, email string) (string, error) {
 		}
 	}
 	exists, err := s.Store.UserExists(r.Context(), email)
-	if err != nil || !exists {
+	if err != nil {
 		return "", err
 	}
+	if !exists {
+		return "unknown:" + email, nil
+	}
 	return "email:" + email, nil
+}
+
+// loginLink signs in with a one-time link made by `tripwatch-verifier login-link`, and makes the
+// browser a known one: the way in when the email's line is held by an attack.
+func (s *server) loginLink(w http.ResponseWriter, r *http.Request) {
+	email, token, err := s.Store.ConsumeLoginLink(r.Context(), r.URL.Query().Get("t"), s.Now())
+	if errors.Is(err, store.ErrNotFound) {
+		s.fail(w, r, http.StatusForbidden, "Link non valido", "Il link di accesso è già stato usato o è scaduto. Creane un altro dal verificatore.")
+		return
+	}
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	s.Log.Info("login with a one-time link", "email", email)
+	s.cookie(w, sessionCookie, token, store.SessionLifetime)
+	if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
+		s.cookie(w, deviceCookie, device, store.DeviceLifetime)
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request, se session) {
@@ -853,9 +878,9 @@ type limiter struct {
 	free    int           // failures allowed before delays start
 	base    time.Duration // first delay
 	ceiling time.Duration
-	window  time.Duration // failures older than this are forgotten
-	entries map[string]*attempts
-	shared  *attempts // the lane of emails that are not users
+	window  time.Duration        // failures older than this are forgotten
+	entries map[string]*attempts // users and their known browsers
+	unknown map[string]*attempts // emails that are not users, bounded on their own
 }
 
 type attempts struct {
@@ -866,37 +891,51 @@ type attempts struct {
 
 func newAttempts() *attempts { return &attempts{turn: make(chan struct{}, 1)} }
 
+// evictOne drops stale idle lanes from a full table; in the table of unknown emails it drops
+// one idle lane anyway, so flooding it with made-up emails only pushes made-up emails out.
+func (l *limiter) evictOne(table map[string]*attempts, force bool, now func() time.Time) {
+	var victim string
+	for k, e := range table {
+		select {
+		case e.turn <- struct{}{}:
+			stale := now().Sub(e.last) > l.window
+			<-e.turn
+			if stale {
+				delete(table, k)
+				continue
+			}
+			if victim == "" {
+				victim = k
+			}
+		default:
+		}
+	}
+	if force && len(table) >= maxLimiterEntries && victim != "" {
+		delete(table, victim)
+	}
+}
+
 const maxLimiterEntries = 10_000
 
 func newLimiter(free int, base, ceiling, window time.Duration) *limiter {
-	return &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}, shared: newAttempts()}
+	return &limiter{free: free, base: base, ceiling: ceiling, window: window, entries: map[string]*attempts{}, unknown: map[string]*attempts{}}
 }
 
 // begin waits for the turn of key and the delay its failures earned. The caller calls done with
 // the outcome. It returns false if ctx ended while waiting.
 func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (done func(ok bool), started bool) {
 	l.mu.Lock()
-	a, ok := l.entries[key]
-	switch {
-	case key == "":
-		a = l.shared
-	case !ok:
-		// Lanes exist only for real users and their known browsers, so the table stays small;
-		// stale ones are still dropped now and then.
-		if len(l.entries) >= maxLimiterEntries {
-			for k, e := range l.entries {
-				select {
-				case e.turn <- struct{}{}:
-					if now().Sub(e.last) > l.window {
-						delete(l.entries, k)
-					}
-					<-e.turn
-				default:
-				}
-			}
+	table, unknown := l.entries, strings.HasPrefix(key, "unknown:")
+	if unknown {
+		table = l.unknown
+	}
+	a, ok := table[key]
+	if !ok {
+		if len(table) >= maxLimiterEntries {
+			l.evictOne(table, unknown, now)
 		}
 		a = newAttempts()
-		l.entries[key] = a
+		table[key] = a
 	}
 	l.mu.Unlock()
 

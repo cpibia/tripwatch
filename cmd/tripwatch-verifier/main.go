@@ -7,6 +7,7 @@
 //	tripwatch-verifier enroll -host web-01 -out web-01.json
 //	tripwatch-verifier revoke -host web-01
 //	tripwatch-verifier user -email ops@example.com   (password on standard input)
+//	tripwatch-verifier login-link -email ops@example.com
 //	tripwatch-verifier healthcheck
 package main
 
@@ -60,8 +61,10 @@ func main() {
 		err = user(args)
 	case "healthcheck":
 		err = healthcheck()
+	case "login-link":
+		err = loginLink(args)
 	default:
-		err = fmt.Errorf("unknown command %q (serve, enroll, revoke, user, healthcheck)", cmd)
+		err = fmt.Errorf("unknown command %q (serve, enroll, revoke, user, login-link, healthcheck)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tripwatch-verifier:", err)
@@ -301,6 +304,31 @@ func user(args []string) error {
 	}
 	defer func() { _ = st.Close() }()
 	return st.SetUser(context.Background(), *email, password, time.Now().UTC())
+}
+
+// loginLink prints a one-time sign-in link, valid for a few minutes: the way in from a new
+// browser while someone keeps guessing the user's password.
+func loginLink(args []string) error {
+	fs := flag.NewFlagSet("login-link", flag.ExitOnError)
+	email := fs.String("email", "", "user to sign in")
+	_ = fs.Parse(args)
+	if *email == "" {
+		return errors.New("login-link needs -email")
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	token, err := st.CreateLoginLink(context.Background(), strings.ToLower(strings.TrimSpace(*email)), time.Now().UTC())
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("no user %s", *email)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s/login/link?t=%s\n(valid once, for %s)\n", strings.TrimSuffix(os.Getenv("TRIPWATCH_PUBLIC_UI_URL"), "/"), token, store.LoginLinkLifetime)
+	return nil
 }
 
 // healthcheck asks the running interface whether it answers; the container image has no shell

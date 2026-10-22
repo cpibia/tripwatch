@@ -34,13 +34,45 @@ func (s *Store) SetUser(ctx context.Context, email, password string, now time.Ti
 	_, err = s.db.ExecContext(ctx, `INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)
 		ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash`, email, hash, now.Unix())
 	if err == nil {
-		// A new password ends every existing session of that user, and forgets its devices.
+		// A new password ends every existing session of that user. Known browsers stay: they
+		// only give a faster line to sign in, never access without the password.
 		_, err = s.db.ExecContext(ctx, `DELETE FROM sessions WHERE email = ?`, email)
 	}
-	if err == nil {
-		_, err = s.db.ExecContext(ctx, `DELETE FROM devices WHERE email = ?`, email)
-	}
 	return err
+}
+
+// LoginLinkLifetime bounds how long a sign-in link made from the command line stays valid.
+const LoginLinkLifetime = 10 * time.Minute
+
+// CreateLoginLink makes a one-time sign-in secret for a user, for the operator who cannot get
+// in from the interface (a new browser while the email is under attack).
+func (s *Store) CreateLoginLink(ctx context.Context, email string, now time.Time) (string, error) {
+	exists, err := s.UserExists(ctx, email)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", ErrNotFound
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(token))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO login_links (token_hash, email, expires_at) VALUES (?, ?, ?)`, sum[:], email, now.Add(LoginLinkLifetime).Unix())
+	return token, err
+}
+
+// ConsumeLoginLink checks a sign-in secret, deletes it, and opens a session for its user.
+func (s *Store) ConsumeLoginLink(ctx context.Context, token string, now time.Time) (email, session string, err error) {
+	sum := sha256.Sum256([]byte(token))
+	err = s.db.QueryRowContext(ctx, `DELETE FROM login_links WHERE token_hash = ? AND expires_at > ? RETURNING email`, sum[:], now.Unix()).Scan(&email)
+	if err != nil {
+		return "", "", ErrNotFound
+	}
+	session, err = s.openSession(ctx, email, now)
+	return email, session, err
 }
 
 // UserExists reports whether an email belongs to a user.
@@ -99,13 +131,18 @@ func (s *Store) Login(ctx context.Context, email, password string, now time.Time
 	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
 		return "", ErrBadCredentials
 	}
+	return s.openSession(ctx, email, now)
+}
+
+// openSession stores a new session and returns its token, which is not stored.
+func (s *Store) openSession(ctx context.Context, email string, now time.Time) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
-	_, err = s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at) VALUES (?, ?, ?)`, sum[:], email, now.Add(SessionLifetime).Unix())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at) VALUES (?, ?, ?)`, sum[:], email, now.Add(SessionLifetime).Unix())
 	return token, err
 }
 
