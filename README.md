@@ -51,6 +51,7 @@ firmato prodotto dalla build (confrontato con il lockfile: `composer.lock`, `pac
 | `packages` | file di sistema che non corrispondono più al database dei pacchetti (dpkg, apk), impronta del database stesso, eseguibili e symlink che nessun pacchetto possiede, elementi nascosti sotto `/usr` |
 | `privileged` | scansione dell'intero filesystem (comprese le cartelle scrivibili da tutti in `/run` e `/dev/shm`) per binari setuid e setgid, file con capability Linux, file immutabili e append-only |
 | `weblog` | log di accesso e di errore dei web server, letti in modo incrementale: eventi d'attacco raggruppati per regola, IP e path, statistiche su IP e destinazioni delle POST |
+| `apps` | per WordPress, Magento, Drupal e Laravel: amministratori nel database, estensioni attive, script salvati in impostazioni e contenuti con i domini da cui caricano o verso cui inviano, impostazioni da sviluppo rimaste in produzione |
 | `web` | inventario dei siti e delle applicazioni, e per ogni applicazione: albero di hash del codice, script nelle cartelle di upload, immagini poliglotte, firme di webshell, file nascosti, script che il web server esegue davvero |
 
 Il sensore rileva anche l'ambiente in cui gira (host, container, Kubernetes, Fargate) e i runtime
@@ -99,6 +100,30 @@ Il collector è stato provato su applicazioni reali di stack diversi, fino a olt
 applicazione. I falsi positivi rimasti sono file di librerie che contengono davvero quei pattern
 (per esempio strumenti di analisi del codice che cercano proprio `preg_replace` con `/e`): la
 baseline del verificatore li riconoscerà come noti dopo il primo snapshot.
+
+## Applicazioni e database
+
+Il collector `apps` legge la configurazione delle applicazioni riconosciute (`wp-config.php`,
+`app/etc/env.php`, `settings.php` e `settings.local.php`, `.env`) e, se il database è MySQL o
+MariaDB, lo interroga con sole `SELECT` e timeout di pochi secondi:
+
+- gli **amministratori**, con email, data di creazione e ultimo accesso: un admin nuovo, con un
+  dominio sconosciuto o con una data di creazione fuori sequenza è il segno tipico di un accesso
+  persistente;
+- gli **script salvati nel database**: opzioni e articoli di WordPress, `core_config_data`,
+  blocchi e pagine CMS di Magento, contenuti di Drupal. Per ognuno vengono riportati i domini da
+  cui gli script si caricano o a cui parlano: è lì che finiscono gli skimmer iniettati dal
+  pannello o con un'injection;
+- le **estensioni attive** (plugin, moduli) e gli URL del sito;
+- le **impostazioni da sviluppo** rimaste in produzione: debug attivo, modalità sviluppatore,
+  modifica dei file PHP dal pannello.
+
+Le credenziali vengono lette dai file di configurazione o, quando l'applicazione usa
+`getenv()`, dall'ambiente dei processi PHP e dei loro processi padre (come succede nei
+container). Restano in memoria per la durata della connessione e non finiscono mai nello snapshot,
+che riporta solo `database@host`. Il prefisso delle tabelle viene accettato solo se è un
+identificatore semplice, perché il file che lo contiene può essere stato scritto da un
+attaccante. Il collector si disattiva con `-app-db=false`.
 
 ## Log dei web server
 
@@ -199,21 +224,20 @@ Una unit systemd con le restrizioni di sicurezza è in [deploy/systemd](deploy/s
 
 ## Roadmap
 
-1. Profili applicativi: amministratori nel database, configurazioni salvate nel database che
-   iniettano script nelle pagine, moduli e plugin attivi.
-2. Verificatore come stack `docker-compose`: interfaccia web curata con l'elenco dei server, lo
+1. Verificatore come stack `docker-compose`: interfaccia web curata con l'elenco dei server, lo
    stato di ciascuno, gli allarmi e il dettaglio dei finding; notifiche email; ricezione su mTLS;
    baseline, confronto e regole.
-3. Trasporto nel sensore: snapshot e battiti dentro buste firmate, eventi in tempo reale via eBPF
+2. Trasporto nel sensore: snapshot e battiti dentro buste firmate, eventi in tempo reale via eBPF
    o auditd.
-4. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
-5. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
-6. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
-7. Controlli dall'esterno e canary token.
-8. Verifica dei pacchetti rpm.
+3. Manifest di deploy firmati prodotti dalla build e confrontati con il lockfile.
+4. Container: differenze dei container in esecuzione rispetto all'immagine, container privilegiati.
+5. Kubernetes e AWS: DaemonSet, audit log, CloudTrail, VPC Flow Logs.
+6. Controlli dall'esterno e canary token.
+7. Verifica dei pacchetti rpm.
+8. Database PostgreSQL per i profili applicativi (Django, Rails, Drupal su PostgreSQL).
 
 ## Stato
 
 Sviluppo iniziale. Sono implementati e testati il protocollo delle buste, la scoperta
-dell'ambiente e dello stack web, i collector di sistema, il collector web e quello dei log. Prossimi
-passi: profili applicativi e verificatore.
+dell'ambiente e dello stack web, i collector di sistema, web, dei log e delle applicazioni. Il
+prossimo passo è il verificatore.

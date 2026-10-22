@@ -120,6 +120,16 @@ separatore. Una copia usata per riconoscere `copytruncate` vale solo se il propr
 non poteva scriverla. Le posizioni nuove restano in sospeso finché il chiamante non conferma la
 consegna dello snapshot con `Commit`: un giro perso viene riletto.
 
+## Applicazioni
+
+`internal/collector/apps` è l'unico collector che apre connessioni: verso il database delle
+applicazioni riconosciute, con le credenziali della loro configurazione. Le query sono solo
+`SELECT`, con prefissi di tabella validati e parametri passati come argomenti; i risultati sono
+limitati a poche centinaia di righe per query. Per l'host `localhost` si usa il socket Unix
+dentro la root osservata, come fa il client `mysql`. I valori presi con `getenv()` si risolvono
+dall'ambiente dei processi PHP e dei loro antenati. Le query passano da un'interfaccia
+(`querier`), così i test non richiedono un database.
+
 ## Struttura dei package
 
 | Package | Ruolo |
@@ -131,9 +141,9 @@ consegna dello snapshot con `Commit`: un giro perso viene riletto.
 | `internal/collector/web` | per ogni applicazione: albero di hash del codice, upload, poliglotte, firme di webshell, file nascosti, script raggiungibili |
 | `internal/weblog` | parsing dei log di accesso, regole d'attacco, redazione delle richieste |
 | `internal/collector/logs` | lettura incrementale e limitata dei log, eventi, statistiche, posizioni con commit |
+| `internal/collector/apps` | configurazione e database delle applicazioni: amministratori, script salvati, estensioni, impostazioni |
 | `internal/buildinfo` | versione inserita al momento della build |
 
-Previsti: profili applicativi con accesso al
-database, `internal/verifier/...` (ricezione su mTLS, archivio, regole, allarmi, interfaccia web,
+Previsti: `internal/verifier/...` (ricezione su mTLS, archivio, regole, allarmi, interfaccia web,
 email) distribuito come stack `docker-compose`, `internal/collector/...` per i container,
 `deploy/` (systemd, DaemonSet Kubernetes).

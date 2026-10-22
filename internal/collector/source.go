@@ -38,13 +38,17 @@ func (a Attrs) Any() bool {
 type Source struct {
 	FS    fs.FS
 	Attrs func(name string) (Attrs, error)
+	// Root is the directory FS is rooted at on the machine running the sensor, for the few
+	// things that cannot go through FS, such as connecting to a Unix socket. Empty in tests.
+	Root string
 }
 
 // NewSource observes the filesystem rooted at dir through a view that unprivileged users
 // cannot use to block or exhaust the sensor (see rootFS).
 func NewSource(dir string) Source {
 	return Source{
-		FS: rootFS{dir: dir},
+		Root: dir,
+		FS:   rootFS{dir: dir},
 		Attrs: func(name string) (Attrs, error) {
 			return ReadAttrs(filepath.Join(dir, filepath.FromSlash(name)))
 		},
