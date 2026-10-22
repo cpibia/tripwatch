@@ -531,38 +531,42 @@ func TestEvidenceOfOpenAlertsOutlivesRetention(t *testing.T) {
 	}
 }
 
-// A later, lesser alert does not take the evidence away from a critical one still open.
-func TestEvidenceLinkKeepsTheWorstOpenAlert(t *testing.T) {
+// A snapshot is evidence of every alert it showed: closing the noise raised with a real change
+// does not delete the proof of the change while it stays open.
+func TestEvidenceOfEveryAlertInTheSnapshot(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	_ = s.Enroll(ctx, "h", pub, t0)
-	sealer := protocol.NewSealer("h", priv, protocol.ChainState{})
-	e := sealer.Seal(protocol.KindSnapshot, []byte("x"), t0)
-	next, _ := protocol.Verify(e, "h", pub, protocol.ChainState{})
-	if err := s.Accept(ctx, e, protocol.ChainState{}, next, t0); err != nil {
-		t.Fatal(err)
-	}
-	ids, _ := s.PendingSnapshots(ctx, 1)
 	raise := func(fp, sev string) int64 {
 		_, _ = s.Raise(ctx, Alert{HostID: "h", Fingerprint: fp, Severity: sev, Kind: "k", Title: fp}, t0)
 		id, _ := s.AlertID(ctx, "h", fp)
 		return id
 	}
-	critical, medium := raise("k:a:1", "critical"), raise("k:b:1", "medium")
-	linked := func() int64 {
-		var ev int64
-		_ = s.db.QueryRowContext(ctx, `SELECT evidence FROM snapshots WHERE id = ?`, ids[0]).Scan(&ev)
-		return ev
+	change, noise := raise("accounts-change:new:admin2", "high"), raise("weblog:command_in_parameters:/index.php|x", "critical")
+	sealer := protocol.NewSealer("h", priv, protocol.ChainState{})
+	var state protocol.ChainState
+	var evidence int64
+	for day := range 40 {
+		at := t0.Add(time.Duration(day) * 24 * time.Hour)
+		e := sealer.Seal(protocol.KindSnapshot, []byte(strconv.Itoa(day)), at)
+		next, _ := protocol.Verify(e, "h", pub, state)
+		if err := s.Accept(ctx, e, state, next, at); err != nil {
+			t.Fatal(err)
+		}
+		state = next
+		ids, _ := s.PendingSnapshots(ctx, 10)
+		for _, id := range ids {
+			if day == 1 {
+				evidence = id
+				_ = s.Keep(ctx, id, noise, change)
+				_ = s.Resolve(ctx, noise, "ops@example.net", at)
+			}
+			_ = s.MarkAnalyzed(ctx, id)
+		}
 	}
-	_ = s.Keep(ctx, ids[0], critical)
-	_ = s.Keep(ctx, ids[0], medium)
-	if linked() != critical {
-		t.Fatal("a medium alert took the evidence of an open critical one")
-	}
-	_ = s.Resolve(ctx, critical, "ops@example.net", t0)
-	_ = s.Keep(ctx, ids[0], medium)
-	if linked() != medium {
-		t.Fatal("the evidence stays linked to a resolved alert")
+	snaps, _ := s.LatestSnapshots(ctx, "h", 1000)
+	if !slices.ContainsFunc(snaps, func(sn Snapshot) bool { return sn.ID == evidence }) {
+		t.Fatal("the proof of an open change went with the noise closed beside it")
 	}
 }

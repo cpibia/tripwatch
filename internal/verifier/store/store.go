@@ -94,6 +94,17 @@ CREATE TABLE IF NOT EXISTS enroll_tokens (
 	expires_at INTEGER NOT NULL,
 	used_at    INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS snapshot_evidence (
+	snapshot_id INTEGER NOT NULL,
+	alert_id    INTEGER NOT NULL,
+	PRIMARY KEY (snapshot_id, alert_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS snapshot_evidence_alert ON snapshot_evidence(alert_id);
+CREATE TABLE IF NOT EXISTS login_links (
+	token_hash BLOB PRIMARY KEY,
+	email      TEXT NOT NULL,
+	expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS devices (
 	token_hash BLOB PRIMARY KEY,
 	email      TEXT NOT NULL,
@@ -144,6 +155,11 @@ func migrate(db *sql.DB) error {
 		if _, err := db.ExecContext(context.Background(), `ALTER TABLE snapshots ADD COLUMN evidence INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
 		}
+	}
+	// Links made before the evidence table: one alert per snapshot, kept in a column.
+	if _, err := db.ExecContext(context.Background(), `INSERT OR IGNORE INTO snapshot_evidence (snapshot_id, alert_id)
+		SELECT id, evidence FROM snapshots WHERE evidence != 0`); err != nil {
+		return err
 	}
 	var used int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('enroll_tokens') WHERE name = 'used_at'`).Scan(&used); err != nil {
@@ -341,13 +357,17 @@ func (s *Store) accept(ctx context.Context, e protocol.Envelope, prev, state pro
 		// Evidence of an alert still open stays past the retention, within the host's quota.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND received_at < ?
 			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
-			AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.id = snapshots.evidence AND a.status != 'resolved')`, e.HostID, now.Add(-Retention).Unix(), e.HostID); err != nil {
+			AND NOT EXISTS (SELECT 1 FROM snapshot_evidence ev JOIN alerts a ON a.id = ev.alert_id
+				WHERE ev.snapshot_id = snapshots.id AND a.status != 'resolved')`, e.HostID, now.Add(-Retention).Unix(), e.HostID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND keep = 0 AND received_at < ?
 			AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
 			AND id NOT IN (SELECT MAX(id) FROM snapshots WHERE host_id = ? GROUP BY received_at / 86400)`,
 			e.HostID, now.Add(-DenseRetention).Unix(), e.HostID, e.HostID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM snapshot_evidence WHERE snapshot_id NOT IN (SELECT id FROM snapshots)`); err != nil {
 			return err
 		}
 	}
@@ -374,24 +394,21 @@ func (s *Store) PendingSnapshots(ctx context.Context, limit int) ([]int64, error
 }
 
 // Keep marks a snapshot as evidence, exempt from thinning until Retention, and past it while
-// the alert it is evidence of (alertID, 0 for none) stays open.
-//
-// A snapshot linked to an alert keeps that link unless the new alert is more severe, or the
-// linked one was resolved: a later, lesser alert cannot take the evidence away from a critical
-// one still open.
-func (s *Store) Keep(ctx context.Context, id, alertID int64) error {
-	rank := func(ref string) string {
-		return `(SELECT CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END FROM alerts WHERE id = ` + ref + `)`
+// any of the alerts it is evidence of stays open. Every alert is recorded, so noise raised in
+// the same snapshot cannot take the evidence away from the change that matters.
+func (s *Store) Keep(ctx context.Context, id int64, alertIDs ...int64) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1 WHERE id = ?`, id); err != nil {
+		return err
 	}
-	//nolint:gosec // the concatenated parts are constants
-	_, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1, evidence = CASE
-		WHEN ?1 = 0 THEN evidence
-		WHEN evidence = 0 THEN ?1
-		WHEN NOT EXISTS (SELECT 1 FROM alerts WHERE id = snapshots.evidence AND status != 'resolved') THEN ?1
-		WHEN `+rank("?1")+` < `+rank("snapshots.evidence")+` THEN ?1
-		ELSE evidence END
-		WHERE id = ?2`, alertID, id)
-	return err
+	for _, a := range alertIDs {
+		if a == 0 {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO snapshot_evidence (snapshot_id, alert_id) VALUES (?, ?)`, id, a); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) MarkAnalyzed(ctx context.Context, id int64) error {
