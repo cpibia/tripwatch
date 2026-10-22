@@ -21,7 +21,10 @@ var runtimeNames = map[string]string{
 
 // Inventory is what runs on the observed machine, as far as the web is concerned.
 type Inventory struct {
-	Sites        []Site           `json:"sites"`
+	Sites []Site `json:"sites"`
+	// ConfigFiles are the web server configuration files read, with owner and mode: one an
+	// unprivileged user can write lets that user change what the server executes.
+	ConfigFiles  []collector.File `json:"config_files"`
 	Applications []Application    `json:"applications"`
 	Runtimes     []string         `json:"runtimes"`
 	Issues       collector.Issues `json:"issues,omitempty"`
@@ -31,10 +34,17 @@ type Inventory struct {
 // applications on disk and the runtimes currently running.
 func Inspect(fsys fs.FS) Inventory {
 	var inv Inventory
-	for _, parse := range []func(fs.FS) ([]Site, collector.Issues){NginxSites, ApacheSites, CaddySites} {
-		sites, issues := parse(fsys)
+	for _, parse := range []func(fs.FS) ([]Site, []string, collector.Issues){NginxSites, ApacheSites, CaddySites} {
+		sites, files, issues := parse(fsys)
 		inv.Sites = append(inv.Sites, sites...)
 		inv.Issues = append(inv.Issues, issues...)
+		for _, name := range files {
+			f, err := collector.Describe(collector.Source{FS: fsys}, name)
+			inv.Issues.Add(err)
+			if f.Path != "" {
+				inv.ConfigFiles = append(inv.ConfigFiles, f)
+			}
+		}
 	}
 	inv.Applications = FindApplications(fsys, inv.Sites)
 	inv.Runtimes = runningRuntimes(fsys)

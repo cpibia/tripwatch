@@ -1,9 +1,14 @@
 package discovery
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
+
+	"github.com/cpibia/tripwatch/internal/collector"
 )
 
 func text(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s), Mode: 0o644} }
@@ -84,7 +89,7 @@ func nginxHost() fstest.MapFS {
 }
 
 func TestNginxSites(t *testing.T) {
-	sites, issues := NginxSites(nginxHost())
+	sites, _, issues := NginxSites(nginxHost())
 	if len(issues) != 0 {
 		t.Fatalf("issues = %v", issues)
 	}
@@ -115,7 +120,7 @@ func TestNginxSites(t *testing.T) {
 }
 
 func TestNginxExecutes(t *testing.T) {
-	sites, _ := NginxSites(nginxHost())
+	sites, _, _ := NginxSites(nginxHost())
 	commerce := sites[1]
 
 	tests := map[string]bool{
@@ -190,7 +195,7 @@ func TestNginxIncludeLoop(t *testing.T) {
 		"etc/nginx/nginx.conf": text("http { include loop.conf; }"),
 		"etc/nginx/loop.conf":  text("include loop.conf;"),
 	}
-	_, issues := NginxSites(fsys)
+	_, _, issues := NginxSites(fsys)
 	if len(issues) == 0 {
 		t.Error("an include loop must be reported, not followed forever")
 	}
@@ -218,7 +223,7 @@ func apacheHost() fstest.MapFS {
 }
 
 func TestApacheSites(t *testing.T) {
-	sites, issues := ApacheSites(apacheHost())
+	sites, _, issues := ApacheSites(apacheHost())
 	if len(issues) != 0 {
 		t.Fatalf("issues = %v", issues)
 	}
@@ -248,7 +253,7 @@ func TestApacheWithoutPHPAndMainServer(t *testing.T) {
 	fsys := fstest.MapFS{
 		"etc/httpd/conf/httpd.conf": text("ServerRoot /etc/httpd\nDocumentRoot \"/var/www/html\"\nServerName static.example.com\nCustomLog logs/access_log combined\n"),
 	}
-	sites, _ := ApacheSites(fsys)
+	sites, _, _ := ApacheSites(fsys)
 	if len(sites) != 1 || sites[0].Root != "/var/www/html" || sites[0].AccessLogs[0] != "/etc/httpd/logs/access_log" {
 		t.Fatalf("sites = %+v", sites)
 	}
@@ -281,7 +286,7 @@ api.example.com {
 `
 
 func TestCaddySites(t *testing.T) {
-	sites, issues := CaddySites(fstest.MapFS{"etc/caddy/Caddyfile": text(caddyConfig)})
+	sites, _, issues := CaddySites(fstest.MapFS{"etc/caddy/Caddyfile": text(caddyConfig)})
 	if len(issues) != 0 || len(sites) != 2 {
 		t.Fatalf("sites = %+v, issues = %v", sites, issues)
 	}
@@ -375,4 +380,72 @@ func equalSites(a, b Site) bool {
 		slices.Equal(a.Names, b.Names) && slices.Equal(a.Listen, b.Listen) &&
 		slices.Equal(a.AccessLogs, b.AccessLogs) && slices.Equal(a.ErrorLogs, b.ErrorLogs) &&
 		slices.Equal(a.Upstreams, b.Upstreams) && slices.Equal(a.ScriptExtensions, b.ScriptExtensions)
+}
+
+// Seven files that include each other through a glob would take 7^10 file reads with only a
+// depth limit; the budget must stop the parse quickly and say so.
+func TestNginxIncludeFanOut(t *testing.T) {
+	fsys := fstest.MapFS{"etc/nginx/nginx.conf": text("http { include /var/www/app/*.conf; }")}
+	for i := range 7 {
+		fsys[fmt.Sprintf("var/www/app/%d.conf", i)] = text("include /var/www/app/*.conf;")
+	}
+
+	done := make(chan collector.Issues, 1)
+	go func() { _, _, issues := NginxSites(fsys); done <- issues }()
+	select {
+	case issues := <-done:
+		if !slices.ContainsFunc(issues, func(s string) bool { return strings.Contains(s, "parsing stopped") }) {
+			t.Errorf("issues = %v, want the budget reported", issues)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("include fan-out did not terminate")
+	}
+}
+
+func TestNginxDeepNesting(t *testing.T) {
+	deep := "http { server { root /srv; } " + strings.Repeat("a {", 100000) + strings.Repeat("}", 100000) + " }"
+	sites, _, issues := NginxSites(fstest.MapFS{"etc/nginx/nginx.conf": text(deep)})
+	if len(sites) != 1 || !slices.ContainsFunc(issues, func(s string) bool { return strings.Contains(s, "nested deeper") }) {
+		t.Errorf("sites = %d, issues = %v", len(sites), issues)
+	}
+}
+
+func TestInspectListsConfigFiles(t *testing.T) {
+	inv := Inspect(nginxHost())
+	var got []string
+	for _, f := range inv.ConfigFiles {
+		got = append(got, f.Path)
+		if len(f.SHA256) != 64 {
+			t.Errorf("%s has no hash", f.Path)
+		}
+	}
+	want := []string{"/etc/nginx/nginx.conf", "/etc/nginx/conf.d/loop.conf", "/etc/nginx/sites-enabled/api", "/etc/nginx/sites-enabled/commerce", "/etc/nginx/conf.d/magento.sample"}
+	if !slices.Equal(got, want) {
+		t.Errorf("config files = %v, want %v", got, want)
+	}
+}
+
+func TestDefaultIndexDoesNotHideApplications(t *testing.T) {
+	fsys := fstest.MapFS{
+		"var/www/html/index.html":                   text("Apache2 Default Page"),
+		"var/www/html/blog/wp-includes/version.php": text("<?php $wp_version = '6.6';"),
+		"var/www/html/tools/package.json":           text("{}"),
+		"var/www/html/store/bin/magento":            text(""),
+		"var/www/html/store/app/etc/di.xml":         text(""),
+		"etc/nginx/nginx.conf":                      text("http { server { server_name blog.example.com; root /var/www/html/blog; } server { server_name www.example.com; root /var/www/html; } }"),
+	}
+	inv := Inspect(fsys)
+	type app struct{ path, framework, sites string }
+	var got []app
+	for _, a := range inv.Applications {
+		got = append(got, app{a.Path, a.Framework, strings.Join(a.Sites, ",")})
+	}
+	want := []app{
+		{"/var/www/html", "static", "www.example.com"},
+		{"/var/www/html/blog", "wordpress", "blog.example.com"},
+		{"/var/www/html/store", "magento", ""},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("applications = %v, want %v", got, want)
+	}
 }

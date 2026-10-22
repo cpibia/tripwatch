@@ -55,6 +55,7 @@ func procHost() fstest.MapFS {
 
 		"proc/2/status": text("Name:\tkthreadd\nPPid:\t0\nUid:\t0\t0\t0\t0\n"),
 		"proc/2/comm":   text("kthreadd\n"),
+		"proc/2/stat":   text("2 (kthreadd) S 0 0 0 0 -1 2129984 0 0 0 0 0 0 0 0 20 0 1 0 2 0 0"),
 
 		"proc/812/status":  text("Name:\tmysqld\nPPid:\t1\nUid:\t111\t111\t111\t111\n"),
 		"proc/812/comm":    text("mysqld\n"),
@@ -276,5 +277,54 @@ func TestPackagesStopsOnCancel(t *testing.T) {
 	cancel()
 	if _, err := (Packages{}).Collect(ctx, collector.Source{FS: dpkgHost()}); err == nil {
 		t.Error("cancelled collection did not stop")
+	}
+}
+
+// fakeExeFS reports the same exe path for different processes, as processes in different
+// mount namespaces do, while each /proc/<pid>/exe opens a different binary.
+type fakeExeFS struct{ fstest.MapFS }
+
+func (f fakeExeFS) ReadLink(name string) (string, error) {
+	if strings.HasSuffix(name, "/exe") {
+		return "/usr/sbin/sshd", nil
+	}
+	return f.MapFS.ReadLink(name)
+}
+
+func TestProcessesSamePathDifferentBinary(t *testing.T) {
+	fsys := fakeExeFS{fstest.MapFS{
+		"proc/10/status": text("Name:\tsshd\nPPid:\t1\nUid:\t0\t0\t0\t0\n"),
+		"proc/10/stat":   text("10 (sshd) S 1 10 10 0 -1 4194560 0 0"),
+		"proc/10/exe":    text("genuine sshd"),
+		"proc/11/status": text("Name:\tsshd\nPPid:\t1\nUid:\t0\t0\t0\t0\n"),
+		"proc/11/stat":   text("11 (sshd) S 1 11 11 0 -1 4194560 0 0"),
+		"proc/11/exe":    text("trojaned sshd"),
+	}}
+	res := collect[ProcessesResult](t, Processes{}, collector.Source{FS: fsys})
+	if len(res.Processes) != 2 || res.Processes[0].ExeSHA256 == res.Processes[1].ExeSHA256 {
+		t.Errorf("two binaries behind the same path got hashes %q and %q", res.Processes[0].ExeSHA256, res.Processes[1].ExeSHA256)
+	}
+}
+
+// A user process whose exe cannot be read and whose argv is empty must not pass for a kernel
+// thread: only the PF_KTHREAD flag makes one.
+func TestProcessesKernelThreadFlag(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/2/status":   text("Name:\tkthreadd\nPPid:\t0\nUid:\t0\t0\t0\t0\n"),
+		"proc/2/stat":     text("2 (kthreadd) S 0 0 0 0 -1 2129984 0 0"),
+		"proc/77/status":  text("Name:\tkworker/0:1\nPPid:\t2\nUid:\t0\t0\t0\t0\n"),
+		"proc/700/status": text("Name:\thidden\nPPid:\t1\nUid:\t33\t33\t33\t33\n"),
+		"proc/700/stat":   text("700 (a) b) (c) S 1 700 700 0 -1 4194560 0 0"),
+		"proc/700/comm":   text("[kworker/1:0]\n"),
+	}
+	res := collect[ProcessesResult](t, Processes{}, collector.Source{FS: fsys})
+	if res.KernelThreads != 2 {
+		t.Errorf("kernel threads = %d, want 2 (flag, and parent kthreadd without stat)", res.KernelThreads)
+	}
+	if len(res.Processes) != 1 || res.Processes[0].PID != 700 {
+		t.Fatalf("processes = %+v, want the impostor listed", res.Processes)
+	}
+	if len(res.Issues) == 0 {
+		t.Error("an unreadable exe link must be reported as an issue")
 	}
 }

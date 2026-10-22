@@ -28,6 +28,7 @@ var (
 )
 
 type apacheParser struct {
+	budget *configBudget
 	fsys   fs.FS
 	root   string
 	vars   map[string]string
@@ -38,15 +39,16 @@ type apacheParser struct {
 	vhost  *Site
 }
 
-// ApacheSites parses the first Apache httpd configuration found. The main server counts as
-// a site when it has a DocumentRoot outside any VirtualHost.
-func ApacheSites(fsys fs.FS) ([]Site, collector.Issues) {
+// ApacheSites parses the first Apache httpd configuration found and returns its sites and the
+// configuration files it read. The main server counts as a site when it has a DocumentRoot
+// outside any VirtualHost.
+func ApacheSites(fsys fs.FS) ([]Site, []string, collector.Issues) {
 	var issues collector.Issues
 	for _, c := range apacheConfigs {
 		if !exists(fsys, c.conf) {
 			continue
 		}
-		p := &apacheParser{fsys: fsys, root: c.root, vars: apacheEnv(fsys, c.root), issues: &issues}
+		p := &apacheParser{fsys: fsys, root: c.root, vars: apacheEnv(fsys, c.root), issues: &issues, budget: newConfigBudget("apache")}
 		p.main = Site{Server: ServerApache, Config: "/" + c.conf}
 		p.parseFile(c.conf, 0)
 
@@ -59,9 +61,9 @@ func ApacheSites(fsys fs.FS) ([]Site, collector.Issues) {
 				sites[i].ScriptExtensions = phpHandlerExtensions
 			}
 		}
-		return sites, issues
+		return sites, p.budget.files, issues
 	}
-	return nil, issues
+	return nil, nil, issues
 }
 
 // apacheEnv reads the variables Debian's apache2ctl exports before starting httpd.
@@ -82,9 +84,21 @@ func apacheEnv(fsys fs.FS, root string) map[string]string {
 }
 
 func (p *apacheParser) parseFile(name string, depth int) {
+	if !p.budget.enter(name, p.issues) {
+		return
+	}
+	defer p.budget.leave(name)
+
 	lines, err := collector.ReadLines(p.fsys, name)
 	if err != nil {
 		p.issues.Add(err)
+		return
+	}
+	size := 0
+	for _, l := range lines {
+		size += len(l) + 1
+	}
+	if !p.budget.consume(size, p.issues) {
 		return
 	}
 

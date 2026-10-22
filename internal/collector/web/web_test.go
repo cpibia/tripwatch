@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -334,4 +335,78 @@ func paddedReport(t *testing.T, fsys fstest.MapFS) AppReport {
 
 func hasFinding(app AppReport, kind, p string) bool {
 	return slices.ContainsFunc(app.Findings, func(f Finding) bool { return f.Kind == kind && f.Path == p })
+}
+
+// A generic marker above an application (a stray index.html in /var/www) must not replace the
+// application's own profile: its upload and data directories still apply, and the outer
+// directory does not report the same files a second time.
+func TestGenericMarkerAboveApplication(t *testing.T) {
+	fsys := compromisedShop()
+	fsys["var/www/index.html"] = text("<h1>It works</h1>")
+	delete(fsys, "etc/nginx/nginx.conf") // found by walking the disk, not through a site
+	res := run(t, fsys)
+
+	app := commerceReport(t, res)
+	if app.Framework != "magento" {
+		t.Fatalf("framework = %q", app.Framework)
+	}
+	for _, want := range []string{KindScriptInUploads, KindCodeInUploads, KindHiddenInData} {
+		if !slices.ContainsFunc(app.Findings, func(f Finding) bool { return f.Kind == want }) {
+			t.Errorf("%s lost under a generic parent", want)
+		}
+	}
+	for _, a := range res.Apps {
+		if a.Path == "/var/www" && (len(a.Findings) != 0 || a.Files != 1) {
+			t.Errorf("outer application rescanned the inner one: %d files, findings %+v", a.Files, a.Findings)
+		}
+	}
+}
+
+func TestSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(p, content string) {
+		t.Helper()
+		full := filepath.Join(dir, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(target, p string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(dir, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("var/www/site/index.php", "<?php echo 1;")
+	mk("var/www/site/uploads/photo.jpg", "\xff\xd8 photo")
+	mk("dev/shm/s.php", `<?php system($_GET['c']);`)
+	mk("srv/shared/config.php", "<?php return [];")
+	link("../../../../dev/shm/s.php", "var/www/site/uploads/x.php")
+	link("../../../srv/shared", "var/www/site/shared")
+	link("photo.jpg", "var/www/site/uploads/latest.jpg")
+	link("index.php", "var/www/site/home.php")
+
+	out, err := Collector{}.Collect(context.Background(), collector.NewSource(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, a := range out.(Result).Apps {
+		for _, f := range a.Findings {
+			got = append(got, fmt.Sprintf("%s %s -> %s %v", f.Kind, f.Path, f.Target, f.Signatures))
+		}
+	}
+	slices.Sort(got)
+	want := []string{
+		KindExternalSymlink + " /var/www/site/shared -> ../../../srv/shared []",
+		KindSuspiciousSymlink + " /var/www/site/home.php -> index.php []",
+		KindSuspiciousSymlink + " /var/www/site/uploads/latest.jpg -> photo.jpg []",
+		KindSuspiciousSymlink + " /var/www/site/uploads/x.php -> ../../../../dev/shm/s.php [exec_request_input]",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("findings:\n got  %q\n want %q", got, want)
+	}
 }

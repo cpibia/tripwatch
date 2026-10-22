@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"fmt"
 	"io/fs"
 	"path"
 	"slices"
@@ -15,6 +16,15 @@ var nginxConfigs = []string{
 	"usr/local/etc/nginx/nginx.conf",
 	"opt/nginx/conf/nginx.conf",
 }
+
+// Budgets for parsing one web server configuration. Include globs can point into directories
+// an attacker writes to (some applications ship a server config inside their own tree), and
+// without a budget a few files that include each other fan out exponentially.
+const (
+	maxConfigFiles  = 500
+	maxConfigBytes  = 32 << 20
+	maxBlockNesting = 64
+)
 
 const (
 	maxIncludeDepth  = 10
@@ -31,30 +41,41 @@ type directive struct {
 	File  string
 }
 
-// NginxSites parses the first nginx configuration found and returns its server blocks.
-func NginxSites(fsys fs.FS) ([]Site, collector.Issues) {
+// NginxSites parses the first nginx configuration found and returns its server blocks and
+// the configuration files it read.
+func NginxSites(fsys fs.FS) ([]Site, []string, collector.Issues) {
 	var issues collector.Issues
 	for _, conf := range nginxConfigs {
 		if !exists(fsys, conf) {
 			continue
 		}
-		p := nginxParser{fsys: fsys, prefix: path.Dir(conf), issues: &issues}
+		p := nginxParser{fsys: fsys, prefix: path.Dir(conf), issues: &issues, budget: newConfigBudget("nginx")}
 		tree := p.parseFile(conf, 0)
-		return nginxServers(tree, path.Dir(conf)), issues
+		return nginxServers(tree, path.Dir(conf)), p.budget.files, issues
 	}
-	return nil, issues
+	return nil, nil, issues
 }
 
 type nginxParser struct {
-	fsys   fs.FS
-	prefix string
-	issues *collector.Issues
+	fsys    fs.FS
+	prefix  string
+	issues  *collector.Issues
+	budget  *configBudget
+	nesting int
 }
 
 func (p *nginxParser) parseFile(name string, depth int) []directive {
+	if !p.budget.enter(name, p.issues) {
+		return nil
+	}
+	defer p.budget.leave(name)
+
 	data, err := fs.ReadFile(p.fsys, name)
 	if err != nil {
 		p.issues.Add(err)
+		return nil
+	}
+	if !p.budget.consume(len(data), p.issues) {
 		return nil
 	}
 	tokens := tokenizeNginx(string(data))
@@ -88,7 +109,13 @@ func (p *nginxParser) parseBlock(tokens []string, file string, depth int) ([]dir
 			}
 			d := directive{Name: stmt[0], Args: stmt[1:], File: "/" + file}
 			stmt = nil
+			if p.nesting >= maxBlockNesting {
+				*p.issues = append(*p.issues, fmt.Sprintf("nginx: blocks nested deeper than %d in /%s, rest of the file ignored", maxBlockNesting, file))
+				return out, nil
+			}
+			p.nesting++
 			d.Block, tokens = p.parseBlock(tokens, file, depth)
+			p.nesting--
 			out = append(out, d)
 		case "}":
 			return out, tokens

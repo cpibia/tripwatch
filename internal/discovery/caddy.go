@@ -12,12 +12,12 @@ const caddyfile = "etc/caddy/Caddyfile"
 
 // CaddySites reads the site blocks of the Caddyfile. Only the directives that matter here are
 // interpreted: root, php_fastcgi, reverse_proxy and log output files.
-func CaddySites(fsys fs.FS) ([]Site, collector.Issues) {
+func CaddySites(fsys fs.FS) ([]Site, []string, collector.Issues) {
 	var issues collector.Issues
 	data, err := fs.ReadFile(fsys, caddyfile)
 	if err != nil {
 		issues.Add(err)
-		return nil, issues
+		return nil, nil, issues
 	}
 
 	var sites []Site
@@ -76,5 +76,5 @@ func CaddySites(fsys fs.FS) ([]Site, collector.Issues) {
 			depth++
 		}
 	}
-	return sites, issues
+	return sites, []string{caddyfile}, issues
 }

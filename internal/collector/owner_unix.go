@@ -3,6 +3,7 @@
 package collector
 
 import (
+	"fmt"
 	"io/fs"
 	"syscall"
 )
@@ -23,4 +24,13 @@ func Inode(info fs.FileInfo) (uint64, bool) {
 		return 0, false
 	}
 	return uint64(st.Ino), true //nolint:unconvert // Ino is not uint64 on every platform
+}
+
+// FileID returns the device and inode identifying the file behind info.
+func FileID(info fs.FileInfo) (string, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%d:%d", st.Dev, st.Ino), true
 }

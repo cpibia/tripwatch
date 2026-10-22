@@ -29,6 +29,12 @@ const (
 	KindHiddenScript    = "hidden_script"
 	KindHiddenInData    = "hidden_in_data_dir"
 	KindEncodedBlob     = "encoded_blob"
+	// A symlink where code or data lives: web servers follow links by default, so a link named
+	// x.php in an upload directory runs whatever it points to.
+	KindSuspiciousSymlink = "suspicious_symlink"
+	// A symlink leaving the application. Deploy tools link shared directories this way, so it
+	// is a weak signal on its own.
+	KindExternalSymlink = "external_symlink"
 )
 
 const (
@@ -68,6 +74,7 @@ var thirdPartyDirs = []string{"vendor", "node_modules", "bower_components"}
 
 type Finding struct {
 	Kind       string   `json:"kind"`
+	Target     string   `json:"target,omitempty"`
 	Signatures []string `json:"signatures,omitempty"`
 	Reachable  bool     `json:"reachable,omitempty"`
 	collector.File
@@ -99,7 +106,7 @@ func (Collector) Name() string { return "web" }
 func (Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.Inspect(src.FS)}
 	for _, app := range res.Inventory.Applications {
-		s := newScanner(src, app, res.Inventory.Sites)
+		s := newScanner(src, app, res.Inventory.Sites, res.Inventory.Applications)
 		if err := s.scan(ctx); err != nil {
 			return nil, err
 		}
@@ -118,9 +125,12 @@ type scanner struct {
 	issues  collector.Issues
 	uploads []string
 	data    []string
+	// nested are the roots of applications inside this one, scanned on their own with their
+	// own profile.
+	nested []string
 }
 
-func newScanner(src collector.Source, app discovery.Application, sites []discovery.Site) *scanner {
+func newScanner(src collector.Source, app discovery.Application, sites []discovery.Site, apps []discovery.Application) *scanner {
 	s := &scanner{
 		src:     src,
 		root:    strings.TrimPrefix(app.Path, "/"),
@@ -130,6 +140,11 @@ func newScanner(src collector.Source, app discovery.Application, sites []discove
 	for _, site := range sites {
 		if site.Root != "" && (site.Root == app.Path || strings.HasPrefix(site.Root, app.Path+"/")) {
 			s.sites = append(s.sites, site)
+		}
+	}
+	for _, other := range apps {
+		if strings.HasPrefix(other.Path, app.Path+"/") {
+			s.nested = append(s.nested, strings.TrimPrefix(other.Path, "/"))
 		}
 	}
 	if s.profile != nil {
@@ -174,6 +189,9 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 	h := sha256.New()
 	for _, e := range entries {
 		name := path.Join(dir, e.Name())
+		if slices.Contains(s.nested, name) {
+			continue
+		}
 		childUploads := inUploads || slices.Contains(s.uploads, name) || (e.IsDir() && s.genericUploadDir(dir, e.Name()))
 		childThirdParty := inThirdParty || slices.Contains(thirdPartyDirs, e.Name())
 		isData := slices.Contains(s.data, name) || (childUploads && !inUploads)
@@ -183,6 +201,7 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 		case e.Type()&fs.ModeSymlink != 0:
 			target, _ := fs.ReadLink(s.src.FS, name)
 			childHash = "link:" + target
+			s.inspectSymlink(name, e, target, childUploads || s.inData(dir))
 		case e.IsDir():
 			if e.Name() == ".git" {
 				continue
@@ -306,6 +325,42 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	}
 }
 
+func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inData bool) {
+	resolved := target
+	if !path.IsAbs(resolved) {
+		resolved = path.Join("/"+path.Dir(name), target)
+	}
+	root := "/" + s.root
+	outside := resolved != root && !strings.HasPrefix(resolved, root+"/")
+	script := isScript(strings.ToLower(e.Name()))
+
+	kind := ""
+	switch {
+	case script || inData:
+		kind = KindSuspiciousSymlink
+	case outside:
+		kind = KindExternalSymlink
+	default:
+		return
+	}
+
+	var sigs []string
+	if info, err := fs.Stat(s.src.FS, name); err == nil && info.Mode().IsRegular() && info.Size() <= maxInMemory {
+		if content, err := fs.ReadFile(s.src.FS, name); err == nil {
+			sigs = matchSignatures(content, s.isPHP(strings.ToLower(e.Name())))
+			if containsCode(content) && !script && inData {
+				sigs = append(sigs, "code_in_target")
+			}
+		}
+	}
+	if s.add(kind, name, e, sigs) {
+		s.report.Findings[len(s.report.Findings)-1].Target = target
+	}
+	if s.isPHP(strings.ToLower(e.Name())) {
+		s.markReachable(name)
+	}
+}
+
 // hashLarge hashes a file too big to load, keeping its first and last bytes for the content
 // checks: code hidden in an image sits after the header or at the end. Beyond MaxHashSize the
 // content is not hashed at all (a sparse file of terabytes would take hours to read): size
@@ -376,16 +431,18 @@ func (s *scanner) hashStream(name string, keepEdges bool) (string, []byte) {
 	return hex.EncodeToString(h.Sum(nil)), append(head.Bytes(), tail...)
 }
 
-func (s *scanner) add(kind, name string, e fs.DirEntry, sigs []string) {
+// add records a finding and reports whether it was kept (the list is capped).
+func (s *scanner) add(kind, name string, e fs.DirEntry, sigs []string) bool {
 	if len(s.report.Findings) >= maxFindingsPerApp {
 		s.report.Truncated = true
-		return
+		return false
 	}
 	f, err := collector.DescribeEntry(s.src, name, e)
 	if err != nil && f.Path == "" {
 		f = collector.File{Path: "/" + name}
 	}
 	s.report.Findings = append(s.report.Findings, Finding{Kind: kind, Signatures: sigs, Reachable: s.reachable(name), File: f})
+	return true
 }
 
 // reachable reports whether some site serving this application would execute name.

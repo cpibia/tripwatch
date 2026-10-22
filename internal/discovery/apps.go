@@ -19,7 +19,10 @@ type Profile struct {
 	UploadDirs []string
 	// DataDirs change at runtime (uploads, caches, logs, sessions) and are left out of the
 	// code tree hash; they are still scanned.
-	DataDirs       []string
+	DataDirs []string
+	// Generic profiles (a bare index.php, package.json...) also match ordinary directories
+	// that merely contain a specific application, so they never hide what lies below them.
+	Generic        bool
 	VersionFile    string
 	VersionPattern *regexp.Regexp
 }
@@ -93,17 +96,17 @@ var Profiles = []Profile{
 		DataDirs:   []string{"public/uploads", "storage", "tmp", "log"},
 	},
 	{Name: "java-webapp", Markers: []string{"WEB-INF/web.xml"}, WebRoot: "."},
-	{Name: "java", Markers: []string{"pom.xml"}},
-	{Name: "java", Markers: []string{"build.gradle"}},
-	{Name: "java", Markers: []string{"build.gradle.kts"}},
-	{Name: "rust", Markers: []string{"Cargo.toml"}},
-	{Name: "go", Markers: []string{"go.mod"}},
-	{Name: "node", Markers: []string{"package.json"}},
-	{Name: "python", Markers: []string{"pyproject.toml"}},
-	{Name: "python", Markers: []string{"requirements.txt"}},
-	{Name: "php", Markers: []string{"composer.json"}, WebRoot: "."},
-	{Name: "php", Markers: []string{"index.php"}, WebRoot: "."},
-	{Name: "static", Markers: []string{"index.html"}, WebRoot: "."},
+	{Name: "java", Markers: []string{"pom.xml"}, Generic: true},
+	{Name: "java", Markers: []string{"build.gradle"}, Generic: true},
+	{Name: "java", Markers: []string{"build.gradle.kts"}, Generic: true},
+	{Name: "rust", Markers: []string{"Cargo.toml"}, Generic: true},
+	{Name: "go", Markers: []string{"go.mod"}, Generic: true},
+	{Name: "node", Markers: []string{"package.json"}, Generic: true},
+	{Name: "python", Markers: []string{"pyproject.toml"}, Generic: true},
+	{Name: "python", Markers: []string{"requirements.txt"}, Generic: true},
+	{Name: "php", Markers: []string{"composer.json"}, WebRoot: ".", Generic: true},
+	{Name: "php", Markers: []string{"index.php"}, WebRoot: ".", Generic: true},
+	{Name: "static", Markers: []string{"index.html"}, WebRoot: ".", Generic: true},
 }
 
 // GenericUploadDirs are directory names treated as upload or data directories in any stack.
@@ -135,21 +138,35 @@ func FindApplications(fsys fs.FS, sites []Site) []Application {
 		walkApps(fsys, root, 0, found)
 	}
 
-	// Outermost first: the Magento root must be found before its pub directory, which on its
-	// own looks like a plain PHP application.
+	// Outermost first, specific profiles first: a framework that serves a subdirectory (pub,
+	// public, web) must be recognised at its root, not as a plain PHP application in that
+	// subdirectory.
 	for _, s := range sites {
 		r := siteRoot(s)
-		if r == "" {
+		if r == "" || coveringSpecific(found, r) != "" {
 			continue
 		}
+		var generic string
+		var genericProfile *Profile
 		for _, dir := range []string{path.Dir(path.Dir(r)), path.Dir(r), r} {
-			if dir == "." || covering(found, dir) != "" {
+			if dir == "." {
 				continue
 			}
-			if p := matchProfile(fsys, dir); p != nil {
-				found[dir] = Application{Path: "/" + dir, Framework: p.Name, Version: readVersion(fsys, dir, p), Profile: p}
+			p := matchProfile(fsys, dir)
+			switch {
+			case p == nil:
+			case !p.Generic:
+				found[dir] = newApplication(fsys, dir, p)
+				generic = ""
+			case generic == "":
+				generic, genericProfile = dir, p
+			}
+			if p != nil && !p.Generic {
 				break
 			}
+		}
+		if generic != "" && covering(found, r) == "" {
+			found[generic] = newApplication(fsys, generic, genericProfile)
 		}
 	}
 
@@ -158,7 +175,7 @@ func FindApplications(fsys fs.FS, sites []Site) []Application {
 		if r == "" || !exists(fsys, r) || covering(found, r) != "" {
 			continue
 		}
-		found[r] = Application{Path: "/" + r, Framework: "unknown", Profile: &Profile{Name: "unknown", WebRoot: "."}}
+		found[r] = Application{Path: "/" + r, Framework: "unknown", Profile: &Profile{Name: "unknown", WebRoot: ".", Generic: true}}
 	}
 
 	apps := make([]Application, 0, len(found))
@@ -166,13 +183,17 @@ func FindApplications(fsys fs.FS, sites []Site) []Application {
 		app := found[key]
 		for _, s := range sites {
 			r := siteRoot(s)
-			if r != "" && covering(map[string]Application{key: app}, r) != "" && len(s.Names) > 0 {
+			if r != "" && innermostApp(found, r) == key && len(s.Names) > 0 {
 				app.Sites = append(app.Sites, s.Names[0])
 			}
 		}
 		apps = append(apps, app)
 	}
 	return apps
+}
+
+func newApplication(fsys fs.FS, dir string, p *Profile) Application {
+	return Application{Path: "/" + dir, Framework: p.Name, Version: readVersion(fsys, dir, p), Profile: p}
 }
 
 // siteRoot returns the document root as a Source path, or "" when it is unset or still holds
@@ -184,16 +205,20 @@ func siteRoot(s Site) string {
 	return strings.TrimPrefix(path.Clean(s.Root), "/")
 }
 
+// walkApps stops at a specific application but keeps descending below a generic one, so a
+// stray index.html above a CMS does not hide it. Below a generic application only specific
+// ones are recorded: a build script's package.json is not an application of its own.
 func walkApps(fsys fs.FS, dir string, depth int, found map[string]Application) {
-	if _, seen := found[dir]; seen || depth > maxAppDepth {
-		return
-	}
-	if covering(found, dir) != "" {
+	if depth > maxAppDepth || coveringSpecific(found, dir) != "" {
 		return
 	}
 	if p := matchProfile(fsys, dir); p != nil {
-		found[dir] = Application{Path: "/" + dir, Framework: p.Name, Version: readVersion(fsys, dir, p), Profile: p}
-		return
+		if _, seen := found[dir]; !seen && (!p.Generic || covering(found, dir) == "") {
+			found[dir] = newApplication(fsys, dir, p)
+		}
+		if !p.Generic {
+			return
+		}
 	}
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
@@ -205,6 +230,26 @@ func walkApps(fsys fs.FS, dir string, depth int, found map[string]Application) {
 		}
 		walkApps(fsys, path.Join(dir, e.Name()), depth+1, found)
 	}
+}
+
+func coveringSpecific(apps map[string]Application, dir string) string {
+	for root, app := range apps {
+		if (dir == root || strings.HasPrefix(dir, root+"/")) && app.Profile != nil && !app.Profile.Generic {
+			return root
+		}
+	}
+	return ""
+}
+
+// innermostApp returns the innermost application containing dir.
+func innermostApp(apps map[string]Application, dir string) string {
+	best := ""
+	for root := range apps {
+		if (dir == root || strings.HasPrefix(dir, root+"/")) && len(root) > len(best) {
+			best = root
+		}
+	}
+	return best
 }
 
 func matchProfile(fsys fs.FS, dir string) *Profile {
