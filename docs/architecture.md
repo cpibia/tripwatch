@@ -50,9 +50,11 @@ Tutti i collector passano da un'unica vista del filesystem (`rootFS` in `interna
 - quando la root osservata non è `/` (DaemonSet con `-root /host`) i symlink si risolvono dentro
   la root, come per l'host e non nel container del sensore: con `openat2` e `RESOLVE_IN_ROOT` se
   il kernel lo offre, altrimenti (kernel vecchio, `openat2` vietato da seccomp) con un resolver in
-  userspace che segue i link componente per componente e apre l'ultimo con `O_NOFOLLOW`. In quel
-  caso lo snapshot riporta un avviso (`warnings`), perché il resolver in userspace è esposto a
-  race che `openat2` non ha. `/proc` fa eccezione: i suoi link speciali servono al collector dei
+  userspace che lavora sui descrittori come il kernel: ogni componente si apre con `openat` sul
+  descrittore della directory precedente con `O_NOFOLLOW`, i symlink si leggono dal loro
+  descriptor e `..` torna indietro su una pila di descrittori senza superare la root. In quel
+  caso lo snapshot riporta comunque un avviso (`warnings`), perché il confinamento non viene dal
+  kernel. `/proc` fa eccezione: i suoi link speciali servono al collector dei
   processi;
 - `Lstat` e `ReadLink` risolvono la directory padre nello stesso modo e leggono l'ultimo
   componente attraverso il suo descrittore, così un link intermedio non porta fuori dalla root;

@@ -132,3 +132,61 @@ func TestDevicesAreNotOpened(t *testing.T) {
 		t.Errorf("Stat(device) = %v, %v", info, err)
 	}
 }
+
+// Swapping a directory for a link to the outside while files are being opened must never
+// let a read escape: the descriptor walk has no step that goes back through a path string.
+func TestUserspaceResolutionRace(t *testing.T) {
+	degradedMu.Lock()
+	prev := degradedReason
+	degradedReason = "forced by test"
+	degradedMu.Unlock()
+	t.Cleanup(func() {
+		degradedMu.Lock()
+		degradedReason = prev
+		degradedMu.Unlock()
+	})
+
+	root, outside := t.TempDir(), t.TempDir()
+	mustMkdir(t, filepath.Join(root, "d"))
+	mustMkdir(t, filepath.Join(outside, "d"))
+	if err := os.WriteFile(filepath.Join(root, "d/f"), []byte("inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "d/f"), []byte("OUTSIDE"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	escape, err := filepath.Rel(root, outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d, saved, tmp := filepath.Join(root, "d"), filepath.Join(root, "d.real"), filepath.Join(root, "d.tmp")
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = os.Rename(d, saved)
+			_ = os.Symlink(filepath.Join(escape, "d"), tmp)
+			_ = os.Rename(tmp, d)
+			_ = os.Remove(d)
+			_ = os.Rename(saved, d)
+		}
+	}()
+
+	src := NewSource(root)
+	for range 200_000 {
+		if data, err := fs.ReadFile(src.FS, "d/f"); err == nil && string(data) != "inside" {
+			close(stop)
+			<-done
+			t.Fatalf("read %q from outside the root", data)
+		}
+	}
+	close(stop)
+	<-done
+}

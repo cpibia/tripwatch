@@ -90,13 +90,7 @@ func openPath(dir, name string) (*os.File, error) {
 			return nil, err
 		}
 	}
-	resolved, err := resolveInRoot(dir, name)
-	if err != nil {
-		return nil, err
-	}
-	// The last component is opened without following: if it was swapped for a link after
-	// resolution, fstat reports a symlink and the open is refused.
-	return openFlags(resolved, pathFlags|syscall.O_NOFOLLOW)
+	return openPathByDescriptors(dir, name)
 }
 
 func openat2InRoot(dir, name string) (*os.File, error) {
@@ -117,11 +111,29 @@ func openat2InRoot(dir, name string) (*os.File, error) {
 	return os.NewFile(fd, filepath.Join(dir, name)), nil
 }
 
-// resolveInRoot follows symlinks component by component, treating dir as "/": absolute
-// targets restart from dir and ".." never climbs above it.
-func resolveInRoot(dir, name string) (string, error) {
+// openPathByDescriptors resolves name inside dir the way openat2 RESOLVE_IN_ROOT does, for
+// kernels without it: every component is opened with openat relative to the descriptor of the
+// directory before it, with O_NOFOLLOW, and symlinks are read from their own descriptor. No
+// step goes back through a path string, so swapping a directory for a link between two steps
+// cannot lead outside dir. Absolute link targets restart from dir and ".." stops at it.
+func openPathByDescriptors(dir, name string) (*os.File, error) {
+	rootFD, err := rootDescriptor(dir)
+	if err != nil {
+		return nil, err
+	}
+	start, err := syscall.Openat(rootFD, ".", pathFlags|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "openat", Path: dir, Err: err}
+	}
+	stack := []int{start}
+	closeAll := func() {
+		for _, fd := range stack {
+			_ = syscall.Close(fd)
+		}
+	}
+
+	full := filepath.Join(dir, filepath.FromSlash(name))
 	pending := strings.Split(name, "/")
-	cur := ""
 	links := 0
 	for len(pending) > 0 {
 		part := pending[0]
@@ -130,34 +142,74 @@ func resolveInRoot(dir, name string) (string, error) {
 		case "", ".":
 			continue
 		case "..":
-			if cur = path.Dir(cur); cur == "." {
-				cur = ""
+			if len(stack) > 1 {
+				_ = syscall.Close(stack[len(stack)-1])
+				stack = stack[:len(stack)-1]
 			}
 			continue
 		}
-		next := path.Join(cur, part)
-		full := filepath.Join(dir, filepath.FromSlash(next))
-		info, err := os.Lstat(full)
+
+		fd, err := syscall.Openat(stack[len(stack)-1], part, pathFlags|syscall.O_NOFOLLOW, 0)
 		if err != nil {
-			return "", err
+			closeAll()
+			return nil, &os.PathError{Op: "openat", Path: full, Err: err}
 		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			cur = next
+		var st syscall.Stat_t
+		if err := syscall.Fstat(fd, &st); err != nil {
+			_ = syscall.Close(fd)
+			closeAll()
+			return nil, &os.PathError{Op: "fstat", Path: full, Err: err}
+		}
+
+		if st.Mode&syscall.S_IFMT == syscall.S_IFLNK {
+			target, err := readlinkFD(fd)
+			_ = syscall.Close(fd)
+			if err != nil {
+				closeAll()
+				return nil, &os.PathError{Op: "readlinkat", Path: full, Err: err}
+			}
+			if links++; links > maxSymlinks {
+				closeAll()
+				return nil, &os.PathError{Op: "resolve", Path: full, Err: syscall.ELOOP}
+			}
+			if path.IsAbs(target) {
+				for _, d := range stack[1:] {
+					_ = syscall.Close(d)
+				}
+				stack = stack[:1]
+			}
+			pending = append(strings.Split(strings.TrimPrefix(target, "/"), "/"), pending...)
 			continue
 		}
-		if links++; links > maxSymlinks {
-			return "", &os.PathError{Op: "resolve", Path: full, Err: syscall.ELOOP}
+		if len(pending) > 0 && st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+			_ = syscall.Close(fd)
+			closeAll()
+			return nil, &os.PathError{Op: "openat", Path: full, Err: syscall.ENOTDIR}
 		}
-		target, err := os.Readlink(full)
-		if err != nil {
-			return "", err
-		}
-		if path.IsAbs(target) {
-			cur = ""
-		}
-		pending = append(strings.Split(strings.TrimPrefix(target, "/"), "/"), pending...)
+		stack = append(stack, fd)
 	}
-	return filepath.Join(dir, filepath.FromSlash(cur)), nil
+
+	result := stack[len(stack)-1]
+	for _, fd := range stack[:len(stack)-1] {
+		_ = syscall.Close(fd)
+	}
+	return os.NewFile(uintptr(result), full), nil
+}
+
+// readlinkFD reads the target of the symlink open as fd (O_PATH|O_NOFOLLOW), with an empty
+// path as readlinkat allows since Linux 2.6.39.
+func readlinkFD(fd int) (string, error) {
+	empty, err := syscall.BytePtrFromString("")
+	if err != nil {
+		return "", err
+	}
+	buf := make([]byte, syscall.PathMax)
+	n, _, errno := syscall.Syscall6(syscall.SYS_READLINKAT, uintptr(fd), uintptr(unsafe.Pointer(empty)), //nolint:gosec // readlinkat takes pointers to the path and the buffer
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), 0, 0) //nolint:gosec // see above
+	if errno != 0 {
+		return "", errno
+	}
+	return string(buf[:n]), nil
 }
 
 // statIn describes name, following symlinks inside dir, without opening the file itself.
