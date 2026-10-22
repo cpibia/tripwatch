@@ -140,11 +140,14 @@ func TestRotation(t *testing.T) {
 	}
 }
 
+// logrotate with compress and no delaycompress leaves name.1.gz, not name.1: the lines
+// written after the last run cannot be read, and that must be said.
 func TestRotationWithoutOldFileIsReported(t *testing.T) {
 	h := newHost(t)
 	h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
 	h.run()
-	if err := os.Remove(filepath.Join(h.root, accessLog)); err != nil {
+	h.appendTo(accessLog, logLine("203.0.113.7", "GET", "/media/late.php", 200))
+	if err := os.Rename(filepath.Join(h.root, accessLog), filepath.Join(h.root, accessLog+".1.gz")); err != nil {
 		t.Fatal(err)
 	}
 	h.writeLog(logLine("203.0.113.8", "GET", "/", 200))
