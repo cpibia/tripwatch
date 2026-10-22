@@ -44,9 +44,9 @@ func (h *host) writeLog(content string) {
 	}
 }
 
-func (h *host) appendTo(name, content string) {
+func (h *host) appendLog(content string) {
 	h.t.Helper()
-	f, err := os.OpenFile(filepath.Join(h.root, name), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600) //nolint:gosec // test fixture under t.TempDir
+	f, err := os.OpenFile(filepath.Join(h.root, accessLog), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600) //nolint:gosec // test fixture under t.TempDir
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -92,13 +92,13 @@ func TestIncrementalReading(t *testing.T) {
 		t.Fatalf("first run: %d requests, events %v", first.Stats.Requests, eventRules(first))
 	}
 
-	h.appendTo(accessLog, logLine("203.0.113.8", "GET", "/.env", 200)+`203.0.113.9 - - [14/Feb/2026:18:48:01 +0000] "GET /partial`)
+	h.appendLog(logLine("203.0.113.8", "GET", "/.env", 200) + `203.0.113.9 - - [14/Feb/2026:18:48:01 +0000] "GET /partial`)
 	second := h.run()
 	if second.Stats.Requests != 1 || !slices.Equal(eventRules(second), []string{"sensitive_file"}) {
 		t.Errorf("second run: %d requests, events %v", second.Stats.Requests, eventRules(second))
 	}
 
-	h.appendTo(accessLog, ` HTTP/1.1" 200 1 "-" "x"`+"\n")
+	h.appendLog(` HTTP/1.1" 200 1 "-" "x"` + "\n")
 	if third := h.run(); third.Stats.Requests != 1 {
 		t.Errorf("a line completed between runs must be read once whole: %d requests", third.Stats.Requests)
 	}
@@ -125,7 +125,7 @@ func TestRotation(t *testing.T) {
 	h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
 	h.run()
 
-	h.appendTo(accessLog, logLine("203.0.113.7", "GET", "/media/late.php", 200))
+	h.appendLog(logLine("203.0.113.7", "GET", "/media/late.php", 200))
 	if err := os.Rename(filepath.Join(h.root, accessLog), filepath.Join(h.root, accessLog+".1")); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestRotationWithoutOldFileIsReported(t *testing.T) {
 	h := newHost(t)
 	h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
 	h.run()
-	h.appendTo(accessLog, logLine("203.0.113.7", "GET", "/media/late.php", 200))
+	h.appendLog(logLine("203.0.113.7", "GET", "/media/late.php", 200))
 	if err := os.Rename(filepath.Join(h.root, accessLog), filepath.Join(h.root, accessLog+".1.gz")); err != nil {
 		t.Fatal(err)
 	}
