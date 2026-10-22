@@ -187,6 +187,14 @@ h2 { font-size: 13.5px; }
 .focus h3 a { text-decoration: none; }
 .focus h3 a:hover { text-decoration: underline; }
 .focus .datum { margin: 0; max-height: 40vh; }
+.focus:focus { outline: none; }
+.focus-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.focus-foot .open { font-weight: 600; }
+
+/* The row shown in the side panel, and rows that select on click. */
+tr[data-href] { cursor: pointer; }
+tr.is-picked td { background: var(--raised); }
+tr.is-picked td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
 .focus .tally { font-size: 13px; }
 
 /* Tables */

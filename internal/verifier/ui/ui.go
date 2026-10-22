@@ -74,7 +74,7 @@ type server struct {
 func New(c Config) (http.Handler, error) {
 	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(10, 15*time.Minute)}
 	for _, name := range []string{"login", "overview", "host", "alerts", "alert", "enroll", "error"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "table": table, "hosttable": hostTable, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -394,7 +394,8 @@ type overviewData struct {
 	Hosts    []hostRow
 	Alerts   []store.Alert
 	Counters []*counter
-	Focus    *store.Alert
+	Focus    focus
+	Base     string
 	Healthy  int
 }
 
@@ -414,7 +415,12 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 	silent := &counter{Key: "silent", Label: "muti"}
 	high := &counter{Key: "high", Label: "alti"}
 	acked := &counter{Key: "acked", Label: "in carico"}
-	d := overviewData{Alerts: open, Counters: []*counter{critical, silent, high, acked}, Focus: mostUrgent(open)}
+	panel, err := s.picked(r, open, se.csrf())
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	d := overviewData{Alerts: open, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r)}
 	for _, a := range open {
 		switch {
 		case a.Kind == "silence":
@@ -519,6 +525,65 @@ type alertTable struct {
 	CSRF    string
 	Back    string
 	OneHost bool
+	// Select, when set, is the page whose side panel shows an alert: rows link to it with the
+	// alert's id instead of to the alert's own page. Selected is the alert shown there.
+	Select   string
+	Selected int64
+}
+
+// focus is the side panel of a page: the alert it shows and whether someone picked it.
+type focus struct {
+	Alert  *store.Alert
+	Picked bool
+	CSRF   string
+	Back   string
+}
+
+// SelectURL is the address that shows alert id in the panel of page base, keeping its query.
+func (t alertTable) SelectURL(id int64) string { return selectURL(t.Select, id) }
+
+func selectURL(base string, id int64) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return "/alerts/" + strconv.FormatInt(id, 10)
+	}
+	q := u.Query()
+	q.Set("a", strconv.FormatInt(id, 10))
+	u.RawQuery = q.Encode()
+	u.Fragment = "focus"
+	return u.String()
+}
+
+// picked resolves the panel of a page: the alert named by ?a= if it exists, otherwise the
+// most urgent of the listed ones.
+func (s *server) picked(r *http.Request, listed []store.Alert, csrf string) (focus, error) {
+	f := focus{CSRF: csrf, Back: r.URL.RequestURI()}
+	if id, err := strconv.ParseInt(r.URL.Query().Get("a"), 10, 64); err == nil {
+		a, err := s.Store.Alert(r.Context(), id)
+		switch {
+		case err == nil:
+			f.Alert, f.Picked = &a, true
+			return f, nil
+		case !errors.Is(err, store.ErrNotFound):
+			return f, err
+		}
+	}
+	f.Alert = mostUrgent(listed)
+	if f.Alert == nil && len(listed) > 0 {
+		f.Alert = &listed[0]
+	}
+	return f, nil
+}
+
+// pageWithoutPick is the current page address without the panel's selection, used as the base
+// of the selection links.
+func pageWithoutPick(r *http.Request) string {
+	q := r.URL.Query()
+	q.Del("a")
+	if len(q) == 0 {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + q.Encode()
 }
 
 type alertAction struct {
@@ -529,6 +594,15 @@ type alertAction struct {
 
 func table(alerts []store.Alert, csrf, back string) alertTable {
 	return alertTable{Alerts: alerts, CSRF: csrf, Back: back}
+}
+
+// pickTable is table for a page with a side panel: rows select the alert shown there.
+func pickTable(alerts []store.Alert, csrf, back, base string, f focus) alertTable {
+	t := alertTable{Alerts: alerts, CSRF: csrf, Back: back, Select: base}
+	if f.Alert != nil {
+		t.Selected = f.Alert.ID
+	}
+	return t
 }
 
 // hostTable is table for a page about one host, where a host column would repeat its name.
@@ -543,6 +617,8 @@ var alertViews = []struct{ Key, Label string }{
 }
 
 type alertsData struct {
+	Focus  focus
+	Base   string
 	View   string
 	Views  []struct{ Key, Label string }
 	Host   string
@@ -568,8 +644,13 @@ func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
+	panel, err := s.picked(r, list, se.csrf())
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	s.render(w, r, http.StatusOK, "alerts", page{Title: "Allarmi", Nav: "alerts", User: se.Email, CSRF: se.csrf(), Refresh: true,
-		Data: alertsData{View: view, Views: alertViews, Host: f.HostID, Alerts: list, Limit: f.Limit}})
+		Data: alertsData{View: view, Views: alertViews, Host: f.HostID, Alerts: list, Limit: f.Limit, Focus: panel, Base: pageWithoutPick(r)}})
 }
 
 func (s *server) alertByPath(w http.ResponseWriter, r *http.Request) (store.Alert, bool) {

@@ -6,10 +6,10 @@
 
 {{define "alertrows"}}
 {{range .Alerts}}
-<tr class="row-{{.Status}}">
+<tr class="row-{{.Status}}{{if and $.Select (eq .ID $.Selected)}} is-picked{{end}}"{{if $.Select}} data-href="{{$.SelectURL .ID}}"{{end}}>
   <td>{{template "sevmark" .}}</td>
   {{if not $.OneHost}}<td class="host">{{template "hostlink" .HostID}}</td>{{end}}
-  <td class="what"><a href="/alerts/{{.ID}}">{{.Title}}</a></td>
+  <td class="what"><a href="{{if $.Select}}{{$.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $.Select (eq .ID $.Selected)}} aria-current="true"{{end}}>{{.Title}}</a></td>
   <td class="num start"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
   <td class="num count">{{if gt .Occurrences 1}}{{.Occurrences}}×{{end}}</td>
   <td class="state">{{status .Status}}{{if .AckedBy}}<span class="by">{{.AckedBy}}</span>{{end}}</td>
@@ -33,3 +33,17 @@
 {{define "legend"}}<ul class="legend" aria-label="Legenda dei segni">
 <li>{{shape "silent" ""}}muto</li><li>{{shape "critical" ""}}critico</li><li>{{shape "high" ""}}alto</li><li>{{shape "medium" ""}}medio</li><li>{{shape "low" ""}}basso</li><li>{{shape "critical" "acknowledged"}}preso in carico</li>
 </ul>{{end}}
+
+{{define "focus"}}{{with .Alert}}
+<aside class="focus" id="focus" aria-labelledby="focus-h" tabindex="-1">
+  <div class="section-head"><h2 id="focus-h">{{if $.Picked}}Allarme selezionato{{else}}Da guardare per primo{{end}}</h2></div>
+  <h3>{{.Title}}</h3>
+  <p class="tally">{{template "sevmark" .}}<span>{{template "hostlink" .HostID}}</span><span>da {{since .CreatedAt}}</span><span>{{status .Status}}</span></p>
+  <pre class="datum">{{.Detail}}</pre>
+  <p class="aside">Testo raccolto sul server: è un dato, non un'istruzione.</p>
+  <div class="focus-foot">
+    {{template "actions" (actx . $.CSRF $.Back)}}
+    <a class="open" href="/alerts/{{.ID}}">Apri il dettaglio</a>
+  </div>
+</aside>
+{{end}}{{end}}

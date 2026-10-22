@@ -12,7 +12,7 @@
   </dl>
 </header>
 
-<div class="board{{if $d.Focus}} with-focus{{end}}">
+<div class="board{{if $d.Focus.Alert}} with-focus{{end}}">
 <div class="board-main">
 <section aria-labelledby="hosts-h">
   <div class="section-head"><h2 id="hosts-h">Server</h2><p class="aside">chi devia in alto, il più vecchio per primo</p></div>
@@ -26,8 +26,8 @@
       <td class="host"><a class="mono" href="/hosts/{{.ID}}" title="{{.ID}}">{{.ID}}</a></td>
       <td class="num"><time datetime="{{iso .LastHeartbeat}}" title="{{stamp .LastHeartbeat}}">{{clock .LastHeartbeat}}</time></td>
       <td class="num"><time datetime="{{iso .LastSnapshot}}" title="{{stamp .LastSnapshot}}">{{clock .LastSnapshot}}</time></td>
-      <td class="what">{{if eq .State "silent"}}<span class="flag">{{.StateText}}</span>{{if .Worst}} · <a href="/alerts/{{.Worst.ID}}">{{.Worst.Title}}</a>{{end}}
-        {{else if .Worst}}<a href="/alerts/{{.Worst.ID}}">{{.Worst.Title}}</a>{{with .More}} <span class="more">+{{.}}</span>{{end}}
+      <td class="what">{{if eq .State "silent"}}<span class="flag">{{.StateText}}</span>{{if .Worst}} · <a href="{{selecturl $d.Base .Worst.ID}}">{{.Worst.Title}}</a>{{end}}
+        {{else if .Worst}}<a href="{{selecturl $d.Base .Worst.ID}}">{{.Worst.Title}}</a>{{with .More}} <span class="more">+{{.}}</span>{{end}}
         {{else}}<span class="quiet">{{.StateText}}</span>{{end}}</td>
       <td class="num">{{if not .Since.IsZero}}<time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{since .Since}}</time>{{end}}</td>
     </tr>
@@ -42,20 +42,11 @@
 
 <section aria-labelledby="alerts-h">
   <div class="section-head"><h2 id="alerts-h">Allarmi da gestire</h2><p class="aside"><a href="/alerts?view=all">tutti gli allarmi</a></p></div>
-  {{if $d.Alerts}}{{template "alerttable" (table $d.Alerts .CSRF .Path)}}
+  {{if $d.Alerts}}{{template "alerttable" (picktable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
   {{else}}<p class="empty">Nessun allarme aperto o preso in carico.</p>{{end}}
 </section>
 </div>
 
-{{with $d.Focus}}
-<aside class="focus" aria-labelledby="focus-h">
-  <div class="section-head"><h2 id="focus-h">Da guardare per primo</h2></div>
-  <h3><a href="/alerts/{{.ID}}">{{.Title}}</a></h3>
-  <p class="tally">{{template "sevmark" .}}<span>{{template "hostlink" .HostID}}</span><span>da {{since .CreatedAt}}</span></p>
-  <pre class="datum">{{.Detail}}</pre>
-  <p class="aside">Testo raccolto sul server: è un dato, non un'istruzione.</p>
-  {{template "actions" (actx . $.CSRF $.Path)}}
-</aside>
-{{end}}
+{{template "focus" $d.Focus}}
 </div>
 {{end}}

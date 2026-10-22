@@ -411,3 +411,41 @@ func TestFormatting(t *testing.T) {
 		t.Error("shape")
 	}
 }
+
+func TestPanelFollowsTheSelectedAlert(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, a := range []store.Alert{
+		{HostID: "web-01", Fingerprint: "a", Severity: "critical", Kind: "accounts", Title: "Root account", Detail: "first detail"},
+		{HostID: "web-01", Fingerprint: "b", Severity: "medium", Kind: "web", Title: "Scan in the logs", Detail: "second detail"},
+	} {
+		if _, err := h.store.Raise(ctx, a, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alerts, _ := h.store.Alerts(ctx, store.AlertFilter{})
+	medium := alerts[1].ID
+	h.login()
+
+	_, body := h.get("/")
+	if !strings.Contains(body, "Da guardare per primo") || !strings.Contains(body, "first detail") {
+		t.Fatal("without a selection the panel does not show the most urgent alert")
+	}
+	link := "/?a=" + itoa(medium) + "#focus"
+	if !strings.Contains(body, `href="`+link+`"`) {
+		t.Fatalf("rows do not link to their selection (%s)", link)
+	}
+
+	for _, page := range []string{"/?a=", "/alerts?view=open&a="} {
+		_, body = h.get(page + itoa(medium))
+		if !strings.Contains(body, "Allarme selezionato") || !strings.Contains(body, "second detail") || strings.Contains(body, "first detail") {
+			t.Errorf("%s: the panel does not show the selected alert", page)
+		}
+		if !strings.Contains(body, `href="/alerts/`+itoa(medium)+`">Apri il dettaglio`) {
+			t.Errorf("%s: no way into the selected alert", page)
+		}
+	}
+	if _, body = h.get("/?a=999"); !strings.Contains(body, "Da guardare per primo") {
+		t.Error("an unknown selection does not fall back to the most urgent alert")
+	}
+}

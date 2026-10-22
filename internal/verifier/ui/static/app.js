@@ -16,3 +16,14 @@
     window.location.reload();
   }, 5000);
 })();
+
+// A click anywhere on an alert row shows that alert in the side panel, as its title link does.
+// Buttons, links and text selections inside the row keep their own behaviour.
+(function () {
+  document.addEventListener("click", function (event) {
+    var row = event.target.closest && event.target.closest("tr[data-href]");
+    if (!row || event.target.closest("a, button, form, input")) return;
+    if (String(window.getSelection ? window.getSelection() : "") !== "") return;
+    window.location.href = row.dataset.href;
+  });
+})();
