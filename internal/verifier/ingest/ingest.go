@@ -40,6 +40,11 @@ const (
 	SnapshotWindow = 15 * time.Minute
 )
 
+// DailySnapshotBytes is the storage quota of one host: snapshots received within a day beyond
+// it are verified and keep the host alive, but are not stored. A server's hourly snapshots take
+// a few to a few tens of MB a day; the quota only stops a host filling the verifier's disk.
+const DailySnapshotBytes = 1 << 30
+
 // ConcurrentSnapshots bounds the snapshot bodies held in memory at once, whatever the number of
 // hosts: each costs its size several times over while it is decoded and stored.
 const ConcurrentSnapshots = 2
@@ -100,6 +105,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	overQuota := false
 	unlock, ok := s.lock(ctx, identity)
 	if !ok {
 		return
@@ -127,6 +133,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "snapshots too frequent", http.StatusTooManyRequests)
 			return
 		}
+		stored, err := s.Store.SnapshotBytes(ctx, identity, now.Add(-24*time.Hour))
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		overQuota = stored >= DailySnapshotBytes
 		release, ok := acquire(ctx, s.snapshots)
 		if !ok {
 			return
@@ -161,7 +173,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.Store.Accept(r.Context(), e, host.Chain, state, now); err != nil {
+	if overQuota {
+		if err := s.Store.AcceptDropped(ctx, e, host.Chain, state, now); err != nil {
+			s.fail(w, err)
+			return
+		}
+		if _, err := s.Store.Raise(ctx, store.Alert{HostID: identity, Fingerprint: "snapshot:quota", Severity: "high", Kind: "sensor",
+			Title:  "Snapshot non conservati: quota giornaliera superata",
+			Detail: fmt.Sprintf("Il server ha inviato più di %d MB di snapshot nelle ultime 24 ore. Gli snapshot oltre la quota vengono verificati ma non conservati né analizzati: un sensore integro non ne produce così tanti.", DailySnapshotBytes>>20),
+		}, now); err != nil {
+			s.Log.Error("raise quota alert", "host", identity, "err", err)
+		}
+		writeAck(w, state.Sequence)
+		return
+	}
+	if err := s.Store.Accept(ctx, e, host.Chain, state, now); err != nil {
 		s.fail(w, err)
 		return
 	}

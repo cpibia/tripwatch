@@ -224,14 +224,21 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	}
 	evidence := false
 	for _, f := range findings {
-		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) {
+		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) || !f.State {
 			evidence = true
 		}
 	}
-	// The snapshot that first showed a condition is evidence: kept beyond the thinning.
+	// A snapshot that shows a change or a new condition is evidence, and so is the one before
+	// it, which shows the host as it was: both are kept beyond the thinning.
 	if evidence {
-		if err := a.Store.Keep(ctx, id); err != nil {
-			a.Log.Error("keep snapshot", "snapshot", id, "err", err)
+		keep := []int64{id}
+		if prevSnap != nil {
+			keep = append(keep, prevSnap.ID)
+		}
+		for _, k := range keep {
+			if err := a.Store.Keep(ctx, k); err != nil {
+				a.Log.Error("keep snapshot", "snapshot", k, "err", err)
+			}
 		}
 	}
 	for _, kind := range StateKinds {

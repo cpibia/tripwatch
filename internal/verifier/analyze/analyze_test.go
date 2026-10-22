@@ -166,3 +166,35 @@ func TestFindingsPerSnapshotAreBounded(t *testing.T) {
 		t.Fatal("no summary of the dropped findings")
 	}
 }
+
+// The snapshot that shows a change and the one before it survive the thinning.
+func TestChangeKeepsBothSnapshots(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, secondRoot))
+	ids, _ := h.store.PendingSnapshots(ctx, 10)
+	for _, id := range ids {
+		h.an.RunSnapshot(ctx, id)
+		_ = h.store.MarkAnalyzed(ctx, id)
+	}
+	// Three days of unchanged hourly snapshots push both past the dense window.
+	for range 72 {
+		h.clock = h.clock.Add(time.Hour)
+		h.deliver(protocol.KindSnapshot, gz(t, secondRoot))
+		next, _ := h.store.PendingSnapshots(ctx, 10)
+		for _, id := range next {
+			h.an.RunSnapshot(ctx, id)
+			_ = h.store.MarkAnalyzed(ctx, id)
+		}
+	}
+	snaps, _ := h.store.LatestSnapshots(ctx, "web-01", 1000)
+	kept := map[int64]bool{}
+	for _, s := range snaps {
+		kept[s.ID] = true
+	}
+	if !kept[ids[0]] || !kept[ids[1]] {
+		t.Fatalf("the snapshots around the change were thinned: kept %d snapshots", len(snaps))
+	}
+}

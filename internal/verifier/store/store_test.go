@@ -310,3 +310,30 @@ func TestAlertFloodIsBounded(t *testing.T) {
 		t.Fatalf("tallies = %+v, %v", tallies, err)
 	}
 }
+
+func TestAcceptDroppedKeepsLivenessOnly(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	pub, _, _ := ed25519.GenerateKey(nil)
+	if err := s.Enroll(ctx, "h", pub, t0); err != nil {
+		t.Fatal(err)
+	}
+	e := protocol.Envelope{HostID: "h", Kind: protocol.KindSnapshot, Sequence: 1, SentAt: t0, Payload: []byte("big")}
+	if err := s.AcceptDropped(ctx, e, protocol.ChainState{}, protocol.ChainState{Sequence: 1}, t0); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := s.Host(ctx, "h")
+	if h.Chain.Sequence != 1 || h.LastHeartbeat.IsZero() || !h.LastSnapshot.IsZero() {
+		t.Fatalf("host = %+v", h)
+	}
+	if n, _ := s.SnapshotBytes(ctx, "h", t0.Add(-time.Hour)); n != 0 {
+		t.Fatalf("a dropped snapshot was stored: %d bytes", n)
+	}
+	e.Sequence = 2
+	if err := s.Accept(ctx, e, protocol.ChainState{Sequence: 1}, protocol.ChainState{Sequence: 2}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.SnapshotBytes(ctx, "h", t0.Add(-time.Hour)); n != 3 {
+		t.Fatalf("stored bytes = %d", n)
+	}
+}

@@ -205,13 +205,28 @@ var ErrChainMoved = errors.New("store: chain position changed concurrently")
 // It runs in one transaction, and only if the chain is still where it was when the envelope was
 // verified (prev), so two envelopes can never both extend the same position.
 func (s *Store) Accept(ctx context.Context, e protocol.Envelope, prev, state protocol.ChainState, now time.Time) error {
+	return s.accept(ctx, e, prev, state, now, true)
+}
+
+// AcceptDropped records a verified snapshot envelope without its payload: the chain moves and
+// the host counts as alive, but nothing is stored or analysed. It is for snapshots over the
+// host's storage quota, so that a host flooding the disk does not also lose its liveness.
+func (s *Store) AcceptDropped(ctx context.Context, e protocol.Envelope, prev, state protocol.ChainState, now time.Time) error {
+	return s.accept(ctx, e, prev, state, now, false)
+}
+
+func (s *Store) accept(ctx context.Context, e protocol.Envelope, prev, state protocol.ChainState, now time.Time, keepPayload bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	field := map[protocol.Kind]string{protocol.KindHeartbeat: "last_heartbeat", protocol.KindSnapshot: "last_snapshot"}[e.Kind]
+	kind := e.Kind
+	if kind == protocol.KindSnapshot && !keepPayload {
+		kind = protocol.KindHeartbeat
+	}
+	field := map[protocol.Kind]string{protocol.KindHeartbeat: "last_heartbeat", protocol.KindSnapshot: "last_snapshot"}[kind]
 	set := "last_seq = ?, last_digest = ?, last_seen = ?"
 	args := []any{state.Sequence, state.LastDigest, now.Unix()}
 	if field != "" {
@@ -227,14 +242,14 @@ func (s *Store) Accept(ctx context.Context, e protocol.Envelope, prev, state pro
 	}
 	if field != "" {
 		minute := now.Unix() / 60
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO activity (host_id, minute, kind) VALUES (?, ?, ?)`, e.HostID, minute, string(e.Kind)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO activity (host_id, minute, kind) VALUES (?, ?, ?)`, e.HostID, minute, string(kind)); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM activity WHERE host_id = ? AND minute < ?`, e.HostID, minute-int64(ActivityRetention/time.Minute)); err != nil {
 			return err
 		}
 	}
-	if e.Kind == protocol.KindSnapshot {
+	if kind == protocol.KindSnapshot {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO snapshots (host_id, seq, taken_at, received_at, payload) VALUES (?, ?, ?, ?, ?)`,
 			e.HostID, e.Sequence, e.SentAt.Unix(), now.Unix(), e.Payload); err != nil {
 			return err
@@ -371,6 +386,13 @@ func (s *Store) Activity(ctx context.Context, host string, since time.Time) ([]M
 func (s *Store) CountSnapshots(ctx context.Context, host string, since time.Time) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM snapshots WHERE host_id = ? AND received_at >= ?`, host, since.Unix()).Scan(&n)
+	return n, err
+}
+
+// SnapshotBytes returns the size of the snapshots of a host received since the given time.
+func (s *Store) SnapshotBytes(ctx context.Context, host string, since time.Time) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(length(payload)), 0) FROM snapshots WHERE host_id = ? AND received_at >= ?`, host, since.Unix()).Scan(&n)
 	return n, err
 }
 

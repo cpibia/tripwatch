@@ -33,9 +33,10 @@ certificato e la chiave TLS del server e una chiave Ed25519 di firma, distinta d
   è ancora quella verificata, quindi due buste non possono estendere lo stesso anello. Uno
   snapshot oltre il terzo in 15 minuti viene rifiutato prima di qualsiasi lavoro.
   Una catena rotta o ripartita è un allarme critico.
-- **Archivio** (`internal/verifier/store`): SQLite. Gli snapshot restano tutti per 48 ore, poi
-  l'ultimo di ogni giorno e quelli che hanno sollevato un allarme fino a 30 giorni, il primo di
-  ogni server per sempre come baseline. La conservazione è per età e mai per numero, così un
+- **Archivio** (`internal/verifier/store`): SQLite. Gli snapshot restano tutti per 48 ore; poi,
+  fino a 30 giorni, l'ultimo di ogni giorno e quelli che mostrano un cambiamento o una condizione
+  nuova insieme al precedente; il primo di ogni server per sempre come baseline. Oltre 1 GB di
+  snapshot in 24 ore un server viene verificato ma non conservato, con un allarme. La conservazione è per età e mai per numero, così un
   server compromesso che inonda di snapshot non può spingere fuori le prove; snapshot orari di un
   server stabile sono quasi identici, e diradarli tiene il database a pochi giorni per server.
   Ogni minuto in cui arriva un battito o uno

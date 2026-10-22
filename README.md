@@ -272,10 +272,12 @@ significa registrare di nuovo ogni server. Il container gira senza root, con fil
 lettura e nessuna capability.
 
 Lo spazio cresce con il numero di server, non con il tempo. Il verificatore conserva tutti gli
-snapshot delle ultime 48 ore, poi l'ultimo di ogni giorno e quelli che hanno sollevato un allarme
-fino a 30 giorni, e il primo di ogni server per sempre. Con snapshot compressi da qualche
-centinaio di KB si arriva a circa 40 MB per server, quindi 50 server stanno in un paio di GB;
-battiti e allarmi pesano poco.
+snapshot delle ultime 48 ore; poi, fino a 30 giorni, l'ultimo di ogni giorno e quelli che
+mostrano un cambiamento insieme al precedente; il primo di ogni server per sempre. Con snapshot
+compressi da qualche centinaio di KB si arriva a circa 40 MB per server, quindi 50 server stanno
+in un paio di GB; battiti e allarmi pesano poco. Un server che supera 1 GB di snapshot in un
+giorno resta vivo per il verificatore, ma gli snapshot oltre la quota non vengono conservati e
+compare un allarme; allo stesso modo un server non può tenere aperti più di 2000 allarmi.
 
 Altri utenti o una nuova password:
 
@@ -288,10 +290,11 @@ docker compose exec verifier /tripwatch-verifier user -email collega@example.net
 - **Panoramica.** Un quadro da sala controllo: tutto è grigio finché qualcosa devia. In alto i
   contatori (critici, muti, alti, in carico, ognuno con l'età del più vecchio); sotto, la tabella
   dei server con chi devia in cima e il più vecchio per primo; poi gli allarmi da gestire. Su
-  schermi larghi, a lato, il dettaglio dell'allarme da guardare per primo con le sue azioni. Ogni
-  gravità ha una forma oltre al colore (rombo muto, triangolo critico, quadrato alto, cerchio
-  medio, cerchio vuoto basso), e un server muto è un segno presente con la riga tratteggiata,
-  non una riga spenta.
+  schermi larghi, a lato, il dettaglio dell'allarme da guardare per primo con le sue azioni;
+  cliccando un altro allarme (anche dalla pagina Allarmi) il pannello mostra quello, con il link
+  per aprirne il dettaglio. Ogni gravità ha una forma oltre al colore (rombo muto, triangolo
+  critico, quadrato alto, cerchio medio, cerchio vuoto basso), e un server muto è un segno
+  presente con la riga tratteggiata, non una riga spenta.
 - **Server.** Stato, tutti gli allarmi, i silenzi degli ultimi 7 giorni con la durata, gli ultimi
   snapshot ricevuti, la revoca.
 - **Allarmi.** Da gestire, presi in carico, risolti. Ogni allarme si può prendere in carico e
