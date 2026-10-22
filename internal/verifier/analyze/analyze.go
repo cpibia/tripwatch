@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +34,10 @@ const (
 	maxSnapshotValues = 500_000
 	maxSnapshotDepth  = 32
 )
+
+// maxEvidencePerDay bounds the snapshots a host keeps as evidence each day: one an hour on
+// average, while the daily thinning keeps the last of each day anyway.
+const maxEvidencePerDay = 24
 
 // maxFindings bounds the alerts one snapshot can raise.
 const maxFindings = 200
@@ -222,31 +228,36 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			Title:  "Troppe anomalie in un solo snapshot",
 			Detail: fmt.Sprintf("Lo snapshot ne contiene %d: registrate le %d più gravi, le altre %d no. Un cambiamento così esteso va esaminato sul server.", maxFindings+dropped, maxFindings, dropped)})
 	}
-	var evidenceOf []string
+	var evidenceOf []Finding
 	for _, f := range findings {
 		// Evidence is the snapshot where an alert starts (or comes back), not every later one
 		// that shows it again: a repeated log request would otherwise keep every snapshot.
 		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) {
-			evidenceOf = append(evidenceOf, f.Fingerprint)
+			evidenceOf = append(evidenceOf, f)
 		}
 	}
 
 	// A snapshot that raises a new alert is evidence, and so is the one before it, which shows the
-	// host as it was: both are kept beyond the thinning.
-	// One proof a day per alert: an alert made to reopen at every snapshot (two files swapped
-	// back and forth) would otherwise keep them all.
-	var alertIDs []int64
+	// host as it was: both are kept beyond the thinning. One proof a day per alert and content,
+	// so an alert made to reopen at every snapshot keeps one, while a decoy raised early in the
+	// day does not take the place of different content raised later; and at most
+	// maxEvidencePerDay a day per host, whatever the number of files swapped back and forth.
+	var links []store.Evidence
 	day := a.Now().Truncate(24 * time.Hour)
-	for _, fp := range evidenceOf {
-		alertID, err := a.Store.AlertID(ctx, host, fp)
-		if err != nil {
-			continue
-		}
-		if seen, err := a.Store.HasEvidenceSince(ctx, alertID, day); err == nil && !seen {
-			alertIDs = append(alertIDs, alertID)
+	if kept, err := a.Store.EvidenceSnapshotsSince(ctx, host, day); err == nil && kept < maxEvidencePerDay {
+		for _, f := range evidenceOf {
+			alertID, err := a.Store.AlertID(ctx, host, f.Fingerprint)
+			if err != nil {
+				continue
+			}
+			sum := sha256.Sum256([]byte(f.Severity + "\x00" + f.Detail))
+			digest := hex.EncodeToString(sum[:8])
+			if seen, err := a.Store.HasEvidenceSince(ctx, alertID, digest, day); err == nil && !seen {
+				links = append(links, store.Evidence{AlertID: alertID, Digest: digest})
+			}
 		}
 	}
-	if len(alertIDs) > 0 {
+	if len(links) > 0 {
 		keep := []int64{id}
 		if prevSnap != nil {
 			keep = append(keep, prevSnap.ID)
@@ -254,7 +265,7 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 		// Linked to every alert it shows, the snapshot outlives the retention while any of them
 		// stays open.
 		for _, k := range keep {
-			if err := a.Store.Keep(ctx, k, alertIDs...); err != nil {
+			if err := a.Store.Keep(ctx, k, links...); err != nil {
 				a.Log.Error("keep snapshot", "snapshot", k, "err", err)
 			}
 		}

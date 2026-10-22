@@ -242,6 +242,9 @@ Il design completo è in [docs/architecture.md](docs/architecture.md).
   interfacce Linux.
 - Con un battito al minuto, un sensore sospeso per meno di 100 secondi non si distingue da un
   ritardo di rete e non dà allarme; pause più lunghe sì, anche se poi i battiti riprendono.
+- Un attacco molto costoso per il verificatore (oltre centomila tentativi di accesso in un'ora,
+  ognuno con il suo controllo della password) può far rispondere più lentamente un'email
+  inesistente nuova che quella di un utente, rivelando quali indirizzi esistono.
 - Chi accede alla console da un browser mai usato prima, mentre qualcuno tenta password sulla sua
   stessa email senza sosta, resta in fila con quei tentativi e può non riuscire a entrare finché
   l'attacco dura. Dai browser già usati l'accesso non viene mai rallentato; per gli altri c'è il

@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS enroll_tokens (
 CREATE TABLE IF NOT EXISTS snapshot_evidence (
 	snapshot_id INTEGER NOT NULL,
 	alert_id    INTEGER NOT NULL,
+	digest      TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (snapshot_id, alert_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS snapshot_evidence_alert ON snapshot_evidence(alert_id);
@@ -153,6 +154,15 @@ func migrate(db *sql.DB) error {
 	}
 	if evidence == 0 {
 		if _, err := db.ExecContext(context.Background(), `ALTER TABLE snapshots ADD COLUMN evidence INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	var digest int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('snapshot_evidence') WHERE name = 'digest'`).Scan(&digest); err != nil {
+		return err
+	}
+	if digest == 0 {
+		if _, err := db.ExecContext(context.Background(), `ALTER TABLE snapshot_evidence ADD COLUMN digest TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}
@@ -418,28 +428,43 @@ func (s *Store) PendingSnapshots(ctx context.Context, limit int) ([]int64, error
 // Keep marks a snapshot as evidence, exempt from thinning until Retention, and past it while
 // any of the alerts it is evidence of stays open. Every alert is recorded, so noise raised in
 // the same snapshot cannot take the evidence away from the change that matters.
-func (s *Store) Keep(ctx context.Context, id int64, alertIDs ...int64) error {
+func (s *Store) Keep(ctx context.Context, id int64, links ...Evidence) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE snapshots SET keep = 1 WHERE id = ?`, id); err != nil {
 		return err
 	}
-	for _, a := range alertIDs {
-		if a == 0 {
+	for _, l := range links {
+		if l.AlertID == 0 {
 			continue
 		}
-		if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO snapshot_evidence (snapshot_id, alert_id) VALUES (?, ?)`, id, a); err != nil {
+		if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO snapshot_evidence (snapshot_id, alert_id, digest) VALUES (?, ?, ?)`, id, l.AlertID, l.Digest); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// HasEvidenceSince reports whether an alert already has a snapshot kept as its evidence among
-// those received since the given time.
-func (s *Store) HasEvidenceSince(ctx context.Context, alertID int64, since time.Time) (bool, error) {
+// Evidence links a snapshot to an alert it shows; Digest identifies what the alert said then,
+// so a later, different content of the same alert is evidence of its own.
+type Evidence struct {
+	AlertID int64
+	Digest  string
+}
+
+// HasEvidenceSince reports whether an alert, with the same content, already has a snapshot kept
+// as its evidence among those received since the given time.
+func (s *Store) HasEvidenceSince(ctx context.Context, alertID int64, digest string, since time.Time) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM snapshot_evidence ev JOIN snapshots sn ON sn.id = ev.snapshot_id
-		WHERE ev.alert_id = ? AND sn.received_at >= ?`, alertID, since.Unix()).Scan(&n)
+		WHERE ev.alert_id = ? AND ev.digest = ? AND sn.received_at >= ?`, alertID, digest, since.Unix()).Scan(&n)
 	return n > 0, err
+}
+
+// EvidenceSnapshotsSince counts a host's snapshots kept as evidence among those received since
+// the given time.
+func (s *Store) EvidenceSnapshotsSince(ctx context.Context, host string, since time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM snapshots WHERE host_id = ? AND keep = 1 AND received_at >= ?`, host, since.Unix()).Scan(&n)
+	return n, err
 }
 
 func (s *Store) MarkAnalyzed(ctx context.Context, id int64) error {

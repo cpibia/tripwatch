@@ -627,3 +627,19 @@ func TestUnknownLanesAreFixed(t *testing.T) {
 		t.Fatal("lanes are not stable per process, or not keyed")
 	}
 }
+
+// With every shared password check taken by a flood, a known browser still gets one.
+func TestKnownBrowserHasAReservedCheck(t *testing.T) {
+	s := &server{checks: make(chan struct{}, 1), knownCheck: make(chan struct{}, 1)}
+	s.checks <- struct{}{} // the flood holds the shared check
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if _, ok := s.checkSlot(ctx, false); ok {
+		t.Fatal("an unknown browser got past a full set of checks")
+	}
+	release, ok := s.checkSlot(t.Context(), true)
+	if !ok {
+		t.Fatal("the known browser has no check of its own")
+	}
+	release()
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -251,5 +252,68 @@ func TestFlappingAlertKeepsOneProofADay(t *testing.T) {
 	snaps, _ := h.store.SnapshotHeads(ctx, "web-01", 100)
 	if len(snaps) > 10 {
 		t.Fatalf("%d snapshots kept: a flapping alert keeps one per reopening", len(snaps))
+	}
+}
+
+func (h *harness) analyse() {
+	h.t.Helper()
+	ctx := context.Background()
+	ids, _ := h.store.PendingSnapshots(ctx, 10)
+	for _, id := range ids {
+		h.an.RunSnapshot(ctx, id)
+		_ = h.store.MarkAnalyzed(ctx, id)
+	}
+}
+
+func rootWith(name, home string) string {
+	return `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0},{"name":"` + name + `","uid":0,"home":"` + home + `"}]}}}}`
+}
+
+// However many different alerts a host raises in a day, it keeps at most maxEvidencePerDay
+// snapshots as their evidence.
+func TestEvidencePerHostAndDayIsBounded(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.analyse()
+	for i := range 40 {
+		h.clock = h.clock.Add(10 * time.Minute)
+		h.deliver(protocol.KindSnapshot, gz(t, rootWith(fmt.Sprintf("r%d", i), "/root")))
+		h.analyse()
+	}
+	if kept, _ := h.store.EvidenceSnapshotsSince(ctx, "web-01", now.Truncate(24*time.Hour)); kept > maxEvidencePerDay+1 {
+		t.Fatalf("%d snapshots kept as evidence in a day", kept)
+	}
+}
+
+// A harmless decoy raised early does not take the day's proof from different content raised
+// later under the same alert.
+func TestDecoyDoesNotTakeTheDaysProof(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.analyse()
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, rootWith("backup", "/decoy")))
+	h.analyse()
+	id, _ := h.store.AlertID(ctx, "web-01", "accounts:uid0:backup")
+	_ = h.store.Resolve(ctx, id, "ops@example.net", h.clock)
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.analyse()
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, rootWith("backup", "/var/lib/real")))
+	h.analyse()
+	genuine, _ := h.store.SnapshotHeads(ctx, "web-01", 1)
+	// A later snapshot the same day, so the genuine one is not kept just as the day's last.
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, rootWith("backup", "/var/lib/real")))
+	h.analyse()
+
+	h.clock = h.clock.Add(72 * time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	snaps, _ := h.store.SnapshotHeads(ctx, "web-01", 100)
+	if !slices.ContainsFunc(snaps, func(s store.SnapshotHead) bool { return s.ID == genuine[0].ID }) {
+		t.Fatal("the snapshot with the real content went with the thinning")
 	}
 }

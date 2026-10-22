@@ -244,7 +244,7 @@ func TestRetentionThinsOlderSnapshots(t *testing.T) {
 		for _, id := range ids {
 			if hour == 30 {
 				evidence = id
-				_ = s.Keep(ctx, id, 0)
+				_ = s.Keep(ctx, id)
 			}
 			_ = s.MarkAnalyzed(ctx, id)
 		}
@@ -507,7 +507,7 @@ func TestEvidenceOfOpenAlertsOutlivesRetention(t *testing.T) {
 		for _, id := range ids {
 			if day == 1 {
 				evidence = id
-				_ = s.Keep(ctx, id, alertID)
+				_ = s.Keep(ctx, id, Evidence{AlertID: alertID})
 			}
 			_ = s.MarkAnalyzed(ctx, id)
 		}
@@ -559,7 +559,7 @@ func TestEvidenceOfEveryAlertInTheSnapshot(t *testing.T) {
 		for _, id := range ids {
 			if day == 1 {
 				evidence = id
-				_ = s.Keep(ctx, id, noise, change)
+				_ = s.Keep(ctx, id, Evidence{AlertID: noise}, Evidence{AlertID: change})
 				_ = s.Resolve(ctx, noise, "ops@example.net", at)
 			}
 			_ = s.MarkAnalyzed(ctx, id)

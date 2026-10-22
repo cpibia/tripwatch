@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,11 +75,16 @@ type server struct {
 	pages  map[string]*template.Template
 	static http.Handler
 	logins *limiter
+	// checks bounds the password checks running at once to the CPUs; knownCheck is one more,
+	// reserved to known browsers.
+	checks     chan struct{}
+	knownCheck chan struct{}
 }
 
 // New returns the web interface handler.
 func New(c Config) (http.Handler, error) {
-	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(time.Second, 15*time.Second)}
+	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(time.Second, 15*time.Second),
+		checks: make(chan struct{}, max(1, runtime.NumCPU()-1)), knownCheck: make(chan struct{}, 1)}
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
@@ -287,14 +293,23 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	// The wait in line, at most one delay ceiling of 15 s plus the check, stays inside the
 	// server's write timeout.
 	waitCtx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
 	done, ok := s.logins.begin(waitCtx, lane, s.Now)
-	cancel()
+	var release func()
+	if ok {
+		// Password checks are bounded across all lanes, so a flood cannot starve the CPU; a
+		// known browser also has a check of its own, which the flood cannot take.
+		if release, ok = s.checkSlot(waitCtx, strings.HasPrefix(lane, "device:")); !ok {
+			done(false)
+		}
+	}
 	if !ok {
 		data.Error = "Troppi tentativi in corso per questo indirizzo. Riprova tra poco."
 		s.render(w, r, http.StatusTooManyRequests, "login", page{Title: "Accesso", Data: data})
 		return
 	}
 	token, err := s.Store.Login(r.Context(), email, r.PostFormValue("password"), s.Now())
+	release()
 	done(err == nil)
 	if errors.Is(err, store.ErrBadCredentials) {
 		s.Log.Warn("failed login", "email", email)
@@ -314,6 +329,28 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Redirect(w, r, data.Next, http.StatusSeeOther) //nolint:gosec // data.Next went through localPath
+}
+
+// checkSlot waits for a turn to check a password. Every lane, users' and unknown emails' alike,
+// waits for the same shared slots, so the wait tells nothing about which emails exist; known
+// browsers may also take a slot reserved to them.
+func (s *server) checkSlot(ctx context.Context, known bool) (func(), bool) {
+	if known {
+		select {
+		case s.knownCheck <- struct{}{}:
+			return func() { <-s.knownCheck }, true
+		case s.checks <- struct{}{}:
+			return func() { <-s.checks }, true
+		case <-ctx.Done():
+			return nil, false
+		}
+	}
+	select {
+	case s.checks <- struct{}{}:
+		return func() { <-s.checks }, true
+	case <-ctx.Done():
+		return nil, false
+	}
 }
 
 // loginLane is the line a sign-in attempt waits in, and whose failures slow it down. A browser
