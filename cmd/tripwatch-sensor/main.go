@@ -5,6 +5,7 @@
 // Without, it prints one snapshot as JSON and exits.
 //
 //	echo tw1.... | tripwatch-sensor enroll -token-file -   (writes /etc/tripwatch/bundle.json)
+//	tripwatch-sensor -update                                (installs the latest release)
 package main
 
 import (
@@ -19,8 +20,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +36,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/discovery"
 	"github.com/cpibia/tripwatch/internal/protocol"
+	"github.com/cpibia/tripwatch/internal/selfupdate"
 	"github.com/cpibia/tripwatch/internal/transport"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
 )
@@ -57,6 +61,7 @@ func main() {
 		return
 	}
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	update := flag.Bool("update", false, "install the latest release, as the same .deb, .rpm or binary as this one, and restart the service")
 	rootDir := flag.String("root", "/", "root of the filesystem to observe (the host root when running in a DaemonSet)")
 	appDB := flag.Bool("app-db", true, "read administrators, extensions and stored scripts from the databases of recognised applications (local database servers only)")
 	appDBHosts := flag.String("app-db-hosts", "", "comma-separated database hosts, as host or host:port, trusted beyond the local server, such as a Docker service name")
@@ -68,6 +73,13 @@ func main() {
 
 	if *showVersion {
 		fmt.Println(buildinfo.String("tripwatch-sensor"))
+		return
+	}
+	if *update {
+		if err := selfUpdate(); err != nil {
+			fmt.Fprintln(os.Stderr, "tripwatch-sensor -update:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -162,6 +174,39 @@ func enroll(args []string) error {
 	}
 	fmt.Printf("Enrolled as %s. Start the sensor: systemctl enable --now tripwatch-sensor\n", b.HostID)
 	return nil
+}
+
+func selfUpdate() error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("releases are built for Linux only, not %s", runtime.GOOS)
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("run it as root, with sudo")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	u := selfupdate.Updater{
+		Client:     &http.Client{Timeout: 5 * time.Minute},
+		BaseURL:    selfupdate.Repository,
+		Current:    buildinfo.Version,
+		Arch:       runtime.GOARCH,
+		Executable: exe,
+		Out:        os.Stdout,
+		Run: func(ctx context.Context, out io.Writer, name string, args ...string) error {
+			cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // fixed commands; the arguments are our own paths
+			cmd.Stdout, cmd.Stderr = out, out
+			return cmd.Run()
+		},
+	}
+	_, err = u.Update(ctx)
+	return err
 }
 
 func (s sensor) snapshot(ctx context.Context) report {

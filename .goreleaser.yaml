@@ -1,6 +1,10 @@
 # Release build: static binaries, deb and rpm packages of the sensor, checksums and the files
 # needed to run the verifier, attached to the GitHub release of a v* tag. The verifier image is
 # built by the release workflow.
+#
+# The sensor is published twice: with the version in the name, and under a fixed name that
+# releases/latest/download/ always resolves to the newest release, so install commands never
+# need editing.
 version: 2
 
 project_name: tripwatch
@@ -28,9 +32,14 @@ builds:
 archives:
   - formats: [binary]
     name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: sensor-latest
+    ids: [sensor]
+    formats: [binary]
+    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
 
 nfpms:
-  - id: sensor
+  - &sensor-package
+    id: sensor
     ids: [sensor]
     package_name: tripwatch-sensor
     file_name_template: "{{ .ConventionalFileName }}"
@@ -57,6 +66,16 @@ nfpms:
       postinstall: deploy/package/postinstall.sh
       preremove: deploy/package/preremove.sh
       postremove: deploy/package/postremove.sh
+  # Named after what dpkg --print-architecture and uname -m print, so one command fits every
+  # architecture.
+  - <<: *sensor-package
+    id: sensor-latest-deb
+    formats: [deb]
+    file_name_template: "{{ .PackageName }}_{{ .Arch }}"
+  - <<: *sensor-package
+    id: sensor-latest-rpm
+    formats: [rpm]
+    file_name_template: '{{ .PackageName }}.{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}'
 
 checksum:
   name_template: SHA256SUMS

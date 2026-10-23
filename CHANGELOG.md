@@ -6,7 +6,21 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
-Update the verifier.
+Update the verifier and the sensors.
+
+### Sensor
+
+- `sudo tripwatch-sensor -update` installs the latest release in the same form as the installed
+  one (`.deb`, `.rpm` or static binary) for the server's architecture, after checking it against
+  the release's `SHA256SUMS`, and restarts the service. Nothing changes if the running version is
+  already the latest.
+
+### Releases
+
+- The sensor's packages and binaries are also published under fixed names
+  (`tripwatch-sensor_amd64.deb`, `tripwatch-sensor.x86_64.rpm`, `tripwatch-sensor_linux_amd64` and
+  the arm64 equivalents), so `releases/latest/download/` always gives the newest one and the
+  install commands in the README no longer name a version.
 
 ### Verifier
 

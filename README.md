@@ -68,8 +68,8 @@ manifest produced by the build (checked against the lockfile: `composer.lock`,
 
 Every [release](https://github.com/cpibia/tripwatch/releases) publishes the sensor as `.deb` and
 `.rpm` packages and the verifier as a container image (`ghcr.io/cpibia/tripwatch-verifier`).
-Nothing needs to be cloned or compiled on the servers. The commands below use release `0.1.2`:
-replace it with the latest one.
+Nothing needs to be cloned or compiled on the servers. The commands below always fetch the latest
+release; each release also keeps its files with the version in the name.
 
 ### 1. Verifier
 
@@ -120,26 +120,26 @@ Debian and Ubuntu (the download goes to `/tmp`, which apt's unprivileged `_apt` 
 
 ```sh
 cd /tmp
-curl -fsSLO https://github.com/cpibia/tripwatch/releases/download/v0.1.2/tripwatch-sensor_0.1.2_amd64.deb
-sudo apt install ./tripwatch-sensor_0.1.2_amd64.deb
+curl -fsSLO https://github.com/cpibia/tripwatch/releases/latest/download/tripwatch-sensor_$(dpkg --print-architecture).deb
+sudo apt install ./tripwatch-sensor_$(dpkg --print-architecture).deb
 ```
 
 RHEL, AlmaLinux, Rocky, Fedora and Amazon Linux:
 
 ```sh
-sudo dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.2/tripwatch-sensor-0.1.2-1.x86_64.rpm
+sudo dnf install https://github.com/cpibia/tripwatch/releases/latest/download/tripwatch-sensor.$(uname -m).rpm
 ```
 
-On ARM servers use `arm64` in the `.deb` name and `aarch64` in the `.rpm` name. The package
+Both commands pick the package for the server's architecture (amd64 or arm64). The package
 installs `/usr/bin/tripwatch-sensor` and its systemd unit, and creates `/etc/tripwatch`; the
 service starts only after enrollment. On other distributions use the static binary from the
-release (`tripwatch-sensor_0.1.2_linux_amd64`) with the unit in [deploy/systemd](deploy/systemd).
+release (`tripwatch-sensor_linux_amd64` or `tripwatch-sensor_linux_arm64`) with the unit in [deploy/systemd](deploy/systemd).
 
 Every file of a release is listed in `SHA256SUMS` and has a build provenance attestation, which
 proves it was built by this repository's release workflow from the tagged source:
 
 ```sh
-gh attestation verify tripwatch-sensor_0.1.2_amd64.deb -R cpibia/tripwatch
+gh attestation verify tripwatch-sensor_amd64.deb -R cpibia/tripwatch
 ```
 
 ### 3. Enrollment
@@ -230,7 +230,7 @@ enrollment page then installs the sensor of its own release.
 ### Upgrading the verifier
 
 `TRIPWATCH_VERSION` in `.env` chooses the image: `latest` by default, or a release number such
-as `0.1.2`. Docker never fetches a newer image by itself, so with
+as `0.1.4`. Docker never fetches a newer image by itself, so with
 `latest` the update happens only when you ask for it:
 
 ```sh
@@ -246,17 +246,30 @@ Coolify, change the tag in the service's compose, or with `latest` pull the imag
 
 ### Upgrading the sensor
 
-Install the package of the new release the same way as the first time; a running sensor is
-by the package and resumes the same chain. Debian and Ubuntu:
+From 0.1.4 the sensor updates itself:
 
 ```sh
-cd /tmp && curl -fsSLO https://github.com/cpibia/tripwatch/releases/download/v0.1.2/tripwatch-sensor_0.1.2_amd64.deb && sudo apt install ./tripwatch-sensor_0.1.2_amd64.deb && rm tripwatch-sensor_0.1.2_amd64.deb
+sudo tripwatch-sensor -update
+```
+
+It finds the latest release, downloads the file of the same kind as the installed one (the
+`.deb` when dpkg owns the binary, the `.rpm` when rpm does, the static binary otherwise) for the
+server's architecture, checks it against the release's `SHA256SUMS` and installs it with dpkg,
+rpm or by replacing the binary. A running sensor is restarted and resumes the same chain; if the
+latest release is not newer, nothing changes. The checksum comes from the same release, so it
+catches a damaged download; to prove where a file was built, use `gh attestation verify`.
+
+Sensors older than 0.1.4 have no `-update`: install the package of the new release the same way
+as the first time. Debian and Ubuntu:
+
+```sh
+cd /tmp && f=tripwatch-sensor_$(dpkg --print-architecture).deb && curl -fsSLO https://github.com/cpibia/tripwatch/releases/latest/download/$f && sudo apt install ./$f && rm $f
 ```
 
 RHEL family and Amazon Linux:
 
 ```sh
-sudo dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.2/tripwatch-sensor-0.1.2-1.x86_64.rpm
+sudo dnf install https://github.com/cpibia/tripwatch/releases/latest/download/tripwatch-sensor.$(uname -m).rpm
 ```
 
 Check the result with `tripwatch-sensor -version`.
