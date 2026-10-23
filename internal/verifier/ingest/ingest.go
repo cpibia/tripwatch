@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -581,7 +582,7 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 	case known && boot != run.BootID:
 		a.Title = "Server restarted without a clean stop"
 		a.Detail = fmt.Sprintf("The sensor started after a new system boot (version %s, system boot %s) without having reported that it was stopping: a crash, a power cut, or a sensor killed before the reboot. Check what happened before it.", version, boot)
-	case known && stopped && run.StopReason == "updating" && version != run.Version && run.Version != "":
+	case known && stopped && run.StopReason == "updating" && newerVersion(version, run.Version):
 		a.Severity, a.Title = "low", "Sensor updated"
 		a.Detail = fmt.Sprintf("The sensor was restarted by its update and runs a new version: %s, before %s (system boot %s).", version, run.Version, boot)
 	case known && version != run.Version && run.Version != "":
@@ -620,6 +621,29 @@ func (s *Server) stopping(ctx context.Context, host string, e protocol.Envelope,
 		Title:  "Sensor removed",
 		Detail: fmt.Sprintf("The sensor package (version %s) was removed from the server and the sensor stopped: nothing on it is watched any more. If no administrator uninstalled it, someone with root did, and the server should be checked from outside.", clipVersion(ev.Version)),
 	}, now)
+}
+
+// newerVersion reports whether a is a later release than b: a downgrade is no update.
+func newerVersion(a, b string) bool {
+	pa, okA := releaseParts(a)
+	pb, okB := releaseParts(b)
+	return okA && okB && slices.Compare(pa, pb) > 0
+}
+
+func releaseParts(v string) ([]int, bool) {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, "-+ "); i >= 0 {
+		v = v[:i]
+	}
+	var out []int
+	for _, p := range strings.Split(v, ".") {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, len(out) > 0
 }
 
 func clipVersion(v string) string {

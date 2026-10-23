@@ -83,7 +83,7 @@ func main() {
 		return
 	}
 	if *update {
-		if err := selfUpdate(); err != nil {
+		if err := selfUpdate(*stateDir); err != nil {
 			fmt.Fprintln(os.Stderr, "tripwatch-sensor -update:", err)
 			os.Exit(1)
 		}
@@ -187,7 +187,7 @@ func enroll(args []string) error {
 	return nil
 }
 
-func selfUpdate() error {
+func selfUpdate(stateDir string) error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("releases are built for Linux only, not %s", runtime.GOOS)
 	}
@@ -213,8 +213,8 @@ func selfUpdate() error {
 		Run: func(ctx context.Context, out io.Writer, name string, args ...string) error {
 			// A binary install restarts the service itself: the running sensor reports the stop
 			// as an update.
-			if name == "systemctl" {
-				_ = os.WriteFile(filepath.Join("/var/lib/tripwatch", updatingMarker), nil, 0o600)
+			if name == "systemctl" && stateDir != "" {
+				_ = os.WriteFile(filepath.Join(stateDir, updatingMarker), nil, 0o600)
 			}
 			cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // fixed commands; the arguments are our own paths
 			cmd.Stdout, cmd.Stderr = out, out

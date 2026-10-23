@@ -475,6 +475,7 @@ func TestSensorStopsAndStarts(t *testing.T) {
 		{"", started("1.2.1", "cccccccc-3"), "Server restarted without a clean stop", "high"},
 		{stop("stopped", false), started("1.2.1", "dddddddd-4"), "Sensor stopped before a reboot", "high"},
 		{stop("stopped", false), started("1.2.2", "dddddddd-4"), "Sensor replaced without an update", "high"},
+		{stop("updating", false), started("1.2.0", "dddddddd-4"), "Sensor replaced without an update", "high"},
 	} {
 		if step.stop != "" {
 			send(step.stop)
