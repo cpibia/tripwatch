@@ -26,21 +26,31 @@ type Finding struct {
 	Owner string
 }
 
-// owned reports whether only root can have caused a finding.
-func (f Finding) owned() bool {
-	if f.Owner != "" {
-		return f.Owner == "root"
-	}
-	return rootKinds[f.Kind]
-}
+// owned reports whether only root can have caused a finding: its owner says so, never its kind
+// alone.
+func (f Finding) owned() bool { return f.Owner == "root" }
 
-// rootKinds are the alert kinds only root on the host can cause, unless a finding names another
-// owner. Processes, listening ports and the sensor's own alerts are left out: the web server's
+// rootKinds are the alert kinds whose findings are root's unless the rule names another owner. Processes, listening ports and the sensor's own alerts are left out: the web server's
 // user can start a program from /tmp, bind a port, or flood the findings of a snapshot.
 var rootKinds = map[string]bool{
 	"accounts": true, "accounts-change": true, "ssh": true, "ssh-change": true,
 	"persistence": true, "persistence-change": true, "privileged": true, "privileged-change": true,
 	"packages": true, "packages-change": true,
+}
+
+func kindOwner(kind string) string {
+	if rootKinds[kind] {
+		return "root"
+	}
+	return ""
+}
+
+// unitOwner is the user a systemd unit runs for: the user of a user unit, root otherwise.
+func unitOwner(u unitT) string {
+	if u.User != "" && u.User != "root" {
+		return u.User
+	}
+	return homeOwner(u.Path)
 }
 
 // cronOwner is the user a crontab belongs to: a user's spool file is theirs, the system's
@@ -57,6 +67,34 @@ func uidOwner(uid *uint32) string {
 		return "root"
 	}
 	return fmt.Sprintf("uid %d", *uid)
+}
+
+// privilegedOwner is root for a file that grants root's or a system group's rights when run:
+// setuid and owned by root, or setgid with a system group (disk, shadow, adm, sudo...). Any
+// other setuid or setgid file grants only its owner's rights.
+func privilegedOwner(f fileT) string {
+	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil && *f.GID < 1000 {
+		return "root"
+	}
+	return uidOwner(f.UID)
+}
+
+// homeOwner names who wrote a configuration read from the given path: root for system
+// directories, otherwise the home it lies in.
+func homeOwner(p string) string {
+	p = "/" + strings.TrimPrefix(p, "/")
+	for _, dir := range []string{"/etc/", "/run/", "/usr/", "/lib/"} {
+		if strings.HasPrefix(p, dir) {
+			return "root"
+		}
+	}
+	if i := strings.Index(p, "/.config/"); i >= 0 {
+		return "home " + p[:i]
+	}
+	if i := strings.Index(p, "/.local/"); i >= 0 {
+		return "home " + p[:i]
+	}
+	return "path " + path.Dir(p)
 }
 
 // StateKinds are the kinds whose alerts resolve themselves when the condition disappears.
@@ -101,11 +139,11 @@ func Evaluate(prev *State, cur State) []Finding {
 	var out []Finding
 	add := func(f Finding) { out = append(out, f) }
 	state := func(kind, fp, sev, title, detail string) {
-		add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail, State: true})
+		add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail, State: true, Owner: kindOwner(kind)})
 	}
 	change := func(kind, fp, sev, title, detail string) {
 		if prev != nil {
-			add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail})
+			add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail, Owner: kindOwner(kind)})
 		}
 	}
 	stateBy := func(owner, kind, fp, sev, title, detail string) {
@@ -156,10 +194,21 @@ func Evaluate(prev *State, cur State) []Finding {
 		if prev != nil && prev.SSH != nil {
 			known = setOf(prev.SSH.Keys, func(p keyT) string { return p.User + "\x00" + p.Fingerprint })
 		}
+		uids := map[string]int{}
+		if cur.Accounts != nil {
+			for _, acc := range cur.Accounts.Accounts {
+				uids[acc.Name] = acc.UID
+			}
+		}
 		for _, k := range s.Keys {
 			if known != nil && !known.has(k.User+"\x00"+k.Fingerprint) {
-				// The user names the group: one user's keys do not crowd out root's.
-				changeBy(k.User, "ssh-change", "key:"+k.User+"|"+k.Fingerprint, "high", "Nuova chiave SSH per "+k.User,
+				// The user names the group: one user's keys do not crowd out root's. Any account
+				// with UID 0 is root.
+				owner := k.User
+				if uid, ok := uids[k.User]; ok && uid == 0 {
+					owner = "root"
+				}
+				changeBy(owner, "ssh-change", "key:"+k.User+"|"+k.Fingerprint, "high", "Nuova chiave SSH per "+k.User,
 					fmt.Sprintf("%s %s (%s) in %s.", k.Type, k.Fingerprint, k.Comment, k.File))
 			}
 		}
@@ -207,7 +256,13 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, env := range s.Environment {
 			if strings.Contains(env, "LD_PRELOAD") {
-				state("persistence", "default-env:"+env, "critical", "Libreria iniettata in tutti i servizi", env)
+				// environment.d lines name their file; the others come from the managers' own
+				// configuration in /etc.
+				owner := "root"
+				if i := strings.LastIndex(env, " ("); i >= 0 && strings.HasSuffix(env, ")") {
+					owner = homeOwner(env[i+2 : len(env)-1])
+				}
+				stateBy(owner, "persistence", "default-env:"+owner+"|"+env, "critical", "Libreria iniettata in tutti i servizi", env)
 			}
 		}
 		for _, u := range s.Units {
@@ -216,11 +271,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			for _, x := range u.Exec {
 				if _, cmd, ok := strings.Cut(x, "="); ok && len(strings.Fields(cmd)) > 0 && suspiciousPath(strings.TrimLeft(strings.Fields(cmd)[0], "-@+!:")) {
-					state("persistence", "unit-exec:"+u.Path+":"+x, "high", "Servizio che esegue da una cartella insolita", x+"\nin "+u.Path)
+					stateBy(unitOwner(u), "persistence", "unit-exec:"+unitOwner(u)+"|"+u.Path+":"+x, "high", "Servizio che esegue da una cartella insolita", x+"\nin "+u.Path)
 				}
 			}
 			if knownUnits != nil && !knownUnits.has(u.Path) {
-				change("persistence-change", "unit:"+u.Path, "medium", "Nuovo servizio systemd", u.Path+"\n"+strings.Join(u.Exec, "\n"))
+				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, "medium", "Nuovo servizio systemd", u.Path+"\n"+strings.Join(u.Exec, "\n"))
 			}
 		}
 		for _, g := range s.Generators {
@@ -298,11 +353,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			case f.Immutable || f.AppendOnly:
 				state("privileged", "attr:"+f.Path, "high", "File protetto con chattr: "+f.Path, "Gli attributi immutable o append-only sono rari sui server e sono usati per rendere persistente un accesso.")
 			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
-				owner := uidOwner(f.UID)
+				owner := privilegedOwner(f)
 				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+", hash "+f.SHA256+".")
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
-				owner := uidOwner(f.UID)
+				owner := privilegedOwner(f)
 				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+".")
 			}
 		}

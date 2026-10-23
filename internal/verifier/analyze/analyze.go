@@ -251,11 +251,11 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 		kept = map[string]int{}
 	}
 	for _, f := range evidenceOf {
-		// The daily bound is per kind of alert, so noise of one kind (files in the uploads)
-		// cannot use up another's. What only root can cause is always kept; web and log
+		// The daily bound is per kind and severity of alert, so noise of one kind (files in the
+		// uploads) cannot use up another's, and medium noise cannot use up the critical budget. What only root can cause is always kept; web and log
 		// alerts, critical ones included, and other users' keys, crontabs and setuid files
 		// can be produced without root and stay bounded.
-		if !f.owned() && kept[f.Kind] >= maxEvidencePerDay {
+		if !f.owned() && kept[f.Kind+"|"+f.Severity] >= maxEvidencePerDay {
 			continue
 		}
 		alertID, err := a.Store.AlertID(ctx, host, f.Fingerprint)

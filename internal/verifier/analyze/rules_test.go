@@ -68,7 +68,7 @@ func TestCompromisedHost(t *testing.T) {
 		"high processes:deleted:/var/www/.cache/x:",
 		"critical privileged:setid:root|/usr/lib/.syslib/sh2",
 		"high privileged-change:new:root|/usr/lib/.syslib/sh2:bb",
-		"high persistence:unit-exec:/etc/systemd/system/sync.service:ExecStart=/var/www/.cache/sync/syncd",
+		"high persistence:unit-exec:root|/etc/systemd/system/sync.service:ExecStart=/var/www/.cache/sync/syncd",
 		"critical web:script_in_upload_dir:/var/www/shop/pub/media/x.php",
 		"critical weblog:script_in_upload_path:/media/x.php|/media/x.php/var/log/nginx/access.log",
 		"critical apps-change:admin:/var/www/shop:9",
@@ -147,5 +147,52 @@ func TestWebFindingDetailCarriesTheHash(t *testing.T) {
 	decoy, genuine := finding("aaaa", 10), finding("bbbb", 4000)
 	if decoy.Fingerprint != genuine.Fingerprint || decoy.Detail == genuine.Detail || !strings.Contains(genuine.Detail, "bbbb") {
 		t.Fatalf("decoy %q, genuine %q", decoy.Detail, genuine.Detail)
+	}
+}
+
+func findingOwners(fs []Finding) map[string]string {
+	out := map[string]string{}
+	for _, f := range fs {
+		out[f.Fingerprint] = f.Owner
+	}
+	return out
+}
+
+// Owners come from where a finding was read, never from its kind alone.
+func TestFindingOwners(t *testing.T) {
+	gid6, uid33, uid0 := uint32(6), uint32(33), uint32(0)
+	cur := State{
+		Services: &system.ServicesResult{Environment: []string{
+			"LD_PRELOAD=/dev/shm/a.so (var/www/.config/environment.d/x.conf)",
+			"LD_PRELOAD=/dev/shm/b.so (etc/environment.d/50-x.conf)",
+		}},
+		Privileged: &system.PrivilegedResult{Files: []collector.File{
+			{Path: "/srv/x/disk", Mode: "grwxr-xr-x", UID: &uid33, GID: &gid6},
+			{Path: "/srv/x/mine", Mode: "urwxr-xr-x", UID: &uid33, GID: &uid33},
+			{Path: "/srv/x/root", Mode: "urwxr-xr-x", UID: &uid0, GID: &uid0},
+		}},
+	}
+	owners := findingOwners(Evaluate(nil, cur))
+	for fp, want := range map[string]string{
+		"persistence:default-env:home /var/www|LD_PRELOAD=/dev/shm/a.so (var/www/.config/environment.d/x.conf)": "home /var/www",
+		"persistence:default-env:root|LD_PRELOAD=/dev/shm/b.so (etc/environment.d/50-x.conf)":                   "root",
+		"privileged:setid:root|/srv/x/disk":   "root",
+		"privileged:setid:uid 33|/srv/x/mine": "uid 33",
+		"privileged:setid:root|/srv/x/root":   "root",
+	} {
+		if got, ok := owners[fp]; !ok || got != want {
+			t.Errorf("%s: owner %q (present %v), want %q", fp, got, ok, want)
+		}
+	}
+
+	// A key of a second account with UID 0 is root's.
+	prev := State{SSH: &system.SSHResult{}}
+	cur = State{
+		Accounts: &system.AccountsResult{Accounts: []system.Account{{Name: "root", UID: 0}, {Name: "toor", UID: 0}, {Name: "www-data", UID: 33}}},
+		SSH:      &system.SSHResult{Keys: []system.AuthorizedKey{{User: "toor", Fingerprint: "SHA256:t"}, {User: "www-data", Fingerprint: "SHA256:w"}}},
+	}
+	owners = findingOwners(Evaluate(&prev, cur))
+	if owners["ssh-change:key:toor|SHA256:t"] != "root" || owners["ssh-change:key:www-data|SHA256:w"] != "www-data" {
+		t.Errorf("key owners %v", owners)
 	}
 }

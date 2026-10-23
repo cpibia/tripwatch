@@ -348,8 +348,8 @@ func TestAnonymousCriticalAlertsAreBounded(t *testing.T) {
 		h.analyse()
 	}
 	kept, _ := h.store.EvidenceSnapshotsSince(ctx, "web-01", now.Truncate(24*time.Hour))
-	if kept["weblog"] == 0 || kept["weblog"] > maxEvidencePerDay+1 {
-		t.Fatalf("%d snapshots kept as evidence of anonymous critical alerts", kept["weblog"])
+	if kept["weblog|critical"] == 0 || kept["weblog|critical"] > maxEvidencePerDay+1 {
+		t.Fatalf("%d snapshots kept as evidence of anonymous critical alerts", kept["weblog|critical"])
 	}
 }
 
@@ -382,5 +382,32 @@ func TestUserKeysDoNotHideRootKey(t *testing.T) {
 	}
 	if ok, _ := h.store.HasEvidenceSince(ctx, id, criticalDigest(t, h, id), now.Truncate(24*time.Hour)); !ok {
 		t.Fatal("the root key's snapshot is not kept as evidence")
+	}
+}
+
+// Medium noise uses up only the medium budget of its kind: a critical alert of the same kind
+// later in the day is still kept.
+func TestCriticalHasItsOwnBudget(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	web := func(findings string) string {
+		return `{"snapshot":{"results":{"web":{"apps":[{"path":"/var/www/app","findings":[` + findings + `]}]}}}}`
+	}
+	h.deliver(protocol.KindSnapshot, gz(t, web("")))
+	h.analyse()
+	for i := range 30 {
+		h.clock = h.clock.Add(10 * time.Minute)
+		h.deliver(protocol.KindSnapshot, gz(t, web(fmt.Sprintf(`{"kind":"hidden_in_data_dir","path":"/var/www/app/up/.x%d","sha256":"h%d"}`, i, i))))
+		h.analyse()
+	}
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, gz(t, web(`{"kind":"script_in_upload_dir","path":"/var/www/app/up/shell.php","sha256":"s"}`)))
+	h.analyse()
+	id, err := h.store.AlertID(ctx, "web-01", "web:script_in_upload_dir:/var/www/app/up/shell.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := h.store.HasEvidenceSince(ctx, id, criticalDigest(t, h, id), now.Truncate(24*time.Hour)); !ok {
+		t.Fatal("the critical web alert lost its evidence to medium noise")
 	}
 }

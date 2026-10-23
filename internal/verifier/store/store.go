@@ -459,12 +459,12 @@ func (s *Store) HasEvidenceSince(ctx context.Context, alertID int64, digest stri
 	return n > 0, err
 }
 
-// EvidenceSnapshotsSince counts, by alert kind, a host's snapshots kept as evidence among those
-// received since the given time.
+// EvidenceSnapshotsSince counts, by alert kind and severity ("kind|severity"), a host's
+// snapshots kept as evidence among those received since the given time.
 func (s *Store) EvidenceSnapshotsSince(ctx context.Context, host string, since time.Time) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT a.kind, COUNT(DISTINCT sn.id) FROM snapshot_evidence ev
+	rows, err := s.db.QueryContext(ctx, `SELECT a.kind || '|' || a.severity, COUNT(DISTINCT sn.id) FROM snapshot_evidence ev
 		JOIN snapshots sn ON sn.id = ev.snapshot_id JOIN alerts a ON a.id = ev.alert_id
-		WHERE sn.host_id = ? AND sn.received_at >= ? GROUP BY a.kind`, host, since.Unix())
+		WHERE sn.host_id = ? AND sn.received_at >= ? GROUP BY a.kind, a.severity`, host, since.Unix())
 	if err != nil {
 		return nil, err
 	}
