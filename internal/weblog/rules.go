@@ -109,13 +109,14 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	// The status is chosen by the script itself, and many web shells answer 404 to blend in:
 	// a script requested in an upload directory stays high on any status but a redirect. A
 	// redirect is almost always the server's own (to https, to a canonical host) before the
-	// script is reached; the request that follows it is logged with its own status. A POST answered
-	// with a redirect stays high: the script may have chosen that status, and nothing reposts it.
+	// script is reached; the request that follows it is logged with its own status. Only a plain
+	// GET or HEAD without a query answered with a permanent redirect counts as one: any other
+	// method, a query, or a 302 the script itself may have chosen stays high.
 	if script && hasUploadSegment(p) {
 		switch {
 		case ok:
 			hit("script_in_upload_path", SeverityCritical)
-		case r.Status >= 300 && r.Status < 400 && !post:
+		case (r.Status == 301 || r.Status == 308) && (r.Method == "GET" || r.Method == "HEAD") && q == "":
 			hit("script_in_upload_path", SeverityLow)
 		default:
 			hit("script_in_upload_path", SeverityHigh)
