@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -114,11 +115,20 @@ func runtimeName(comm string) (string, bool) {
 // userHZ is the unit of process start times in /proc/<pid>/stat on every mainstream Linux.
 const userHZ = 100
 
-// configLoaded returns when the web server last read its configuration: the start of its most
-// recent process where a reload starts new workers, of its oldest elsewhere. It comes from the
-// start time in /proc/<pid>/stat (ticks since boot) and the boot time in /proc/stat. The
-// timestamps of /proc entries themselves are not usable: procfs sets them at first lookup.
-func configLoaded(fsys fs.FS, names []string, newest bool) (time.Time, bool) {
+// serverProcess is a process of a web server, as /proc shows it.
+type serverProcess struct {
+	pid, ppid, uid int
+	start          time.Time
+}
+
+// configLoaded returns when the web server last read its configuration. Only processes running
+// the server's executable from the system's directories count: a process can give itself any
+// name. Where a reload starts new workers (workers), it is the oldest child of a master running
+// as root, the workers of the previous configuration having exited; otherwise, and when the
+// master has no child, the oldest process. Start times come from /proc/<pid>/stat (ticks since
+// boot) and the boot time in /proc/stat: the timestamps of /proc entries themselves are not
+// usable, procfs sets them at first lookup.
+func configLoaded(fsys fs.FS, names []string, workers bool) (time.Time, bool) {
 	boot, ok := bootTime(fsys)
 	if !ok {
 		return time.Time{}, false
@@ -127,16 +137,18 @@ func configLoaded(fsys fs.FS, names []string, newest bool) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	var picked time.Time
+	var procs []serverProcess
 	for _, e := range entries {
-		if _, err := strconv.Atoi(e.Name()); err != nil {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
 			continue
 		}
-		comm, err := fs.ReadFile(fsys, "proc/"+e.Name()+"/comm")
-		if err != nil || !slices.Contains(names, strings.TrimSpace(string(comm))) {
+		dir := "proc/" + e.Name() + "/"
+		exe, err := fs.ReadLink(fsys, dir+"exe")
+		if err != nil || !slices.Contains(names, path.Base(exe)) || !systemExecutable(exe) {
 			continue
 		}
-		stat, err := fs.ReadFile(fsys, "proc/"+e.Name()+"/stat")
+		stat, err := fs.ReadFile(fsys, dir+"stat")
 		if err != nil {
 			continue
 		}
@@ -152,12 +164,72 @@ func configLoaded(fsys fs.FS, names []string, newest bool) (time.Time, bool) {
 		if err != nil {
 			continue
 		}
-		start := boot.Add(time.Duration(ticks) * time.Second / userHZ)
-		if picked.IsZero() || (newest && start.After(picked)) || (!newest && start.Before(picked)) {
-			picked = start
+		ppid, _ := strconv.Atoi(fields[1])
+		procs = append(procs, serverProcess{pid: pid, ppid: ppid, uid: processUID(fsys, dir), start: boot.Add(time.Duration(ticks) * time.Second / userHZ)})
+	}
+	if len(procs) == 0 {
+		return time.Time{}, false
+	}
+	oldest := func(ps []serverProcess) time.Time {
+		var t time.Time
+		for _, p := range ps {
+			if t.IsZero() || p.start.Before(t) {
+				t = p.start
+			}
+		}
+		return t
+	}
+	if workers {
+		pids := map[int]bool{}
+		for _, p := range procs {
+			pids[p.pid] = true
+		}
+		var loaded time.Time
+		for _, m := range procs {
+			if m.uid != 0 || pids[m.ppid] {
+				continue
+			}
+			var children []serverProcess
+			for _, c := range procs {
+				if c.ppid == m.pid {
+					children = append(children, c)
+				}
+			}
+			t := m.start
+			if len(children) > 0 {
+				t = oldest(children)
+			}
+			if t.After(loaded) {
+				loaded = t
+			}
+		}
+		if !loaded.IsZero() {
+			return loaded, true
 		}
 	}
-	return picked, !picked.IsZero()
+	return oldest(procs), true
+}
+
+// systemExecutable reports whether a path lies in the system's binary directories.
+func systemExecutable(p string) bool {
+	return slices.ContainsFunc([]string{"/usr/sbin/", "/usr/bin/", "/sbin/", "/bin/", "/usr/local/sbin/", "/usr/local/bin/", "/usr/lib/", "/opt/"}, func(d string) bool { return strings.HasPrefix(p, d) })
+}
+
+func processUID(fsys fs.FS, dir string) int {
+	status, err := fs.ReadFile(fsys, dir+"status")
+	if err != nil {
+		return -1
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		if v, ok := strings.CutPrefix(line, "Uid:"); ok {
+			if f := strings.Fields(v); len(f) > 0 {
+				if n, err := strconv.Atoi(f[0]); err == nil {
+					return n
+				}
+			}
+		}
+	}
+	return -1
 }
 
 func bootTime(fsys fs.FS) (time.Time, bool) {

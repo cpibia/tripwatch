@@ -2,8 +2,10 @@ package discovery
 
 import (
 	"fmt"
+	"io/fs"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -493,12 +495,20 @@ func TestNginxCycleIssuesDeduplicated(t *testing.T) {
 
 func TestStaleConfig(t *testing.T) {
 	boot := time.Unix(1_700_000_000, 0)
+	link := func(target string) *fstest.MapFile {
+		return &fstest.MapFile{Data: []byte(target), Mode: fs.ModeSymlink}
+	}
+	stat := func(pid, ppid string, ticks int) *fstest.MapFile {
+		return text(pid + " (nginx) S " + ppid + " 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 " + strconv.Itoa(ticks) + " 0 0")
+	}
 	fsys := fstest.MapFS{
 		"proc/stat":            text("cpu 1 2 3\nbtime 1700000000\n"),
-		"proc/10/comm":         text("nginx\n"),
-		"proc/10/stat":         text("10 (nginx) S 1 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 360000 0 0"),
-		"proc/11/comm":         text("nginx\n"),
-		"proc/11/stat":         text("11 (nginx) S 10 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 720000 0 0"),
+		"proc/10/exe":          link("/usr/sbin/nginx"),
+		"proc/10/status":       text("Uid:\t0\t0\t0\t0\n"),
+		"proc/10/stat":         stat("10", "1", 360000),
+		"proc/11/exe":          link("/usr/sbin/nginx"),
+		"proc/11/status":       text("Uid:\t33\t33\t33\t33\n"),
+		"proc/11/stat":         stat("11", "10", 720000),
 		"etc/nginx/nginx.conf": &fstest.MapFile{Data: []byte("http { include sites/*; }"), ModTime: boot.Add(30 * time.Minute)},
 		"etc/nginx/sites/a":    &fstest.MapFile{Data: []byte("server { root /srv; }"), ModTime: boot.Add(90 * time.Minute)},
 	}
@@ -507,8 +517,12 @@ func TestStaleConfig(t *testing.T) {
 	if inv := Inspect(fsys); len(inv.StaleConfig) != 0 {
 		t.Errorf("stale after a reload = %v", inv.StaleConfig)
 	}
-	// Without the reload, the file changed after the server started is stale.
-	fsys["proc/11/stat"] = text("11 (nginx) S 10 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 360000 0 0")
+	// Without the reload, the file changed after the server started is stale; a process that
+	// only calls itself nginx, started later, changes nothing.
+	fsys["proc/11/stat"] = stat("11", "10", 360000)
+	fsys["proc/99/exe"] = link("/tmp/nginx")
+	fsys["proc/99/status"] = text("Uid:\t33\t33\t33\t33\n")
+	fsys["proc/99/stat"] = stat("99", "1", 900000)
 	if inv := Inspect(fsys); !slices.Equal(inv.StaleConfig, []string{"/etc/nginx/sites/a"}) {
 		t.Errorf("stale = %v", inv.StaleConfig)
 	}
