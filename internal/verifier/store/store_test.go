@@ -570,3 +570,24 @@ func TestEvidenceOfEveryAlertInTheSnapshot(t *testing.T) {
 		t.Fatal("the proof of an open change went with the noise closed beside it")
 	}
 }
+
+// A password set from the command line with capitals reaches the same user as the console.
+func TestUserEmailsAreCaseInsensitive(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	if err := s.SetUser(ctx, "admin@example.com", "first-password-long", t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Login(ctx, "admin@example.com", "first-password-long", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetUser(ctx, " Admin@Example.COM", "second-password-long", t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Login(ctx, "admin@example.com", "first-password-long", t0); err == nil {
+		t.Fatal("the old password still works after a reset typed with capitals")
+	}
+	if _, err := s.Login(ctx, "ADMIN@example.com", "second-password-long", t0); err != nil {
+		t.Fatalf("the new password does not work: %v", err)
+	}
+}

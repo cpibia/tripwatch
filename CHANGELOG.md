@@ -43,6 +43,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   presented after a re-enrollment became the host's, so a copy of the old bundle could win
   against the new sensor. Hosts enrolled before certificates were recorded must be enrolled
   again.
+- User emails are stored and looked up in lower case everywhere: a password reset from the
+  command line with capitals no longer creates a second user and leaves the first working.
 - Checksums of a dpkg package that changed while its version did not are a high "Package
   checksums changed without an upgrade", package by package, whatever else changed in the
   database at the same time.

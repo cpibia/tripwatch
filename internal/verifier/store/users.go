@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ var dummyHash = sync.OnceValue(func() []byte {
 
 // SetUser creates a user or replaces their password.
 func (s *Store) SetUser(ctx context.Context, email, password string, now time.Time) error {
+	email = normalEmail(email)
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -50,6 +52,7 @@ const MaxDevices = 10
 
 // RevokeDevices forgets every browser a user signed in from.
 func (s *Store) RevokeDevices(ctx context.Context, email string) (int64, error) {
+	email = normalEmail(email)
 	res, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE email = ?`, email)
 	if err != nil {
 		return 0, err
@@ -63,6 +66,7 @@ const LoginLinkLifetime = 10 * time.Minute
 // CreateLoginLink makes a one-time sign-in secret for a user, for the operator who cannot get
 // in from the interface (a new browser while the email is under attack).
 func (s *Store) CreateLoginLink(ctx context.Context, email string, now time.Time) (string, error) {
+	email = normalEmail(email)
 	exists, err := s.UserExists(ctx, email)
 	if err != nil {
 		return "", err
@@ -93,6 +97,7 @@ func (s *Store) ConsumeLoginLink(ctx context.Context, token string, now time.Tim
 
 // UserExists reports whether an email belongs to a user.
 func (s *Store) UserExists(ctx context.Context, email string) (bool, error) {
+	email = normalEmail(email)
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE email = ?`, email).Scan(&n)
 	return n > 0, err
@@ -104,6 +109,7 @@ const DeviceLifetime = 365 * 24 * time.Hour
 // CreateDevice remembers a browser a user signed in from. The token is returned once; only its
 // hash is stored.
 func (s *Store) CreateDevice(ctx context.Context, email string, now time.Time) (string, error) {
+	email = normalEmail(email)
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -138,6 +144,7 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 // Login checks the password and opens a session. The token is returned once; only its hash is
 // stored, so a copy of the database does not hand out live sessions.
 func (s *Store) Login(ctx context.Context, email, password string, now time.Time) (string, error) {
+	email = normalEmail(email)
 	var hash []byte
 	err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE email = ?`, email).Scan(&hash)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -182,3 +189,8 @@ func (s *Store) Logout(ctx context.Context, token string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, sum[:])
 	return err
 }
+
+// normalEmail is the form an email is stored and looked up in: the console lowercases what is
+// typed, and the command line must reach the same user, or a password reset would create a
+// second one and leave the first, and its sessions, working.
+func normalEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
