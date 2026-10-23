@@ -137,6 +137,9 @@ func configLoaded(fsys fs.FS, names []string, workers bool) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
+	// Only the host's processes read the configuration found on the host's disk: a web server in
+	// a container reads its own.
+	hostMnt, _ := fs.ReadLink(fsys, "proc/1/ns/mnt")
 	var procs []serverProcess
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
@@ -145,7 +148,12 @@ func configLoaded(fsys fs.FS, names []string, workers bool) (time.Time, bool) {
 		}
 		dir := "proc/" + e.Name() + "/"
 		exe, err := fs.ReadLink(fsys, dir+"exe")
+		// An executable replaced by an upgrade still names the server, with " (deleted)".
+		exe = strings.TrimSuffix(exe, " (deleted)")
 		if err != nil || !slices.Contains(names, path.Base(exe)) || !systemExecutable(exe) {
+			continue
+		}
+		if mnt, _ := fs.ReadLink(fsys, dir+"ns/mnt"); hostMnt != "" && mnt != hostMnt {
 			continue
 		}
 		stat, err := fs.ReadFile(fsys, dir+"stat")
