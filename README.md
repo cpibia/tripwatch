@@ -177,9 +177,10 @@ tripwatch-sensor -root /host
 
 ### Updates
 
-Every new version is a [GitHub release](https://github.com/cpibia/tripwatch/releases). To be told
-when one comes out, open the repository on GitHub, choose **Watch → Custom → Releases**, and
-GitHub sends an email for each release; the same list is also a feed for any RSS reader at
+Every new version is a [GitHub release](https://github.com/cpibia/tripwatch/releases), and
+[CHANGELOG.md](CHANGELOG.md) says what changed and whether the verifier, the sensors or both need
+updating. To be told when one comes out, open the repository on GitHub, choose **Watch →
+Custom → Releases**, and GitHub sends an email for each release; the same list is also a feed for any RSS reader at
 `https://github.com/cpibia/tripwatch/releases.atom`.
 
 To see which version is installed:
