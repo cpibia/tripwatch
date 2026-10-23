@@ -109,19 +109,20 @@ Then sign in with the first user and remove `TRIPWATCH_ADMIN_PASSWORD` from `.en
 
 ### 2. Sensor
 
-On every server to monitor, as root.
+On every server to monitor.
 
-Debian and Ubuntu:
+Debian and Ubuntu (the download goes to `/tmp`, which apt's unprivileged `_apt` user can read):
 
 ```sh
+cd /tmp
 curl -fsSLO https://github.com/cpibia/tripwatch/releases/download/v0.1.0/tripwatch-sensor_0.1.0_amd64.deb
-apt install ./tripwatch-sensor_0.1.0_amd64.deb
+sudo apt install ./tripwatch-sensor_0.1.0_amd64.deb
 ```
 
 RHEL, AlmaLinux, Rocky, Fedora and Amazon Linux:
 
 ```sh
-dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.0/tripwatch-sensor-0.1.0-1.x86_64.rpm
+sudo dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.0/tripwatch-sensor-0.1.0-1.x86_64.rpm
 ```
 
 On ARM servers use `arm64` in the `.deb` name and `aarch64` in the `.rpm` name. The package
@@ -139,10 +140,10 @@ gh attestation verify tripwatch-sensor_0.1.0_amd64.deb -R cpibia/tripwatch
 ### 3. Enrollment
 
 In the web interface open "Registra server", choose the server's name and run the command it
-shows on the server, as root:
+shows on the server. As a user with sudo, `sudo` goes after the pipe:
 
 ```sh
-echo 'tw1....' | tripwatch-sensor enroll -token-file - && systemctl enable --now tripwatch-sensor
+echo 'tw1....' | sudo tripwatch-sensor enroll -token-file - && sudo systemctl enable --now tripwatch-sensor
 ```
 
 The server shows up in the overview with its first heartbeat within a minute; the first full
