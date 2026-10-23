@@ -115,7 +115,8 @@ func TestEvaluateIsLinear(t *testing.T) {
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("Evaluate took %v", took)
 	}
-	if len(findings) != 80_000 {
+	// One alert for the changed file, its detail bounded.
+	if len(findings) != 1 || strings.Count(findings[0].Detail, "\n") > 40 {
 		t.Fatalf("%d findings", len(findings))
 	}
 }
@@ -334,7 +335,7 @@ func TestDormantGrantsAndPolicies(t *testing.T) {
 	if f := got["accounts-change:group-admin:docker|www-data"]; f.Severity != "critical" || f.Owner != "root" {
 		t.Errorf("group admin: %+v", f)
 	}
-	if f := got["persistence-change:sudo:/etc/polkit-1/rules.d/49-web.rules|return polkit.Result.YES;"]; f.Title != "Nuova regola polkit" || f.Owner != "root" {
+	if f := got["persistence-change:policy:/etc/polkit-1/rules.d/49-web.rules|"]; f.Title != "Nuova politica polkit: /etc/polkit-1/rules.d/49-web.rules" || f.Owner != "root" {
 		t.Errorf("polkit rule: %+v", f)
 	}
 	for _, rule := range []string{`%\x64eploy ALL=(ALL) ALL`, "%DEPLOY ALL=(ALL) ALL", "%:deploy ALL=(ALL) ALL"} {
@@ -358,5 +359,47 @@ func TestSetgidOwnersAreLinear(t *testing.T) {
 	Evaluate(nil, State{Accounts: acc, Privileged: &system.PrivilegedResult{Files: files}})
 	if took := time.Since(start); took > time.Second {
 		t.Fatalf("Evaluate took %v", took)
+	}
+}
+
+// A policy file changed without new lines (lines reused, a condition removed) or removed is
+// still an alert, with the lines in its detail; groups granted by polkit and doas count.
+func TestPolicyFileChanges(t *testing.T) {
+	file := func(sum string, rules ...string) system.SudoersFile {
+		return system.SudoersFile{File: collector.File{Path: "/etc/polkit-1/rules.d/50.rules", SHA256: sum}, Rules: rules}
+	}
+	prev := State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{file("a", "if (a) {", "if (subject.user == \"x\")", "return YES;", "}")}}}
+	cur := State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{file("b", "if (a) {", "return YES;", "}")}}}
+	fs := Evaluate(&prev, cur)
+	if len(fs) != 1 || !strings.Contains(fs[0].Detail, `- if (subject.user == "x")`) || fs[0].Owner != "root" {
+		t.Fatalf("condition removed: %+v", fs)
+	}
+	if fs := Evaluate(&prev, State{Sudoers: &system.SudoersResult{}}); len(fs) != 1 || !strings.Contains(fs[0].Title, "rimossa") {
+		t.Fatalf("file removed: %+v", fs)
+	}
+	groups := &system.AccountsResult{Groups: []system.Group{{Name: "ops", GID: 1500}, {Name: "web", GID: 1600}, {Name: "doers", GID: 1700}}}
+	st := State{Accounts: groups, Sudoers: &system.SudoersResult{Files: []system.SudoersFile{{Rules: []string{
+		"Identity=unix-group:ops", `if (subject.isInGroup("web")) return polkit.Result.YES;`, "permit nopass :doers as root"}}}}}
+	gids := privilegedGIDs(st)
+	if !gids[1500] || !gids[1600] || !gids[1700] {
+		t.Fatalf("policy groups: %v", gids)
+	}
+}
+
+// Many groups and a rule naming many of them are resolved in linear time.
+func TestPrivilegedGIDsAreLinear(t *testing.T) {
+	acc := &system.AccountsResult{}
+	var names []string
+	for i := range 80_000 {
+		acc.Groups = append(acc.Groups, system.Group{Name: fmt.Sprintf("g%d", i), GID: 2000 + i})
+		names = append(names, fmt.Sprintf("%%g%d", i))
+	}
+	st := State{Accounts: acc, Sudoers: &system.SudoersResult{Files: []system.SudoersFile{{Rules: []string{strings.Join(names, ",") + " ALL=(ALL) ALL"}}}}}
+	start := time.Now()
+	if gids := privilegedGIDs(st); len(gids) != 80_001 {
+		t.Fatalf("%d privileged GIDs", len(gids))
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("privilegedGIDs took %v", took)
 	}
 }

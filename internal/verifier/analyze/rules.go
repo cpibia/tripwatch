@@ -55,6 +55,31 @@ func unitOwner(u unitT) string { return homeOwner(u.Path) }
 // named nologin elsewhere is a shell.
 var noLogin = map[string]bool{"/usr/sbin/nologin": true, "/sbin/nologin": true, "/bin/false": true, "/usr/bin/false": true, "": true}
 
+// ruleDiff lists the lines added (+) and removed (-) between two versions of a policy file.
+func ruleDiff(old, cur []string) string {
+	was, now := set{}, set{}
+	was.add(old...)
+	now.add(cur...)
+	var b strings.Builder
+	n := 0
+	for _, l := range cur {
+		if !was.has(l) && n < 40 {
+			b.WriteString("+ " + l + "\n")
+			n++
+		}
+	}
+	for _, l := range old {
+		if !now.has(l) && n < 40 {
+			b.WriteString("- " + l + "\n")
+			n++
+		}
+	}
+	if n == 0 {
+		return "Contenuto cambiato senza righe nuove o tolte (ordine o spazi)."
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
 // policyName names the privilege policy a file belongs to.
 func policyName(p string) string {
 	switch {
@@ -96,6 +121,9 @@ func memberships(r *system.AccountsResult) map[string]map[int]bool {
 // sudoGroup matches the groups a sudoers rule grants to: %name or %#gid.
 var sudoGroup = regexp.MustCompile(`%:?(#?)([A-Za-z0-9_.-]+)`)
 
+// policyGroup matches the groups polkit and doas grant to.
+var policyGroup = regexp.MustCompile(`unix-group:([A-Za-z0-9_.-]+)|isInGroup\(\s*["']([A-Za-z0-9_.-]+)["']|^permit\b.*?\s:([A-Za-z0-9_.-]+)`)
+
 // sudoEscape matches the \xHH escapes sudoers allows in names.
 var sudoEscape = regexp.MustCompile(`\\x([0-9A-Fa-f]{2})`)
 
@@ -109,7 +137,10 @@ func privilegedGIDs(snaps ...State) map[int]bool {
 		if st.Accounts != nil {
 			groups = st.Accounts.Groups
 		}
+		// Built once per snapshot: a policy naming many groups must not scan them all for each.
+		byName := map[string][]int{}
 		for _, g := range groups {
+			byName[strings.ToLower(g.Name)] = append(byName[strings.ToLower(g.Name)], g.GID)
 			if privilegedGroups[g.Name] {
 				out[g.GID] = true
 			}
@@ -123,7 +154,12 @@ func privilegedGIDs(snaps ...State) map[int]bool {
 					n, _ := strconv.ParseUint(e[2:], 16, 8)
 					return string(rune(n))
 				})
-				for _, m := range sudoGroup.FindAllStringSubmatch(rule, -1) {
+				matches := sudoGroup.FindAllStringSubmatch(rule, -1)
+				// polkit (unix-group:name, isInGroup("name")) and doas (permit ... :name).
+				for _, m := range policyGroup.FindAllStringSubmatch(rule, -1) {
+					matches = append(matches, []string{m[0], "", m[1] + m[2] + m[3]})
+				}
+				for _, m := range matches {
 					if m[1] == "#" {
 						if gid, err := strconv.Atoi(m[2]); err == nil {
 							out[gid] = true
@@ -132,10 +168,8 @@ func privilegedGIDs(snaps ...State) map[int]bool {
 					}
 					// Compared without case: wrongly calling a group privileged costs an alert,
 					// missing one costs a silent promotion.
-					for _, g := range groups {
-						if strings.EqualFold(g.Name, m[2]) {
-							out[g.GID] = true
-						}
+					for _, gid := range byName[strings.ToLower(m[2])] {
+						out[gid] = true
 					}
 				}
 			}
@@ -381,8 +415,12 @@ func Evaluate(prev *State, cur State) []Finding {
 				// A group administrator can add anyone, itself included, at any time: a dormant
 				// grant of the group.
 				for _, m := range g.Admins {
-					if privGIDs[g.GID] && !admins[g.Name].has(m) {
-						change("accounts-change", "group-admin:"+g.Name+"|"+m, "critical", "Amministratore del gruppo "+g.Name+": "+m,
+					if !admins[g.Name].has(m) {
+						sev := "high"
+						if privGIDs[g.GID] {
+							sev = "critical"
+						}
+						change("accounts-change", "group-admin:"+g.Name+"|"+m, sev, "Amministratore del gruppo "+g.Name+": "+m,
 							fmt.Sprintf("%s può ora aggiungere chiunque, sé compreso, al gruppo %s (GID %d) con gpasswd.", m, g.Name, g.GID))
 					}
 				}
@@ -428,16 +466,27 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if s := cur.Sudoers; s != nil && prev != nil && prev.Sudoers != nil {
-		known := set{}
+		// Compared file by file and by content: polkit rules are code, so a rule made of lines
+		// found elsewhere, or a condition removed, changes the file but adds no new line.
+		before := map[string]sudoersT{}
 		for _, p := range prev.Sudoers.Files {
-			known.add(p.Rules...)
+			before[p.Path] = p
 		}
 		for _, f := range s.Files {
-			for _, rule := range f.Rules {
-				if !known.has(rule) {
-					change("persistence-change", "sudo:"+f.Path+"|"+rule, "high", "Nuova regola "+policyName(f.Path), rule+" in "+f.Path)
-				}
+			old, ok := before[f.Path]
+			delete(before, f.Path)
+			if ok && old.SHA256 == f.SHA256 && slices.Equal(old.Rules, f.Rules) {
+				continue
 			}
+			title := "Nuova politica " + policyName(f.Path) + ": " + f.Path
+			if ok {
+				title = "Politica " + policyName(f.Path) + " cambiata: " + f.Path
+			}
+			change("persistence-change", "policy:"+f.Path+"|"+f.SHA256, "high", title, ruleDiff(old.Rules, f.Rules))
+		}
+		for path, old := range before {
+			change("persistence-change", "policy-removed:"+path+"|"+old.SHA256, "high", "Politica "+policyName(path)+" rimossa: "+path,
+				"Togliere un file può togliere un divieto.\n"+ruleDiff(old.Rules, nil))
 		}
 	}
 

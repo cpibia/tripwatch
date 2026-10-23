@@ -240,6 +240,8 @@ Il design completo è in [docs/architecture.md](docs/architecture.md).
   checksum per coprire un binario sostituito. La sua impronta cambia e il verificatore lo vedrà
   fra due snapshot; il confronto con i metadati firmati dei repository è una scelta ancora da
   fare.
+- Un filesystem FUSE montato da un utente nasconde la cartella su cui è montato, e un remount con
+  `suid` fatto da root non cambia il modo in cui i suoi file vengono marcati.
 - Il sensore fuori da Linux serve solo allo sviluppo: il confinamento dei symlink si basa su
   interfacce Linux.
 - Con un battito al minuto, un sensore sospeso per meno di 100 secondi non si distingue da un

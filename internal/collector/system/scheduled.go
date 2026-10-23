@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"strings"
 
@@ -94,7 +95,7 @@ func (Sudoers) Name() string { return "sudoers" }
 // privilegePolicies are the other files that grant root's power to users: polkit rules (which
 // systemd-run and pkexec obey) and their older .pkla form, and doas.
 var privilegePolicies = []string{
-	"etc/polkit-1/rules.d/*", "usr/share/polkit-1/rules.d/*", "usr/local/share/polkit-1/rules.d/*",
+	"etc/polkit-1/rules.d/*", "run/polkit-1/rules.d/*", "usr/share/polkit-1/rules.d/*", "usr/local/share/polkit-1/rules.d/*",
 	"etc/polkit-1/localauthority/*/*", "var/lib/polkit-1/localauthority/*/*",
 	"etc/doas.conf", "usr/local/etc/doas.conf",
 }
@@ -109,7 +110,11 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 	var res SudoersResult
 	queue := append([]string{"etc/sudoers"}, collector.Glob(src.FS, "etc/sudoers.d/*")...)
 	seen := map[string]bool{}
-	for len(queue) > 0 && len(seen) < maxSudoersFiles {
+	for len(queue) > 0 {
+		if len(seen) >= maxSudoersFiles {
+			res.Issues = append(res.Issues, fmt.Sprintf("sudoers: more than %d files through includes, the rest not read", maxSudoersFiles))
+			break
+		}
 		name := queue[0]
 		queue = queue[1:]
 		if seen[name] {
@@ -127,10 +132,15 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 		res.Files = append(res.Files, SudoersFile{File: f, Rules: rules})
 		for _, r := range rules {
 			directive, target, _ := strings.Cut(r, " ")
-			target = strings.TrimPrefix(strings.TrimSpace(target), "/")
+			target = includeTarget(name, target)
 			switch directive {
 			case "#include", "@include":
-				queue = append(queue, target)
+				// %h is the host name, unknown here: every file it could name is read.
+				if strings.Contains(target, "%h") {
+					queue = append(queue, collector.Glob(src.FS, strings.ReplaceAll(target, "%h", "*"))...)
+				} else {
+					queue = append(queue, target)
+				}
 			case "#includedir", "@includedir":
 				queue = append(queue, collector.Glob(src.FS, path.Join(target, "*"))...)
 			}
@@ -151,8 +161,18 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 	return res, nil
 }
 
+// includeTarget resolves an include line's path as sudo does: quotes removed, and relative to
+// the directory of the file that includes it.
+func includeTarget(from, target string) string {
+	target = strings.Trim(strings.TrimSpace(target), `"`)
+	if !strings.HasPrefix(target, "/") {
+		target = path.Join("/", path.Dir(from), target)
+	}
+	return strings.TrimPrefix(path.Clean(target), "/")
+}
+
 // sudoersRules drops comments but keeps #include and #includedir, which look like comments
-// and pull in more policy.
+// and pull in more policy, and #<number>, which sudo reads as a UID (#33 ALL=... is a rule).
 func sudoersRules(lines []string) []string {
 	out := []string{}
 	for _, line := range lines {
@@ -160,7 +180,8 @@ func sudoersRules(lines []string) []string {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "#include") || strings.HasPrefix(line, "//") {
+		uid := len(line) > 1 && line[0] == '#' && line[1] >= '0' && line[1] <= '9'
+		if strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "#include") && !uid || strings.HasPrefix(line, "//") {
 			continue
 		}
 		out = append(out, line)

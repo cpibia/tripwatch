@@ -10,6 +10,7 @@ import (
 type (
 	accountT = system.Account
 	keyT     = system.AuthorizedKey
+	sudoersT = system.SudoersFile
 	unitT    = system.Unit
 	fileT    = collector.File
 	adminT   = apps.Admin

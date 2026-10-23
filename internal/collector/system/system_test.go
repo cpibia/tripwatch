@@ -516,3 +516,23 @@ func TestNestedRootMount(t *testing.T) {
 		t.Fatal("mount lookup")
 	}
 }
+
+// "#33" is a UID to sudo, not a comment, and includes are followed relative, quoted and with %h.
+func TestSudoersUIDLinesAndIncludes(t *testing.T) {
+	if got := sudoersRules([]string{"# comment", "#33 ALL=(ALL) NOPASSWD: ALL", "#include x"}); !slices.Equal(got, []string{"#33 ALL=(ALL) NOPASSWD: ALL", "#include x"}) {
+		t.Fatalf("rules = %v", got)
+	}
+	fsys := fstest.MapFS{
+		"etc/sudoers":    text("@include \"local\"\n@include /etc/host.%h\n"),
+		"etc/local":      text("a ALL=(ALL) ALL\n"),
+		"etc/host.web01": text("b ALL=(ALL) ALL\n"),
+	}
+	res := collect[SudoersResult](t, Sudoers{}, collector.Source{FS: fsys})
+	got := map[string]bool{}
+	for _, f := range res.Files {
+		got[f.Path] = true
+	}
+	if !got["/etc/local"] || !got["/etc/host.web01"] {
+		t.Fatalf("includes not followed: %v", got)
+	}
+}
