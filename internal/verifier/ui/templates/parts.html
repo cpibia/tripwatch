@@ -4,19 +4,32 @@
 
 {{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verificatore</span>{{else}}<a class="mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
 
-{{define "alertrows"}}
-{{range .Alerts}}
-<tr class="row-{{.Status}}{{if and $.Select (eq .ID $.Selected)}} is-picked{{end}}"{{if $.Select}} data-href="{{$.SelectURL .ID}}"{{end}}>
+{{define "alertrow"}}{{$t := .Table}}{{with .Alert}}
+<tr class="row-{{.Status}}{{if and $t.Select (eq .ID $t.Selected)}} is-picked{{end}}"{{if $t.Select}} data-href="{{$t.SelectURL .ID}}"{{end}}>
   <td>{{template "sevmark" .}}</td>
-  {{if not $.OneHost}}<td class="host">{{template "hostlink" .HostID}}</td>{{end}}
-  <td class="what"><a href="{{if $.Select}}{{$.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $.Select (eq .ID $.Selected)}} aria-current="true"{{end}}>{{.Title}}</a></td>
+  {{if not $t.OneHost}}<td class="host">{{template "hostlink" .HostID}}</td>{{end}}
+  <td class="what"><a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{.Title}}</a></td>
   <td class="num start"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
   <td class="num count">{{if gt .Occurrences 1}}{{.Occurrences}}×{{end}}</td>
   <td class="state">{{status .Status}}{{if .AckedBy}}<span class="by">{{.AckedBy}}</span>{{end}}</td>
-  <td class="act">{{template "actions" (actx . $.CSRF $.Back)}}</td>
+  <td class="act">{{template "actions" (actx . $t.CSRF $t.Back)}}</td>
 </tr>
-{{end}}
-{{end}}
+{{end}}{{end}}
+
+{{define "grouphead"}}{{$t := .Table}}{{with .Group}}
+<tr class="group-head row-{{.Lead.Status}}">
+  <td>{{template "sevmark" .Lead}}</td>
+  {{if not $t.OneHost}}<td class="host">{{template "hostlink" .Lead.HostID}}</td>{{end}}
+  <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span><span class="tally-n">{{len .Alerts}}</span></button></td>
+  <td class="num start"><time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{clock .Since}}</time></td>
+  <td class="num count"></td>
+  <td class="state">{{if .Open}}<span>{{.Open}} {{plural .Open "aperto" "aperti"}}</span>{{end}}{{if .Acked}}<span>{{.Acked}} in carico</span>{{end}}{{if .Resolved}}<span>{{.Resolved}} {{plural .Resolved "risolto" "risolti"}}</span>{{end}}</td>
+  <td class="act">{{with .Pending}}<div class="actions">
+    {{if $.Group.Open}}<form method="post" action="/bulk/ack"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}{{if eq .Status "open"}}<input type="hidden" name="id" value="{{.ID}}">{{end}}{{end}}<button type="submit">Prendi in carico tutti<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
+    <form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit">Risolvi tutti<span class="sr">: {{$.Group.Label}}</span></button></form>
+  </div>{{end}}</td>
+</tr>
+{{end}}{{end}}
 
 {{define "actions"}}{{$a := .Alert}}{{if ne $a.Status "resolved"}}<div class="actions">
 {{if eq $a.Status "open"}}<form method="post" action="/alerts/{{$a.ID}}/ack"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Prendi in carico<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
@@ -26,7 +39,12 @@
 {{define "alerttable"}}
 <table class="grid alerts">
 <thead><tr><th scope="col">Gravità</th>{{if not .OneHost}}<th scope="col">Server</th>{{end}}<th scope="col">Allarme</th><th scope="col" class="num">Inizio</th><th scope="col" class="num"><span class="sr">Rilevazioni</span></th><th scope="col">Stato</th><th scope="col"><span class="sr">Azioni</span></th></tr></thead>
-<tbody>{{template "alertrows" .}}</tbody>
+{{range .Groups}}{{if eq (len .Alerts) 1}}
+<tbody>{{template "alertrow" (rowx .Lead $)}}</tbody>
+{{else}}
+<tbody class="group">{{template "grouphead" (groupx . $)}}</tbody>
+<tbody class="group-rows" id="rows-{{.Key}}"{{if not .Expanded}} hidden{{end}}>{{range .Alerts}}{{template "alertrow" (rowx . $)}}{{end}}</tbody>
+{{end}}{{end}}
 </table>
 {{end}}
 

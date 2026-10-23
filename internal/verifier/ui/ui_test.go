@@ -702,3 +702,88 @@ func TestEnrollCommandInstallsTheSameRelease(t *testing.T) {
 		t.Errorf("enrollment alone = %s", got)
 	}
 }
+
+// Alerts of one rule on one host are one row that opens onto them, and a group is resolved at
+// once; a rule with a single alert keeps its plain row.
+func TestAlertsOfOneRuleAreGrouped(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	raise := func(fp, severity, title string) int64 {
+		t.Helper()
+		if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: fp, Severity: severity, Kind: "packages", Title: title}, now); err != nil {
+			t.Fatal(err)
+		}
+		id, err := h.store.AlertID(ctx, "web-01", fp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	var hidden []int64
+	for _, p := range []string{"/usr/lib/.a", "/usr/lib/.b", "/usr/share/.c"} {
+		hidden = append(hidden, raise("packages:hidden:"+p, "high", "Elemento nascosto in /usr: "+p))
+	}
+	single := raise("packages:unowned:/usr/bin/x", "high", "Eseguibile senza pacchetto: /usr/bin/x")
+
+	csrf := h.login()
+	_, body := h.get("/hosts/web-01")
+	heads := regexp.MustCompile(`<button type="button" class="disclose"[^>]*aria-controls="(rows-[0-9a-f]+)"[^>]*><span class="label">([^<]*)</span><span class="tally-n">(\d+)</span>`).FindAllStringSubmatch(body, -1)
+	if len(heads) != 1 || heads[0][2] != "Elemento nascosto in /usr" || heads[0][3] != "3" {
+		t.Fatalf("group heads = %q", heads)
+	}
+	if !strings.Contains(body, `id="`+heads[0][1]+`" hidden>`) {
+		t.Error("the rows of a group are not closed at first")
+	}
+	if !strings.Contains(body, `href="/alerts/`+itoa(single)+`"`) {
+		t.Error("an alert alone in its rule lost its own row")
+	}
+
+	form := url.Values{"csrf": {csrf}, "back": {"/hosts/web-01"}}
+	for _, id := range hidden {
+		form.Add("id", itoa(id))
+	}
+	if res, _ := h.post("/bulk/resolve", form); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("bulk resolve: status %d", res.StatusCode)
+	}
+	for _, id := range append(hidden, single) {
+		a, err := h.store.Alert(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := id != single; (a.Status == "resolved") != want {
+			t.Errorf("alert %d: status %q", id, a.Status)
+		}
+	}
+	if res, _ := h.post("/bulk/delete", form); res.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown bulk action: status %d", res.StatusCode)
+	}
+}
+
+func TestGroupLabel(t *testing.T) {
+	titles := func(ts ...string) []store.Alert {
+		var out []store.Alert
+		for _, t := range ts {
+			out = append(out, store.Alert{Title: t})
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		alerts []store.Alert
+		want   string
+	}{
+		{titles("Script nelle cartelle di upload", "Script nelle cartelle di upload"), "Script nelle cartelle di upload"},
+		{titles("Elemento nascosto in /usr: /usr/src/a/.x", "Elemento nascosto in /usr: /usr/src/b/.y"), "Elemento nascosto in /usr"},
+		{titles("Impostazione da sviluppo in /srv/app/one", "Impostazione da sviluppo in /srv/app/two"), "Impostazione da sviluppo in /srv/app/"},
+		{titles("Alpha", "Beta"), "Alpha"},
+	} {
+		if got := commonLabel(tc.alerts); got != tc.want {
+			t.Errorf("commonLabel = %q, want %q", got, tc.want)
+		}
+	}
+	if alertRule("weblog:upload_script:/up/a.php|1") != "weblog:upload_script" || alertRule("chain:broken") != "chain:broken" {
+		t.Error("alertRule does not keep the kind and rule only")
+	}
+}

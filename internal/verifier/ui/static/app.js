@@ -42,3 +42,34 @@
     });
   });
 })();
+
+// A group of alerts opens onto its rows. The groups left open survive the minute reload: the
+// keys are kept for this tab only, and a storage the browser refuses just leaves them closed.
+(function () {
+  var storageKey = "tw-open-groups";
+  function load() {
+    try { return JSON.parse(sessionStorage.getItem(storageKey) || "[]"); } catch (e) { return []; }
+  }
+  function save(keys) {
+    try { sessionStorage.setItem(storageKey, JSON.stringify(keys)); } catch (e) { /* nothing to keep */ }
+  }
+  function show(button, open) {
+    var rows = document.getElementById(button.getAttribute("aria-controls"));
+    if (!rows) return;
+    rows.hidden = !open;
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  var kept = load();
+  document.querySelectorAll("button.disclose[data-group]").forEach(function (button) {
+    if (kept.indexOf(button.dataset.group) >= 0) show(button, true);
+  });
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("button.disclose[data-group]");
+    if (!button) return;
+    var open = button.getAttribute("aria-expanded") !== "true";
+    show(button, open);
+    var keys = load().filter(function (k) { return k !== button.dataset.group; });
+    if (open) keys.push(button.dataset.group);
+    save(keys.slice(-50));
+  });
+})();

@@ -12,6 +12,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -98,7 +99,7 @@ func New(c Config) (http.Handler, error) {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "host", "alerts", "alert", "enroll", "error"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -126,6 +127,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /alerts/{id}", s.authed(s.alert))
 	mux.HandleFunc("POST /alerts/{id}/ack", s.authed(s.ack))
 	mux.HandleFunc("POST /alerts/{id}/resolve", s.authed(s.resolve))
+	mux.HandleFunc("POST /bulk/{action}", s.authed(s.bulk))
 	mux.HandleFunc("GET /enroll", s.authed(s.enrollForm))
 	mux.HandleFunc("POST /enroll", s.authed(s.enroll))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -678,6 +680,8 @@ type alertTable struct {
 	// alert's id instead of to the alert's own page. Selected is the alert shown there.
 	Select   string
 	Selected int64
+	// Picked is set when someone chose the selected alert: its group opens to show it.
+	Picked bool
 }
 
 // focus is the side panel of a page: the alert it shows and whether someone picked it.
@@ -749,7 +753,7 @@ func table(alerts []store.Alert, csrf, back string) alertTable {
 func pickTable(alerts []store.Alert, csrf, back, base string, f focus) alertTable {
 	t := alertTable{Alerts: alerts, CSRF: csrf, Back: back, Select: base}
 	if f.Alert != nil {
-		t.Selected = f.Alert.ID
+		t.Selected, t.Picked = f.Alert.ID, f.Picked
 	}
 	return t
 }
@@ -760,6 +764,125 @@ func hostTable(alerts []store.Alert, csrf, back string) alertTable {
 }
 
 func actx(a store.Alert, csrf, back string) alertAction { return alertAction{a, csrf, back} }
+
+// alertRow is one row of an alert table, with the table it belongs to.
+type alertRow struct {
+	Alert store.Alert
+	Table alertTable
+}
+
+func rowx(a store.Alert, t alertTable) alertRow { return alertRow{a, t} }
+
+// groupRow is the head row of a group, with the table it belongs to.
+type groupRow struct {
+	Group alertGroup
+	Table alertTable
+}
+
+func groupx(g alertGroup, t alertTable) groupRow { return groupRow{g, t} }
+
+// alertGroup is the alerts of one host, severity and rule: one row that opens onto them. One
+// finding per file or per request makes a rule raise hundreds of alerts at once, and a list of
+// identical rows hides everything else.
+type alertGroup struct {
+	// Key names the group in the page, so it stays open across the minute refresh.
+	Key    string
+	Label  string
+	Alerts []store.Alert
+	// Lead stands for the group: the first in the table's order, the most severe and recent.
+	Lead     store.Alert
+	Since    time.Time
+	Open     int
+	Acked    int
+	Resolved int
+	Expanded bool
+}
+
+// Pending are the alerts a bulk action applies to: those not resolved yet.
+func (g alertGroup) Pending() []store.Alert {
+	var out []store.Alert
+	for _, a := range g.Alerts {
+		if a.Status != "resolved" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// Groups splits the table's alerts by host, severity and rule, keeping the table's order.
+func (t alertTable) Groups() []alertGroup {
+	index := map[string]int{}
+	var groups []alertGroup
+	for _, a := range t.Alerts {
+		k := a.HostID + "\x00" + a.Severity + "\x00" + alertRule(a.Fingerprint)
+		i, ok := index[k]
+		if !ok {
+			sum := sha256.Sum256([]byte(k))
+			i = len(groups)
+			index[k] = i
+			groups = append(groups, alertGroup{Key: hex.EncodeToString(sum[:6]), Lead: a, Since: a.CreatedAt})
+		}
+		g := &groups[i]
+		g.Alerts = append(g.Alerts, a)
+		if a.CreatedAt.Before(g.Since) {
+			g.Since = a.CreatedAt
+		}
+		switch a.Status {
+		case "open":
+			g.Open++
+		case "acknowledged":
+			g.Acked++
+		default:
+			g.Resolved++
+		}
+		if t.Picked && a.ID == t.Selected {
+			g.Expanded = true
+		}
+	}
+	for i := range groups {
+		groups[i].Label = commonLabel(groups[i].Alerts)
+	}
+	return groups
+}
+
+// alertRule is the rule part of a fingerprint: the kind and the rule, without the file, request
+// or script that tells one finding from another. It follows the grouping of store.Raise, but
+// also joins the per-script groups of the web log rules.
+func alertRule(fingerprint string) string {
+	fingerprint, _, _ = strings.Cut(fingerprint, "|")
+	parts := strings.SplitN(fingerprint, ":", 3)
+	if len(parts) < 3 {
+		return fingerprint
+	}
+	return parts[0] + ":" + parts[1]
+}
+
+// commonLabel names a group by what its titles share, cut where a path or a name starts to
+// differ.
+func commonLabel(alerts []store.Alert) string {
+	label, same := alerts[0].Title, true
+	for _, a := range alerts[1:] {
+		n := 0
+		for n < len(label) && n < len(a.Title) && label[n] == a.Title[n] {
+			n++
+		}
+		same = same && n == len(label) && n == len(a.Title)
+		label = label[:n]
+	}
+	if same {
+		return label
+	}
+	// Titles read "rule: detail"; without that shape, cut at the last word or path element.
+	if i := strings.LastIndex(label, ": "); i > 0 {
+		label = label[:i]
+	} else if i := strings.LastIndexAny(label, " /"); i > 0 {
+		label = strings.TrimRight(label[:i+1], " ")
+	}
+	if strings.TrimSpace(label) == "" {
+		return alerts[0].Title
+	}
+	return label
+}
 
 var alertViews = []struct{ Key, Label string }{
 	{"open", "Da gestire"}, {"acknowledged", "Presi in carico"}, {"resolved", "Risolti"}, {"all", "Tutti"},
@@ -849,6 +972,42 @@ func (s *server) ack(w http.ResponseWriter, r *http.Request, se session) {
 
 func (s *server) resolve(w http.ResponseWriter, r *http.Request, se session) {
 	s.transition(w, r, se, s.Store.Resolve, "alert resolved")
+}
+
+// maxBulk bounds the alerts one bulk action names: a table shows at most a few hundred.
+const maxBulk = 1000
+
+// bulk acknowledges or resolves the alerts of a group at once.
+func (s *server) bulk(w http.ResponseWriter, r *http.Request, se session) {
+	apply, msg := s.Store.Ack, "alerts acknowledged"
+	switch r.PathValue("action") {
+	case "ack":
+	case "resolve":
+		apply, msg = s.Store.Resolve, "alerts resolved"
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	ids := r.PostForm["id"]
+	if len(ids) > maxBulk {
+		http.Error(w, "too many alerts", http.StatusRequestEntityTooLarge)
+		return
+	}
+	now, done := s.Now(), 0
+	for _, raw := range ids {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			continue
+		}
+		// As for a single alert, one changed meanwhile by a colleague is not an error.
+		if err := apply(r.Context(), id, se.Email, now); err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.internal(w, r, err)
+			return
+		}
+		done++
+	}
+	s.Log.Info(msg, "count", done, "by", se.Email)
+	http.Redirect(w, r, localPath(r.PostFormValue("back"), "/alerts"), http.StatusSeeOther) //nolint:gosec // localPath accepts only paths on this site
 }
 
 func (s *server) transition(w http.ResponseWriter, r *http.Request, se session, apply func(context.Context, int64, string, time.Time) error, msg string) {

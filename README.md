@@ -218,7 +218,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `hooks` | `ld.so.preload`, `rc.local`, `profile.d`, PAM, `update-motd.d`, package manager hooks, the shell rc files of every account |
 | `processes` | every process with its executable (flagged if deleted from disk), hash, working directory, `LD_PRELOAD` and namespaces; command lines with passwords, tokens and credentials redacted; kernel threads (kernel flag) are only counted, processes imitating their names are listed |
 | `sockets` | listening sockets, open connections and pending outbound attempts, in every network namespace (containers included), mapped to their process |
-| `packages` | system files that no longer match the package database (dpkg, apk), a fingerprint of the database itself, executables and symlinks no package owns, hidden entries under `/usr` |
+| `packages` | system files that no longer match the package database (dpkg, apk), a fingerprint of the database itself, executables and symlinks no package owns, hidden entries under `/usr` that no package installed (and anything added inside a packaged hidden directory) |
 | `privileged` | a scan of the whole filesystem (including the world-writable directories in `/run` and `/dev/shm`) for setuid and setgid binaries, files with Linux capabilities, immutable and append-only files; files on a FUSE filesystem mounted by a user other than root are marked with that mount, since that user chooses their owner and mode |
 | `weblog` | web server access and error logs, read incrementally: attack events grouped by rule, IP and path, statistics on IPs and POST targets |
 | `apps` | for WordPress, Magento, Drupal and Laravel: administrators in the database, active extensions, scripts stored in settings and content with the domains they load from or send to, development settings left on in production |
@@ -492,7 +492,10 @@ The interface is in Italian.
 - **Server.** State, every alert, the silences of the last 7 days with their duration, the last
   snapshots received, revocation.
 - **Alerts.** To handle, acknowledged, resolved. Every alert can be acknowledged and resolved;
-  the detail shows the text collected from the server as data, without interpreting it.
+  the detail shows the text collected from the server as data, without interpreting it. Alerts
+  of the same rule, server and severity (one per file, request or process) are one row that opens
+  onto them, with actions that acknowledge or resolve the whole group; an open group stays open
+  across the automatic refresh.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 

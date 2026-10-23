@@ -233,6 +233,20 @@ tr.st-silent td { background: repeating-linear-gradient(-45deg, var(--hatch) 0 1
 .legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 10px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
 .legend li { display: inline-flex; align-items: center; gap: 6px; }
 
+/* A group is one row that opens onto its alerts; the open rows hang from a rule, indented. */
+.alerts .disclose { display: inline-flex; align-items: baseline; gap: 10px; width: 100%; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; }
+.alerts .disclose:hover .label { text-decoration: underline; }
+.alerts .disclose::before { content: ""; flex: none; width: 0; height: 0; border-style: solid; border-width: 4px 0 4px 6px; border-color: transparent transparent transparent currentColor; transform: translateY(-1px); transition: transform 120ms ease-out; }
+.alerts .disclose[aria-expanded="true"]::before { transform: translateY(-1px) rotate(90deg); }
+.alerts .disclose .label { overflow-wrap: anywhere; font-weight: 500; }
+.alerts .disclose .tally-n { flex: none; min-width: 2ch; padding: 1px 6px; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--ink-2); border: var(--hair) solid var(--rule-strong); }
+.alerts .group-head td.state span { display: block; }
+.alerts .group-head td.state span + span { font-size: 11.5px; color: var(--muted); }
+.alerts .group-rows td { background: var(--surface); }
+.alerts .group-rows td:first-child { padding-left: 14px; box-shadow: inset var(--hair) 0 0 var(--rule-strong); }
+.alerts .group-rows td.what a { font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .alerts .disclose::before { transition: none; } }
+
 .actions { display: inline-flex; gap: 6px; }
 .focus .actions { flex-wrap: wrap; }
 .actions form { margin: 0; }
