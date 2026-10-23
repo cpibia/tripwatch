@@ -222,3 +222,37 @@ func TestCronLinesAreKnownPerTable(t *testing.T) {
 		t.Error("/root or /run/user owners")
 	}
 }
+
+// An existing account made privileged by a standard command raises root's alert.
+func TestExistingAccountPromoted(t *testing.T) {
+	accounts := func(www system.Account, dockerMembers ...string) *system.AccountsResult {
+		return &system.AccountsResult{
+			Accounts: []system.Account{{Name: "root", UID: 0, GID: 0, Shell: "/bin/bash", Password: system.PasswordSet}, www},
+			Groups:   []system.Group{{Name: "root", GID: 0}, {Name: "www-data", GID: 33}, {Name: "docker", GID: 999, Members: dockerMembers}},
+		}
+	}
+	base := system.Account{Name: "www-data", UID: 33, GID: 33, Shell: "/usr/sbin/nologin", Password: system.PasswordLocked}
+	prev := State{Accounts: accounts(base)}
+	promoted := base
+	promoted.GID, promoted.Shell, promoted.Password = 0, "/bin/bash", system.PasswordSet
+	cur := State{Accounts: accounts(promoted, "www-data")}
+	got := map[string]Finding{}
+	for _, f := range Evaluate(&prev, cur) {
+		got[f.Fingerprint] = f
+	}
+	for _, fp := range []string{
+		"accounts-change:member:docker|www-data",
+		"accounts-change:primary-group:www-data|0",
+		"accounts-change:password:www-data|set",
+		"accounts-change:shell:www-data|/bin/bash",
+	} {
+		if f, ok := got[fp]; !ok || f.Owner != "root" {
+			t.Errorf("%s: %+v", fp, f)
+		}
+	}
+	renumbered := base
+	renumbered.UID = 0
+	if _, ok := findingOwners(Evaluate(&prev, State{Accounts: accounts(renumbered)}))["accounts-change:uid:www-data|0"]; !ok {
+		t.Error("UID change not reported")
+	}
+}

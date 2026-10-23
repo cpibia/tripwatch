@@ -178,6 +178,12 @@ func advCases() []advCase {
 		advKey("CONTROL key of root", "root", "root", "/root/.ssh/authorized_keys"),
 		advKey("CONTROL key of second UID 0", "root", "toor", "/root/.ssh/authorized_keys"),
 	}
+	// An alias of UID 33 listed after www-data and not in adm: www-data still is.
+	alias := advSetid("setgid adm, UID 33 alias listed last", "web", "/var/www/up/alias", g, 33, 4)
+	alias.cur.Accounts = advAccounts()
+	alias.cur.Accounts.Accounts = append(alias.cur.Accounts.Accounts, system.Account{Name: "deploy", UID: 33, GID: 1001, Home: "/var/www"})
+	alias.prev.Accounts = alias.cur.Accounts
+	cs = append(cs, alias)
 	// Without a group database only GID 0 counts.
 	nodb := cs[6]
 	nodb.cur.Accounts = &system.AccountsResult{Accounts: advAccounts().Accounts}

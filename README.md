@@ -1,7 +1,8 @@
 # tripwatch
 
 tripwatch rileva le modifiche non autorizzate sui server, qualunque cosa ci giri sopra. Controlla
-ciò che un attaccante cambia per entrare e per restare: nuovi account privilegiati e chiavi SSH,
+ciò che un attaccante cambia per entrare e per restare: nuovi account privilegiati, account
+esistenti promossi (gruppi come sudo o docker, password o shell abilitate, UID cambiato), chiavi SSH,
 persistenze in cron, systemd e negli script di avvio, binari setuid e file immutabili, file di
 sistema che non corrispondono più al loro pacchetto, processi avviati da eseguibili cancellati o
 nascosti, connessioni in uscita inattese, codice applicativo modificato senza un deploy.

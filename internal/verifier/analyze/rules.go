@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/weblog"
 )
@@ -49,6 +50,11 @@ func kindOwner(kind string) string {
 // that home's, whatever User= it names; a unit in the system directories is root's.
 func unitOwner(u unitT) string { return homeOwner(u.Path) }
 
+// realShell reports whether a login shell lets the account open a session.
+func realShell(sh string) bool {
+	return sh != "" && !strings.HasSuffix(sh, "nologin") && !strings.HasSuffix(sh, "/false")
+}
+
 // cronOwner is the user a crontab belongs to: a user's spool file is theirs, the system's
 // tables are root's.
 func cronOwner(p string) string {
@@ -79,20 +85,24 @@ var privilegedGroups = map[string]bool{
 func privilegedOwner(f fileT, cur State) string {
 	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil {
 		gid := int(*f.GID)
-		name, members, owner, primary := "", []string(nil), "", -1
+		name, members := "", []string(nil)
 		if cur.Accounts != nil {
 			for _, g := range cur.Accounts.Groups {
 				if g.GID == gid {
 					name, members = g.Name, g.Members
 				}
 			}
+		}
+		// A member if any account with the file's UID is: a process runs with the groups of the
+		// name it started as, and a web user's alias may come later in the passwd file.
+		member := false
+		if cur.Accounts != nil && f.UID != nil {
 			for _, a := range cur.Accounts.Accounts {
-				if f.UID != nil && a.UID == int(*f.UID) {
-					owner, primary = a.Name, a.GID
+				if a.UID == int(*f.UID) && (a.GID == gid || slices.Contains(members, a.Name)) {
+					member = true
 				}
 			}
 		}
-		member := primary == gid || (owner != "" && slices.Contains(members, owner))
 		rootOwned := f.UID != nil && *f.UID == 0
 		if (gid == 0 || privilegedGroups[name]) && (!member || rootOwned) {
 			return "root"
@@ -205,11 +215,58 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 		}
 		if prev != nil && prev.Accounts != nil {
-			known := setOf(prev.Accounts.Accounts, func(p accountT) string { return p.Name })
+			before := map[string]accountT{}
+			for _, p := range prev.Accounts.Accounts {
+				before[p.Name] = p
+			}
+			privileged := func(gid int, name string) bool { return gid == 0 || privilegedGroups[name] }
+			groupName := func(groups []system.Group, gid int) string {
+				for _, g := range groups {
+					if g.GID == gid {
+						return g.Name
+					}
+				}
+				return ""
+			}
 			for _, acc := range a.Accounts {
-				if !known.has(acc.Name) {
+				old, ok := before[acc.Name]
+				if !ok {
 					change("accounts-change", "new:"+acc.Name, "high", "Nuovo account: "+acc.Name,
 						fmt.Sprintf("UID %d, home %s, shell %s.", acc.UID, acc.Home, acc.Shell))
+					continue
+				}
+				// An existing account given root's power by a standard command: these files are
+				// root's, so the change is.
+				if old.UID != acc.UID {
+					change("accounts-change", "uid:"+acc.Name+"|"+fmt.Sprint(acc.UID), "high", "UID cambiato per "+acc.Name,
+						fmt.Sprintf("Da %d a %d.", old.UID, acc.UID))
+				}
+				if g := groupName(a.Groups, acc.GID); old.GID != acc.GID && privileged(acc.GID, g) {
+					change("accounts-change", "primary-group:"+acc.Name+"|"+fmt.Sprint(acc.GID), "critical", "Gruppo privilegiato come primario per "+acc.Name,
+						fmt.Sprintf("Il gruppo primario di %s è ora %s (GID %d), che vale quasi quanto root.", acc.Name, g, acc.GID))
+				}
+				if old.Password != system.PasswordSet && acc.Password == system.PasswordSet {
+					change("accounts-change", "password:"+acc.Name+"|"+acc.Password, "high", "Password impostata per "+acc.Name,
+						"L'account prima non aveva una password utilizzabile; ora sì.")
+				}
+				if !realShell(old.Shell) && realShell(acc.Shell) {
+					change("accounts-change", "shell:"+acc.Name+"|"+acc.Shell, "high", "Shell abilitata per "+acc.Name,
+						fmt.Sprintf("Da %s a %s: l'account ora può aprire una sessione.", old.Shell, acc.Shell))
+				}
+			}
+			members := map[string]set{}
+			for _, g := range prev.Accounts.Groups {
+				members[g.Name] = setOf(g.Members, func(m string) string { return m })
+			}
+			for _, g := range a.Groups {
+				if !privileged(g.GID, g.Name) {
+					continue
+				}
+				for _, m := range g.Members {
+					if was, ok := members[g.Name]; !ok || !was.has(m) {
+						change("accounts-change", "member:"+g.Name+"|"+m, "critical", "Aggiunto al gruppo "+g.Name+": "+m,
+							fmt.Sprintf("%s è ora membro di %s (GID %d), che dà accesso equivalente o vicino a quello di root.", m, g.Name, g.GID))
+					}
 				}
 			}
 		}
