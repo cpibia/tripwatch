@@ -492,7 +492,11 @@ func TestPanelFollowsTheSelectedAlert(t *testing.T) {
 // parallel and from any number of addresses, does not slow it down.
 func TestKnownBrowserIsNeverSlowed(t *testing.T) {
 	h := newHarness(t)
+	begin := time.Now()
 	h.login() // the harness client becomes a known browser
+	// A plain sign-in on this machine, password check included: the race detector and a slow
+	// CI make an absolute bound meaningless.
+	plain := time.Since(begin)
 	attacker := func() {
 		form := url.Values{"email": {email}, "password": {"wrong-password-here"}}
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+"/login", strings.NewReader(form.Encode()))
@@ -516,8 +520,8 @@ func TestKnownBrowserIsNeverSlowed(t *testing.T) {
 	}
 	start = time.Now()
 	res, _ := h.post("/login", url.Values{"email": {email}, "password": {password}})
-	if res.StatusCode != http.StatusSeeOther || time.Since(start) > time.Second {
-		t.Fatalf("the known browser: status %d after %v", res.StatusCode, time.Since(start))
+	if took := time.Since(start); res.StatusCode != http.StatusSeeOther || took > 3*plain+200*time.Millisecond {
+		t.Fatalf("the known browser: status %d after %v (a plain sign-in takes %v)", res.StatusCode, took, plain)
 	}
 }
 
