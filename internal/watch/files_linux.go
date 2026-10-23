@@ -385,7 +385,7 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 	// Root's budget is for root's files on system paths: in the uploads and the scratch
 	// directories the web server's user can rename a file of root left behind in a loop and
 	// spend it.
-	if info.Size() > maxEventHash || !f.spend(info.Size(), systemClass(class) && e.UID != nil && *e.UID == 0) {
+	if info.Size() > maxEventHash || !f.spend(info.Size(), systemClass(class) && e.UID != nil && *e.UID == 0 && f.rootDir(path.Dir(p))) {
 		return e
 	}
 	file, err := collector.DescribeNoFollow(f.src, collector.Rel(p))
@@ -399,6 +399,17 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 		f.mu.Unlock()
 	}
 	return e
+}
+
+// rootDir reports whether only root can change the entries of a directory: there a file of
+// root cannot have been renamed in by another user.
+func (f *Files) rootDir(dir string) bool {
+	info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		return false
+	}
+	uid, ok := collector.Owner(info)
+	return ok && uid == 0
 }
 
 // spend takes n bytes from this second's hashing budget, root's or the other users'.
