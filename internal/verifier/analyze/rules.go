@@ -21,6 +21,42 @@ type Finding struct {
 	Title       string
 	Detail      string
 	State       bool
+	// Owner is the account the finding is about when it is not root's by nature: a key or a
+	// crontab of another user, a setuid file owned by one. Empty means the kind decides.
+	Owner string
+}
+
+// owned reports whether only root can have caused a finding.
+func (f Finding) owned() bool {
+	if f.Owner != "" {
+		return f.Owner == "root"
+	}
+	return rootKinds[f.Kind]
+}
+
+// rootKinds are the alert kinds only root on the host can cause, unless a finding names another
+// owner. Processes, listening ports and the sensor's own alerts are left out: the web server's
+// user can start a program from /tmp, bind a port, or flood the findings of a snapshot.
+var rootKinds = map[string]bool{
+	"accounts": true, "accounts-change": true, "ssh": true, "ssh-change": true,
+	"persistence": true, "persistence-change": true, "privileged": true, "privileged-change": true,
+	"packages": true, "packages-change": true,
+}
+
+// cronOwner is the user a crontab belongs to: a user's spool file is theirs, the system's
+// tables are root's.
+func cronOwner(p string) string {
+	if dir, user := path.Split(p); strings.Contains(dir, "/spool/cron") {
+		return user
+	}
+	return "root"
+}
+
+func uidOwner(uid *uint32) string {
+	if uid == nil || *uid == 0 {
+		return "root"
+	}
+	return fmt.Sprintf("uid %d", *uid)
 }
 
 // StateKinds are the kinds whose alerts resolve themselves when the condition disappears.
@@ -72,6 +108,14 @@ func Evaluate(prev *State, cur State) []Finding {
 			add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail})
 		}
 	}
+	stateBy := func(owner, kind, fp, sev, title, detail string) {
+		add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail, State: true, Owner: owner})
+	}
+	changeBy := func(owner, kind, fp, sev, title, detail string) {
+		if prev != nil {
+			add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail, Owner: owner})
+		}
+	}
 
 	for name, msg := range cur.Errors {
 		state("sensor", "error:"+name, "medium", "Collector "+name+" non completato", msg)
@@ -114,7 +158,8 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, k := range s.Keys {
 			if known != nil && !known.has(k.User+"\x00"+k.Fingerprint) {
-				change("ssh-change", "key:"+k.User+":"+k.Fingerprint, "high", "Nuova chiave SSH per "+k.User,
+				// The user names the group: one user's keys do not crowd out root's.
+				changeBy(k.User, "ssh-change", "key:"+k.User+"|"+k.Fingerprint, "high", "Nuova chiave SSH per "+k.User,
 					fmt.Sprintf("%s %s (%s) in %s.", k.Type, k.Fingerprint, k.Comment, k.File))
 			}
 		}
@@ -128,7 +173,7 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, f := range s.Files {
 			for _, rule := range f.Rules {
 				if !known.has(rule) {
-					change("persistence-change", "sudo:"+f.Path+":"+rule, "high", "Nuova regola sudo", rule+" in "+f.Path)
+					change("persistence-change", "sudo:"+f.Path+"|"+rule, "high", "Nuova regola sudo", rule+" in "+f.Path)
 				}
 			}
 		}
@@ -148,7 +193,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			for _, e := range t.Entries {
 				if known != nil && !known.has(e) {
-					change("persistence-change", "cron:"+t.Path+":"+e, "high", "Nuova riga di cron", e+"\nin "+t.Path)
+					changeBy(cronOwner(t.Path), "persistence-change", "cron:"+t.Path+"|"+e, "high", "Nuova riga di cron", e+"\nin "+t.Path)
 				}
 			}
 		}
@@ -253,10 +298,12 @@ func Evaluate(prev *State, cur State) []Finding {
 			case f.Immutable || f.AppendOnly:
 				state("privileged", "attr:"+f.Path, "high", "File protetto con chattr: "+f.Path, "Gli attributi immutable o append-only sono rari sui server e sono usati per rendere persistente un accesso.")
 			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
-				state("privileged", "setid:"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", hash "+f.SHA256+".")
+				owner := uidOwner(f.UID)
+				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+", hash "+f.SHA256+".")
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
-				change("privileged-change", "new:"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+".")
+				owner := uidOwner(f.UID)
+				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+".")
 			}
 		}
 	}

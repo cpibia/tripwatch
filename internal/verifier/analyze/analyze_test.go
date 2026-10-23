@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,5 +350,37 @@ func TestAnonymousCriticalAlertsAreBounded(t *testing.T) {
 	kept, _ := h.store.EvidenceSnapshotsSince(ctx, "web-01", now.Truncate(24*time.Hour))
 	if kept["weblog"] == 0 || kept["weblog"] > maxEvidencePerDay+1 {
 		t.Fatalf("%d snapshots kept as evidence of anonymous critical alerts", kept["weblog"])
+	}
+}
+
+// A user's own keys, however many, do not crowd out a key root adds: it gets its own alert and
+// its evidence is kept.
+func TestUserKeysDoNotHideRootKey(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	keys := func(n int, root bool) string {
+		var parts []string
+		for i := range n {
+			parts = append(parts, fmt.Sprintf(`{"user":"www-data","file":"/var/www/.ssh/authorized_keys","type":"ssh-ed25519","fingerprint":"SHA256:w%d"}`, i))
+		}
+		if root {
+			parts = append(parts, `{"user":"root","file":"/root/.ssh/authorized_keys","type":"ssh-ed25519","fingerprint":"SHA256:r"}`)
+		}
+		return `{"snapshot":{"results":{"ssh":{"keys":[` + strings.Join(parts, ",") + `]}}}}`
+	}
+	h.deliver(protocol.KindSnapshot, gz(t, keys(0, false)))
+	h.analyse()
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, keys(150, false)))
+	h.analyse()
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, keys(150, true)))
+	h.analyse()
+	id, err := h.store.AlertID(ctx, "web-01", "ssh-change:key:root|SHA256:r")
+	if err != nil {
+		t.Fatal("the root key has no alert of its own")
+	}
+	if ok, _ := h.store.HasEvidenceSince(ctx, id, criticalDigest(t, h, id), now.Truncate(24*time.Hour)); !ok {
+		t.Fatal("the root key's snapshot is not kept as evidence")
 	}
 }
