@@ -447,8 +447,8 @@ func TestPolicyFileAccess(t *testing.T) {
 	wide := dir
 	wide.Mode = "dtrwxrwxrwx"
 	acl := dir
-	acl.ACL = "0123456789abcdef"
-	none := policyIDs{}
+	acl.ACL, acl.ACLWrite = "0123456789abcdef", true
+	none := policyTrust{}
 	for _, f := range []collector.File{wide, acl, {Mode: "-rw-rw-r--", UID: uid(0), GID: uid(100)}, {Mode: "-rw-r--r--", UID: uid(0), Mount: "fuse uid 1000"}} {
 		if !foreignWritable(f, none) {
 			t.Errorf("not writable by others: %+v", f)
@@ -457,10 +457,15 @@ func TestPolicyFileAccess(t *testing.T) {
 	if foreignWritable(collector.File{Mode: "-rw-rw-r--", UID: uid(0), GID: uid(0)}, none) {
 		t.Error("root group counted as foreign")
 	}
+	readOnly := dir
+	readOnly.ACL = "0123456789abcdef"
+	if foreignWritable(readOnly, none) {
+		t.Error("a read-only ACL counted as a writer")
+	}
 
 	// polkit's own account owns its rule directories on a standard install; elsewhere it is
 	// an account like any other.
-	accounts := &system.AccountsResult{Accounts: []system.Account{{Name: "polkitd", UID: 997}}, Groups: []system.Group{{Name: "polkitd", GID: 997}}}
+	accounts := &system.AccountsResult{Accounts: []system.Account{{Name: "polkitd", UID: 997, GID: 997, Shell: "/usr/sbin/nologin"}}, Groups: []system.Group{{Name: "polkitd", GID: 997}}}
 	daemon := collector.File{Path: "/usr/share/polkit-1/rules.d", UID: uid(997), GID: uid(997), Mode: "drwx------"}
 	st := State{Accounts: accounts, Sudoers: &system.SudoersResult{Dirs: []collector.File{daemon}}}
 	if fs := Evaluate(nil, st); len(fs) != 0 {
@@ -469,5 +474,35 @@ func TestPolicyFileAccess(t *testing.T) {
 	daemon.Path = "/etc/sudoers.d"
 	if !foreignWritable(daemon, policyAccounts(accounts)) {
 		t.Error("polkitd trusted outside polkit")
+	}
+
+	// The daemon's name on another account, its UID shared, or a member in its group, is not
+	// the daemon.
+	rulesDir := collector.File{Path: "/etc/polkit-1/rules.d", UID: uid(33), GID: uid(0), Mode: "drwx------"}
+	shared := &system.AccountsResult{Accounts: []system.Account{{Name: "www-data", UID: 33, Shell: "/usr/sbin/nologin"}, {Name: "polkit", UID: 33, Shell: "/usr/sbin/nologin"}}}
+	if !foreignWritable(rulesDir, policyAccounts(shared)) {
+		t.Error("polkit sharing www-data's UID trusted")
+	}
+	group := collector.File{Path: "/etc/polkit-1/rules.d", UID: uid(0), GID: uid(997), Mode: "drwxrwx---"}
+	if foreignWritable(group, policyAccounts(accounts)) {
+		t.Error("polkitd's own group not trusted")
+	}
+	joined := &system.AccountsResult{Accounts: accounts.Accounts, Groups: []system.Group{{Name: "polkitd", GID: 997, Members: []string{"www-data"}}}}
+	if !foreignWritable(group, policyAccounts(joined)) {
+		t.Error("polkitd's group with www-data in it trusted")
+	}
+
+	// /usr/local of root:staff 2775 is root's while staff is empty, and makes staff privileged.
+	local := collector.File{Path: "/usr/local", UID: uid(0), GID: uid(50), Mode: "dgrwxrwsr-x"}
+	staff := &system.AccountsResult{Accounts: []system.Account{{Name: "root", UID: 0}}, Groups: []system.Group{{Name: "staff", GID: 50, Members: []string{"root"}}}}
+	if foreignWritable(local, policyAccounts(staff)) {
+		t.Error("empty staff group counted as foreign")
+	}
+	staff.Groups[0].Members = append(staff.Groups[0].Members, "alice")
+	if !foreignWritable(local, policyAccounts(staff)) {
+		t.Error("staff with alice in it trusted")
+	}
+	if gids := privilegedGIDs(State{Sudoers: &system.SudoersResult{Dirs: []collector.File{local}}}); !gids[50] {
+		t.Error("a group that can write a policy directory is not privileged")
 	}
 }

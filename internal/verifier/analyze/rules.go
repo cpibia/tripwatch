@@ -27,6 +27,9 @@ type Finding struct {
 	// Owner is the account the finding is about when it is not root's by nature: a key or a
 	// crontab of another user, a setuid file owned by one. Empty means the kind decides.
 	Owner string
+	// Diff is the complete diff of a policy change, kept with the alert: Detail shows only its
+	// first lines.
+	Diff []string
 }
 
 // owned reports whether only root can have caused a finding: its owner says so, never its kind
@@ -146,47 +149,105 @@ func fileAccess(f collector.File) string {
 	return out
 }
 
-// policyIDs are the system accounts and groups a policy daemon runs as. polkit's rule
-// directories belong to polkitd and are mode 0700 on a standard install.
-type policyIDs struct{ uids, gids map[int]bool }
+// policyTrust says which non-root accounts and groups may write a policy file. polkit's rule
+// directories belong to its daemon account on a standard install; a group counts only when an
+// account other than root is in it.
+type policyTrust struct {
+	known   bool
+	daemons map[int]bool
+	// daemonGIDs are polkit's groups with no member but the daemon itself.
+	daemonGIDs map[int]bool
+	members    map[int]int
+}
 
 var policyDaemons = map[string]bool{"polkitd": true, "polkit": true}
 
-func policyAccounts(a *system.AccountsResult) policyIDs {
-	ids := policyIDs{uids: map[int]bool{}, gids: map[int]bool{}}
+func policyAccounts(a *system.AccountsResult) policyTrust {
+	t := policyTrust{daemons: map[int]bool{}, daemonGIDs: map[int]bool{}, members: map[int]int{}}
 	if a == nil {
-		return ids
+		return t
 	}
+	t.known = true
+	byUID := map[int]int{}
+	uidOf := map[string]int{}
 	for _, acc := range a.Accounts {
-		if policyDaemons[acc.Name] && acc.UID > 0 {
-			ids.uids[acc.UID] = true
+		byUID[acc.UID]++
+		uidOf[acc.Name] = acc.UID
+	}
+	// The daemon's UID is trusted only when it is a system account of its own with no shell:
+	// another account given that UID, or the name on a login account, is not the daemon.
+	daemon := map[string]bool{}
+	for _, acc := range a.Accounts {
+		if policyDaemons[acc.Name] && acc.UID > 0 && acc.UID < 1000 && byUID[acc.UID] == 1 && !realShell(acc.Shell) {
+			t.daemons[acc.UID] = true
+			daemon[acc.Name] = true
 		}
+	}
+	others := map[int]map[string]bool{}
+	for name, gids := range memberships(a) {
+		if uid, ok := uidOf[name]; ok && uid == 0 {
+			continue
+		}
+		for gid := range gids {
+			if others[gid] == nil {
+				others[gid] = map[string]bool{}
+			}
+			others[gid][name] = true
+		}
+	}
+	for gid, names := range others {
+		t.members[gid] = len(names)
 	}
 	for _, g := range a.Groups {
-		if policyDaemons[g.Name] && g.GID > 0 {
-			ids.gids[g.GID] = true
+		if !policyDaemons[g.Name] || g.GID <= 0 {
+			continue
+		}
+		trusted := true
+		for name := range others[g.GID] {
+			trusted = trusted && daemon[name]
+		}
+		if trusted {
+			t.daemonGIDs[g.GID] = true
 		}
 	}
-	return ids
+	return t
+}
+
+// groupWriters reports whether a group lets an account other than root (and polkit's daemon on
+// polkit's files) write. Without the accounts every group other than root's counts.
+func (t policyTrust) groupWriters(gid int, polkit bool) bool {
+	switch {
+	case gid == 0:
+		return false
+	case !t.known:
+		return true
+	case polkit && t.daemonGIDs[gid]:
+		return false
+	}
+	return t.members[gid] > 0
 }
 
 // foreignWritable reports whether an account other than root can change a file: it owns it,
-// it is on a user's FUSE mount, an ACL is set, or the mode lets others (or a group other than
-// root's) write. polkit's own account and group are trusted on polkit's files.
-func foreignWritable(f collector.File, trusted policyIDs) bool {
+// it is on a user's FUSE mount, an ACL lets a named user or group write, or the mode lets
+// others, or a group with an account other than root in it, write.
+func foreignWritable(f collector.File, t policyTrust) bool {
 	polkit := strings.Contains(f.Path+"/", "/polkit-1/")
-	if f.Mount != "" || f.ACL != "" {
+	if f.Mount != "" || f.ACLWrite {
 		return true
 	}
-	if f.UID != nil && *f.UID != 0 && (!polkit || !trusted.uids[int(*f.UID)]) {
+	if f.UID != nil && *f.UID != 0 && (!polkit || !t.daemons[int(*f.UID)]) {
 		return true
 	}
 	if len(f.Mode) < 9 {
 		return false
 	}
 	perm := f.Mode[len(f.Mode)-9:]
-	groupOK := f.GID == nil || *f.GID == 0 || polkit && trusted.gids[int(*f.GID)]
-	return perm[7] == 'w' || perm[4] == 'w' && !groupOK
+	return perm[7] == 'w' || perm[4] == 'w' && f.GID != nil && t.groupWriters(int(*f.GID), polkit)
+}
+
+// groupWritable reports whether a file's group may write it.
+func groupWritable(f collector.File) bool {
+	return len(f.Mode) >= 9 && f.Mode[len(f.Mode)-5] == 'w' && f.GID != nil && *f.GID != 0
 }
 
 // policyName names the privilege policy a file belongs to.
@@ -257,7 +318,17 @@ func privilegedGIDs(snaps ...State) map[int]bool {
 		if st.Sudoers == nil {
 			continue
 		}
+		// A group that may write a policy file or a directory above one can grant itself
+		// anything: joining it is joining root.
+		for _, d := range st.Sudoers.Dirs {
+			if groupWritable(d) {
+				out[int(*d.GID)] = true
+			}
+		}
 		for _, f := range st.Sudoers.Files {
+			if groupWritable(f.File) {
+				out[int(*f.GID)] = true
+			}
 			for _, rule := range f.Rules {
 				rule = sudoEscape.ReplaceAllStringFunc(rule, func(e string) string {
 					n, _ := strconv.ParseUint(e[2:], 16, 8)
@@ -624,11 +695,13 @@ func Evaluate(prev *State, cur State) []Finding {
 			if ok {
 				title = "Politica " + policyName(f.Path) + " cambiata: " + f.Path
 			}
-			change("persistence-change", "policy:"+f.Path+"|"+f.SHA256, "high", title, ruleDiff(old.Rules, f.Rules))
+			add(Finding{Kind: "persistence-change", Fingerprint: "persistence-change:policy:" + f.Path + "|" + f.SHA256, Severity: "high",
+				Title: title, Detail: ruleDiff(old.Rules, f.Rules), Owner: "root", Diff: append([]string{}, diffLines(old.Rules, f.Rules)...)})
 		}
 		for path, old := range before {
-			change("persistence-change", "policy-removed:"+path+"|"+old.SHA256, "high", "Politica "+policyName(path)+" rimossa: "+path,
-				"Togliere un file può togliere un divieto.\n"+ruleDiff(old.Rules, nil))
+			add(Finding{Kind: "persistence-change", Fingerprint: "persistence-change:policy-removed:" + path + "|" + old.SHA256, Severity: "high",
+				Title:  "Politica " + policyName(path) + " rimossa: " + path,
+				Detail: "Togliere un file può togliere un divieto.\n" + ruleDiff(old.Rules, nil), Owner: "root", Diff: append([]string{}, diffLines(old.Rules, nil)...)})
 		}
 	}
 

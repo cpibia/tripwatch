@@ -17,9 +17,9 @@
   <pre class="datum">{{$a.Detail}}</pre>
   {{with $v.Diff}}
   <details class="diff">
-    <summary>Confronto completo con lo snapshot del <time datetime="{{iso .Since}}">{{stamp .Since}}</time>, righe cambiate: {{len .Lines}}</summary>
+    <summary>Confronto completo, calcolato all'analisi del <time datetime="{{iso .At}}">{{stamp .At}}</time></summary>
     <pre class="datum">{{range .Lines}}{{.}}
-{{else}}Contenuto cambiato senza righe nuove o tolte (ordine o spazi).{{end}}</pre>
+{{end}}</pre>
   </details>
   {{end}}
   <dl class="facts small">

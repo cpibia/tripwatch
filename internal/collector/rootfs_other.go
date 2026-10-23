@@ -47,3 +47,7 @@ func lstatIn(dir, name string) (os.FileInfo, error) {
 func readlinkIn(dir, name string) (string, error) {
 	return os.Readlink(filepath.Join(dir, filepath.FromSlash(name)))
 }
+
+func attrsIn(dir, name string) (Attrs, error) {
+	return ReadAttrs(filepath.Join(dir, filepath.FromSlash(name)))
+}

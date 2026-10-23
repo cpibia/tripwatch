@@ -300,3 +300,14 @@ func openFlags(full string, flags int) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(fd), full), nil
 }
+
+// attrsIn reads the attributes of name resolved inside dir: by its raw path the kernel would
+// follow a link in the sensor's own filesystem instead of the observed one.
+func attrsIn(dir, name string) (Attrs, error) {
+	f, err := openPath(dir, name)
+	if err != nil {
+		return Attrs{}, err
+	}
+	defer func() { _ = f.Close() }()
+	return ReadAttrs("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
+}

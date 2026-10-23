@@ -224,7 +224,29 @@ const (
 func (s *Store) PruneResolved(ctx context.Context, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE status = 'resolved' AND (updated_at < ?
 		OR (severity NOT IN ('critical', 'high') AND updated_at < ?))`, now.Add(-ResolvedRetention).Unix(), now.Add(-MinorResolvedRetention).Unix())
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM alert_diffs WHERE alert_id NOT IN (SELECT id FROM alerts)`)
 	return err
+}
+
+// SetAlertDiff keeps the complete diff of a policy alert, replacing the one before.
+func (s *Store) SetAlertDiff(ctx context.Context, id int64, lines string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_diffs (alert_id, lines, computed_at) VALUES (?, ?, ?)
+		ON CONFLICT (alert_id) DO UPDATE SET lines = excluded.lines, computed_at = excluded.computed_at`, id, lines, now.Unix())
+	return err
+}
+
+// AlertDiff returns the complete diff kept with an alert and when it was computed.
+func (s *Store) AlertDiff(ctx context.Context, id int64) (string, time.Time, error) {
+	var lines string
+	var at int64
+	err := s.db.QueryRowContext(ctx, `SELECT lines, computed_at FROM alert_diffs WHERE alert_id = ?`, id).Scan(&lines, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, ErrNotFound
+	}
+	return lines, unix(at), err
 }
 
 // Resolve closes an alert by hand.

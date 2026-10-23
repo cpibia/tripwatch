@@ -352,6 +352,9 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) {
 			evidenceOf = append(evidenceOf, f)
 		}
+		if f.Diff != nil {
+			a.keepDiff(ctx, host, f)
+		}
 	}
 
 	// A snapshot that raises a new alert is evidence, and so is the one before it, which shows the
@@ -406,6 +409,30 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 }
 
 // raise records an alert and reports whether it is new or reopened.
+// maxStoredDiff bounds the complete diff kept with a policy alert.
+const maxStoredDiff = 256 << 10
+
+// keepDiff stores the complete diff of a policy alert, computed once here: rebuilding it later
+// from snapshots would depend on which of them retention kept.
+func (a *Analyzer) keepDiff(ctx context.Context, host string, f Finding) {
+	id, err := a.Store.AlertID(ctx, host, f.Fingerprint)
+	if err != nil {
+		a.Log.Error("alert diff", "host", host, "err", err)
+		return
+	}
+	var b strings.Builder
+	for i, l := range f.Diff {
+		if b.Len()+len(l) > maxStoredDiff {
+			fmt.Fprintf(&b, "(altre %d righe oltre %d KB non conservate)\n", len(f.Diff)-i, maxStoredDiff>>10)
+			break
+		}
+		b.WriteString(l + "\n")
+	}
+	if err := a.Store.SetAlertDiff(ctx, id, strings.TrimSuffix(b.String(), "\n"), a.Now()); err != nil {
+		a.Log.Error("alert diff", "host", host, "err", err)
+	}
+}
+
 func (a *Analyzer) raise(ctx context.Context, al store.Alert) bool {
 	fresh, err := a.Store.Raise(ctx, al, a.Now())
 	if err != nil {

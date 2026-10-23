@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -458,7 +457,7 @@ func TestCollectorFailingForLong(t *testing.T) {
 	}
 }
 
-// The alert detail shows the first lines of a policy change; the alert page rebuilds all of it.
+// The alert detail shows the first lines of a policy change; the complete diff is kept with it.
 func TestPolicyDiffIsComplete(t *testing.T) {
 	h := newHarness(t)
 	policy := func(sum string, rules []string) []byte {
@@ -478,11 +477,8 @@ func TestPolicyDiffIsComplete(t *testing.T) {
 	if !ok {
 		t.Fatalf("policy change not raised: %v", h.open())
 	}
-	d, err := PolicyDiff(context.Background(), h.store, a)
-	if err != nil || len(d.Lines) != 60 || !d.Since.Equal(now) {
-		t.Fatalf("diff = %d lines since %v, %v", len(d.Lines), d.Since, err)
-	}
-	if _, err := PolicyDiff(context.Background(), h.store, store.Alert{Fingerprint: "accounts:uid0:x"}); !errors.Is(err, ErrNoPolicyDiff) {
-		t.Fatalf("non-policy alert: %v", err)
+	lines, _, err := h.store.AlertDiff(context.Background(), a.ID)
+	if got := strings.Split(lines, "\n"); err != nil || len(got) != 60 || got[0] != "+ Cmnd_Alias C0 = /bin/true" {
+		t.Fatalf("diff = %d lines, %v", len(got), err)
 	}
 }

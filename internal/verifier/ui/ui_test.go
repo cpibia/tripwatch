@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -650,36 +648,24 @@ func TestKnownBrowserHasAReservedCheck(t *testing.T) {
 	release()
 }
 
-// The page of a policy alert shows the whole diff, which the alert detail cuts short.
+// The page of a policy alert shows the whole diff kept with it, which the detail cuts short.
 func TestPolicyAlertShowsCompleteDiff(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	for i, rules := range []string{`["a ALL=(ALL) ALL"]`, `["a ALL=(ALL) ALL","b ALL=(ALL) NOPASSWD: ALL"]`} {
-		var buf bytes.Buffer
-		zw := gzip.NewWriter(&buf)
-		_, _ = zw.Write([]byte(`{"snapshot":{"results":{"sudoers":{"files":[{"path":"/etc/sudoers.d/x","sha256":"` + itoa(int64(i)) + `","rules":` + rules + `}]}}}}`))
-		_ = zw.Close()
-		hs, _ := h.store.Host(ctx, "web-01")
-		e := protocol.Envelope{HostID: "web-01", Kind: protocol.KindSnapshot, Sequence: hs.Chain.Sequence + 1, SentAt: now, Payload: buf.Bytes()}
-		if err := h.store.Accept(ctx, e, hs.Chain, protocol.ChainState{Sequence: e.Sequence}, now.Add(time.Duration(i)*time.Minute)); err != nil {
-			t.Fatal(err)
-		}
-	}
 	if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: "persistence-change:policy:/etc/sudoers.d/x|1", Severity: "high",
 		Kind: "persistence-change", Title: "Politica sudo cambiata"}, now); err != nil {
 		t.Fatal(err)
 	}
-	ids, _ := h.store.PendingSnapshots(ctx, 10)
 	id, _ := h.store.AlertID(ctx, "web-01", "persistence-change:policy:/etc/sudoers.d/x|1")
-	if err := h.store.Keep(ctx, ids[1], store.Evidence{AlertID: id}); err != nil {
+	if err := h.store.SetAlertDiff(ctx, id, "+ b ALL=(ALL) NOPASSWD: ALL\n+ <script>", now); err != nil {
 		t.Fatal(err)
 	}
 	h.login()
 	_, body := h.get("/alerts/" + itoa(id))
-	if !strings.Contains(body, "righe cambiate: 1") || !strings.Contains(body, "&#43; b ALL=(ALL) NOPASSWD: ALL") {
+	if !strings.Contains(body, "Confronto completo") || !strings.Contains(body, "&#43; b ALL=(ALL) NOPASSWD: ALL") || strings.Contains(body, "<script>") {
 		t.Fatalf("complete diff not shown:\n%s", body)
 	}
 }

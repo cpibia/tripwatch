@@ -101,6 +101,11 @@ CREATE TABLE IF NOT EXISTS snapshot_evidence (
 	PRIMARY KEY (snapshot_id, alert_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS snapshot_evidence_alert ON snapshot_evidence(alert_id);
+CREATE TABLE IF NOT EXISTS alert_diffs (
+	alert_id    INTEGER PRIMARY KEY,
+	lines       TEXT NOT NULL,
+	computed_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS login_links (
 	token_hash BLOB PRIMARY KEY,
 	email      TEXT NOT NULL,
@@ -500,11 +505,6 @@ func (s *Store) SnapshotPair(ctx context.Context, id int64) (Snapshot, *Snapshot
 		return Snapshot{}, nil, err
 	}
 	return cur, &prev, nil
-}
-
-// LatestEvidence returns the newest snapshot kept as evidence of an alert.
-func (s *Store) LatestEvidence(ctx context.Context, alertID int64) (Snapshot, error) {
-	return s.snapshot(ctx, `WHERE id = (SELECT MAX(snapshot_id) FROM snapshot_evidence WHERE alert_id = ?)`, alertID)
 }
 
 // SnapshotBefore returns the snapshot of a host that precedes id.

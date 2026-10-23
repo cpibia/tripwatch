@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -29,6 +28,9 @@ type Attrs struct {
 	// ACL fingerprints the file's extended POSIX ACLs, empty when it has none: an ACL can let
 	// another account write a file whose mode says it cannot.
 	ACL string `json:"acl,omitempty"`
+	// ACLWrite is set when an ACL entry for a named user or group, through the mask, allows
+	// writing.
+	ACLWrite bool `json:"acl_write,omitempty"`
 }
 
 // Any reports whether any attribute is set.
@@ -50,11 +52,9 @@ type Source struct {
 // cannot use to block or exhaust the sensor (see rootFS).
 func NewSource(dir string) Source {
 	return Source{
-		Root: dir,
-		FS:   rootFS{dir: dir},
-		Attrs: func(name string) (Attrs, error) {
-			return ReadAttrs(filepath.Join(dir, filepath.FromSlash(name)))
-		},
+		Root:  dir,
+		FS:    rootFS{dir: dir},
+		Attrs: func(name string) (Attrs, error) { return attrsIn(dir, name) },
 	}
 }
 
