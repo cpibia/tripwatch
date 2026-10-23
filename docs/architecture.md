@@ -65,7 +65,11 @@ the signing key does not change.
   disappears, except critical and high ones) and changes. Every minute a check raises the alert
   for silent hosts and for those that send heartbeats but no more snapshots.
 - **Alerts**: one fingerprint per condition and host; the same condition updates the existing
-  alert instead of creating a new one, and reopens it if it was resolved.
+  alert instead of creating a new one, and reopens it if it was resolved, unless it was accepted.
+  An acceptance (`accepted` table) binds a host and fingerprint to a hash of the alert's detail,
+  without process numbers: while a new snapshot produces the same detail, `Store.Raise` drops
+  the alert; a different detail deletes the acceptance and raises it. What the verifier and the
+  sensor's lifecycle report (silences, chains, sensor events, aggregates) cannot be accepted.
 - **Notifications** (`internal/verifier/notify`): critical and high alerts by email, one message
   per round.
 - **Interface** (`internal/verifier/ui`): server-rendered HTML, templates and assets embedded in

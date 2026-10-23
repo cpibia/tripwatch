@@ -330,8 +330,9 @@ one may differ.
 
 The collector has been run on real applications of different stacks, up to more than 170,000
 files per application. The remaining false positives are library files that really contain those
-patterns (for example code analysis tools that search for `preg_replace` with `/e`): the
-verifier's baseline recognizes them as known after the first snapshot.
+patterns (for example code analysis tools that search for `preg_replace` with `/e`): accept them
+once in the verifier (see [Interface](#interface)) and they are not raised again while they stay
+identical.
 
 ## Applications and databases
 
@@ -558,7 +559,12 @@ The interface is in Italian.
   the detail shows the text collected from the server as data, without interpreting it. Alerts
   of the same rule, server and severity (one per file, request or process) are one row that opens
   onto them, with actions that acknowledge or resolve the whole group; an open group stays open
-  across the automatic refresh.
+  across the automatic refresh. Resolving closes an alert, but a condition still present comes
+  back with the next snapshot. **Accept** (on one alert or a whole group) declares it legitimate,
+  such as a file a library ships: it is not raised again while its evidence (for a file, its size
+  and SHA-256) stays the same, and a changed file or a new one is an alert again. The server's
+  page lists what was accepted, by whom and when, and puts any of it back under watch. Silences,
+  broken chains, sensor events and the verifier's own alerts cannot be accepted.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 

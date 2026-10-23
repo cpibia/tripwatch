@@ -18,6 +18,19 @@
   {{else}}<p class="empty">Nessun allarme per questo server.</p>{{end}}
 </section>
 
+{{if $d.Accepted}}
+<section aria-labelledby="accepted-h">
+  <div class="section-head"><h2 id="accepted-h">Accettati come legittimi</h2><p class="aside">non vengono segnalati finché restano identici; se cambiano, tornano allarmi</p></div>
+  <table class="grid">
+    <thead><tr><th scope="col">Allarme</th><th scope="col">Da</th><th scope="col" class="num">Quando</th><th scope="col"><span class="sr">Azioni</span></th></tr></thead>
+    <tbody>{{range $d.Accepted}}
+    <tr><td class="what">{{.Title}}</td><td class="state">{{.AcceptedBy}}</td><td class="num"><time datetime="{{iso .AcceptedAt}}" title="{{stamp .AcceptedAt}}">{{clock .AcceptedAt}}</time></td>
+      <td class="act"><form method="post" action="/hosts/{{$h.ID}}/withdraw"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="fingerprint" value="{{.Fingerprint}}"><button type="submit">Rimetti sotto controllo<span class="sr">: {{.Title}}</span></button></form></td></tr>
+    {{end}}</tbody>
+  </table>
+</section>
+{{end}}
+
 <div class="pair">
 <section aria-labelledby="silence-h">
   <div class="section-head"><h2 id="silence-h">Silenzi</h2><p class="aside">ultimi 7 giorni, senza battiti per più di {{dur $d.SilenceAfter}}</p></div>

@@ -99,7 +99,7 @@ func New(c Config) (http.Handler, error) {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "host", "alerts", "alert", "enroll", "error"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -123,10 +123,12 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /{$}", s.authed(s.overview))
 	mux.HandleFunc("GET /hosts/{id}", s.authed(s.host))
 	mux.HandleFunc("POST /hosts/{id}/revoke", s.authed(s.revoke))
+	mux.HandleFunc("POST /hosts/{id}/withdraw", s.authed(s.withdraw))
 	mux.HandleFunc("GET /alerts", s.authed(s.alerts))
 	mux.HandleFunc("GET /alerts/{id}", s.authed(s.alert))
 	mux.HandleFunc("POST /alerts/{id}/ack", s.authed(s.ack))
 	mux.HandleFunc("POST /alerts/{id}/resolve", s.authed(s.resolve))
+	mux.HandleFunc("POST /alerts/{id}/accept", s.authed(s.accept))
 	mux.HandleFunc("POST /bulk/{action}", s.authed(s.bulk))
 	mux.HandleFunc("GET /enroll", s.authed(s.enrollForm))
 	mux.HandleFunc("POST /enroll", s.authed(s.enroll))
@@ -611,6 +613,7 @@ type hostData struct {
 	Alerts       []store.Alert
 	Silences     []Gap
 	Snapshots    []store.SnapshotHead
+	Accepted     []store.Acceptance
 }
 
 func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
@@ -640,8 +643,13 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
+	accepted, err := s.Store.Acceptances(ctx, h.ID)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	sum, has := summarize(alerts)
-	d := hostData{Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
+	d := hostData{Accepted: accepted, Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
 		Silences: silences(marks, h.EnrolledAt, now, store.ActivityRetention, s.SilenceAfter)}
 	if h.Revoked && len(d.Silences) > 0 && d.Silences[0].Ongoing {
 		d.Silences = d.Silences[1:]
@@ -665,6 +673,17 @@ func (s *server) revoke(w http.ResponseWriter, r *http.Request, se session) {
 	}
 	s.Log.Info("host revoked", "host", id, "by", se.Email)
 	http.Redirect(w, r, "/hosts/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+// withdraw puts a finding accepted on a host back under watch.
+func (s *server) withdraw(w http.ResponseWriter, r *http.Request, se session) {
+	id, fp := r.PathValue("id"), r.PostFormValue("fingerprint")
+	if err := s.Store.Withdraw(r.Context(), id, fp); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.internal(w, r, err)
+		return
+	}
+	s.Log.Info("acceptance withdrawn", "host", id, "fingerprint", fp, "by", se.Email)
+	http.Redirect(w, r, "/hosts/"+url.PathEscape(id)+"#accepted-h", http.StatusSeeOther)
 }
 
 // Alerts.
@@ -974,6 +993,10 @@ func (s *server) resolve(w http.ResponseWriter, r *http.Request, se session) {
 	s.transition(w, r, se, s.Store.Resolve, "alert resolved")
 }
 
+func (s *server) accept(w http.ResponseWriter, r *http.Request, se session) {
+	s.transition(w, r, se, s.Store.AcceptAlert, "alert accepted")
+}
+
 // maxBulk bounds the alerts one bulk action names: a table shows at most a few hundred.
 const maxBulk = 1000
 
@@ -984,6 +1007,8 @@ func (s *server) bulk(w http.ResponseWriter, r *http.Request, se session) {
 	case "ack":
 	case "resolve":
 		apply, msg = s.Store.Resolve, "alerts resolved"
+	case "accept":
+		apply, msg = s.Store.AcceptAlert, "alerts accepted"
 	default:
 		http.NotFound(w, r)
 		return

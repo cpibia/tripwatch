@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS alert_diffs (
 	lines       TEXT NOT NULL,
 	computed_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS accepted (
+	host_id     TEXT NOT NULL,
+	fingerprint TEXT NOT NULL,
+	evidence    TEXT NOT NULL,
+	title       TEXT NOT NULL,
+	accepted_by TEXT NOT NULL,
+	accepted_at INTEGER NOT NULL,
+	PRIMARY KEY (host_id, fingerprint)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS login_links (
 	token_hash BLOB PRIMARY KEY,
 	email      TEXT NOT NULL,

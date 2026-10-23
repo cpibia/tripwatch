@@ -6,12 +6,23 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update both the verifier and the sensors.
+
 ### Sensor
 
 - Hidden scripts that libraries ship on purpose are no longer reported as hidden: the
   `.php_cs.php` and `.php_cs.dist.php` tool configurations, and hidden files inside the test
   directories of a dependency (`vendor/`, `node_modules/`, `bower_components/`, under `tests/`,
   `test/`, `fixtures/`). Webshell signatures are still searched in them.
+
+### Verifier
+
+- **Accept** an alert, or a whole group, as legitimate. A resolved alert whose condition is still
+  present comes back with the next snapshot; an accepted one is not raised again while its
+  evidence (for a file, its size and SHA-256; for a process, its executable and hash) stays the
+  same, and comes back as soon as it changes. The server's page lists what was accepted and puts
+  it back under watch. Silences, broken chains, sensor events and the verifier's own alerts
+  cannot be accepted.
 
 ### Documentation
 

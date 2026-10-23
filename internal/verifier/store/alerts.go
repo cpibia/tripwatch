@@ -108,10 +108,14 @@ func clip(s string, n int) string {
 
 // Raise records an alert. The same fingerprint on the same host updates the existing alert
 // instead of adding one, and reopens it if it had been resolved: a condition that comes back
-// is news again. It reports whether the alert is new or reopened.
+// is news again, unless someone accepted it with the same evidence. It reports whether the
+// alert is new or reopened.
 func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error) {
 	a.Title, a.Detail, a.Kind = clip(a.Title, MaxTitle), clip(a.Detail, MaxDetail), clip(a.Kind, 64)
 	a.Fingerprint = storedFingerprint(a.Fingerprint)
+	if ok, err := s.accepted(ctx, a); ok || err != nil {
+		return false, err
+	}
 	var status string
 	err := s.db.QueryRowContext(ctx, `SELECT status FROM alerts WHERE host_id = ? AND fingerprint = ?`, a.HostID, a.Fingerprint).Scan(&status)
 	switch {

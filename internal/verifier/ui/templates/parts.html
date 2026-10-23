@@ -27,6 +27,7 @@
   <td class="act">{{with .Pending}}<div class="actions">
     {{if $.Group.Open}}<form method="post" action="/bulk/ack"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}{{if eq .Status "open"}}<input type="hidden" name="id" value="{{.ID}}">{{end}}{{end}}<button type="submit">Prendi in carico tutti<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
     <form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit">Risolvi tutti<span class="sr">: {{$.Group.Label}}</span></button></form>
+    {{if acceptable $.Group.Lead}}<form method="post" action="/bulk/accept"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit" title="Non segnalarli più finché restano identici">Accetta tutti<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
   </div>{{end}}</td>
 </tr>
 {{end}}{{end}}
@@ -34,6 +35,7 @@
 {{define "actions"}}{{$a := .Alert}}{{if ne $a.Status "resolved"}}<div class="actions">
 {{if eq $a.Status "open"}}<form method="post" action="/alerts/{{$a.ID}}/ack"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Prendi in carico<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
 <form method="post" action="/alerts/{{$a.ID}}/resolve"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Risolvi<span class="sr">: {{$a.Title}}</span></button></form>
+{{if acceptable $a}}<form method="post" action="/alerts/{{$a.ID}}/accept"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit" title="Non segnalarlo più finché resta identico">Accetta<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
 </div>{{end}}{{end}}
 
 {{define "alerttable"}}

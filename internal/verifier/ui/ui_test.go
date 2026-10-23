@@ -787,3 +787,39 @@ func TestGroupLabel(t *testing.T) {
 		t.Error("alertRule does not keep the kind and rule only")
 	}
 }
+
+// Accepting a group closes its alerts and lists them on the host's page, where each can be put
+// back under watch.
+func TestAcceptGroupAndWithdraw(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"back": {"/hosts/web-01"}}
+	for _, p := range []string{"/srv/app/vendor/a/.cs.php", "/srv/app/vendor/b/.cs.php"} {
+		fp := "web:hidden_script:" + p
+		if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: fp, Severity: "high", Kind: "web", Title: "Script nascosto", Detail: p}, now); err != nil {
+			t.Fatal(err)
+		}
+		id, _ := h.store.AlertID(ctx, "web-01", fp)
+		form.Add("id", itoa(id))
+	}
+	form.Set("csrf", h.login())
+	if _, body := h.get("/hosts/web-01"); !strings.Contains(body, `action="/bulk/accept"`) {
+		t.Fatal("the group offers no acceptance")
+	}
+	if res, _ := h.post("/bulk/accept", form); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("bulk accept: status %d", res.StatusCode)
+	}
+	_, body := h.get("/hosts/web-01")
+	if !strings.Contains(body, "Accettati come legittimi") || strings.Count(body, `action="/hosts/web-01/withdraw"`) != 2 {
+		t.Fatalf("accepted list missing:\n%s", body)
+	}
+	if res, _ := h.post("/hosts/web-01/withdraw", url.Values{"csrf": form["csrf"], "fingerprint": {"web:hidden_script:/srv/app/vendor/a/.cs.php"}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("withdraw: status %d", res.StatusCode)
+	}
+	if list, _ := h.store.Acceptances(ctx, "web-01"); len(list) != 1 {
+		t.Fatalf("acceptances after withdrawal = %+v", list)
+	}
+}
