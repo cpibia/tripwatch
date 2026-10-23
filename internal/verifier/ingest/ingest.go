@@ -550,12 +550,14 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 	s.started(ctx, host, e, clipVersion(ev.Version), clipVersion(ev.BootID), now)
 }
 
-// started judges a start of the sensor against how its previous run ended. A new system boot
-// after a clean stop is a server switched off and on, and a new version on the same boot an
-// update: one low event each, so a server that is turned off every night does not raise three
-// alerts a day. The same boot and version means the service was restarted without a reboot,
-// which nobody needs to do: that stays high, as does a start whose history is unknown. A new
-// boot without a clean stop is a crash, a power cut, or a sensor killed before a reboot.
+// started judges a start of the sensor against how its previous run ended, from what the
+// sensor signed as it stopped. A new system boot after a stop made while systemd was shutting
+// the system down is a server switched off and on, and a new version on the same boot after a
+// stop for an update is an update: one low event each, so a server that is turned off every
+// night does not raise three alerts a day. Anything else stays high: the service stopped on a
+// running system and the server rebooted later, a crash or a killed sensor before a reboot, a
+// restart without reboot or update, a start whose history is unknown. Root can stop the sensor,
+// work, then reboot; only the signed shutdown makes the silence that follows ordinary.
 func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, version, boot string, now time.Time) {
 	run, err := s.Store.Run(ctx, host)
 	if err != nil {
@@ -568,16 +570,23 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 		Detail: fmt.Sprintf("The sensor started (version %s, system boot %s). If the server was not rebooted and the sensor was not updated, someone stopped and restarted it: check what happened while it was down.", version, boot),
 	}
 	known := run.BootID != "" && boot != ""
+	stopped := !run.StoppedAt.IsZero()
 	switch {
-	case known && boot != run.BootID && !run.StoppedAt.IsZero():
+	case known && boot != run.BootID && stopped && run.Shutdown:
 		a.Severity, a.Title = "low", "Server was off"
-		a.Detail = fmt.Sprintf("The sensor stopped cleanly at %s and started again at %s after a new system boot (version %s, system boot %s): the server was shut down or rebooted. If nobody did, check who could.", run.StoppedAt.Format(time.RFC3339), now.Format(time.RFC3339), version, boot)
+		a.Detail = fmt.Sprintf("The sensor stopped at %s while the system was shutting down, and started again at %s after a new system boot (version %s, system boot %s): the server was shut down or rebooted. If nobody did, check who could.", run.StoppedAt.Format(time.RFC3339), now.Format(time.RFC3339), version, boot)
+	case known && boot != run.BootID && stopped:
+		a.Title = "Sensor stopped before a reboot"
+		a.Detail = fmt.Sprintf("The sensor was stopped at %s while the system was running, and started again at %s after a new system boot (version %s, system boot %s): the server ran unwatched in between, and the reboot came later. Check what happened while it was down.", run.StoppedAt.Format(time.RFC3339), now.Format(time.RFC3339), version, boot)
 	case known && boot != run.BootID:
-		a.Severity, a.Title = "medium", "Server restarted without a clean stop"
+		a.Title = "Server restarted without a clean stop"
 		a.Detail = fmt.Sprintf("The sensor started after a new system boot (version %s, system boot %s) without having reported that it was stopping: a crash, a power cut, or a sensor killed before the reboot. Check what happened before it.", version, boot)
-	case known && version != run.Version && run.Version != "":
+	case known && stopped && run.StopReason == "updating" && version != run.Version && run.Version != "":
 		a.Severity, a.Title = "low", "Sensor updated"
-		a.Detail = fmt.Sprintf("The sensor started again on the same system boot with a new version: %s, before %s (system boot %s). Updating it restarts it; if nobody updated it, someone replaced it.", version, run.Version, boot)
+		a.Detail = fmt.Sprintf("The sensor was restarted by its update and runs a new version: %s, before %s (system boot %s).", version, run.Version, boot)
+	case known && version != run.Version && run.Version != "":
+		a.Title = "Sensor replaced without an update"
+		a.Detail = fmt.Sprintf("The sensor started again on the same system boot with another version, %s, before %s (system boot %s), but it did not stop for an update of its package: someone replaced the binary. Check where it came from.", version, run.Version, boot)
 	case known:
 		a.Title = "Sensor restarted without a reboot"
 		a.Detail = fmt.Sprintf("The sensor started again on the same system boot and version (%s, system boot %s): someone stopped and restarted the service, which neither updates nor reboots require. Check what happened while it was down.", version, boot)
@@ -596,11 +605,12 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 // does, and the next start says whether a reboot explains it.
 func (s *Server) stopping(ctx context.Context, host string, e protocol.Envelope, now time.Time) {
 	var ev struct {
-		Version string `json:"version"`
-		Reason  string `json:"reason"`
+		Version  string `json:"version"`
+		Reason   string `json:"reason"`
+		Shutdown bool   `json:"shutdown"`
 	}
 	_ = json.Unmarshal(e.Payload, &ev)
-	if err := s.Store.Stopped(ctx, host, now); err != nil {
+	if err := s.Store.Stopped(ctx, host, now, ev.Reason, ev.Shutdown); err != nil {
 		s.Log.Error("record sensor stop", "host", host, "err", err)
 	}
 	if ev.Reason != "package_removed" {

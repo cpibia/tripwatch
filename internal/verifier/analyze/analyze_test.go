@@ -146,10 +146,20 @@ func TestSilentSensor(t *testing.T) {
 		t.Fatal("a host sending heartbeats is reported silent")
 	}
 
-	// A sensor that said it was stopping is silent at medium for a day, then high.
+	// A stop on a running system leaves the silence critical.
 	h.clock = h.clock.Add(time.Minute)
 	h.deliver(protocol.KindHeartbeat, nil)
-	if err := h.store.Stopped(ctx, "web-01", h.clock); err != nil {
+	if err := h.store.Stopped(ctx, "web-01", h.clock, "stopped", false); err != nil {
+		t.Fatal(err)
+	}
+	h.clock = h.clock.Add(time.Hour)
+	h.an.Silent(ctx, 3*time.Minute, 300*time.Hour)
+	if got := h.open()["sensor:silent"].Severity; got != "critical" {
+		t.Fatalf("silence after a stop on a running system: %q", got)
+	}
+	// A sensor that signed a shutdown is silent at medium for a day, then high.
+	h.deliver(protocol.KindHeartbeat, nil)
+	if err := h.store.Stopped(ctx, "web-01", h.clock, "stopped", true); err != nil {
 		t.Fatal(err)
 	}
 	for _, step := range []struct {

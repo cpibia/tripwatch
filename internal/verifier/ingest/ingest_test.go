@@ -456,22 +456,29 @@ func TestSensorStopsAndStarts(t *testing.T) {
 	started := func(version, boot string) string {
 		return `{"event":"sensor_started","version":"` + version + `","boot_id":"` + boot + `"}`
 	}
-	const stop = `{"event":"sensor_stopping","version":"1.2.0","reason":"stopped"}`
+	stop := func(reason string, shutdown bool) string {
+		return `{"event":"sensor_stopping","version":"1.2.0","reason":"` + reason + `","shutdown":` + strconv.FormatBool(shutdown) + `}`
+	}
 
 	send(started("1.2.0", "aaaaaaaa-1"))
 	if a := latest(); a.Title != "Sensor started" || a.Severity != "high" {
 		t.Fatalf("first start: %+v", a)
 	}
-	send(stop)
+	send(stop("stopped", true))
 	if n := len(h.alerts()); n != 1 {
 		t.Fatalf("a plain stop raised an alert: %d alerts", n)
 	}
-	for _, step := range []struct{ payload, title, severity string }{
-		{started("1.2.0", "bbbbbbbb-2"), "Server was off", "low"},
-		{started("1.2.1", "bbbbbbbb-2"), "Sensor updated", "low"},
-		{started("1.2.1", "bbbbbbbb-2"), "Sensor restarted without a reboot", "high"},
-		{started("1.2.1", "cccccccc-3"), "Server restarted without a clean stop", "medium"},
+	for _, step := range []struct{ stop, payload, title, severity string }{
+		{"", started("1.2.0", "bbbbbbbb-2"), "Server was off", "low"},
+		{stop("updating", false), started("1.2.1", "bbbbbbbb-2"), "Sensor updated", "low"},
+		{"", started("1.2.1", "bbbbbbbb-2"), "Sensor restarted without a reboot", "high"},
+		{"", started("1.2.1", "cccccccc-3"), "Server restarted without a clean stop", "high"},
+		{stop("stopped", false), started("1.2.1", "dddddddd-4"), "Sensor stopped before a reboot", "high"},
+		{stop("stopped", false), started("1.2.2", "dddddddd-4"), "Sensor replaced without an update", "high"},
 	} {
+		if step.stop != "" {
+			send(step.stop)
+		}
 		send(step.payload)
 		if a := latest(); a.Title != step.title || a.Severity != step.severity {
 			t.Fatalf("%s: got %q %s", step.title, a.Title, a.Severity)

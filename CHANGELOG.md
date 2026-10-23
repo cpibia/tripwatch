@@ -6,6 +6,21 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- The stop event says whether systemd was shutting the system down (`systemctl
+  is-system-running` answering `stopping`) and whether the stop is for an update: the package's
+  post-installation script and `-update` leave a marker before restarting the sensor.
+
+### Verifier
+
+- Security fix for the nightly shutdown handling of 0.1.10 and 0.1.11: severities are lowered only
+  on what the sensor signed. A stop on a running system keeps the silence critical and the next
+  start high, even after a reboot ("Sensor stopped before a reboot"); a new boot without a clean
+  stop is high; another version on the same boot without an update is high ("Sensor replaced
+  without an update"). Only a signed shutdown followed by a new boot is a low "Server was off",
+  and only a stop for an update followed by a new version a low "Sensor updated".
+
 ## [0.1.11] - 2026-10-23
 
 False positives seen on a real server, fixed. Update the verifier, then the sensors

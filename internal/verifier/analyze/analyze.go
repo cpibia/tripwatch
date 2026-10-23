@@ -478,12 +478,13 @@ func (a *Analyzer) Silent(ctx context.Context, limit, snapshotLimit time.Duratio
 			al := store.Alert{HostID: h.ID, Fingerprint: fp, Severity: "critical", Kind: "silence",
 				Title:  "The sensor is silent",
 				Detail: fmt.Sprintf("No heartbeat for %s (last: %s). The sensor is stopped, the server is unreachable, or someone turned it off.", span(now.Sub(last)), formatTime(last))}
-			// A sensor that said it was stopping, after its last heartbeat, went away cleanly: a
-			// shutdown or an administrator. That silence is medium for a day, the length of a
-			// server switched off at night; the next start tells a reboot from a restart.
-			if run, err := a.Store.Run(ctx, h.ID); err == nil && !run.StoppedAt.IsZero() && !run.StoppedAt.Before(last.Add(-2*time.Minute)) {
-				al.Severity, al.Title = "medium", "The sensor stopped and has not come back"
-				al.Detail = fmt.Sprintf("The sensor reported at %s that it was stopping, and has been silent for %s since: the server is off, or the service was stopped. Past a day this becomes high.", formatTime(run.StoppedAt), span(now.Sub(run.StoppedAt)))
+			// A sensor that signed, after its last heartbeat, that it stopped because systemd was
+			// shutting the system down went away with the server. That silence is medium for a
+			// day, the length of a server switched off at night; a stop on a running system stays
+			// critical, since root can stop the sensor and work before rebooting.
+			if run, err := a.Store.Run(ctx, h.ID); err == nil && run.Shutdown && !run.StoppedAt.IsZero() && !run.StoppedAt.Before(last.Add(-2*time.Minute)) {
+				al.Severity, al.Title = "medium", "The server was shut down"
+				al.Detail = fmt.Sprintf("The sensor reported at %s that it was stopping while the system was shutting down, and has been silent for %s since: the server is off. Past a day this becomes high.", formatTime(run.StoppedAt), span(now.Sub(run.StoppedAt)))
 				if now.Sub(run.StoppedAt) > cleanStopGrace {
 					al.Severity = "high"
 				}

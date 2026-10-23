@@ -509,11 +509,14 @@ not pretend otherwise, but aims to make both visible. Already today:
   stop or a suspension shorter than the silence threshold leaves a trace; a sensor that is
   stopped says so in a last signed event, and one removed with its package (`apt remove`,
   `dnf remove`) raises a high alert at once instead of only falling silent; each start is judged
-  against how the previous run ended, from the system boot it reports: a new boot after a clean
-  stop is one low "Server was off" event (a server switched off every night raises no more), a
-  new version on the same boot is an update, a new boot without a clean stop is medium, and the
-  same boot and version, a service restarted by hand, stays high. The silence after a clean stop
-  is medium for a day, then high, while an unannounced silence is critical;
+  against how the previous run ended, from what the sensor signed as it stopped: only a stop made
+  while systemd was shutting the system down, followed by a new boot, is one low "Server was off"
+  event (a server switched off every night raises no more), and only a stop for an update of the
+  package, followed by a new version, is a low "Sensor updated". A service stopped on a running
+  system stays critical while silent and high when it comes back, even after a later reboot, so
+  stopping the sensor, working and then rebooting is not quiet; so do a crash or a killed sensor
+  before a reboot, and another version without an update. The silence after a signed shutdown is
+  medium for a day, then high;
 - critical and high alerts do not close by themselves when the condition goes away: a
   compromised server could clean up and silence its own alerts, so a person closes them.
 

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -20,7 +22,7 @@ func TestRunFallsBackOnStartAlerts(t *testing.T) {
 	if err != nil || r.BootID != "0b9e6f3c-0000-4000-8000-000000000002" || r.Version != "0.1.8" || !r.StoppedAt.IsZero() {
 		t.Fatalf("run = %+v, %v", r, err)
 	}
-	if err := s.Stopped(ctx, "web-01", t0.Add(2*time.Hour)); err != nil {
+	if err := s.Stopped(ctx, "web-01", t0.Add(2*time.Hour), "stopped", true); err != nil {
 		t.Fatal(err)
 	}
 	if r, _ := s.Run(ctx, "web-01"); r.BootID != "0b9e6f3c-0000-4000-8000-000000000002" || !r.StoppedAt.Equal(t0.Add(2*time.Hour)) {
@@ -31,5 +33,30 @@ func TestRunFallsBackOnStartAlerts(t *testing.T) {
 	}
 	if r, _ := s.Run(ctx, "web-01"); r.BootID != "b2" || r.Version != "0.1.10" || !r.StoppedAt.IsZero() {
 		t.Fatalf("after a start: %+v", r)
+	}
+}
+
+// A database created by 0.1.10 gains the columns that record how the sensor stopped.
+func TestRunsMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE sensor_runs (host_id TEXT PRIMARY KEY, boot_id TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '', stopped_at INTEGER NOT NULL DEFAULT 0);
+		INSERT INTO sensor_runs (host_id, boot_id, version) VALUES ('web-01', 'b1', '0.1.10')`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.Stopped(context.Background(), "web-01", t0, "stopped", true); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := s.Run(context.Background(), "web-01"); err != nil || r.BootID != "b1" || !r.Shutdown || r.StopReason != "stopped" {
+		t.Fatalf("run = %+v, %v", r, err)
 	}
 }

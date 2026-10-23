@@ -211,6 +211,11 @@ func selfUpdate() error {
 		Executable: exe,
 		Out:        os.Stdout,
 		Run: func(ctx context.Context, out io.Writer, name string, args ...string) error {
+			// A binary install restarts the service itself: the running sensor reports the stop
+			// as an update.
+			if name == "systemctl" {
+				_ = os.WriteFile(filepath.Join("/var/lib/tripwatch", updatingMarker), nil, 0o600)
+			}
 			cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // fixed commands; the arguments are our own paths
 			cmd.Stdout, cmd.Stderr = out, out
 			return cmd.Run()
@@ -298,6 +303,7 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 	// no trace. If the verifier is unreachable the event stays pending and goes out first.
 	// A marker left by an earlier removal of the package means nothing to this run.
 	_ = os.Remove(filepath.Join(stateDir, removingMarker))
+	_ = os.Remove(filepath.Join(stateDir, updatingMarker))
 	bootID, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	started, _ := json.Marshal(map[string]string{"event": "sensor_started", "version": buildinfo.Version, "boot_id": strings.TrimSpace(string(bootID))})
 	if err := client.Send(ctx, protocol.KindEvent, started, time.Now()); err != nil && ctx.Err() == nil {
@@ -357,8 +363,24 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 	}
 }
 
-// removingMarker is left in the state directory by the package's pre-removal script.
-const removingMarker = "removing"
+// Markers left in the state directory for the running sensor to read as it stops: by the
+// package's pre-removal script, and by the package's post-installation script or -update before
+// they restart it on a new version.
+const (
+	removingMarker = "removing"
+	updatingMarker = "updating"
+)
+
+// systemStopping reports whether systemd is shutting the system down: only then does the
+// verifier take a stop for a shutdown. A stop of the service on a running system is not one.
+func systemStopping() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// is-system-running exits non-zero for every state but "running", "stopping" included: only
+	// its output counts.
+	out, _ := exec.CommandContext(ctx, "systemctl", "is-system-running").Output()
+	return strings.TrimSpace(string(out)) == "stopping"
+}
 
 // stopping tells the verifier, as the last envelope of the chain, that the sensor is going away
 // and why: removed with its package, or stopped (by hand, or for a reboot). Without it a stop
@@ -367,8 +389,10 @@ func stopping(log *slog.Logger, client *transport.Client, stateDir string) {
 	reason := "stopped"
 	if _, err := os.Stat(filepath.Join(stateDir, removingMarker)); err == nil {
 		reason = "package_removed"
+	} else if _, err := os.Stat(filepath.Join(stateDir, updatingMarker)); err == nil {
+		reason = "updating"
 	}
-	payload, _ := json.Marshal(map[string]string{"event": "sensor_stopping", "version": buildinfo.Version, "reason": reason})
+	payload, _ := json.Marshal(map[string]any{"event": "sensor_stopping", "version": buildinfo.Version, "reason": reason, "shutdown": systemStopping()})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := client.Send(ctx, protocol.KindEvent, payload, time.Now()); err != nil {

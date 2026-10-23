@@ -106,7 +106,9 @@ CREATE TABLE IF NOT EXISTS sensor_runs (
 	host_id    TEXT PRIMARY KEY,
 	boot_id    TEXT NOT NULL DEFAULT '',
 	version    TEXT NOT NULL DEFAULT '',
-	stopped_at INTEGER NOT NULL DEFAULT 0
+	stopped_at INTEGER NOT NULL DEFAULT 0,
+	stop_reason TEXT NOT NULL DEFAULT '',
+	shutdown   INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS enroll_tokens (
 	host_id    TEXT PRIMARY KEY,
@@ -227,6 +229,18 @@ func migrate(db *sql.DB) error {
 		}
 		if n == 0 {
 			if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts ADD COLUMN `+col+` TEXT NOT NULL DEFAULT ''`); err != nil { //nolint:gosec // column names from the list above
+				return err
+			}
+		}
+	}
+	// sensor_runs as created by 0.1.10 lacks how the sensor said it stopped.
+	for col, def := range map[string]string{"stop_reason": "TEXT NOT NULL DEFAULT ''", "shutdown": "INTEGER NOT NULL DEFAULT 0"} {
+		var have int
+		if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('sensor_runs') WHERE name = ?`, col).Scan(&have); err != nil {
+			return err
+		}
+		if have == 0 {
+			if _, err := db.ExecContext(context.Background(), `ALTER TABLE sensor_runs ADD COLUMN `+col+` `+def); err != nil { //nolint:gosec // names and definitions from the map above
 				return err
 			}
 		}
