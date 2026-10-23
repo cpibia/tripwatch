@@ -288,7 +288,13 @@ type AlertFilter struct {
 	Limit      int
 	// Oldest orders by creation, oldest first, within each severity instead of newest update.
 	Oldest bool
+	// Current leaves out the alerts of revoked hosts, which no longer report: their alerts stay
+	// as a record, but they no longer describe the fleet.
+	Current bool
 }
+
+// currentHosts is the condition that keeps alerts of hosts still enrolled.
+const currentHosts = `host_id NOT IN (SELECT id FROM hosts WHERE revoked = 1)`
 
 // Alert returns one alert by id.
 func (s *Store) Alert(ctx context.Context, id int64) (Alert, error) {
@@ -330,6 +336,9 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 	}
 	if f.Unnotified {
 		q += ` AND notified_at = 0`
+	}
+	if f.Current {
+		q += ` AND ` + currentHosts
 	}
 	if len(f.Statuses) > 0 {
 		q += ` AND status IN (?` + repeat(",?", len(f.Statuses)-1) + `)` //nolint:gosec // placeholders only; values are bound
@@ -401,7 +410,7 @@ func (s *Store) Summaries(ctx context.Context) (map[string]HostSummary, error) {
 		occurrences, COALESCE(acked_by, ''), notified_at, n FROM (
 			SELECT *, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY status = 'open' DESC, `+severityOrder+`, created_at, id) AS rn,
 				COUNT(*) OVER (PARTITION BY host_id) AS n
-			FROM alerts WHERE status != 'resolved'
+			FROM alerts WHERE status != 'resolved' AND `+currentHosts+`
 		) WHERE rn = 1`)
 	if err != nil {
 		return nil, err
@@ -428,11 +437,11 @@ type Tally struct {
 	Oldest time.Time
 }
 
-// Tallies counts unresolved alerts: "acknowledged" for those someone took, and otherwise by
-// severity; silence alerts are left out, the overview counts silent hosts itself.
+// Tallies counts unresolved alerts of enrolled hosts: "acknowledged" for those someone took, and
+// otherwise by severity; silence alerts are left out, the overview counts silent hosts itself.
 func (s *Store) Tallies(ctx context.Context) (map[string]Tally, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN status = 'acknowledged' THEN 'acknowledged' ELSE severity END AS k,
-		COUNT(*), MIN(created_at) FROM alerts WHERE status != 'resolved' AND kind != 'silence' GROUP BY k`)
+		COUNT(*), MIN(created_at) FROM alerts WHERE status != 'resolved' AND kind != 'silence' AND `+currentHosts+` GROUP BY k`)
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +472,7 @@ func repeat(s string, n int) string {
 // tab icon red.
 func (s *Store) Alarming(ctx context.Context) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM alerts WHERE status = 'open' AND severity = 'critical')`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM alerts WHERE status = 'open' AND severity = 'critical' AND `+currentHosts+`)`).Scan(&n)
 	return n == 1, err
 }
 
@@ -486,7 +495,7 @@ type Raised struct {
 func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT host_id, fingerprint, severity, kind, title,
 		CASE WHEN kind = 'weblog' THEN detail ELSE '' END, status, created_at, occurrences
-		FROM alerts WHERE created_at >= ? ORDER BY created_at`, since.Unix())
+		FROM alerts WHERE created_at >= ? AND `+currentHosts+` ORDER BY created_at`, since.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +515,7 @@ func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, err
 
 // OpenBySeverity counts the unresolved alerts of every host by severity, silences included.
 func (s *Store) OpenBySeverity(ctx context.Context) (map[string]map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT host_id, severity, COUNT(*) FROM alerts WHERE status != 'resolved' GROUP BY host_id, severity`)
+	rows, err := s.db.QueryContext(ctx, `SELECT host_id, severity, COUNT(*) FROM alerts WHERE status != 'resolved' AND `+currentHosts+` GROUP BY host_id, severity`)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- Revoked servers no longer count in the overview: they are left out of the figures, the charts,
+  the server cells, the healthy count and the alarm mark, and named apart under Servers. Their
+  pages keep their alerts as a record.
+
 ## [0.1.5] - 2026-10-23
 
 Update the verifier and the sensors.

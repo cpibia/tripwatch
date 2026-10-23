@@ -893,3 +893,36 @@ func TestBoardLeadsWithDeviations(t *testing.T) {
 		t.Errorf("font: status %d", res.StatusCode)
 	}
 }
+
+// A revoked host no longer describes the fleet: the overview names it apart and leaves its
+// alerts out of the figures, the server cells and the alarm mark, while its page keeps them.
+func TestOverviewLeavesRevokedHostsOut(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "old-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.Raise(ctx, store.Alert{HostID: "old-01", Fingerprint: "web:signature:/srv/x.php", Severity: "critical", Kind: "web", Title: "Webshell signature", Detail: "/srv/x.php"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Revoke(ctx, "old-01"); err != nil {
+		t.Fatal(err)
+	}
+	h.login()
+	_, body := h.get("/")
+	if strings.Contains(body, `class="cell `) || strings.Contains(body, "Webshell signature") {
+		t.Error("the revoked host still counts in the overview")
+	}
+	if !regexp.MustCompile(`kpi k-critical"[^>]*>\s*<span class="kpi-label"><svg[^>]*>.*?</svg>Critical</span>\s*<span class="kpi-n">0</span>`).MatchString(body) {
+		t.Error("the revoked host's alert is counted")
+	}
+	if strings.Contains(body, "mark-alarm.svg") {
+		t.Error("the revoked host's alert turns the mark red")
+	}
+	if !strings.Contains(body, `Revoked: <a class="mono" href="/hosts/old-01">old-01</a>`) {
+		t.Error("the revoked host is not named apart")
+	}
+	if _, body := h.get("/hosts/old-01"); !strings.Contains(body, "Webshell signature") {
+		t.Error("the revoked host's page lost its alerts")
+	}
+}

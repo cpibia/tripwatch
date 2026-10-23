@@ -276,6 +276,8 @@ h2 { font-size: var(--fs-lg); line-height: 1.3; }
 .cell.st-silent a { background: repeating-linear-gradient(-45deg, var(--hatch) 0 1px, transparent 1px 6px), var(--raised); }
 .cell.st-critical .cell-state, .cell.st-silent .cell-state { color: var(--red); font-weight: 500; }
 .cell.st-high .cell-state { color: var(--amber-text); font-weight: 500; }
+.revoked-list { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
+.revoked-list a { color: var(--muted); }
 .ok-dot { width: 10px; height: 10px; flex: none; border: 1.5px solid var(--muted); }
 
 .ranking { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }

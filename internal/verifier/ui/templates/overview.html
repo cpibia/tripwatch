@@ -51,8 +51,9 @@
     {{end}}
   </ul>
   {{else}}
-  <p class="empty">No server enrolled yet. <a href="/enroll">Enroll the first server</a>: it shows up here with its first heartbeat.</p>
+  <p class="empty">No server enrolled{{if $d.Revoked}} now{{else}} yet{{end}}. <a href="/enroll">Enroll {{if $d.Revoked}}a{{else}}the first{{end}} server</a>: it shows up here with its first heartbeat.</p>
   {{end}}
+  {{with $d.Revoked}}<p class="revoked-list">Revoked: {{range $i, $id := .}}{{if $i}}, {{end}}<a class="mono" href="/hosts/{{$id}}">{{$id}}</a>{{end}}</p>{{end}}
 </section>
 
 <section class="panel p-open" aria-labelledby="alerts-h">

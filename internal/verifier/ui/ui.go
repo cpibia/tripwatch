@@ -557,6 +557,8 @@ type overviewData struct {
 	Rules    []rankRow
 	Loaded   []rankRow
 	Web      webAttacks
+	// Revoked hosts no longer report: the overview only names them, their pages keep the record.
+	Revoked []string
 }
 
 // overviewAlerts bounds the alert table of the overview; counters and host rows are computed
@@ -573,7 +575,7 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	open, err := s.Store.Alerts(ctx, store.AlertFilter{Statuses: []string{store.StatusOpen, store.StatusAcked}, Limit: overviewAlerts})
+	open, err := s.Store.Alerts(ctx, store.AlertFilter{Statuses: []string{store.StatusOpen, store.StatusAcked}, Limit: overviewAlerts, Current: true})
 	if err != nil {
 		s.internal(w, r, err)
 		return
@@ -617,6 +619,10 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 	d := overviewData{Alerts: open, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r),
 		Timeline: buildTimeline(raised, r.URL.Query().Get("range"), now), Rules: buildRules(raised, 8), Loaded: buildHosts(bySeverity, 8), Web: buildWeb(raised, 6)}
 	for _, h := range hosts {
+		if h.Revoked {
+			d.Revoked = append(d.Revoked, h.ID)
+			continue
+		}
 		sum, has := summaries[h.ID]
 		row := s.hostRow(h, sum, has)
 		switch row.State {
