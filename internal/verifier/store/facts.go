@@ -10,24 +10,33 @@ import (
 // HostFacts is what the fleet page shows of a host: its system as the sensor read it, and what
 // the latest snapshot found on it. All of it comes from the host, so it is data, never markup.
 type HostFacts struct {
-	OS                string    `json:"os,omitempty"`
-	OSID              string    `json:"os_id,omitempty"`
-	OSVersion         string    `json:"os_version,omitempty"`
-	Kernel            string    `json:"kernel,omitempty"`
-	Arch              string    `json:"arch,omitempty"`
-	Hostname          string    `json:"hostname,omitempty"`
-	BootedAt          time.Time `json:"booted_at,omitzero"`
-	CPUs              int       `json:"cpus,omitempty"`
-	MemoryBytes       uint64    `json:"memory_bytes,omitempty"`
-	Addresses         []string  `json:"addresses,omitempty"`
-	SensorVersion     string    `json:"sensor_version,omitempty"`
-	Environment       string    `json:"environment,omitempty"`
-	ContainerRuntimes []string  `json:"container_runtimes,omitempty"`
-	PackageManager    string    `json:"package_manager,omitempty"`
-	Packages          int       `json:"packages,omitempty"`
-	Apps              []AppFact `json:"apps,omitempty"`
-	Listening         int       `json:"listening,omitempty"`
-	SeenAt            time.Time `json:"seen_at"`
+	OS                string        `json:"os,omitempty"`
+	OSID              string        `json:"os_id,omitempty"`
+	OSVersion         string        `json:"os_version,omitempty"`
+	Kernel            string        `json:"kernel,omitempty"`
+	Arch              string        `json:"arch,omitempty"`
+	Hostname          string        `json:"hostname,omitempty"`
+	BootedAt          time.Time     `json:"booted_at,omitzero"`
+	CPUs              int           `json:"cpus,omitempty"`
+	MemoryBytes       uint64        `json:"memory_bytes,omitempty"`
+	Addresses         []string      `json:"addresses,omitempty"`
+	SensorVersion     string        `json:"sensor_version,omitempty"`
+	Environment       string        `json:"environment,omitempty"`
+	ContainerRuntimes []string      `json:"container_runtimes,omitempty"`
+	PackageManager    string        `json:"package_manager,omitempty"`
+	Packages          int           `json:"packages,omitempty"`
+	Apps              []AppFact     `json:"apps,omitempty"`
+	Listening         int           `json:"listening,omitempty"`
+	Realtime          *RealtimeFact `json:"realtime,omitempty"`
+	SeenAt            time.Time     `json:"seen_at"`
+}
+
+// RealtimeFact says whether the sensor's real-time watchers run, and why not when they do not.
+type RealtimeFact struct {
+	Files     bool     `json:"files"`
+	Processes bool     `json:"processes"`
+	Watches   int      `json:"watches,omitempty"`
+	Issues    []string `json:"issues,omitempty"`
 }
 
 // AppFact is one web application found on a host.

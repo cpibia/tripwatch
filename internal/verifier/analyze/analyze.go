@@ -26,6 +26,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/discovery"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
+	"github.com/cpibia/tripwatch/internal/watch"
 )
 
 // Limits on a decompressed snapshot, which comes from a host that may be compromised. Real
@@ -61,6 +62,7 @@ func severityRank(s string) int {
 type Report struct {
 	Environment discovery.Environment `json:"environment"`
 	Snapshot    collector.Snapshot    `json:"snapshot"`
+	Realtime    *watch.Status         `json:"realtime,omitempty"`
 }
 
 // State is a snapshot decoded into the collectors' result types. A collector missing from the
@@ -83,6 +85,8 @@ type State struct {
 	Web         *web.Result
 	Weblog      *logs.Result
 	Apps        *apps.Result
+	// Realtime is nil for sensors that predate the real-time watchers.
+	Realtime *watch.Status
 }
 
 // Decode reads a payload as sent by the sensor: gzip-compressed JSON.
@@ -106,7 +110,7 @@ func Decode(payload []byte) (State, error) {
 		return State{}, err
 	}
 
-	st := State{TakenAt: r.Snapshot.TakenAt, Environment: r.Environment, Errors: r.Snapshot.Errors, Warnings: r.Snapshot.Warnings}
+	st := State{TakenAt: r.Snapshot.TakenAt, Environment: r.Environment, Errors: r.Snapshot.Errors, Warnings: r.Snapshot.Warnings, Realtime: r.Realtime}
 	targets := map[string]any{
 		"accounts": &st.Accounts, "ssh": &st.SSH, "sudoers": &st.Sudoers, "scheduled": &st.Scheduled,
 		"services": &st.Services, "hooks": &st.Hooks, "processes": &st.Processes, "sockets": &st.Sockets,
@@ -506,8 +510,12 @@ func formatTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04 MST")
 }
 
-// maxAppFacts bounds the applications listed among a host's facts.
-const maxAppFacts = 50
+// maxAppFacts bounds the applications listed among a host's facts, maxRealtimeIssues the
+// problems of its real-time watchers.
+const (
+	maxAppFacts       = 50
+	maxRealtimeIssues = 5
+)
 
 // Facts sums up a snapshot for the fleet page: the sensor's system block, the environment, and
 // what the collectors counted.
@@ -516,6 +524,18 @@ func Facts(st State) store.HostFacts {
 	if sys := st.Environment.System; sys != nil {
 		f.OS, f.OSID, f.OSVersion, f.Kernel, f.Arch, f.Hostname = sys.OS, sys.OSID, sys.OSVersion, sys.Kernel, sys.Arch, sys.Hostname
 		f.BootedAt, f.CPUs, f.MemoryBytes, f.Addresses, f.SensorVersion = sys.BootedAt, sys.CPUs, sys.MemoryBytes, sys.Addresses, sys.SensorVersion
+	}
+	if rt := st.Realtime; rt != nil {
+		f.Realtime = &store.RealtimeFact{Files: rt.Files, Processes: rt.Processes, Watches: rt.Watches}
+		for i, issue := range rt.Issues {
+			if i == maxRealtimeIssues {
+				break
+			}
+			if len(issue) > 300 {
+				issue = strings.ToValidUTF8(issue[:300], "")
+			}
+			f.Realtime.Issues = append(f.Realtime.Issues, issue)
+		}
 	}
 	if p := st.Packages; p != nil {
 		f.PackageManager, f.Packages = p.Manager, p.Packages

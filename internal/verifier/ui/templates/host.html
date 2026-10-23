@@ -25,6 +25,7 @@
     <div><dt>Sensor</dt><dd><span class="mono">{{if .SensorVersion}}{{.SensorVersion}}{{else}}unknown{{end}}</span>{{if $d.Outdated}} <span class="flag-update">update available: <code class="mono">tripwatch-sensor -update</code></span>{{end}}</dd></div>
     <div><dt>Packages</dt><dd>{{if .PackageManager}}{{.Packages}} ({{.PackageManager}}){{else}}-{{end}}</dd></div>
     <div><dt>Listening ports</dt><dd>{{.Listening}}</dd></div>
+    <div><dt>Real-time watch</dt><dd>{{with .Realtime}}{{if and .Files .Processes}}files and processes{{else if .Files}}files only{{else if .Processes}}processes only{{else}}<span class="flag-off">off</span>{{end}}{{if .Watches}} · {{.Watches}} {{plural .Watches "directory" "directories"}}{{end}}{{else}}<span class="quiet">not in this sensor version</span>{{end}}</dd></div>
     <div><dt>Addresses</dt><dd class="mono">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{else}}-{{end}}</dd></div>
   </dl>
   {{with .Apps}}<div class="apps-list"><h3>Web applications</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span></li>{{end}}</ul></div>{{end}}
@@ -35,6 +36,23 @@
   <div class="section-head"><h2 id="alerts-h">Alerts</h2><p class="aside">every status, the most severe on top</p></div>
   {{if $d.Alerts}}{{template "alerttable" (hosttable $d.Alerts .CSRF .Path)}}
   {{else}}<p class="empty">No alerts for this server.</p>{{end}}
+</section>
+
+<section aria-labelledby="events-h">
+  <div class="section-head"><h2 id="events-h">Real-time events</h2><p class="aside">newest first, kept 7 days: data from the server</p></div>
+  {{if $d.Events}}
+  <table class="grid events">
+    <thead><tr><th scope="col" class="num">When</th><th scope="col">Area</th><th scope="col">Path or program</th><th scope="col">What happened</th></tr></thead>
+    <tbody>{{range $d.Events}}
+    <tr><td class="num"><time datetime="{{iso .At}}" title="{{stamp .At}}">{{clock .At}}</time></td><td class="area">{{.Class}}</td>
+      <td class="what"><span class="mono">{{.Subject}}</span>{{with .Detail}}<span class="subject mono">{{.}}</span>{{end}}</td>
+      <td class="state">{{.What}}{{if .PackageManager}}<span class="by">during a package installation</span>{{end}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}{{with $d.Facts}}{{with .Realtime}}{{if or .Files .Processes}}<p class="empty">Nothing changed in the watched places in the last 7 days.</p>
+  {{else}}<p class="empty">The sensor's real-time watchers are not running, so changes show only in snapshots.{{range .Issues}} <span class="mono">{{.}}</span>{{end}}</p>{{end}}
+  {{else}}<p class="empty">This sensor version reports changes only in its snapshots: update it with <code class="mono">tripwatch-sensor -update</code> to see them as they happen.</p>{{end}}
+  {{else}}<p class="empty">No events yet.</p>{{end}}{{end}}
 </section>
 
 {{if $d.Accepted}}

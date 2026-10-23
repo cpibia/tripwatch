@@ -667,6 +667,7 @@ type hostData struct {
 	Facts        *store.HostFacts
 	Outdated     bool
 	Release      string
+	Events       []eventRow
 }
 
 func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
@@ -706,8 +707,13 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
+	events, err := s.Store.HostEvents(ctx, h.ID, maxEventRows)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	sum, has := summarize(alerts)
-	d := hostData{Accepted: accepted, Release: s.release(), Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
+	d := hostData{Events: eventRows(events), Accepted: accepted, Release: s.release(), Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
 		Silences: silences(marks, h.EnrolledAt, now, store.ActivityRetention, s.SilenceAfter)}
 	if f, ok := facts[h.ID]; ok {
 		d.Facts = &f

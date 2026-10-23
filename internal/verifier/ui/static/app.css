@@ -390,6 +390,10 @@ table.hosts tbody tr:hover, table.alerts tbody tr:hover { background: var(--surf
 /* Silence is drawn as a presence: a mark, a word and a hatched row, never just a dimmed one. */
 tr.st-silent td { background: repeating-linear-gradient(-45deg, var(--hatch) 0 1px, transparent 1px 6px); }
 .flag { color: var(--red); font-weight: 600; }
+.flag-off { color: var(--amber-text); font-weight: 500; }
+td.area { white-space: nowrap; color: var(--ink-2); font-size: var(--fs-sm); }
+table.events td.what .mono { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+table.events td.what .subject { white-space: pre-wrap; }
 .st-silent td.num { color: var(--ink); }
 
 .legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 12px 0 0; padding: 0; font-size: var(--fs-xs); color: var(--muted); }
@@ -577,6 +581,14 @@ details.revoke[open] > summary::after { content: " \2212"; }
   table.alerts tr.is-picked, table.alerts .group-rows tr { background: var(--surface); }
   table.alerts tr.is-picked td, table.alerts .group-rows td { background: none; box-shadow: none; }
   table.alerts .group-rows tr { padding-left: 12px; box-shadow: inset var(--hair) 0 0 var(--rule-strong); }
+  table.events, table.events tbody { display: block; }
+  table.events thead { display: none; }
+  table.events tr { display: grid; grid-template-columns: auto auto minmax(0, 1fr); grid-template-areas: "what what what" "when area state"; gap: 4px 12px; padding: 10px 0; border-bottom: var(--hair) solid var(--rule); }
+  table.events td { padding: 0; border: 0; }
+  table.events td.num { grid-area: when; text-align: left; }
+  table.events td.area { grid-area: area; }
+  table.events td.what { grid-area: what; }
+  table.events td.state { grid-area: state; white-space: normal; }
   .form.inline { grid-template-columns: minmax(0, 1fr); }
   .tabs { margin-bottom: -12px; }
 }
