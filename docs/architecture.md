@@ -201,7 +201,7 @@ not need a database.
 | Package | Role |
 |---|---|
 | `internal/protocol` | envelope format, signing, chain verification |
-| `internal/discovery` | runtime environment, container runtimes, nginx, Apache and Caddy sites with their routing, applications and active runtimes |
+| `internal/discovery` | runtime environment, container runtimes, the machine's system (distribution, kernel, resources, addresses), nginx, Apache and Caddy sites with their routing, applications and active runtimes |
 | `internal/collector` | collector contract, snapshot, file description (hash, owner, inode flags) |
 | `internal/collector/system` | accounts, SSH, sudoers, cron and at, systemd units, startup hooks, processes, sockets, package verification, privileged files |
 | `internal/collector/web` | for each application: code hash tree, uploads, polyglots, webshell signatures, hidden files, reachable scripts |

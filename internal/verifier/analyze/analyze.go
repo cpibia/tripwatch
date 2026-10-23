@@ -66,22 +66,23 @@ type Report struct {
 // State is a snapshot decoded into the collectors' result types. A collector missing from the
 // snapshot (failed, disabled) leaves its field nil, and rules on it do not run.
 type State struct {
-	TakenAt    time.Time
-	Errors     map[string]string
-	Warnings   []string
-	Accounts   *system.AccountsResult
-	SSH        *system.SSHResult
-	Sudoers    *system.SudoersResult
-	Scheduled  *system.ScheduledResult
-	Services   *system.ServicesResult
-	Hooks      *system.HooksResult
-	Processes  *system.ProcessesResult
-	Sockets    *system.SocketsResult
-	Packages   *system.PackagesResult
-	Privileged *system.PrivilegedResult
-	Web        *web.Result
-	Weblog     *logs.Result
-	Apps       *apps.Result
+	TakenAt     time.Time
+	Environment discovery.Environment
+	Errors      map[string]string
+	Warnings    []string
+	Accounts    *system.AccountsResult
+	SSH         *system.SSHResult
+	Sudoers     *system.SudoersResult
+	Scheduled   *system.ScheduledResult
+	Services    *system.ServicesResult
+	Hooks       *system.HooksResult
+	Processes   *system.ProcessesResult
+	Sockets     *system.SocketsResult
+	Packages    *system.PackagesResult
+	Privileged  *system.PrivilegedResult
+	Web         *web.Result
+	Weblog      *logs.Result
+	Apps        *apps.Result
 }
 
 // Decode reads a payload as sent by the sensor: gzip-compressed JSON.
@@ -105,7 +106,7 @@ func Decode(payload []byte) (State, error) {
 		return State{}, err
 	}
 
-	st := State{TakenAt: r.Snapshot.TakenAt, Errors: r.Snapshot.Errors, Warnings: r.Snapshot.Warnings}
+	st := State{TakenAt: r.Snapshot.TakenAt, Environment: r.Environment, Errors: r.Snapshot.Errors, Warnings: r.Snapshot.Warnings}
 	targets := map[string]any{
 		"accounts": &st.Accounts, "ssh": &st.SSH, "sudoers": &st.Sudoers, "scheduled": &st.Scheduled,
 		"services": &st.Services, "hooks": &st.Hooks, "processes": &st.Processes, "sockets": &st.Sockets,
@@ -317,6 +318,9 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			Title: "Snapshot refused", Detail: err.Error() + ". A sound sensor does not produce snapshots like this: the server may be compromised."})
 		return
 	}
+	if err := a.Store.SetFacts(ctx, host, Facts(state)); err != nil {
+		a.Log.Error("keep host facts", "host", host, "err", err)
+	}
 	prev, lost := a.base(ctx, state, prevSnap)
 
 	findings := Evaluate(prev, state)
@@ -500,4 +504,38 @@ func formatTime(t time.Time) string {
 		return "never"
 	}
 	return t.Format("2006-01-02 15:04 MST")
+}
+
+// maxAppFacts bounds the applications listed among a host's facts.
+const maxAppFacts = 50
+
+// Facts sums up a snapshot for the fleet page: the sensor's system block, the environment, and
+// what the collectors counted.
+func Facts(st State) store.HostFacts {
+	f := store.HostFacts{SeenAt: st.TakenAt, Environment: string(st.Environment.Kind), ContainerRuntimes: st.Environment.ContainerRuntimes}
+	if sys := st.Environment.System; sys != nil {
+		f.OS, f.OSID, f.OSVersion, f.Kernel, f.Arch, f.Hostname = sys.OS, sys.OSID, sys.OSVersion, sys.Kernel, sys.Arch, sys.Hostname
+		f.BootedAt, f.CPUs, f.MemoryBytes, f.Addresses, f.SensorVersion = sys.BootedAt, sys.CPUs, sys.MemoryBytes, sys.Addresses, sys.SensorVersion
+	}
+	if p := st.Packages; p != nil {
+		f.PackageManager, f.Packages = p.Manager, p.Packages
+	}
+	if w := st.Web; w != nil {
+		for _, app := range w.Apps {
+			if len(f.Apps) == maxAppFacts {
+				break
+			}
+			f.Apps = append(f.Apps, store.AppFact{Path: app.Path, Framework: app.Framework, Version: app.Version})
+		}
+	}
+	if so := st.Sockets; so != nil {
+		seen := map[string]bool{}
+		for _, s := range so.Sockets {
+			if s.State == "listen" && !seen[s.Proto+" "+s.Local] {
+				seen[s.Proto+" "+s.Local] = true
+				f.Listening++
+			}
+		}
+	}
+	return f
 }

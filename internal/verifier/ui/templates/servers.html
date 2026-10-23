@@ -1,0 +1,38 @@
+{{define "content"}}{{$d := .Data}}
+<header class="head">
+  <div class="title-line"><h1>Servers</h1><p class="aside">{{len $d.Hosts}} enrolled{{with $d.Revoked}}, {{len .}} revoked{{end}}{{with $d.Release}} · verifier {{.}}{{end}}</p></div>
+  {{if $d.Outdated}}<p class="notice">{{shape "high" ""}}<span>{{$d.Outdated}} {{plural $d.Outdated "sensor is" "sensors are"}} older than the verifier. On each, as root: <code class="mono">tripwatch-sensor -update</code></span></p>{{end}}
+</header>
+
+{{if $d.Hosts}}
+<div class="panel">
+<table class="grid fleet-table">
+  <thead><tr><th scope="col"><span class="sr">State</span></th><th scope="col">Server</th><th scope="col">System</th><th scope="col">Sensor</th><th scope="col">Addresses</th><th scope="col">Web applications</th><th scope="col" class="num">Last heartbeat</th><th scope="col" class="num">Last snapshot</th><th scope="col" class="num">Alerts</th></tr></thead>
+  <tbody>
+  {{range $d.Hosts}}{{$f := .Facts}}{{$row := .}}
+  <tr class="st-{{.State}}">
+    <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}<span class="sr">silent</span>{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}<span class="sr">{{sev .Worst.Severity}}</span>{{end}}</td>
+    <td class="host"><a class="mono" href="/hosts/{{.ID}}" title="{{.ID}}">{{.ID}}</a>{{with $f.Hostname}}{{if ne . $row.ID}}<span class="sub mono">{{.}}</span>{{end}}{{end}}</td>
+    <td class="sys">{{if $f.OS}}<span>{{$f.OS}}</span>{{else}}<span class="quiet">not reported yet</span>{{end}}<span class="sub">{{with $f.Kernel}}<span class="mono">{{.}}</span>{{end}}{{with $f.Arch}} · {{.}}{{end}}{{with $f.Environment}}{{if ne . "host"}} · {{.}}{{end}}{{end}}</span></td>
+    <td class="ver">{{if $f.SensorVersion}}<span class="mono">{{$f.SensorVersion}}</span>{{if .Outdated}}<span class="flag-update">update available</span>{{end}}{{else}}<span class="quiet">unknown</span>{{end}}</td>
+    <td class="addr">{{range $i, $a := $f.Addresses}}{{if lt $i 2}}<span class="mono">{{$a}}</span>{{end}}{{end}}{{if gt (len $f.Addresses) 2}}<span class="sub">+{{sub (len $f.Addresses) 2}} more</span>{{end}}</td>
+    <td class="apps">{{range $i, $a := $f.Apps}}{{if lt $i 2}}<span>{{$a.Framework}}{{with $a.Version}} {{.}}{{end}}</span>{{end}}{{end}}{{if gt (len $f.Apps) 2}}<span class="sub">+{{sub (len $f.Apps) 2}} more</span>{{end}}{{if not $f.Apps}}<span class="quiet">none</span>{{end}}</td>
+    <td class="num"><time datetime="{{iso .LastHeartbeat}}" title="{{stamp .LastHeartbeat}}">{{clock .LastHeartbeat}}</time></td>
+    <td class="num"><time datetime="{{iso .LastSnapshot}}" title="{{stamp .LastSnapshot}}">{{clock .LastSnapshot}}</time></td>
+    <td class="num">{{if .Open}}{{.Open}}{{else}}<span class="quiet">0</span>{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="empty">No server enrolled{{if $d.Revoked}} now{{else}} yet{{end}}. <a href="/enroll">Enroll {{if $d.Revoked}}a{{else}}the first{{end}} server</a>.</p>
+{{end}}
+
+{{with $d.Revoked}}
+<section aria-labelledby="revoked-h">
+  <div class="section-head"><h2 id="revoked-h">Revoked</h2><p class="aside">they no longer report; their pages keep their alerts</p></div>
+  <ul class="revoked-rows">{{range .}}<li><a class="mono" href="/hosts/{{.ID}}">{{.ID}}</a>{{with .Facts.OS}} <span class="quiet">{{.}}</span>{{end}} <span class="quiet">· last heartbeat {{clock .LastHeartbeat}}</span></li>{{end}}</ul>
+</section>
+{{end}}
+{{end}}

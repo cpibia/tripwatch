@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cpibia/tripwatch/internal/collector/system"
+	"github.com/cpibia/tripwatch/internal/collector/web"
+	"github.com/cpibia/tripwatch/internal/discovery"
 	"github.com/cpibia/tripwatch/internal/protocol"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
@@ -480,5 +483,20 @@ func TestPolicyDiffIsComplete(t *testing.T) {
 	lines, _, err := h.store.AlertDiff(context.Background(), a.ID)
 	if got := strings.Split(lines, "\n"); err != nil || len(got) != 60 || got[0] != "+ Cmnd_Alias C0 = /bin/true" {
 		t.Fatalf("diff = %d lines, %v", len(got), err)
+	}
+}
+
+// A snapshot's facts carry the sensor's system block and what the collectors counted.
+func TestFactsFromSnapshot(t *testing.T) {
+	st := State{TakenAt: time.Unix(1729670400, 0).UTC(),
+		Environment: discovery.Environment{Kind: discovery.KindHost, System: &discovery.System{OS: "Amazon Linux 2023", Kernel: "6.1.112", Arch: "amd64", SensorVersion: "0.1.8", CPUs: 2}},
+		Packages:    &system.PackagesResult{Manager: system.ManagerRpm, Packages: 412},
+		Sockets:     &system.SocketsResult{Sockets: []system.Socket{{Proto: "tcp", Local: "0.0.0.0:22", State: "listen"}, {Proto: "tcp", Local: "0.0.0.0:22", State: "listen"}, {Proto: "tcp", Local: "10.0.0.5:51234", State: "established"}}},
+		Web:         &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/srv/www/blog", Framework: "wordpress", Version: "6.6.2"}}}},
+	}
+	f := Facts(st)
+	if f.OS != "Amazon Linux 2023" || f.SensorVersion != "0.1.8" || f.CPUs != 2 || f.PackageManager != system.ManagerRpm || f.Packages != 412 ||
+		f.Listening != 1 || len(f.Apps) != 1 || f.Apps[0].Framework != "wordpress" || f.Environment != "host" || !f.SeenAt.Equal(st.TakenAt) {
+		t.Errorf("facts = %+v", f)
 	}
 }

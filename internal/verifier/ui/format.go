@@ -44,6 +44,13 @@ func funcs(now func() time.Time) template.FuncMap {
 			return s
 		},
 		"size": size,
+		"sub":  func(a, b int) int { return a - b },
+		"bytes": func(n uint64) string {
+			if n >= 1<<30 {
+				return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+			}
+			return fmt.Sprintf("%d MB", n>>20)
+		},
 		"plural": func(n int, one, many string) string {
 			if n == 1 {
 				return one

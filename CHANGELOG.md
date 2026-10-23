@@ -6,6 +6,22 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- Each snapshot carries the machine's system: distribution and version (`/etc/os-release`),
+  kernel, architecture, hostname, boot time, CPUs, memory, the addresses of its network
+  interfaces (loopback and link-local left out) and the sensor's version. Values are bounded:
+  they come from files the host writes.
+
+### Verifier
+
+- A **Servers** page lists the fleet: system and kernel, sensor version flagged "update
+  available" when older than the verifier (with `tripwatch-sensor -update`), addresses, web
+  applications, last heartbeat and snapshot, alerts; revoked servers apart. A sensor that does
+  not send its system yet still shows its version, read from the signed event of its start.
+- Each server's page has a System block: the facts above plus package manager and count,
+  listening ports and web applications. The overview's server cells show the sensor version.
+
 ## [0.1.7] - 2026-10-23
 
 Update the verifier; the sensors stay on 0.1.5.

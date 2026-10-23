@@ -300,7 +300,8 @@ leaves it, `docker compose down -v` deletes it with the CA and every enrollment.
 | `web` | inventory of sites and applications, and for each application: hash tree of the code, scripts in upload directories, polyglot images, webshell signatures, hidden files, scripts the web server actually executes |
 
 The sensor also detects the environment it runs in (host, container, Kubernetes, Fargate) and the
-container runtimes present.
+container runtimes present, and reports the machine's system: distribution, kernel, architecture,
+hostname, boot time, CPUs, memory, the addresses of its interfaces and its own version.
 
 ## Web stack
 
@@ -568,8 +569,13 @@ is needed too, which closes them all.
   attacks seen in the web server logs. Every figure comes from what the verifier holds. Every severity has a shape as well as a color (diamond for silent, triangle critical,
   square high, circle medium, hollow circle low), and a silent server is a present mark with a
   dashed row, not a dimmed row.
-- **Server.** State, every alert, the silences of the last 7 days with their duration, the last
-  snapshots received, revocation.
+- **Servers.** The fleet: every server with its system and kernel, the sensor's version (flagged
+  "update available" when it is older than the verifier, with the command to run), its
+  addresses, the web applications found on it, the last heartbeat and snapshot and the number
+  of alerts; revoked servers listed apart.
+- **Server.** State, the system as the sensor read it (with the package manager and count, the
+  listening ports and the web applications), every alert, the silences of the last 7 days with
+  their duration, the last snapshots received, revocation.
 - **Alerts.** To handle, acknowledged, resolved. At the side (above the list on smaller screens)
   the alert to look at first, chosen by severity and then by kind (a silent sensor, then code
   planted in a web application, then the rest), with its actions; clicking another alert shows

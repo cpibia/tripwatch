@@ -46,6 +46,7 @@
         <span class="cell-top">{{if eq .State "silent"}}{{shape "silent" ""}}{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}{{else}}<span class="ok-dot" aria-hidden="true"></span>{{end}}<span class="mono name" title="{{.ID}}">{{.ID}}</span></span>
         <span class="cell-state">{{.StateText}}{{if not .Since.IsZero}} · {{since .Since}}{{end}}</span>
         <span class="cell-beat">heartbeat {{clock .LastHeartbeat}} · snapshot {{clock .LastSnapshot}}</span>
+        <span class="cell-ver">sensor {{if .Facts.SensorVersion}}{{.Facts.SensorVersion}}{{else}}?{{end}}{{if .Outdated}} <span class="flag-update">update available</span>{{end}}</span>
       </a>
     </li>
     {{end}}

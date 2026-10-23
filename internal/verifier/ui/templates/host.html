@@ -1,6 +1,6 @@
 {{define "content"}}{{$d := .Data}}{{$h := $d.Row}}
 <header class="head">
-  <p class="crumb"><a href="/">Overview</a></p>
+  <p class="crumb"><a href="/hosts">Servers</a></p>
   <h1 class="mono">{{$h.ID}}</h1>
   <p class="tally st-{{$h.State}}{{if and $h.Worst (eq $h.Worst.Status "acknowledged")}} acked{{end}}"><span class="state-line">{{if eq $h.State "silent"}}{{shape "silent" ""}}{{else if $h.Worst}}{{shape $h.Worst.Severity $h.Worst.Status}}{{end}}{{$h.StateText}}{{if not $h.Since.IsZero}} for {{since $h.Since}}{{end}}</span>{{if $h.Open}}<span>{{$h.Open}} {{plural $h.Open "alert to handle" "alerts to handle"}}</span>{{end}}</p>
 </header>
@@ -11,6 +11,25 @@
   <div><dt>Enrolled</dt><dd><time datetime="{{iso $h.EnrolledAt}}" title="{{stamp $h.EnrolledAt}}">{{clock $h.EnrolledAt}}</time></dd></div>
   <div><dt>Messages received</dt><dd>{{$h.Chain.Sequence}}</dd></div>
 </dl>
+
+{{with $d.Facts}}
+<section class="panel sysinfo" aria-labelledby="sys-h">
+  <div class="panel-head"><h2 id="sys-h">System</h2><p class="aside">as the sensor read it at {{clock .SeenAt}}: data from the server</p></div>
+  <dl class="facts">
+    <div><dt>Operating system</dt><dd>{{if .OS}}{{.OS}}{{else}}<span class="quiet">not reported by this sensor version</span>{{end}}</dd></div>
+    <div><dt>Kernel</dt><dd class="mono">{{if .Kernel}}{{.Kernel}}{{else}}-{{end}}</dd></div>
+    <div><dt>Architecture</dt><dd>{{if .Arch}}{{.Arch}}{{else}}-{{end}}{{with .Environment}} · {{.}}{{end}}</dd></div>
+    <div><dt>Hostname</dt><dd class="mono">{{if .Hostname}}{{.Hostname}}{{else}}-{{end}}</dd></div>
+    <div><dt>Up since</dt><dd>{{if not .BootedAt.IsZero}}<time datetime="{{iso .BootedAt}}" title="{{stamp .BootedAt}}">{{since .BootedAt}}</time>{{else}}-{{end}}</dd></div>
+    <div><dt>CPU and memory</dt><dd>{{if .CPUs}}{{.CPUs}} CPU{{end}}{{if .MemoryBytes}} · {{bytes .MemoryBytes}}{{end}}{{if not .CPUs}}-{{end}}</dd></div>
+    <div><dt>Sensor</dt><dd><span class="mono">{{if .SensorVersion}}{{.SensorVersion}}{{else}}unknown{{end}}</span>{{if $d.Outdated}} <span class="flag-update">update available: <code class="mono">tripwatch-sensor -update</code></span>{{end}}</dd></div>
+    <div><dt>Packages</dt><dd>{{if .PackageManager}}{{.Packages}} ({{.PackageManager}}){{else}}-{{end}}</dd></div>
+    <div><dt>Listening ports</dt><dd>{{.Listening}}</dd></div>
+    <div><dt>Addresses</dt><dd class="mono">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{else}}-{{end}}</dd></div>
+  </dl>
+  {{with .Apps}}<div class="apps-list"><h3>Web applications</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span></li>{{end}}</ul></div>{{end}}
+</section>
+{{end}}
 
 <section aria-labelledby="alerts-h">
   <div class="section-head"><h2 id="alerts-h">Alerts</h2><p class="aside">every status, the most severe on top</p></div>

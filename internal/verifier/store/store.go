@@ -107,6 +107,11 @@ CREATE TABLE IF NOT EXISTS alert_diffs (
 	lines       TEXT NOT NULL,
 	computed_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS host_facts (
+	host_id    TEXT PRIMARY KEY,
+	facts      TEXT NOT NULL,
+	updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS accepted (
 	host_id     TEXT NOT NULL,
 	fingerprint TEXT NOT NULL,

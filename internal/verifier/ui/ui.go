@@ -98,7 +98,7 @@ func New(c Config) (http.Handler, error) {
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
-	for _, name := range []string{"login", "link", "overview", "host", "alerts", "alert", "enroll", "error"} {
+	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
@@ -121,6 +121,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
 	mux.HandleFunc("POST /theme", s.authed(s.theme))
 	mux.HandleFunc("GET /{$}", s.authed(s.overview))
+	mux.HandleFunc("GET /hosts", s.authed(s.servers))
 	mux.HandleFunc("GET /hosts/{id}", s.authed(s.host))
 	mux.HandleFunc("POST /hosts/{id}/revoke", s.authed(s.revoke))
 	mux.HandleFunc("POST /hosts/{id}/withdraw", s.authed(s.withdraw))
@@ -464,6 +465,9 @@ type hostRow struct {
 	Since     time.Time
 	Open      int
 	Worst     *store.Alert
+	// Facts and Outdated come from the host's latest snapshot and sensor start.
+	Facts    store.HostFacts
+	Outdated bool
 }
 
 // More is the number of unresolved alerts besides the one shown.
@@ -616,6 +620,11 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
+	facts, err := s.Store.Facts(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	d := overviewData{Alerts: open, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r),
 		Timeline: buildTimeline(raised, r.URL.Query().Get("range"), now), Rules: buildRules(raised, 8), Loaded: buildHosts(bySeverity, 8), Web: buildWeb(raised, 6)}
 	for _, h := range hosts {
@@ -625,6 +634,8 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		}
 		sum, has := summaries[h.ID]
 		row := s.hostRow(h, sum, has)
+		row.Facts = facts[h.ID]
+		row.Outdated = outdated(row.Facts.SensorVersion, s.release())
 		switch row.State {
 		case "silent":
 			silent.add(row.Since)
@@ -653,6 +664,9 @@ type hostData struct {
 	Silences     []Gap
 	Snapshots    []store.SnapshotHead
 	Accepted     []store.Acceptance
+	Facts        *store.HostFacts
+	Outdated     bool
+	Release      string
 }
 
 func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
@@ -687,13 +701,22 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
+	facts, err := s.Store.Facts(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	sum, has := summarize(alerts)
-	d := hostData{Accepted: accepted, Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
+	d := hostData{Accepted: accepted, Release: s.release(), Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
 		Silences: silences(marks, h.EnrolledAt, now, store.ActivityRetention, s.SilenceAfter)}
+	if f, ok := facts[h.ID]; ok {
+		d.Facts = &f
+		d.Outdated = outdated(f.SensorVersion, s.release())
+	}
 	if h.Revoked && len(d.Silences) > 0 && d.Silences[0].Ongoing {
 		d.Silences = d.Silences[1:]
 	}
-	s.render(w, r, http.StatusOK, "host", page{Title: h.ID, Nav: "overview", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
+	s.render(w, r, http.StatusOK, "host", page{Title: h.ID, Nav: "servers", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
 }
 
 func (s *server) revoke(w http.ResponseWriter, r *http.Request, se session) {
@@ -1401,4 +1424,74 @@ func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (
 		}
 		<-a.turn
 	}, true
+}
+
+// serversData is the fleet page: every enrolled host with its system and sensor, then the
+// revoked ones.
+type serversData struct {
+	Hosts    []hostRow
+	Revoked  []hostRow
+	Release  string
+	Outdated int
+}
+
+func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
+	ctx := r.Context()
+	hosts, err := s.Store.Hosts(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	summaries, err := s.Store.Summaries(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	facts, err := s.Store.Facts(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	d := serversData{Release: s.release()}
+	for _, h := range hosts {
+		sum, has := summaries[h.ID]
+		row := s.hostRow(h, sum, has)
+		row.Facts = facts[h.ID]
+		row.Outdated = !h.Revoked && outdated(row.Facts.SensorVersion, d.Release)
+		if h.Revoked {
+			d.Revoked = append(d.Revoked, row)
+			continue
+		}
+		if row.Outdated {
+			d.Outdated++
+		}
+		d.Hosts = append(d.Hosts, row)
+	}
+	slices.SortStableFunc(d.Hosts, func(a, b hostRow) int { return strings.Compare(a.ID, b.ID) })
+	s.render(w, r, http.StatusOK, "servers", page{Title: "Servers", Nav: "servers", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
+}
+
+// outdated reports whether a sensor runs an older release than the verifier: the verifier is
+// updated first, so its version is the one sensors should reach. Development builds compare
+// with nothing.
+func outdated(sensor, verifier string) bool {
+	a, okA := semver(sensor)
+	b, okB := semver(verifier)
+	return okA && okB && slices.Compare(a, b) < 0
+}
+
+func semver(v string) ([]int, bool) {
+	m := releasePattern.FindStringSubmatch(v)
+	if m == nil {
+		return nil, false
+	}
+	var out []int
+	for _, p := range strings.Split(m[1], ".") {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
 }

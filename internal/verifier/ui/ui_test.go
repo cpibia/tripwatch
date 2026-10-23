@@ -970,3 +970,33 @@ func TestGroupWithHeldBackAlerts(t *testing.T) {
 		t.Fatalf("a held alert is not raised on its own after the group was accepted: %v %v", fresh, err)
 	}
 }
+
+// The fleet page lists each server with its system and sensor, flags a sensor older than the
+// verifier, and reads the version of a sensor that predates the system block from its start.
+func TestServersPage(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, id := range []string{"app-01", "web-01"} {
+		if err := h.store.Enroll(ctx, id, make([]byte, 32), now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.store.SetFacts(ctx, "web-01", store.HostFacts{OS: "Debian GNU/Linux 12 (bookworm)", Kernel: "6.1.0-26-amd64", Arch: "amd64",
+		SensorVersion: "0.1.7", Apps: []store.AppFact{{Path: "/srv/www/blog", Framework: "wordpress", Version: "6.6.2"}}, SeenAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.Raise(ctx, store.Alert{HostID: "app-01", Fingerprint: "sensor:started:3", Severity: "high", Kind: "sensor-event", Title: "Sensor started",
+		Detail: "Il sensore è partito (versione 0.1.4, avvio del sistema x)."}, now); err != nil {
+		t.Fatal(err)
+	}
+	h.login()
+	_, body := h.get("/hosts")
+	for _, want := range []string{"Debian GNU/Linux 12 (bookworm)", "6.1.0-26-amd64", `<span class="mono">0.1.7</span>`, "wordpress 6.6.2", `<span class="mono">0.1.4</span>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("servers page lacks %q", want)
+		}
+	}
+	if !outdated("0.1.4", "0.1.8") || outdated("0.1.8", "0.1.8") || outdated("0.2.0", "0.1.8") || outdated("dev", "0.1.8") || outdated("0.1.4", "dev") {
+		t.Error("outdated compares versions wrongly")
+	}
+}

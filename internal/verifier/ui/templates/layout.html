@@ -17,6 +17,7 @@
   <a class="wordmark{{if .Alarm}} alarm{{end}}" href="/" aria-label="tripwatch, overview{{if .Alarm}}, critical alerts open{{end}}">{{template "glyph"}}<span>tripwatch</span></a>
   <ul class="nav">
     <li><a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Overview</a></li>
+    <li><a href="/hosts"{{if eq .Nav "servers"}} aria-current="page"{{end}}>Servers</a></li>
     <li><a href="/alerts"{{if eq .Nav "alerts"}} aria-current="page"{{end}}>Alerts</a></li>
     <li><a href="/enroll"{{if eq .Nav "enroll"}} aria-current="page"{{end}}>Enroll server</a></li>
   </ul>

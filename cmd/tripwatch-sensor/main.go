@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -211,10 +212,31 @@ func selfUpdate() error {
 
 func (s sensor) snapshot(ctx context.Context) report {
 	src := collector.NewSource(s.root)
+	env := discovery.DetectEnvironment(src.FS, os.Getenv)
+	system := discovery.DetectSystem(src.FS, buildinfo.Version, interfaceAddresses())
+	env.System = &system
 	return report{
-		Environment: discovery.DetectEnvironment(src.FS, os.Getenv),
+		Environment: env,
 		Snapshot:    collector.Run(ctx, src, s.collectors, time.Now()),
 	}
+}
+
+// interfaceAddresses lists the addresses of the sensor's network interfaces that identify the
+// machine: loopback and link-local ones say nothing about which server this is.
+func interfaceAddresses() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() || ipnet.IP.IsLinkLocalUnicast() || ipnet.IP.IsLinkLocalMulticast() {
+			continue
+		}
+		out = append(out, ipnet.IP.String())
+	}
+	return out
 }
 
 func (s sensor) printOnce(ctx context.Context) error {

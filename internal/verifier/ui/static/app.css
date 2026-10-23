@@ -276,6 +276,33 @@ h2 { font-size: var(--fs-lg); line-height: 1.3; }
 .cell.st-silent a { background: repeating-linear-gradient(-45deg, var(--hatch) 0 1px, transparent 1px 6px), var(--raised); }
 .cell.st-critical .cell-state, .cell.st-silent .cell-state { color: var(--red); font-weight: 500; }
 .cell.st-high .cell-state { color: var(--amber-text); font-weight: 500; }
+/* Fleet page and system facts: what the sensors report about each server, shown as data. */
+.notice { margin: 0; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: var(--fs-sm); color: var(--ink); background: var(--surface); border: var(--hair) solid var(--amber); }
+.notice code { padding: 1px 5px; background: var(--raised); }
+.fleet-table td { vertical-align: top; }
+.fleet-table .sub, td.host .sub { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--muted); }
+.fleet-table td.sys, .fleet-table td.apps { min-width: 12rem; }
+.fleet-table td.addr span, .fleet-table td.apps > span:not(.sub) { display: block; font-size: var(--fs-sm); }
+.fleet-table td.ver { white-space: nowrap; }
+.flag-update { display: inline-block; margin-left: 6px; padding: 0 6px; font-size: var(--fs-xs); line-height: 18px; color: var(--amber-text); border: var(--hair) solid var(--amber); white-space: nowrap; }
+.flag-update code { font-size: var(--fs-xs); }
+.cell-ver { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sysinfo .facts { grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.apps-list h3 { margin: 4px 0 8px; font-size: var(--fs-xs); font-weight: 500; color: var(--muted); }
+.apps-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--fs-sm); }
+.revoked-rows { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; font-size: var(--fs-sm); }
+.quiet { color: var(--muted); }
+@media (max-width: 860px) {
+  .fleet-table thead { display: none; }
+  .fleet-table, .fleet-table tbody { display: block; }
+  .fleet-table tr { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 4px 8px; padding: 10px 0; border-bottom: var(--hair) solid var(--rule); }
+  .fleet-table td { padding: 0; border: 0; }
+  .fleet-table td.m { grid-row: 1; }
+  .fleet-table td.host { grid-row: 1; grid-column: 2; max-width: none; }
+  .fleet-table td.ver { grid-row: 1; grid-column: 3; }
+  .fleet-table td.sys, .fleet-table td.apps, .fleet-table td.addr { grid-column: 2 / -1; min-width: 0; }
+  .fleet-table td.num { display: none; }
+}
 .revoked-list { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
 .revoked-list a { color: var(--muted); }
 .ok-dot { width: 10px; height: 10px; flex: none; border: 1.5px solid var(--muted); }

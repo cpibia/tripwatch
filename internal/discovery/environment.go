@@ -19,6 +19,8 @@ const (
 type Environment struct {
 	Kind              Kind     `json:"kind"`
 	ContainerRuntimes []string `json:"container_runtimes,omitempty"`
+	// System is set by sensors from 0.1.8 on.
+	System *System `json:"system,omitempty"`
 }
 
 var runtimeSockets = []struct {
