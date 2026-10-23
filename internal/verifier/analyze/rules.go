@@ -1070,12 +1070,20 @@ func Evaluate(prev *State, cur State) []Finding {
 // webFinding maps a web finding kind to a severity and a title.
 func webFinding(f web.Finding) (string, string) {
 	switch f.Kind {
-	case web.KindSignature, web.KindScriptInUploads, web.KindCodeInUploads, web.KindPolyglotImage:
+	// A script where uploads go is critical when its content carries a webshell signature. Some
+	// applications keep generated templates there, so one with none is high: still to look at,
+	// and an accepted one that changes is raised again, with its signatures if any. The detail
+	// stays as it was, so acceptances given before keep holding.
+	case web.KindScriptInUploads:
+		if len(f.Signatures) > 0 {
+			return "critical", "Script in upload directories"
+		}
+		return "high", "Script in upload directories"
+	case web.KindSignature, web.KindCodeInUploads, web.KindPolyglotImage:
 		return "critical", map[string]string{
-			web.KindSignature:       "Webshell signature",
-			web.KindScriptInUploads: "Script in upload directories",
-			web.KindCodeInUploads:   "Code inside an uploaded file",
-			web.KindPolyglotImage:   "Image with hidden code",
+			web.KindSignature:     "Webshell signature",
+			web.KindCodeInUploads: "Code inside an uploaded file",
+			web.KindPolyglotImage: "Image with hidden code",
 		}[f.Kind]
 	case web.KindHiddenScript, web.KindSuspiciousSymlink, web.KindAppInData:
 		return "high", map[string]string{

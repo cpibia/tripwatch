@@ -879,6 +879,10 @@ type alertGroup struct {
 	Expanded bool
 	// Hosts counts the distinct hosts of the group.
 	Hosts int
+	// Held is set when the store holds more alerts of the group back in an aggregate, beyond
+	// its cap of open alerts per rule; CanAccept when some alert of the group can be accepted.
+	Held      bool
+	CanAccept bool
 }
 
 // Pending are the alerts a bulk action applies to: those not resolved yet.
@@ -897,7 +901,12 @@ func (t alertTable) Groups() []alertGroup {
 	index := map[string]int{}
 	var groups []alertGroup
 	for _, a := range t.Alerts {
-		k := a.Severity + "\x00" + alertRule(a.Fingerprint)
+		fp := a.Fingerprint
+		held := false
+		if g, ok := store.Aggregate(fp); ok {
+			fp, held = g, true
+		}
+		k := a.Severity + "\x00" + alertRule(fp)
 		if !t.AcrossHosts {
 			k = a.HostID + "\x00" + k
 		}
@@ -910,6 +919,8 @@ func (t alertTable) Groups() []alertGroup {
 		}
 		g := &groups[i]
 		g.Alerts = append(g.Alerts, a)
+		g.Held = g.Held || held
+		g.CanAccept = g.CanAccept || store.Acceptable(a)
 		if a.CreatedAt.Before(g.Since) {
 			g.Since = a.CreatedAt
 		}
@@ -926,7 +937,14 @@ func (t alertTable) Groups() []alertGroup {
 		}
 	}
 	for i := range groups {
-		groups[i].Label = commonLabel(groups[i].Alerts)
+		named := groups[i].Alerts
+		if groups[i].Held && len(named) > 1 {
+			named = slices.DeleteFunc(slices.Clone(named), func(a store.Alert) bool {
+				_, agg := store.Aggregate(a.Fingerprint)
+				return agg
+			})
+		}
+		groups[i].Label = commonLabel(named)
 		seen := map[string]bool{}
 		for _, a := range groups[i].Alerts {
 			seen[a.HostID] = true

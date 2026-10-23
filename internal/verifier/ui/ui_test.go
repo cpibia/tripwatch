@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io"
 	"log/slog"
@@ -924,5 +925,48 @@ func TestOverviewLeavesRevokedHostsOut(t *testing.T) {
 	}
 	if _, body := h.get("/hosts/old-01"); !strings.Contains(body, "Webshell signature") {
 		t.Error("the revoked host's page lost its alerts")
+	}
+}
+
+// Beyond the cap of open alerts per rule the store holds the rest in an aggregate: the group
+// says so, and accepting the group closes the aggregate too, so the held alerts come next.
+func TestGroupWithHeldBackAlerts(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range store.MaxOpenPerGroup + 3 {
+		p := fmt.Sprintf("/srv/up/templates/t%03d.php", i)
+		if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: "web:script_in_upload_dir:" + p, Severity: "high", Kind: "web", Title: "Script in upload directories", Detail: p}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	csrf := h.login()
+	_, body := h.get("/hosts/web-01")
+	if !strings.Contains(body, `<span class="label">Script in upload directories</span> <span class="tally-n">101</span> <span class="held">+ more held back</span>`) {
+		t.Fatal("the group does not show it holds alerts back")
+	}
+	if !strings.Contains(body, `action="/bulk/accept"`) || !strings.Contains(body, "The alerts held back are raised one by one") {
+		t.Fatal("the group cannot be accepted with its aggregate")
+	}
+	all, err := h.store.Alerts(ctx, store.AlertFilter{HostID: "web-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"csrf": {csrf}, "back": {"/hosts/web-01"}}
+	for _, a := range all {
+		form.Add("id", itoa(a.ID))
+	}
+	if res, _ := h.post("/bulk/accept", form); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("bulk accept: status %d", res.StatusCode)
+	}
+	open, _ := h.store.Alerts(ctx, store.AlertFilter{HostID: "web-01", Statuses: []string{store.StatusOpen}})
+	if len(open) != 0 {
+		t.Fatalf("%d alerts still open, the aggregate among them", len(open))
+	}
+	p := fmt.Sprintf("/srv/up/templates/t%03d.php", store.MaxOpenPerGroup+2)
+	if fresh, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: "web:script_in_upload_dir:" + p, Severity: "high", Kind: "web", Title: "Script in upload directories", Detail: p}, now); err != nil || !fresh {
+		t.Fatalf("a held alert is not raised on its own after the group was accepted: %v %v", fresh, err)
 	}
 }

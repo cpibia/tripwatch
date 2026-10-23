@@ -20,7 +20,7 @@
 <tr class="group-head row-{{.Lead.Status}}">
   <td>{{template "sevmark" .Lead}}</td>
   {{if not $t.OneHost}}<td class="host">{{if gt .Hosts 1}}<span class="hosts-n">{{.Hosts}} servers</span>{{else}}{{template "hostlink" .Lead.HostID}}{{end}}</td>{{end}}
-  <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span> <span class="tally-n">{{len .Alerts}}</span></button></td>
+  <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span> <span class="tally-n">{{len .Alerts}}</span>{{if .Held}} <span class="held">+ more held back</span>{{end}}</button></td>
   <td class="num start"><time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{clock .Since}}</time></td>
   <td class="num count"></td>
   <td class="state">{{if .Open}}<span>{{.Open}} open</span>{{end}}{{if .Acked}}<span>{{.Acked}} acknowledged</span>{{end}}{{if .Resolved}}<span>{{.Resolved}} resolved</span>{{end}}</td>
@@ -29,8 +29,8 @@
     {{if $serious}}<details class="confirm"><summary>Resolve all<span class="sr">: {{$.Group.Label}}</span></summary>
       <form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit" class="danger">Resolve {{$n}} {{sev $.Group.Lead.Severity}} {{plural $n "alert" "alerts"}}</button></form>
     </details>{{else}}<form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit">Resolve all<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
-    {{if acceptable $.Group.Lead}}<details class="confirm"><summary>Accept all<span class="sr">: {{$.Group.Label}}</span></summary>
-      <form method="post" action="/bulk/accept"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<p>Not raised again while each stays identical.</p><button type="submit" class="danger">Accept {{$n}} {{plural $n "alert" "alerts"}}</button></form>
+    {{if $.Group.CanAccept}}<details class="confirm"><summary>Accept all<span class="sr">: {{$.Group.Label}}</span></summary>
+      <form method="post" action="/bulk/accept"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<p>Not raised again while each stays identical.{{if $.Group.Held}} The alerts held back are raised one by one with the next snapshot.{{end}}</p><button type="submit" class="danger">Accept {{$n}} {{plural $n "alert" "alerts"}}</button></form>
     </details>{{end}}
   </div>{{end}}</td>{{end}}
 </tr>

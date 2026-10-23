@@ -6,6 +6,21 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-23
+
+Update the verifier; the sensors stay on 0.1.5.
+
+### Verifier
+
+- A script in an upload directory is critical when its content carries a webshell signature,
+  and high when it carries none: some applications keep generated templates there. The alert's
+  detail is unchanged, so acceptances given before keep holding; an accepted file that changes
+  is raised again.
+- Beyond the cap of 100 open alerts per rule on a server, the rest is held in an aggregate
+  ("Many alerts of the same rule"). That aggregate now joins its group, which says
+  "+ more held back"; accepting or resolving the group closes it too, and the alerts it held are
+  raised one by one with the next snapshot instead of seeming to come back.
+
 ## [0.1.6] - 2026-10-23
 
 Update the verifier; the sensors stay on 0.1.5.
@@ -172,7 +187,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/cpibia/tripwatch/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/cpibia/tripwatch/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/cpibia/tripwatch/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/cpibia/tripwatch/compare/v0.1.3...v0.1.4

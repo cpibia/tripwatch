@@ -54,7 +54,10 @@ func TestCompromisedHost(t *testing.T) {
 	cur.Processes = &system.ProcessesResult{Processes: []system.Process{{PID: 4242, Comm: "[kworker/0:2]", Exe: "/var/www/.cache/x", ExeDeleted: true}}}
 	cur.Privileged.Files = append(cur.Privileged.Files, collector.File{Path: "/usr/lib/.syslib/sh2", Mode: "urwxr-xr-x", SHA256: "bb"})
 	cur.Services = &system.ServicesResult{Units: []system.Unit{{File: collector.File{Path: "/etc/systemd/system/sync.service"}, Exec: []string{"ExecStart=/var/www/.cache/sync/syncd"}}, {File: collector.File{Path: "/etc/systemd/system/empty.service"}, Exec: []string{"ExecStart="}}}}
-	cur.Web = &web.Result{Apps: []web.AppReport{{Findings: []web.Finding{{Kind: web.KindScriptInUploads, File: collector.File{Path: "/var/www/shop/pub/media/x.php"}}, {Kind: web.KindEncodedBlob, File: collector.File{Path: "/var/www/shop/lib/fonts.php"}}}}}}
+	cur.Web = &web.Result{Apps: []web.AppReport{{Findings: []web.Finding{
+		{Kind: web.KindScriptInUploads, File: collector.File{Path: "/var/www/shop/pub/media/x.php"}, Signatures: []string{"eval_request_input"}},
+		{Kind: web.KindScriptInUploads, File: collector.File{Path: "/var/www/shop/pub/media/templates/page.php"}},
+		{Kind: web.KindEncodedBlob, File: collector.File{Path: "/var/www/shop/lib/fonts.php"}}}}}}
 	cur.Weblog = &logs.Result{Events: []logs.Event{{Rule: "script_in_upload_path", Severity: "critical", Method: "POST", Status: 200, Log: "/var/log/nginx/access.log", Evidence: logs.AttackerControlled{Request: "/media/x.php"}}}}
 	cur.Apps.Apps[0].Admins = append(cur.Apps.Apps[0].Admins, apps.Admin{ID: "9", Name: "support", Email: "x@example.invalid"})
 	cur.Apps.Apps[0].Injected = []apps.Injected{{Where: "config design/footer", Domains: []string{"cdn.example.net"}}}
@@ -71,6 +74,7 @@ func TestCompromisedHost(t *testing.T) {
 		"high privileged-change:new:root|/usr/lib/.syslib/sh2:bb",
 		"high persistence:unit-exec:root|/etc/systemd/system/sync.service:ExecStart=/var/www/.cache/sync/syncd",
 		"critical web:script_in_upload_dir:/var/www/shop/pub/media/x.php",
+		"high web:script_in_upload_dir:/var/www/shop/pub/media/templates/page.php",
 		"critical weblog:script_in_upload_path:/media/x.php|/media/x.php/var/log/nginx/access.log",
 		"critical apps-change:admin:/var/www/shop:9",
 		"high apps:script:/var/www/shop:config design/footer:cdn.example.net",

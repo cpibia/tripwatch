@@ -57,6 +57,12 @@ func (s *Store) AcceptAlert(ctx context.Context, id int64, by string, now time.T
 	if err != nil {
 		return err
 	}
+	// The aggregate of a group accepted at once is closed with it: the alerts it held back are
+	// raised one by one with the next snapshot, to be looked at like the others.
+	if _, ok := Aggregate(a.Fingerprint); ok {
+		_, err := s.db.ExecContext(ctx, `UPDATE alerts SET status = 'resolved', acked_by = ?, updated_at = ? WHERE id = ?`, by, now.Unix(), id)
+		return err
+	}
 	if !Acceptable(a) {
 		return ErrNotFound
 	}
@@ -112,4 +118,15 @@ func (s *Store) Withdraw(ctx context.Context, host, fingerprint string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Aggregate reports whether a fingerprint is the alert standing for one group's alerts held back
+// beyond MaxOpenPerGroup, and the fingerprint prefix of that group.
+func Aggregate(fingerprint string) (string, bool) {
+	rest, ok := strings.CutPrefix(fingerprint, floodPrefix)
+	if !ok {
+		return "", false
+	}
+	_, group, ok := strings.Cut(rest, ":")
+	return group, ok
 }

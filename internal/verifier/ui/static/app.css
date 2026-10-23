@@ -376,6 +376,7 @@ tr.st-silent td { background: repeating-linear-gradient(-45deg, var(--hatch) 0 1
 .alerts .disclose .label { overflow-wrap: anywhere; font-weight: 500; }
 .alerts .disclose .tally-n { display: inline-block; min-width: 2ch; margin-left: 4px; padding: 0 6px; font-size: var(--fs-xs); line-height: 18px; text-align: center; white-space: nowrap; color: var(--ink-2); border: var(--hair) solid var(--rule-strong); vertical-align: 1px; }
 .alerts .group-head td.state span { display: block; }
+.alerts .disclose .held { margin-left: 6px; font-size: var(--fs-xs); font-weight: 400; color: var(--amber-text); white-space: nowrap; }
 .alerts .group-head td.state span + span { font-size: var(--fs-xs); color: var(--muted); }
 .alerts .group-rows td { background: var(--surface); }
 .alerts .group-rows td:first-child { padding-left: 14px; box-shadow: inset var(--hair) 0 0 var(--rule-strong); }
