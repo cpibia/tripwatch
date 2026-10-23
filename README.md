@@ -11,6 +11,29 @@ It is stack-agnostic. The core knows nothing about PHP, Python, Java or Rust: st
 checks live in profiles that switch on when automatic discovery finds the matching technology. It
 runs on plain hosts, Docker hosts, Kubernetes nodes and AWS Fargate.
 
+## Contents
+
+- [How it works](#how-it-works)
+- [Installation](#installation)
+  - [1. Verifier](#1-verifier)
+  - [2. Sensor](#2-sensor)
+  - [3. Enrollment](#3-enrollment)
+  - [Kubernetes](#kubernetes)
+  - [Updating and removing](#updating-and-removing)
+  - [Building from source](#building-from-source)
+- [What the sensor collects](#what-the-sensor-collects)
+- [Web stack](#web-stack)
+- [Applications and databases](#applications-and-databases)
+- [Web server logs](#web-server-logs)
+- [Detection compared](#detection-compared)
+- [Trust model](#trust-model)
+- [Known limits](#known-limits)
+- [Verifier](#verifier)
+- [Sensor](#sensor)
+- [Roadmap](#roadmap)
+- [Status](#status)
+- [License](#license)
+
 ## How it works
 
 ```
@@ -36,14 +59,14 @@ A file is legitimate only if it traces back to the system package manager, to a 
 manifest produced by the build (checked against the lockfile: `composer.lock`,
 `package-lock.json`, `poetry.lock`, `Cargo.lock`, `go.sum`, ...) or to a container image digest.
 
-## Getting started
+## Installation
 
-Every release publishes the sensor as `.deb` and `.rpm` packages and the verifier as a container
-image (`ghcr.io/cpibia/tripwatch-verifier`). Nothing needs to be cloned or compiled on the
-servers. The commands below use release `0.1.0`: take the current number from the
-[releases page](https://github.com/cpibia/tripwatch/releases).
+Every [release](https://github.com/cpibia/tripwatch/releases) publishes the sensor as `.deb` and
+`.rpm` packages and the verifier as a container image (`ghcr.io/cpibia/tripwatch-verifier`).
+Nothing needs to be cloned or compiled on the servers. The commands below use release `0.1.0`:
+replace it with the latest one.
 
-### 1. Install the verifier
+### 1. Verifier
 
 You need a dedicated machine with Docker (a small VPS is enough), outside the servers you will
 monitor, and a DNS name pointing to it, here `tripwatch.example.net`.
@@ -84,7 +107,7 @@ tripwatch.example.net {
 Without a proxy, `ssh -L 8080:127.0.0.1:8080 your-vps` and http://localhost:8080 also work.
 Then sign in with the first user and remove `TRIPWATCH_ADMIN_PASSWORD` from `.env`.
 
-### 2. Install the sensor
+### 2. Sensor
 
 On every server to monitor, as root.
 
@@ -113,7 +136,7 @@ proves it was built by this repository's release workflow from the tagged source
 gh attestation verify tripwatch-sensor_0.1.0_amd64.deb -R cpibia/tripwatch
 ```
 
-### 3. Enroll the server
+### 3. Enrollment
 
 In the web interface open "Registra server", choose the server's name and run the command it
 shows on the server, as root:
@@ -125,6 +148,28 @@ echo 'tw1....' | tripwatch-sensor enroll -token-file - && systemctl enable --now
 The server shows up in the overview with its first heartbeat within a minute; the first full
 snapshot follows shortly.
 
+Instead of the token, the verifier can generate a bundle with the keys already inside, from the
+interface or from the command line:
+
+```sh
+(umask 077; docker compose exec -T verifier /tripwatch-verifier enroll -host web-01 -out - > web-01.json)
+```
+
+Copy the bundle to the server and start the service:
+
+```sh
+sudo install -o root -g root -m 600 web-01.json /etc/tripwatch/bundle.json
+sudo systemctl enable --now tripwatch-sensor
+```
+
+### Kubernetes
+
+On a Kubernetes node, mount the host root into the pod and tell the sensor where it is:
+
+```sh
+tripwatch-sensor -root /host
+```
+
 ### Updating and removing
 
 - **Sensor:** install the package of the new release the same way; a running sensor is
@@ -134,8 +179,29 @@ snapshot follows shortly.
 - **Verifier:** set the new `TRIPWATCH_VERSION` in `.env`, then
   `docker compose pull && docker compose up -d`. The state stays in the `data` volume.
 
-To see what the sensor collects without a verifier, run `sudo tripwatch-sensor > snapshot.json`
-on any Linux machine.
+### Building from source
+
+Requires Go (the version is in `go.mod`).
+
+```sh
+make build   # binaries for this machine in bin/
+make dist    # static Linux binaries (amd64, arm64) in dist/
+make test    # tests with the race detector
+make cover   # tests with the coverage threshold
+make lint    # go vet and golangci-lint
+```
+
+Releases are built by GoReleaser (`.goreleaser.yaml`) when a `v*` tag is pushed: the workflow in
+`.github/workflows/release.yml` publishes binaries, packages, checksums and the verifier image,
+each with a build provenance attestation.
+
+To run the verifier from your own checkout instead of the published image:
+
+```sh
+cd deploy/verifier
+cp .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
 ## What the sensor collects
 
@@ -357,22 +423,6 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   the attack lasts. From browsers already used, sign-in is never slowed down; for the others there
   is the one-time link described below.
 
-## Build
-
-Requires Go (the version is in `go.mod`).
-
-```sh
-make build   # binaries for this machine in bin/
-make dist    # static Linux binaries (amd64, arm64) in dist/
-make test    # tests with the race detector
-make cover   # tests with the coverage threshold
-make lint    # go vet and golangci-lint
-```
-
-Releases are built by GoReleaser (`.goreleaser.yaml`) when a `v*` tag is pushed: the workflow in
-`.github/workflows/release.yml` publishes binaries, packages, checksums and the verifier image,
-each with a build provenance attestation.
-
 ## Verifier
 
 The verifier runs on a dedicated machine, outside the monitored servers, as a `docker-compose`
@@ -383,17 +433,7 @@ stack. It exposes two ports:
 - `8080`, the web interface over HTTP, published on `127.0.0.1` only: expose it through an HTTPS
   reverse proxy (nginx, Caddy, Traefik) or reach it with an SSH tunnel.
 
-```sh
-cp .env.example .env      # release, names, public URLs, first user, SMTP
-docker compose up -d
-```
-
-To run a build of your own checkout instead of the published image:
-
-```sh
-cd deploy/verifier
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
-```
+To install it, see [Installation](#1-verifier).
 
 On first start the verifier creates the CA, the server certificate for the names in
 `TRIPWATCH_HOSTNAMES` and the first user from `TRIPWATCH_ADMIN_EMAIL` and
@@ -467,36 +507,15 @@ With `TRIPWATCH_SMTP_HOST` set, critical and high alerts arrive by email, groupe
 per round, with a link to the detail. If sending fails, the interface shows it as a verifier
 alert.
 
-## Running the sensor
+## Sensor
 
-The recommended way is the token: in the interface ("Registra server") you choose the server's
-name and get a command to run on the server, as root:
-
-```sh
-echo 'tw1....' | tripwatch-sensor enroll -token-file - && systemctl enable --now tripwatch-sensor
-```
-
-The sensor generates its own TLS key and signing key, checks that the verifier is the right one
-by comparing its CA with the fingerprint in the token, and only then sends the secret and the
-public keys; private keys never leave the server. The token is valid for one hour and once only,
+Enrollment is described in [Installation](#3-enrollment). With a token, the sensor generates its
+own TLS key and signing key, checks that the verifier is the right one by comparing its CA with
+the fingerprint in the token, and only then sends the secret and the public keys; private keys never leave the server. The token is valid for one hour and once only,
 and the verifier keeps only its hash. The token goes through standard input because any user on
 the server can read a process's arguments; every enrollment raises an alert, and a token presented
 again after use raises a critical one, because it means someone has a copy. On certificate
 renewal, too, the new key is born on the server.
-
-Alternatively the verifier generates a bundle with the keys already inside, from the interface or
-from the command line:
-
-```sh
-(umask 077; docker compose exec -T verifier /tripwatch-verifier enroll -host web-01 -out - > web-01.json)
-```
-
-Copy the bundle to the server and start the service:
-
-```sh
-sudo install -o root -g root -m 600 web-01.json /etc/tripwatch/bundle.json
-sudo systemctl enable --now tripwatch-sensor
-```
 
 The sensor refuses a bundle not owned by its user, readable by other users or with a verifier
 address that is not `https`. The client certificate lasts two years and the sensor renews it by
@@ -505,16 +524,11 @@ between runs (position in the chain, envelope awaiting acknowledgement, log posi
 `-state-dir` (default `/var/lib/tripwatch`); every envelope is saved before being sent and resent
 identical if the acknowledgement is lost.
 
-Without `-bundle` the sensor prints a JSON snapshot and exits, useful to see what it collects:
+Without `-bundle` the sensor prints a JSON snapshot and exits, useful to see what it collects
+on any Linux machine:
 
 ```sh
-sudo ./tripwatch-sensor > snapshot.json
-```
-
-On a Kubernetes node, mount the host root into the pod and tell the sensor where it is:
-
-```sh
-tripwatch-sensor -root /host
+sudo tripwatch-sensor > snapshot.json
 ```
 
 A systemd unit with security restrictions is in [deploy/systemd](deploy/systemd).
