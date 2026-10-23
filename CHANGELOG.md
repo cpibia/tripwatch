@@ -8,6 +8,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The exemption for an account's own scripts is narrowed: the path is normalised, and only a
+  job run by cron, from the account's home, from a file the account owns, outside every upload
+  directory, is exempted. Python and Ruby application servers (gunicorn, uwsgi, puma, unicorn,
+  Passenger) count as the web server.
 - The scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`) are watched for executable files: a
   dropper written, run and deleted lives too briefly for its process to be read, but its file
   is seen. Only executables, and the removal of those, are reported.

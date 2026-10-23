@@ -35,4 +35,5 @@ func NewExecs(collector.Source, chan<- Event) (*Execs, error) { return nil, ErrU
 func (*Execs) Close() error                  { return nil }
 func (*Execs) SetWebUsers([]int)             {}
 func (*Execs) SetHomes(map[int]string)       {}
+func (*Execs) SetUploads([]string)           {}
 func (*Execs) Run(ctx context.Context) error { <-ctx.Done(); return nil }

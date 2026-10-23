@@ -13,7 +13,7 @@ var webUserNames = []string{"www-data", "nginx", "apache", "http", "wwwrun", "li
 
 // webServerComms are the process names of web servers and of the interpreters they hand
 // requests to.
-var webServerComms = []string{"nginx", "apache2", "httpd", "caddy", "lighttpd", "lsphp", "php-fpm", "php-cgi"}
+var webServerComms = []string{"nginx", "apache2", "httpd", "caddy", "lighttpd", "lsphp", "php-fpm", "php-cgi", "gunicorn", "uwsgi", "puma", "unicorn", "passenger", "Passenger"}
 
 // webTools are what a webshell runs once it is in: shells, interpreters, network and download
 // tools, and the commands that make a foothold persistent.
@@ -64,36 +64,60 @@ func WebUsers(accounts *system.AccountsResult, processes *system.ProcessesResult
 	return out
 }
 
+// execContext is what classifying a process start needs to know of the host.
+type execContext struct {
+	webUsers map[int]bool
+	// homes maps UIDs to their home directories, uploads lists the upload directories.
+	homes   map[int]string
+	uploads []string
+	// fromCron reports whether a process descends from cron; owner returns a file's owner.
+	fromCron func(p system.Process) bool
+	owner    func(path string) (int, bool)
+}
+
 // classifyExec says why a process that just started matters, or "" when it does not, and the
-// script it runs when the executable is an interpreter. homes maps UIDs to their home
-// directories: an account running a program from its own home is its owner's business, such as
-// a crontab calling a script, unless the account is the web server's, whose home is often the
-// web root where uploads land.
-func classifyExec(p system.Process, webUsers map[int]bool, homes map[int]string) (reason, script string) {
-	exe := p.Exe
+// script it runs when the executable is an interpreter.
+func classifyExec(p system.Process, c execContext) (reason, script string) {
+	exe := path.Clean(p.Exe)
 	tool := toolName(exe, p.Comm)
 	if slices.Contains(interpreters, tool) || strings.HasPrefix(tool, "php") {
-		script = scriptArg(p.Cmdline)
+		if script = scriptArg(p.Cmdline); script != "" {
+			script = path.Clean(script)
+		}
 	}
 	switch {
 	case p.ExeDeleted:
 		return ReasonDeleted, script
-	case webUsers[p.UID] && slices.Contains(webTools, tool):
+	case c.webUsers[p.UID] && slices.Contains(webTools, tool):
 		return ReasonWebShell, script
-	case (unusual(exe) && !ownHome(p.UID, exe, webUsers, homes)) || (unusual(script) && !ownHome(p.UID, script, webUsers, homes)):
+	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script)):
 		return ReasonUnusualPath, script
 	}
 	return "", script
 }
 
-// ownHome reports whether path lies in the home of the account uid, other than root's and the
-// web server's.
-func ownHome(uid int, p string, webUsers map[int]bool, homes map[int]string) bool {
-	home := homes[uid]
-	if uid == 0 || webUsers[uid] || home == "" || home == "/" {
+// ownCronJob reports whether a program from an unusual place is an account's own scheduled job:
+// run by cron, from the account's home, from a file the account owns, outside every upload
+// directory. Root and the web server's user never qualify, the latter's home being often the
+// web root.
+func (c execContext) ownCronJob(p system.Process, file string) bool {
+	home := c.homes[p.UID]
+	if p.UID == 0 || c.webUsers[p.UID] || home == "" || home == "/" {
 		return false
 	}
-	return strings.HasPrefix(p, strings.TrimSuffix(home, "/")+"/")
+	if !strings.HasPrefix(file, strings.TrimSuffix(path.Clean(home), "/")+"/") {
+		return false
+	}
+	if slices.ContainsFunc(c.uploads, func(u string) bool { return file == u || strings.HasPrefix(file, strings.TrimSuffix(u, "/")+"/") }) {
+		return false
+	}
+	if c.owner == nil || c.fromCron == nil {
+		return false
+	}
+	if uid, ok := c.owner(file); !ok || uid != p.UID {
+		return false
+	}
+	return c.fromCron(p)
 }
 
 func unusual(p string) bool {

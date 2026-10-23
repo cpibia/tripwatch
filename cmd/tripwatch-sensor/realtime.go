@@ -155,6 +155,7 @@ func (r *realtime) update(snap collector.Snapshot) {
 			homes[a.UID] = a.Home
 		}
 		execs.SetHomes(homes)
+		execs.SetUploads(uploads)
 	}
 }
 

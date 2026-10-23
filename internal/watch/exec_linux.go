@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io/fs"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,6 +47,7 @@ type Execs struct {
 	mu       sync.Mutex
 	webUsers map[int]bool
 	homes    map[int]string
+	uploads  []string
 	// Dropped counts events lost because the consumer did not keep up; Skipped, processes not
 	// inspected because more started than MaxInspections in a second.
 	Dropped atomic.Int64
@@ -106,6 +109,13 @@ func dropNetAdmin() error {
 
 // Close stops the subscription.
 func (x *Execs) Close() error { return unix.Close(x.fd) }
+
+// SetUploads replaces the upload directories, where no account's job is exempted.
+func (x *Execs) SetUploads(dirs []string) {
+	x.mu.Lock()
+	x.uploads = dirs
+	x.mu.Unlock()
+}
 
 // SetHomes replaces the home directories of the accounts, by UID.
 func (x *Execs) SetHomes(homes map[int]string) {
@@ -198,7 +208,7 @@ func (x *Execs) message(m []byte) bool {
 			return true
 		}
 		x.mu.Lock()
-		reason, script := classifyExec(p, x.webUsers, x.homes)
+		reason, script := classifyExec(p, execContext{webUsers: x.webUsers, homes: x.homes, uploads: x.uploads, fromCron: x.fromCron, owner: x.owner})
 		x.mu.Unlock()
 		if reason != "" {
 			e := x.event(reason, p)
@@ -224,6 +234,38 @@ func (x *Execs) message(m []byte) bool {
 		return true
 	}
 	return false
+}
+
+// cronNames are the process names of cron daemons.
+var cronNames = []string{"cron", "crond", "CRON", "anacron", "fcron"}
+
+// fromCron walks up to four ancestors of a process looking for a cron daemon.
+func (x *Execs) fromCron(p system.Process) bool {
+	ppid := p.PPID
+	for range 4 {
+		if ppid <= 1 {
+			return false
+		}
+		parent, ok := system.ReadProcess(x.src.FS, ppid)
+		if !ok {
+			return false
+		}
+		if slices.Contains(cronNames, parent.Comm) {
+			return true
+		}
+		ppid = parent.PPID
+	}
+	return false
+}
+
+// owner returns the owner of a file, without following a final link.
+func (x *Execs) owner(p string) (int, bool) {
+	info, err := fs.Lstat(x.src.FS, collector.Rel(p))
+	if err != nil {
+		return 0, false
+	}
+	uid, ok := collector.Owner(info)
+	return int(uid), ok
 }
 
 func (x *Execs) event(reason string, p system.Process) Event {
