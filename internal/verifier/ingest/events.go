@@ -94,13 +94,13 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 	}
 
 	if b.Dropped > 0 {
-		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost", Severity: "high", Kind: "sensor",
+		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost:" + now.UTC().Format("2006-01-02"), Severity: "high", Kind: "sensor",
 			Title:  "Real-time events lost",
 			Detail: fmt.Sprintf("The sensor lost %d events: they came faster than it could read or send them. Flooding the watched directories is a way to hide one change among many; the next snapshot still shows the state they left.", b.Dropped),
 		}, now)
 	}
 	if b.DroppedSystem > 0 {
-		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost-system", Severity: "high", Kind: "sensor",
+		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost-system:" + now.UTC().Format("2006-01-02"), Severity: "high", Kind: "sensor",
 			Title:  "Real-time events on system paths lost",
 			Detail: fmt.Sprintf("Among the lost events, %d were changes to accounts, SSH, privileges, services, scheduled tasks or start-up scripts: the sensor's queue was full of them. Check those places on the server; the next snapshot shows their state.", b.DroppedSystem),
 		}, now)

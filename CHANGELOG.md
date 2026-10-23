@@ -26,7 +26,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   deep): directories anyone creates there can no longer take the watches of the system, the
   homes or the uploads. Places of those left unwatched by the bounds are listed in each snapshot.
 - Files in the scratch directories are marked when the web server's user owns them; at most
-  2,000 events a second are handled there, the rest counted as lost; the executables remembered
+  4,000 events a second are handled there, and 1,000 for each owning account, so one account's
+  files cannot hide another's; the rest is counted as lost; the executables remembered
   there are pruned by age.
 - The scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock`) are watched for executable files: a
   dropper written, run and deleted lives too briefly for its process to be read, but its file
@@ -43,6 +44,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
   mappings of real files (memfd ones included) count again, only the anonymous region of OPcache
   and JITs is left out; new generators and set-user-ID programs are high again whatever packages
   did; removing an activation link (a unit disabled) is low.
+- Lost real-time events are one alert a day, not a single one kept open for good.
 - Places left without a real-time watch are an alert per class: high for the system, the homes
   and the uploads, medium for the scratch directories. The list is computed again at each
   snapshot.

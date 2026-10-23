@@ -49,8 +49,10 @@ type Files struct {
 	scratchSeen map[string]time.Time
 	// webUsers are the web server's UIDs, whose files in the scratch directories are marked.
 	webUsers map[int]bool
-	// scratchEvents counts the scratch events handled this second, against maxScratchEvents.
+	// scratchEvents counts the scratch events handled this second, against maxScratchEvents,
+	// and scratchByUID those of each owner, against maxScratchPerUID.
 	scratchEvents int
+	scratchByUID  map[uint32]int
 	scratchSecond time.Time
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
 	known map[string]string
@@ -80,7 +82,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}, classWatches: map[string]int{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}}, nil
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -539,7 +541,8 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 	}
 	e.Size = info.Size()
 	// Most of what is written in /tmp is not executable and is dropped: no need to read it.
-	if class == ClassScratch && !Executable(e.Mode) {
+	if class == ClassScratch && (!Executable(e.Mode) || (e.UID != nil && !f.scratchOwnerBudget(*e.UID))) {
+		e.Mode = ""
 		return e
 	}
 	// Root's budget is for root's files on system paths: in the uploads and the scratch
@@ -625,21 +628,36 @@ func (f *Files) pruneScratch() {
 	}
 }
 
-// maxScratchEvents bounds the scratch events handled each second: anyone can write in /tmp in a
-// loop. What is over is counted as lost, so the flood shows.
-const maxScratchEvents = 2000
+// Budgets of the scratch directories, each second: anyone can write in /tmp in a loop. The total
+// bounds the sensor's work; the share of each owner keeps one account's files from hiding
+// another's. What is over is counted as lost, so the flood shows.
+const (
+	maxScratchEvents = 4000
+	maxScratchPerUID = 1000
+)
 
 // scratchBudget takes one event from this second's budget of the scratch directories.
 func (f *Files) scratchBudget() bool {
 	now := f.now()
 	if now.Sub(f.scratchSecond) >= time.Second {
 		f.scratchEvents, f.scratchSecond = 0, now
+		clear(f.scratchByUID)
 	}
 	if f.scratchEvents >= maxScratchEvents {
 		f.Dropped.Add(1)
 		return false
 	}
 	f.scratchEvents++
+	return true
+}
+
+// scratchOwnerBudget takes one event from this second's share of the file's owner.
+func (f *Files) scratchOwnerBudget(uid uint32) bool {
+	if f.scratchByUID[uid] >= maxScratchPerUID {
+		f.Dropped.Add(1)
+		return false
+	}
+	f.scratchByUID[uid]++
 	return true
 }
 
