@@ -147,6 +147,7 @@ func (r *realtime) update(snap collector.Snapshot) {
 	r.mu.Unlock()
 	if files != nil {
 		files.Set(watch.Targets(homes, uploads))
+		files.SetWebUsers(watch.WebUsers(&accounts, &processes))
 	}
 	if execs != nil {
 		execs.SetWebUsers(watch.WebUsers(&accounts, &processes))

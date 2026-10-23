@@ -61,11 +61,13 @@ type Event struct {
 	Dir    bool      `json:"dir,omitempty"`
 	Size   int64     `json:"size,omitempty"`
 	SHA256 string    `json:"sha256,omitempty"`
-	// PrevSHA256 is the content the sensor last knew the file to have, for system paths: a key added and then removed by rewriting a file that existed long before shows
-	// as a return to it.
-	PrevSHA256 string  `json:"prev_sha256,omitempty"`
-	UID        *uint32 `json:"uid,omitempty"`
-	Mode       string  `json:"mode,omitempty"`
+	// PrevSHA256 is the content the sensor last knew the file to have, for system paths: a key
+	// added and then removed by rewriting a file that existed long before shows as a return to it.
+	PrevSHA256 string `json:"prev_sha256,omitempty"`
+	// WebUser marks a file in a scratch directory owned by the web server's user.
+	WebUser bool    `json:"web_user,omitempty"`
+	UID     *uint32 `json:"uid,omitempty"`
+	Mode    string  `json:"mode,omitempty"`
 	// Process events: why the process was reported, and what it is.
 	Reason  string `json:"reason,omitempty"`
 	PID     int    `json:"pid,omitempty"`

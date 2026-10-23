@@ -94,9 +94,15 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 
 	case watch.ClassScratch:
 		dir := scratchRoot(e.Path)
+		// Each account's drops are a group of their own: one user's builds, which come and go in
+		// /tmp all day, never fold root's or the web server's into an aggregate.
 		if e.Op == watch.OpDelete {
 			if first, ok := appeared(e, history); ok {
-				return event("scratch-transient", e.Path+occurrence(first), "critical", "Executable dropped in "+dir+" and removed",
+				sev := "high"
+				if first.WebUser || (first.UID != nil && *first.UID == 0) {
+					sev = "critical"
+				}
+				return event("scratch-transient", owner(first)+"|"+e.Path+occurrence(first), sev, "Executable dropped in "+dir+" and removed",
 					fmt.Sprintf("%s was written at %s and removed at %s: a program dropped, most likely run and deleted so that nothing stays on disk. %s",
 						e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))), true
 			}
@@ -105,7 +111,11 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		if !watch.Executable(e.Mode) {
 			return Finding{}, false
 		}
-		return event("scratch-exec", e.Path, "high", "Executable file in "+dir,
+		sev := "medium"
+		if e.WebUser || (e.UID != nil && *e.UID == 0) {
+			sev = "high"
+		}
+		return event("scratch-exec", owner(e)+"|"+e.Path, sev, "Executable file in "+dir,
 			fmt.Sprintf("%s: %s. Programs are not installed in %s; an executable there was put there, by a build, an installer, or an intruder staging a tool.", e.Path, describeFile(e), dir)), true
 
 	case watch.ClassSSH:
@@ -298,9 +308,17 @@ func restored(e watch.Event, history History) (watch.Event, bool) {
 
 // occurrence tells transient alerts apart: each appearance is an alert of its own, so one
 // acknowledged does not silence the next on the same path, even with the same content.
+// owner names the account of an event's file, for grouping alerts.
+func owner(e watch.Event) string {
+	if e.UID == nil {
+		return "uid?"
+	}
+	return "uid" + strconv.FormatUint(uint64(*e.UID), 10)
+}
+
 // scratchRoot is the scratch directory a path lies in.
 func scratchRoot(p string) string {
-	for _, d := range []string{"/dev/shm", "/var/tmp", "/tmp"} {
+	for _, d := range []string{"/dev/shm", "/var/tmp", "/tmp", "/run/lock"} {
 		if p == d || strings.HasPrefix(p, d+"/") {
 			return d
 		}

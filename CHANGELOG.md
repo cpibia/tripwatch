@@ -17,6 +17,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - The scratch directories come last and have a budget of their own (512 watches, two levels
   deep): directories anyone creates there can no longer take the watches of the system, the
   homes or the uploads. Places of those left unwatched by the bounds are listed in each snapshot.
+- Files in the scratch directories are marked when the web server's user owns them; at most
+  2,000 events a second are handled there, the rest counted as lost; the executables remembered
+  there are pruned by age.
 - The scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock`) are watched for executable files: a
   dropper written, run and deleted lives too briefly for its process to be read, but its file
   is seen. Only executables, and the removal of those, are reported.
@@ -34,8 +37,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   did; removing an activation link (a unit disabled) is low.
 - Places of the system, the homes or the uploads left without a real-time watch are a high
   alert.
-- An executable file in a scratch directory is high; one that appears and is removed within 15
-  minutes is critical. The benchmark's dropper run and deleted between two checks is caught.
+- An executable file in a scratch directory is high when root or the web server's user owns it,
+  medium otherwise (builds and installers); one that appears and is removed within 15 minutes is
+  critical for root and the web server's user, high otherwise. Each account's drops are a group
+  of their own, so one user's noise never folds another's alerts into an aggregate. The benchmark's dropper run and deleted between two checks is caught.
 
 ## [0.1.12] - 2026-10-23
 

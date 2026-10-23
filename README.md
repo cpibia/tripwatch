@@ -546,6 +546,12 @@ The full design is in [docs/architecture.md](docs/architecture.md).
 
 - Container storage (`/var/lib/docker` and similar) is not examined yet: it will come with the
   container collector, which will compare running containers with their images.
+- In the scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock`) the watch sees
+  executable files, as anyone can write there: a file run without its execute bit (through the
+  dynamic loader or an interpreter), one created with `O_TMPFILE` or in memory (`memfd`), one in
+  a private tmpfs of a user namespace, or one removed within a millisecond, before the sensor
+  reads it, is not seen there; a process still alive from such a file shows in the snapshot's
+  processes. Past 2,000 events a second there the rest is counted as lost and reported.
 - Real-time events cover the watched places and the process starts listed in
   [Real-time events](#real-time-events): a file that appears and disappears elsewhere between two
   snapshots is not seen. inotify has a per-user watch limit (`fs.inotify.max_user_watches`): when

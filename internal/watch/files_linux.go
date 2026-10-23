@@ -46,7 +46,12 @@ type Files struct {
 	issues collector.Issues
 	// scratchSeen are the executables reported in the scratch directories, whose removal is
 	// reported too. Only the goroutine reading the kernel's queue touches it.
-	scratchSeen map[string]bool
+	scratchSeen map[string]time.Time
+	// webUsers are the web server's UIDs, whose files in the scratch directories are marked.
+	webUsers map[int]bool
+	// scratchEvents counts the scratch events handled this second, against maxScratchEvents.
+	scratchEvents int
+	scratchSecond time.Time
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
 	known map[string]string
 	// gaps are the places left unwatched by the bounds since the sensor started, kept across
@@ -71,7 +76,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]bool{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}}, nil
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -347,6 +352,9 @@ func (f *Files) event(wd int, mask uint32, name string) {
 		if !t.wants(name) {
 			continue
 		}
+		if t.Class == ClassScratch && !f.scratchBudget() {
+			continue
+		}
 		if isDir && op == OpCreate && t.Recursive {
 			if w.depth < t.depth() {
 				f.watchNew(full, t, w.depth+1)
@@ -483,6 +491,60 @@ func (f *Files) spend(n int64, root bool) bool {
 // maxScratchSeen bounds the executables remembered in the scratch directories.
 const maxScratchSeen = 1024
 
+// pruneScratch forgets the executables seen in the scratch directories more than an hour ago,
+// and the older half if that is not enough: their removal is no longer a short-lived drop.
+func (f *Files) pruneScratch() {
+	cutoff := f.now().Add(-time.Hour)
+	for p, at := range f.scratchSeen {
+		if at.Before(cutoff) {
+			delete(f.scratchSeen, p)
+		}
+	}
+	if len(f.scratchSeen) < maxScratchSeen {
+		return
+	}
+	times := make([]time.Time, 0, len(f.scratchSeen))
+	for _, at := range f.scratchSeen {
+		times = append(times, at)
+	}
+	slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
+	median := times[len(times)/2]
+	for p, at := range f.scratchSeen {
+		if !at.After(median) {
+			delete(f.scratchSeen, p)
+		}
+	}
+}
+
+// maxScratchEvents bounds the scratch events handled each second: anyone can write in /tmp in a
+// loop. What is over is counted as lost, so the flood shows.
+const maxScratchEvents = 2000
+
+// scratchBudget takes one event from this second's budget of the scratch directories.
+func (f *Files) scratchBudget() bool {
+	now := f.now()
+	if now.Sub(f.scratchSecond) >= time.Second {
+		f.scratchEvents, f.scratchSecond = 0, now
+	}
+	if f.scratchEvents >= maxScratchEvents {
+		f.Dropped.Add(1)
+		return false
+	}
+	f.scratchEvents++
+	return true
+}
+
+// SetWebUsers replaces the web server's UIDs.
+func (f *Files) SetWebUsers(uids []int) {
+	m := make(map[int]bool, len(uids))
+	for _, u := range uids {
+		m[u] = true
+	}
+	f.mu.Lock()
+	f.webUsers = m
+	f.mu.Unlock()
+}
+
 // emit sends an event, keeping of the scratch directories only executable files, and the
 // removal of those it reported: the rest of what happens in /tmp is noise.
 func (f *Files) emit(e Event) {
@@ -491,14 +553,22 @@ func (f *Files) emit(e Event) {
 		case e.Dir:
 			return
 		case e.Op == OpDelete:
-			if !f.scratchSeen[e.Path] {
+			if _, seen := f.scratchSeen[e.Path]; !seen {
 				return
 			}
 			delete(f.scratchSeen, e.Path)
 		case !Executable(e.Mode):
 			return
-		case len(f.scratchSeen) < maxScratchSeen:
-			f.scratchSeen[e.Path] = true
+		default:
+			if len(f.scratchSeen) >= maxScratchSeen {
+				f.pruneScratch()
+			}
+			f.scratchSeen[e.Path] = f.now()
+		}
+		if e.UID != nil {
+			f.mu.Lock()
+			e.WebUser = f.webUsers[int(*e.UID)]
+			f.mu.Unlock()
 		}
 	}
 	f.send(e)

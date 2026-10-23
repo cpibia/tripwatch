@@ -12,6 +12,7 @@ func TestEvaluateEvents(t *testing.T) {
 	t0 := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	uid := 33
 	keys := "/root/.ssh/authorized_keys"
+	web33, dev1000, root0 := uint32(33), uint32(1000), uint32(0)
 	oldKeys := "/home/ops/.ssh/authorized_keys"
 	past := map[string][]watch.Event{
 		keys: {
@@ -19,7 +20,7 @@ func TestEvaluateEvents(t *testing.T) {
 			{At: t0.Add(time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "bbbb"},
 			{At: t0.Add(2 * time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "aaaa"},
 		},
-		"/tmp/.bench-dropper":      {{At: t0, Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/.bench-dropper", Mode: "-rwxr-xr-x"}},
+		"/tmp/.bench-dropper":      {{At: t0, Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/.bench-dropper", Mode: "-rwxr-xr-x", UID: &root0}},
 		"/srv/app/uploads/old.php": {{At: t0.Add(-time.Hour), Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/srv/app/uploads/old.php"}},
 		// A file unchanged for months, then a key added: the sensor knew the content before it.
 		oldKeys: {{At: t0.Add(time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: oldKeys, SHA256: "1111", PrevSHA256: "0000"}},
@@ -61,9 +62,10 @@ func TestEvaluateEvents(t *testing.T) {
 		{"key added", watch.Event{At: t0.Add(time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "bbbb"}, false, "ssh-keys high"},
 		{"key removed from an old file", watch.Event{At: t0.Add(2 * time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: oldKeys, SHA256: "0000", PrevSHA256: "1111"}, false, "ssh-transient critical"},
 		{"known hosts", watch.Event{Class: watch.ClassSSH, Op: watch.OpWrite, Path: "/root/.ssh/known_hosts"}, false, ""},
-		{"executable in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/.x", Mode: "-rwxr-xr-x"}, false, "scratch-exec high"},
+		{"executable in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/.x", Mode: "-rwxr-xr-x", UID: &web33, WebUser: true}, false, "scratch-exec:uid33 high"},
+		{"build output in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/go-build1/a.out", Mode: "-rwxr-xr-x", UID: &dev1000}, false, "scratch-exec:uid1000 medium"},
 		{"plain file in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpCreate, Path: "/tmp/sess", Mode: "-rw-------"}, false, ""},
-		{"dropper removed", watch.Event{At: t0.Add(time.Minute), Class: watch.ClassScratch, Op: watch.OpDelete, Path: "/tmp/.bench-dropper"}, false, "scratch-transient critical"},
+		{"dropper removed", watch.Event{At: t0.Add(time.Minute), Class: watch.ClassScratch, Op: watch.OpDelete, Path: "/tmp/.bench-dropper"}, false, "scratch-transient:uid0 critical"},
 		{"directory", watch.Event{Class: watch.ClassSchedule, Op: watch.OpCreate, Path: "/var/spool/cron/x", Dir: true}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
