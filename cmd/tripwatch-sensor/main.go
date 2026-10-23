@@ -373,13 +373,20 @@ const (
 
 // systemStopping reports whether systemd is shutting the system down: only then does the
 // verifier take a stop for a shutdown. A stop of the service on a running system is not one.
+// systemctl is run by absolute path, never looked up in PATH.
 func systemStopping() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	// is-system-running exits non-zero for every state but "running", "stopping" included: only
 	// its output counts.
-	out, _ := exec.CommandContext(ctx, "systemctl", "is-system-running").Output()
-	return strings.TrimSpace(string(out)) == "stopping"
+	for _, systemctl := range []string{"/usr/bin/systemctl", "/bin/systemctl"} {
+		if _, err := os.Stat(systemctl); err != nil {
+			continue
+		}
+		out, _ := exec.CommandContext(ctx, systemctl, "is-system-running").Output() //nolint:gosec // one of the two fixed paths above
+		return strings.TrimSpace(string(out)) == "stopping"
+	}
+	return false
 }
 
 // stopping tells the verifier, as the last envelope of the chain, that the sensor is going away
