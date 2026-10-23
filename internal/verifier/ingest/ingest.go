@@ -173,6 +173,7 @@ type Server struct {
 	Log   *slog.Logger
 
 	locks      sync.Map // host -> chan struct{}, a one-slot semaphore
+	small      sync.Map // host -> *bucket, the rate of heartbeats and event batches
 	snapshots  chan struct{}
 	once       sync.Once
 	enrolling  chan struct{}
@@ -248,6 +249,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.currentCertificate(ctx, w, host, r.TLS.PeerCertificates[0], now) {
+		return
+	}
+	if kind != protocol.KindSnapshot && !s.allowSmall(identity, now) {
+		// Refused before the body is read: a compromised host cannot keep the verifier busy
+		// with heartbeats and event batches, and the chain does not move.
+		s.alive(ctx, identity, now)
+		http.Error(w, "too many envelopes, retry later", http.StatusTooManyRequests)
 		return
 	}
 	if kind == protocol.KindSnapshot {
@@ -654,6 +662,37 @@ func clipVersion(v string) string {
 		v = v[:64]
 	}
 	return strings.ToValidUTF8(v, "")
+}
+
+// Heartbeats and event batches a host may send: a burst of SmallBurst, then SmallRate a second.
+// An intact sensor sends a heartbeat a minute and a batch every two seconds at most, and a
+// backlog after an outage in a short burst.
+const (
+	SmallBurst = 60
+	SmallRate  = 1.0
+)
+
+type bucket struct {
+	mu     sync.Mutex
+	tokens float64
+	last   time.Time
+}
+
+// allowSmall takes one token from the host's bucket of small envelopes.
+func (s *Server) allowSmall(host string, now time.Time) bool {
+	v, _ := s.small.LoadOrStore(host, &bucket{tokens: SmallBurst, last: now})
+	b := v.(*bucket)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if elapsed := now.Sub(b.last).Seconds(); elapsed > 0 {
+		b.tokens = min(SmallBurst, b.tokens+elapsed*SmallRate)
+	}
+	b.last = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
 }
 
 func writeAck(w http.ResponseWriter, seq uint64) {

@@ -762,3 +762,24 @@ func TestReenrollmentBindsTheNewCertificateAtOnce(t *testing.T) {
 		t.Fatalf("a host with no certificate recorded took the first one presented: %v", err)
 	}
 }
+
+// Heartbeats and event batches beyond the burst are refused before the body is read, and the
+// chain waits: the envelope goes out once the bucket refills.
+func TestSmallEnvelopesAreRateLimited(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	for i := range SmallBurst {
+		if err := c.Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+			t.Fatalf("heartbeat %d: %v", i, err)
+		}
+	}
+	err := c.Send(ctx, protocol.KindHeartbeat, nil, h.clock)
+	if err == nil || errors.Is(err, transport.ErrRejected) {
+		t.Fatalf("past the burst: %v, want a temporary refusal", err)
+	}
+	h.clock = h.clock.Add(5 * time.Second)
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+		t.Fatalf("after the bucket refilled: %v", err)
+	}
+}

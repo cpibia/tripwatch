@@ -67,10 +67,27 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 		}, now)
 	}
 
+	// Each path's history is read once for the batch, from the earliest time any event of the
+	// batch can look back to, and filtered for each event.
+	earliest := now
+	for _, ev := range events {
+		if ev.At.Before(earliest) {
+			earliest = ev.At
+		}
+	}
+	earliest = earliest.Add(-analyze.TransientWindow)
+	read := map[string][]store.Event{}
 	history := func(path string, since time.Time) []watch.Event {
-		past, _ := s.Store.PathEvents(ctx, host, path, since)
+		past, ok := read[path]
+		if !ok {
+			past, _ = s.Store.PathEvents(ctx, host, path, earliest)
+			read[path] = past
+		}
 		out := make([]watch.Event, 0, len(past))
 		for _, p := range past {
+			if p.At.Before(since) {
+				continue
+			}
 			var ev watch.Event
 			if json.Unmarshal(p.Data, &ev) == nil {
 				ev.At = p.At
