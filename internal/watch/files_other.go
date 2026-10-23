@@ -22,3 +22,15 @@ func (*Files) Issues() collector.Issues      { return nil }
 func (*Files) Watches() int                  { return 0 }
 func (*Files) Set([]Target)                  {}
 func (*Files) Run(ctx context.Context) error { <-ctx.Done(); return nil }
+
+// Execs is a stand-in outside Linux, where the process connector does not exist.
+type Execs struct {
+	Dropped atomic.Int64
+	Skipped atomic.Int64
+}
+
+func NewExecs(collector.Source, chan<- Event) (*Execs, error) { return nil, ErrUnsupported }
+
+func (*Execs) Close() error                  { return nil }
+func (*Execs) SetWebUsers([]int)             {}
+func (*Execs) Run(ctx context.Context) error { <-ctx.Done(); return nil }

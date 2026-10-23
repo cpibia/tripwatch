@@ -19,6 +19,22 @@ const (
 	ClassService   = "service"
 	ClassHook      = "hook"
 	ClassUpload    = "upload"
+	ClassExec      = "exec"
+)
+
+// Reasons a process start is reported. Only these are: a busy server starts thousands of
+// processes an hour, and the verifier needs the few that mean something.
+const (
+	// ReasonWebShell: the web server's user started a shell or a network tool, what a webshell
+	// in use does.
+	ReasonWebShell = "web_user_tool"
+	// ReasonDeleted: the executable was removed from disk after it started.
+	ReasonDeleted = "deleted_executable"
+	// ReasonUnusualPath: the executable sits where programs are not installed.
+	ReasonUnusualPath = "unusual_path"
+	// ReasonPrivilege: a process gained root through a set-user-ID program outside the system's
+	// binary directories.
+	ReasonPrivilege = "privilege_gain"
 )
 
 // Operations on a watched path.
@@ -42,6 +58,17 @@ type Event struct {
 	SHA256 string    `json:"sha256,omitempty"`
 	UID    *uint32   `json:"uid,omitempty"`
 	Mode   string    `json:"mode,omitempty"`
+	// Process events: why the process was reported, and what it is.
+	Reason  string `json:"reason,omitempty"`
+	PID     int    `json:"pid,omitempty"`
+	PPID    int    `json:"ppid,omitempty"`
+	User    *int   `json:"user,omitempty"`
+	EUser   *int   `json:"euser,omitempty"`
+	Exe     string `json:"exe,omitempty"`
+	Cmdline string `json:"cmdline,omitempty"`
+	Comm    string `json:"comm,omitempty"`
+	Parent  string `json:"parent,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
 }
 
 // Target is a directory to watch. Names, when set, keeps only the entries with those names;

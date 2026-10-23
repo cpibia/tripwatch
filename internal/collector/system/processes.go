@@ -118,6 +118,13 @@ func pids(fsys fs.FS) []int {
 	return out
 }
 
+// ReadProcess reads one process the way the collector does, its command line redacted: for the
+// real-time watcher, which looks at a process the moment it starts.
+func ReadProcess(fsys fs.FS, pid int) (Process, bool) {
+	var issues collector.Issues
+	return readProcess(fsys, pid, &issues)
+}
+
 // readProcess returns false when the process exited while being read.
 func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) {
 	dir := fmt.Sprintf("proc/%d/", pid)
