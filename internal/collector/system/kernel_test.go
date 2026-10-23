@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -100,5 +101,16 @@ func TestKernel(t *testing.T) {
 func TestTaintFlags(t *testing.T) {
 	if got := TaintFlags(1 | 1<<12 | 1<<13); got != "POE" {
 		t.Errorf("TaintFlags = %q", got)
+	}
+}
+
+// A status file past collector.MaxReadSize is streamed, not dropped.
+func TestDpkgStatesLargeStatus(t *testing.T) {
+	big := strings.Repeat("\n", 17<<20) + "Package: bash\nStatus: install ok installed\nVersion: 5.2-1\nArchitecture: amd64\n"
+	fsys := fstest.MapFS{"var/lib/dpkg/status": &fstest.MapFile{Data: []byte(big)}}
+	var issues collector.Issues
+	st := dpkgStates(fsys, &issues)
+	if st["bash"].Version != "5.2-1" || len(issues) != 0 {
+		t.Fatalf("states %v, issues %v", st, issues)
 	}
 }

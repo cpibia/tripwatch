@@ -1,6 +1,7 @@
 package system
 
 import (
+	"bufio"
 	"context"
 	"crypto/md5"  //nolint:gosec // dpkg records MD5 checksums; it is used to compare, not to protect
 	"crypto/sha1" //nolint:gosec // apk records SHA-1 checksums; same reason
@@ -81,49 +82,74 @@ type PackageState struct {
 // within what the verifier accepts in a snapshot.
 const maxPackageStates = 20000
 
-// dpkgStates reads each installed package's version and checksums from dpkg's database.
+// maxStatusRead bounds how much of dpkg's status file is read for the package states: real ones
+// are a few MB.
+const maxStatusRead = 64 << 20
+
+// dpkgStates reads each installed package's version and checksums from dpkg's database. The
+// status file is streamed: it can be larger than collector.MaxReadSize, and a crafted one must
+// not cost memory in proportion to its size.
 func dpkgStates(fsys fs.FS, issues *collector.Issues) map[string]PackageState {
-	status, err := fs.ReadFile(fsys, "var/lib/dpkg/status")
+	file, err := fsys.Open("var/lib/dpkg/status")
 	if err != nil {
+		issues.Add(err)
 		return nil
 	}
+	defer func() { _ = file.Close() }()
 	out := map[string]PackageState{}
 	conffiles := map[string]string{}
-	for _, stanza := range strings.Split(string(status), "\n\n") {
-		var pkg, arch, version string
-		var conf strings.Builder
-		inConffiles := false
-		for _, line := range strings.Split(stanza, "\n") {
-			switch {
-			case strings.HasPrefix(line, "Package: "):
-				pkg = strings.TrimPrefix(line, "Package: ")
-			case strings.HasPrefix(line, "Architecture: "):
-				arch = strings.TrimPrefix(line, "Architecture: ")
-			case strings.HasPrefix(line, "Version: "):
-				version = strings.TrimPrefix(line, "Version: ")
-			case line == "Conffiles:":
-				inConffiles = true
+	var pkg, arch, version string
+	var conf strings.Builder
+	inConffiles := false
+	flush := func() {
+		if pkg != "" && version != "" && len(out) < maxPackageStates {
+			// A multi-arch package's files are named with its architecture: only the name that
+			// has an .md5sums is kept, the plain one otherwise.
+			name := pkg
+			if _, err := fs.Stat(fsys, "var/lib/dpkg/info/"+pkg+":"+arch+".md5sums"); err == nil {
+				name = pkg + ":" + arch
+			}
+			out[name] = PackageState{Version: clipField(version)}
+			conffiles[name] = conf.String()
+		}
+		pkg, arch, version, inConffiles = "", "", "", false
+		conf.Reset()
+	}
+	limited := &io.LimitedReader{R: file, N: maxStatusRead + 1}
+	sc := bufio.NewScanner(limited)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		switch {
+		case line == "":
+			flush()
+			continue
+		case strings.HasPrefix(line, "Package: "):
+			pkg = strings.TrimPrefix(line, "Package: ")
+		case strings.HasPrefix(line, "Architecture: "):
+			arch = strings.TrimPrefix(line, "Architecture: ")
+		case strings.HasPrefix(line, "Version: "):
+			version = strings.TrimPrefix(line, "Version: ")
+		case line == "Conffiles:":
+			inConffiles = true
+			continue
+		}
+		if inConffiles {
+			if !strings.HasPrefix(line, " ") {
+				inConffiles = false
 				continue
 			}
-			if inConffiles {
-				if !strings.HasPrefix(line, " ") {
-					inConffiles = false
-					continue
-				}
+			if conf.Len() < 1<<20 {
 				conf.WriteString(line + "\n")
 			}
 		}
-		if pkg == "" || version == "" || len(out) >= maxPackageStates {
-			continue
-		}
-		// A multi-arch package's files are named with its architecture: only the name that has
-		// an .md5sums is kept, the plain one otherwise.
-		name := pkg
-		if _, err := fs.Stat(fsys, "var/lib/dpkg/info/"+pkg+":"+arch+".md5sums"); err == nil {
-			name = pkg + ":" + arch
-		}
-		out[name] = PackageState{Version: clipField(version)}
-		conffiles[name] = conf.String()
+	}
+	flush()
+	if err := sc.Err(); err != nil {
+		issues.Add(fmt.Errorf("dpkg status: %w", err))
+	}
+	if limited.N <= 0 {
+		issues.Add(fmt.Errorf("dpkg status: larger than %d MB, package states read from its start only", maxStatusRead>>20))
 	}
 	for name, st := range out {
 		h := sha256.New()
