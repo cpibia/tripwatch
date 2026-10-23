@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"strconv"
+	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 )
@@ -38,6 +40,7 @@ func (Privileged) Name() string { return "privileged" }
 
 func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, error) {
 	var res PrivilegedResult
+	mounts := readUserMounts(src)
 	skip := map[string]bool{}
 	for _, s := range p.Skip {
 		skip[s] = true
@@ -87,6 +90,7 @@ func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, err
 			res.Issues.Add(err)
 		}
 		if f.Path != "" {
+			f.Mount = mounts.userMount(f.Path)
 			res.Files = append(res.Files, f)
 		}
 		return nil
@@ -101,4 +105,66 @@ func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, err
 		res.Issues = append(res.Issues, fmt.Sprintf("further errors omitted after %d", maxWalkIssues))
 	}
 	return res, nil
+}
+
+// userMounts are the filesystems an unprivileged user mounted, by mount point.
+type userMounts map[string]string
+
+// readUserMounts reads the mount table of the host's init process (the observed root's, when the
+// sensor runs in a container with the host mounted) and keeps the FUSE mounts of a user other
+// than root. A missing table only means no file gets marked.
+func readUserMounts(src collector.Source) userMounts {
+	out := userMounts{}
+	lines, err := collector.ReadLines(src.FS, "proc/1/mountinfo")
+	if err != nil {
+		return out
+	}
+	for _, line := range lines {
+		left, right, ok := strings.Cut(line, " - ")
+		fields, tail := strings.Fields(left), strings.Fields(right)
+		if !ok || len(fields) < 5 || len(tail) < 3 {
+			continue
+		}
+		fstype := tail[0]
+		if fstype != "fuseblk" && fstype != "fuse" && !strings.HasPrefix(fstype, "fuse.") {
+			continue
+		}
+		uid := ""
+		for _, opt := range strings.Split(tail[2], ",") {
+			if v, ok := strings.CutPrefix(opt, "user_id="); ok {
+				uid = v
+			}
+		}
+		if uid != "" && uid != "0" {
+			out[unescapeMount(fields[4])] = fstype + " uid " + uid
+		}
+	}
+	return out
+}
+
+// unescapeMount decodes the octal escapes mountinfo uses for spaces and the like.
+func unescapeMount(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+3 < len(s) {
+			if n, err := strconv.ParseUint(s[i+1:i+4], 8, 8); err == nil {
+				b.WriteByte(byte(n))
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// userMount returns the user mount a path lies on, the deepest one, or "".
+func (m userMounts) userMount(p string) string {
+	best, kind := "", ""
+	for point, k := range m {
+		if (p == point || strings.HasPrefix(p, strings.TrimSuffix(point, "/")+"/")) && len(point) > len(best) {
+			best, kind = point, k
+		}
+	}
+	return kind
 }

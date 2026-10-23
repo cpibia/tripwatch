@@ -177,6 +177,10 @@ var privilegedGroups = map[string]bool{
 // group its owner already belongs to, as primary group or as member, grants nothing the owner
 // did not have: a web user in adm or docker can make those itself.
 func privilegedOwner(f fileT, cur State) string {
+	// On a filesystem a user mounted, owner and mode are what that user chose: neither is root's.
+	if f.Mount != "" {
+		return "mount " + f.Mount
+	}
 	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil && privilegedGIDs(cur)[int(*f.GID)] {
 		gid := int(*f.GID)
 		// A member if any account with the file's UID is, through any group line with that

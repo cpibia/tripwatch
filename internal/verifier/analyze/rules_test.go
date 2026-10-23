@@ -301,3 +301,16 @@ func TestPromotionsByGID(t *testing.T) {
 		t.Error("a shell copied under the name nologin was not seen")
 	}
 }
+
+// A setuid file with UID 0 on a FUSE mount of the web user is that mount's, not root's.
+func TestSetuidOnUserMount(t *testing.T) {
+	uid0 := uint32(0)
+	cur := State{Privileged: &system.PrivilegedResult{Files: []collector.File{
+		{Path: "/var/www/m/x", Mode: "urwxr-xr-x", UID: &uid0, GID: &uid0, Mount: "fuse.sshfs uid 33"},
+		{Path: "/var/tmp/r", Mode: "urwxr-xr-x", UID: &uid0, GID: &uid0},
+	}}}
+	owners := findingOwners(Evaluate(nil, cur))
+	if owners["privileged:setid:mount fuse.sshfs uid 33|/var/www/m/x"] != "mount fuse.sshfs uid 33" || owners["privileged:setid:root|/var/tmp/r"] != "root" {
+		t.Fatalf("owners %v", owners)
+	}
+}

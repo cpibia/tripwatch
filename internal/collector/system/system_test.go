@@ -462,3 +462,23 @@ func TestGroupShadow(t *testing.T) {
 		t.Error("the group password hash reached the snapshot")
 	}
 }
+
+// A setuid file on a FUSE filesystem a user mounted is reported with that mount: its owner and
+// mode are the user's choice. Root's own mounts are not marked.
+func TestPrivilegedMarksUserMounts(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/1/mountinfo": text("36 25 0:32 / /var/www/m rw,nosuid,nodev - fuse.sshfs sshfs rw,user_id=33,group_id=33\n" +
+			"37 25 0:33 / /mnt/backup rw - fuse.sshfs sshfs rw,user_id=0,group_id=0\n"),
+		"var/www/m/x":   &fstest.MapFile{Mode: fs.ModeSetuid | 0o755, Data: []byte("x")},
+		"mnt/backup/y":  &fstest.MapFile{Mode: fs.ModeSetuid | 0o755, Data: []byte("y")},
+		"var/www/other": &fstest.MapFile{Mode: fs.ModeSetuid | 0o755, Data: []byte("z")},
+	}
+	res := collect[PrivilegedResult](t, Privileged{Skip: []string{"proc"}}, collector.Source{FS: fsys})
+	got := map[string]string{}
+	for _, f := range res.Files {
+		got[f.Path] = f.Mount
+	}
+	if got["/var/www/m/x"] != "fuse.sshfs uid 33" || got["/mnt/backup/y"] != "" || got["/var/www/other"] != "" {
+		t.Fatalf("mounts = %v", got)
+	}
+}

@@ -73,6 +73,9 @@ type File struct {
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"mtime"`
 	SHA256  string    `json:"sha256,omitempty"`
+	// Mount names, for a file on a filesystem an unprivileged user mounted (FUSE), its type and
+	// the user: the owner and mode it reports are whatever that user chose.
+	Mount string `json:"mount,omitempty"`
 	Attrs
 }
 
