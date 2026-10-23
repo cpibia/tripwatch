@@ -30,7 +30,10 @@ type Process struct {
 	ExeDeleted bool   `json:"exe_deleted,omitempty"`
 	// ExeReplaced means a file exists again where a deleted executable was: a package upgrade
 	// that the process has not been restarted for, not a binary that removed itself.
-	ExeReplaced bool   `json:"exe_replaced,omitempty"`
+	ExeReplaced bool `json:"exe_replaced,omitempty"`
+	// ExePackaged means dpkg's file lists name the executable's path: what replaced it was most
+	// likely the package's own upgrade.
+	ExePackaged bool   `json:"exe_packaged,omitempty"`
 	ExeSHA256   string `json:"exe_sha256,omitempty"`
 	Cwd         string `json:"cwd,omitempty"`
 	Preload     string `json:"ld_preload,omitempty"`
@@ -69,6 +72,15 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 	// The host's mount namespace: a path is looked up in the observed root, which is that
 	// namespace's view, never a container's.
 	hostMnt, _ := fs.ReadLink(src.FS, "proc/1/ns/mnt")
+	// dpkg's file lists, read at most once per snapshot and only when a process needs them.
+	var owned map[string]bool
+	packaged := func(p string) bool {
+		if owned == nil {
+			owned = dpkgOwned(src.FS)
+		}
+		// With merged /usr, dpkg may list /sbin/agetty for what runs as /usr/sbin/agetty.
+		return owned[p] || owned[strings.TrimPrefix(p, "/usr")] || owned["/usr"+p]
+	}
 
 	for _, pid := range pids(src.FS) {
 		if err := ctx.Err(); err != nil {
@@ -92,6 +104,7 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 			if info, err := fs.Lstat(src.FS, collector.Rel(p.Exe)); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o022 == 0 {
 				if uid, ok := collector.Owner(info); ok && uid == 0 {
 					p.ExeReplaced = true
+					p.ExePackaged = packaged(p.Exe)
 				}
 			}
 		}
@@ -123,6 +136,27 @@ func exeHash(src collector.Source, pid int, cache map[string]string, issues *col
 		cache[id] = f.SHA256
 	}
 	return f.SHA256
+}
+
+// maxOwnedPaths bounds the paths of dpkg's file lists held in memory.
+const maxOwnedPaths = 1 << 20
+
+// dpkgOwned reads every path dpkg's file lists name, bounded.
+func dpkgOwned(fsys fs.FS) map[string]bool {
+	owned := map[string]bool{}
+	for _, name := range collector.Glob(fsys, "var/lib/dpkg/info/*.list") {
+		lines, err := collector.ReadLines(fsys, name)
+		if err != nil {
+			continue
+		}
+		for _, l := range lines {
+			if len(owned) >= maxOwnedPaths {
+				return owned
+			}
+			owned[l] = true
+		}
+	}
+	return owned
 }
 
 // Bounds on reading memory maps: a JVM or a browser maps thousands of regions.

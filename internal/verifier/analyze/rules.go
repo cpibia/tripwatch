@@ -941,7 +941,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			case strings.HasPrefix(pr.Exe, "/memfd:"):
 				state("processes", "memfd:"+pr.Comm+":"+pr.ExeSHA256, "critical", "Fileless process: "+pr.Comm,
 					fmt.Sprintf("PID %d (%s) runs %s, a file that exists only in memory: malware runs this way to leave nothing on disk. UID %d, hash %s, command line %s.", pr.PID, pr.Comm, pr.Exe, pr.UID, pr.ExeSHA256, pr.Cmdline))
-			case pr.ExeDeleted && pr.ExeReplaced && packagedPath(pr.Exe, cur.Packages):
+			case pr.ExeDeleted && pr.ExeReplaced && pr.ExePackaged && packagedPath(pr.Exe, cur.Packages):
 				state("processes", "restart-pending:"+pr.Exe+":"+pr.ExeSHA256, "low", "Process still runs a replaced binary: "+pr.Comm,
 					fmt.Sprintf("PID %d (%s) still runs the old %s: the file was replaced, most likely by a package upgrade, and the process has not been restarted since. Restart it to run the new version.", pr.PID, pr.Comm, pr.Exe))
 			case pr.ExeDeleted:
@@ -1286,7 +1286,8 @@ func sensorBefore(st State, release ...int) bool {
 var packageDirs = []string{"/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/lib/", "/usr/libexec/", "/lib/"}
 
 // packagedPath reports whether a path lies where packages install and the packages collector
-// did not find it unowned or modified there.
+// did not find it unowned or modified there. That a package names the path is the sensor's to
+// say (ExePackaged): the packages collector does not list owned files.
 func packagedPath(p string, pkgs *system.PackagesResult) bool {
 	if pkgs == nil || !slices.ContainsFunc(packageDirs, func(d string) bool { return strings.HasPrefix(p, d) }) {
 		return false

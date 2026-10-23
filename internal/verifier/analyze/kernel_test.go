@@ -80,7 +80,8 @@ func TestProcessMemoryFindings(t *testing.T) {
 		{PID: 11, Comm: "app", Exe: "/usr/bin/app", Tracer: 67},
 		{PID: 12, Comm: "node", Exe: "/usr/bin/node", Mapped: []string{"/var/www/app/node_modules/x/build/x.node", "/dev/shm/.l.so", "/memfd:s (deleted)"}},
 		{PID: 13, Comm: "x", Exe: "/memfd:x", ExeDeleted: true},
-		{PID: 14, Comm: "agetty", Exe: "/usr/sbin/agetty", ExeDeleted: true, ExeReplaced: true},
+		{PID: 14, Comm: "agetty", Exe: "/usr/sbin/agetty", ExeDeleted: true, ExeReplaced: true, ExePackaged: true},
+		{PID: 19, Comm: "impl", Exe: "/usr/lib/x/impl", ExeDeleted: true, ExeReplaced: true},
 		{PID: 15, Comm: "agetty", Exe: "/usr/sbin/gone", ExeDeleted: true},
 		{PID: 17, Comm: "tool", Exe: "/usr/local/bin/tool", ExeDeleted: true, ExeReplaced: true},
 		{PID: 18, Comm: "planted", Exe: "/usr/bin/planted", ExeDeleted: true, ExeReplaced: true},
@@ -101,6 +102,7 @@ func TestProcessMemoryFindings(t *testing.T) {
 		"processes:restart-pending:/usr/sbin/agetty:":                    "low",
 		"processes:deleted:/usr/local/bin/tool:":                         "high",
 		"processes:deleted:/usr/bin/planted:":                            "high",
+		"processes:deleted:/usr/lib/x/impl:":                             "high",
 		"processes:deleted:/usr/sbin/gone:":                              "high",
 	} {
 		if got[fp] != sev {

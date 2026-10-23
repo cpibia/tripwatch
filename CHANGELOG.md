@@ -14,6 +14,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   job run by cron, from the account's home, from a file the account owns, outside every upload
   directory, is exempted. Python and Ruby application servers (gunicorn, uwsgi, puma, unicorn,
   Passenger) count as the web server.
+- A process still running a replaced binary is marked as packaged (`exe_packaged`) only when
+  dpkg's file lists name the path; only then is it a "restart pending".
 - The scratch directories come last and have a budget of their own (512 watches, two levels
   deep): directories anyone creates there can no longer take the watches of the system, the
   homes or the uploads. Places of those left unwatched by the bounds are listed in each snapshot.
