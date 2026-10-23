@@ -5,18 +5,24 @@
 #
 # A tool detects a scenario when the lines of its output that mention one of the scenario's indicators
 # differ from the same lines on the clean system: something new appeared or something known
-# changed. For tripwatch the "lines" are the JSON objects that hold the indicator.
+# changed. For tripwatch the "lines" are the JSON objects that hold the indicator: in its snapshot,
+# and in the alerts the verifier's real-time rules raise on what its watchers saw while the
+# scenario ran.
 set -u
 
 readonly TOOLS=(tripwatch aide rkhunter debsums)
 readonly BEFORE=/bench/before
 readonly AFTER=/bench/after
 readonly TOOL_TIMEOUT=900
+readonly EVENTS=/bench/events.jsonl
 
 run_tool() {
   local tool=$1 out=$2
   case $tool in
-    tripwatch) tripwatch-sensor -app-db=false -state-dir= >"$out" 2>/dev/null ;;
+    tripwatch)
+      tripwatch-sensor -app-db=false -state-dir= >"$out" 2>/dev/null
+      if [ -f "$EVENTS" ]; then judge <"$EVENTS" >>"$out"; fi
+      ;;
     aide) aide --config=/etc/aide/aide.conf --check >"$out" 2>/dev/null ;;
     rkhunter)
       rkhunter --check --sk --nocolors --logfile "$out.log" >/dev/null 2>&1
@@ -27,6 +33,7 @@ run_tool() {
 }
 
 export -f run_tool
+export EVENTS
 
 # measure runs a tool under a timeout and records "status seconds max_rss_kb".
 measure() {
@@ -87,8 +94,19 @@ baseline() {
 run() {
   local scenario=$1 indicator line
   indicator=$(sed -n 's/^# indicator: //p' "$scenario")
+  # The watchers run as in daemon mode, placed after a first snapshot: what the scenario does in
+  # between two snapshots is what they are for.
+  tripwatch-sensor -watch-only -app-db=false -state-dir= >"$EVENTS" 2>/bench/watch.log &
+  local watcher=$! i
+  for i in $(seq 100); do
+    grep -q '"msg":"watching"' /bench/watch.log && break
+    sleep 0.2
+  done
   bash "$scenario" >/dev/null 2>&1
-  sleep 1
+  # Batches leave at most two seconds apart.
+  sleep 3
+  kill -INT "$watcher"
+  wait "$watcher"
   mkdir -p "$AFTER"
   line=$(basename "$scenario" .sh)
   for tool in "${TOOLS[@]}"; do

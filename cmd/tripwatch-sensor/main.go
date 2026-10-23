@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -74,6 +75,7 @@ func main() {
 	bundlePath := flag.String("bundle", "", "enrollment bundle issued by the verifier; runs as a daemon reporting to it")
 	interval := flag.Duration("interval", time.Hour, "time between snapshots in daemon mode")
 	heartbeat := flag.Duration("heartbeat", time.Minute, "time between heartbeats in daemon mode")
+	watchOnly := flag.Bool("watch-only", false, "print the real-time event batches as JSON lines until interrupted, without a verifier, to see what the watchers report")
 	flag.Parse()
 
 	if *showVersion {
@@ -97,6 +99,10 @@ func main() {
 		s.collectors = append(s.collectors, apps.Collector{AllowedHosts: splitList(*appDBHosts)})
 	}
 
+	if *watchOnly {
+		s.watchOnly(ctx, log)
+		return
+	}
 	if *bundlePath == "" {
 		if err := s.printOnce(ctx); err != nil {
 			log.Error("snapshot", "err", err)
@@ -258,6 +264,20 @@ func (s sensor) printOnce(ctx context.Context) error {
 	return s.weblog.Commit()
 }
 
+// watchOnly prints what the watchers report, pointed at what one snapshot finds, until ctx ends.
+func (s sensor) watchOnly(ctx context.Context, log *slog.Logger) {
+	var mu sync.Mutex
+	s.realtime = s.startRealtime(ctx, log, func(_ context.Context, payload []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		_, err := os.Stdout.Write(append(payload, '\n'))
+		return err
+	})
+	s.snapshot(ctx)
+	log.Info("watching", "status", s.realtime.status())
+	<-ctx.Done()
+}
+
 func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateDir string, interval, heartbeat time.Duration) error {
 	bundle, key, err := pki.LoadBundle(bundlePath)
 	if err != nil {
@@ -298,7 +318,7 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 		}
 	}()
 
-	s.realtime = s.startRealtime(ctx, log, client)
+	s.realtime = s.startRealtime(ctx, log, sendEvents(log, client))
 
 	// Heartbeats run on their own: a snapshot taking minutes must not look like silence.
 	go func() {

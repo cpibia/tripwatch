@@ -6,6 +6,10 @@
 #   bench/run.sh            all scenarios, 4 at a time
 #   JOBS=8 bench/run.sh     more parallel containers
 #   RENDER_ONLY=1 bench/run.sh   redraw the report and the chart from the saved results
+#
+# Process events need a kernel with the process connector (CONFIG_PROC_EVENTS) and the initial
+# network namespace: BENCH_DOCKER_FLAGS=--network=host on a Linux host. Without them the
+# scenarios that only a process start reveals are reported as missed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -18,7 +22,8 @@ commit=$(git rev-parse --short HEAD)
 arch=$(docker version --format '{{.Server.Arch}}')
 mkdir -p "$work/src" "$work/ctx"
 git archive HEAD | tar -x -C "$work/src"
-(cd "$work/src" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$work/ctx/tripwatch-sensor" ./cmd/tripwatch-sensor)
+(cd "$work/src" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$work/ctx/tripwatch-sensor" ./cmd/tripwatch-sensor \
+  && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$work/ctx/judge" ./bench/judge)
 cp -R bench/Dockerfile bench/probe.sh bench/fixture bench/scenarios "$work/ctx/"
 docker build -q -t "$image" "$work/ctx" >/dev/null
 
@@ -29,10 +34,11 @@ docker run --rm "$image" sh -c '
   echo "rkhunter	$(dpkg-query -W -f="\${Version}" rkhunter)"
   echo "debsums	$(dpkg-query -W -f="\${Version}" debsums)"
   echo "os	$(. /etc/os-release && echo "$PRETTY_NAME")"
+  echo "kernel	$(uname -r)"
 ' >bench/versions.tsv
 
 ls bench/scenarios/*.sh | xargs -n1 basename | xargs -P "${JOBS:-4}" -I{} \
-  docker run --rm --cap-add LINUX_IMMUTABLE "$image" /bench/probe.sh run /bench/scenarios/{} \
+  docker run --rm --cap-add LINUX_IMMUTABLE --cap-add NET_ADMIN ${BENCH_DOCKER_FLAGS:-} "$image" /bench/probe.sh run /bench/scenarios/{} \
   | sort >bench/results.tsv
 fi
 

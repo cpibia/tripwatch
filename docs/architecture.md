@@ -9,9 +9,8 @@ activated when automatic discovery finds the matching technology.
 ## Components
 
 **Sensor** (`cmd/tripwatch-sensor`): a static binary on every monitored machine. It observes and
-reports, it never decides. As a service it sends a heartbeat every minute and a full snapshot
-every hour, inside signed envelopes. In the future, critical events (users, keys, sudoers, setuid,
-new units and cron lines, kernel modules) will be sent as soon as they happen.
+reports, it never decides. As a service it sends a heartbeat every minute, a full snapshot every
+hour and, on Linux, real-time events, inside signed envelopes of one chain.
 
 **Verifier** (`cmd/tripwatch-verifier`): runs on a dedicated machine. It keeps baselines and build
 manifests outside the monitored servers, compares, applies the rules and raises alerts. It has no
@@ -98,9 +97,41 @@ not try to prevent this, it makes it visible:
   messages are detected, and a missing heartbeat is an alert;
 - critical and high alerts are closed only by hand, because a compromised server could clean up
   the condition that raised them;
-- privilege escalation events are sent before the attacker can act on the sensor;
+- changes to critical paths and suspicious process starts leave the server within two seconds,
+  before the attacker can act on the sensor;
 - checks that do not run on the server (pages fetched from outside, the provider's APIs, canary
   tokens, disk snapshots verified offline) cannot be silenced from there.
+
+## Real-time events
+
+`internal/watch` runs next to the snapshots. Files are watched with inotify on directories, never
+on files, so a file replaced by a rename is still seen: each target names a directory, a class
+(accounts, ssh, privilege, schedule, service, hook, upload) and optionally the entry names it
+keeps. Upload directories are watched recursively down to four levels, including directories
+created later, whose contents are listed at once since a file can land there before the watch
+exists. Watches are capped at 8,192, use `IN_DONT_FOLLOW` and `IN_ONLYDIR`, and the file behind an
+event is described through the same confined view the collectors use, with `lstat` first so a
+planted link is reported and never read. After each snapshot the targets are set again from the
+accounts' homes and the applications' upload directories.
+
+Processes come from the netlink process connector (`PROC_EVENT_EXEC` and `PROC_EVENT_UID`), which
+needs `CAP_NET_ADMIN` in the initial network namespace and no eBPF. Each new process is read from
+`/proc` the way the processes collector reads it, command line redacted, at most 200 a second;
+only those matching a reason are reported (`web_user_tool`, `unusual_path`, `deleted_executable`,
+`privilege_gain`). For an interpreter the script it runs is reported as well, since `/proc` shows
+the interpreter as the executable.
+
+Events go through a bounded channel to a batcher that sends at most every two seconds, in batches
+under 192 KB, with the counts of what was lost (kernel queue overflow, full channel, full queue)
+and whether a package manager was running. If the transport cannot seal a batch because an
+earlier envelope is still pending, the batcher keeps it in a queue of 4,096 events and retries
+with a backoff up to a minute. Each snapshot carries the watchers' status.
+
+The verifier stores the events (`events` table, seven days, at most 20,000 a host in 24 hours,
+past which they are counted, not stored) and judges each batch at once with the rules in
+`internal/verifier/analyze/events.go`, looking up the same path's earlier events for what
+appeared and disappeared within 15 minutes. Their alerts have kind `realtime` and, as changes,
+are never resolved by a snapshot.
 
 ## Reading files safely
 
@@ -208,11 +239,12 @@ not need a database.
 | `internal/weblog` | access log parsing, attack rules, request redaction |
 | `internal/collector/logs` | incremental, bounded log reading, events, statistics, committed positions |
 | `internal/collector/apps` | application configuration and database: administrators, stored scripts, extensions, settings |
+| `internal/watch` | real-time watchers on Linux: inotify on critical paths, the process connector, batching |
 | `internal/transport` | sealing, saving and sending envelopes from the sensor |
 | `internal/verifier/pki` | private CA, server certificate, enrollment bundles |
 | `internal/verifier/ingest` | mTLS ingest and chain verification |
-| `internal/verifier/store` | SQLite store: hosts, snapshots, activity, alerts, users, sessions |
-| `internal/verifier/analyze` | bounded snapshot decoding, rules, sensor silence |
+| `internal/verifier/store` | SQLite store: hosts, snapshots, events, activity, alerts, users, sessions |
+| `internal/verifier/analyze` | bounded snapshot decoding, rules on snapshots and on real-time events, sensor silence |
 | `internal/verifier/notify` | alert emails |
 | `internal/verifier/ui` | web interface |
 | `internal/buildinfo` | version stamped at build time |

@@ -25,7 +25,9 @@ type realtime struct {
 	issues []string
 }
 
-func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, client *transport.Client) *realtime {
+// startRealtime starts the watchers; send gets each batch and returns an error only when the
+// batch has to be sent again.
+func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(context.Context, []byte) error) *realtime {
 	src := collector.NewSource(s.root)
 	events := make(chan watch.Event, 2048)
 	r := &realtime{}
@@ -47,22 +49,28 @@ func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, client *tra
 		return r
 	}
 	b := &watch.Batcher{
-		In: events,
-		Send: func(ctx context.Context, payload []byte) error {
-			err := client.Send(ctx, protocol.KindEvent, payload, time.Now())
-			if errors.Is(err, transport.ErrNotSealed) {
-				return err
-			}
-			if err != nil && ctx.Err() == nil {
-				log.Warn("events not delivered yet, they go out before the next envelope", "err", err)
-			}
-			return nil
-		},
+		In:             events,
+		Send:           send,
 		Lost:           r.lost,
 		PackageManager: func() bool { return watch.PackageManagerRunning(src.FS) },
 	}
 	go b.Run(ctx)
 	return r
+}
+
+// sendEvents delivers a batch as an event envelope. A batch sealed but not delivered goes out
+// before the next envelope, so only one never sealed is handed back.
+func sendEvents(log *slog.Logger, client *transport.Client) func(context.Context, []byte) error {
+	return func(ctx context.Context, payload []byte) error {
+		err := client.Send(ctx, protocol.KindEvent, payload, time.Now())
+		if errors.Is(err, transport.ErrNotSealed) {
+			return err
+		}
+		if err != nil && ctx.Err() == nil {
+			log.Warn("events not delivered yet, they go out before the next envelope", "err", err)
+		}
+		return nil
+	}
 }
 
 func (r *realtime) run(ctx context.Context, log *slog.Logger, name string, run func(context.Context) error) {

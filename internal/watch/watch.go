@@ -66,6 +66,7 @@ type Event struct {
 	User    *int   `json:"user,omitempty"`
 	EUser   *int   `json:"euser,omitempty"`
 	Exe     string `json:"exe,omitempty"`
+	Script  string `json:"script,omitempty"`
 	Cmdline string `json:"cmdline,omitempty"`
 	Comm    string `json:"comm,omitempty"`
 	Parent  string `json:"parent,omitempty"`

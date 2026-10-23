@@ -27,6 +27,7 @@ runs on plain hosts, Docker hosts, Kubernetes nodes and AWS Fargate.
   - [Upgrading the sensor](#upgrading-the-sensor)
   - [Removing](#removing)
 - [What the sensor collects](#what-the-sensor-collects)
+- [Real-time events](#real-time-events)
 - [Web stack](#web-stack)
 - [Applications and databases](#applications-and-databases)
 - [Web server logs](#web-server-logs)
@@ -52,8 +53,9 @@ runs on plain hosts, Docker hosts, Kubernetes nodes and AWS Fargate.
 ```
 
 - **The sensor only observes.** It is a static Go binary with no dependencies, so it also runs on
-  old or unpatched distributions. It sends a heartbeat every minute and a full state snapshot
-  every hour; real-time critical events are on the roadmap.
+  old or unpatched distributions. It sends a heartbeat every minute, a full state snapshot every
+  hour and, on Linux, the changes to critical paths and the suspicious process starts as they
+  happen.
 - **The verifier decides, off the server.** Baselines and build manifests live where an attacker
   with root on a monitored server cannot rewrite them. The verifier holds no credentials to log
   into the servers: the sensors push their data to it.
@@ -303,6 +305,42 @@ The sensor also detects the environment it runs in (host, container, Kubernetes,
 container runtimes present, and reports the machine's system: distribution, kernel, architecture,
 hostname, boot time, CPUs, memory, the addresses of its interfaces and its own version.
 
+## Real-time events
+
+Between two snapshots the sensor watches the places an intruder uses to get in or stay, and sends
+what changes there within two seconds, in signed event envelopes of the same chain:
+
+- **Files**, with inotify: the account databases, sudoers, polkit and doas, the SSH server
+  configuration and every account's `authorized_keys`, cron and `at`, systemd units and
+  generators, `ld.so.preload`, `profile.d`, PAM, `rc.local` and the shell rc files of every
+  account, and the upload directories of the web applications found by the last snapshot. Each
+  event carries the size, SHA-256, owner and mode of the file after the change, read without
+  following links.
+- **Processes**, with the kernel's process connector: only the starts that mean something, not
+  the thousands a busy server makes. A shell, an interpreter or a network tool started by the web
+  server's user; a program or a script run from `/tmp`, `/dev/shm`, a home or a web root; a
+  program whose file was deleted after it started; root gained through a set-user-ID program
+  outside the system's binary directories.
+
+The verifier keeps the events for seven days (at most 20,000 a server in 24 hours, so a flood
+cannot push out the first ones) and judges them at once. The web server's user starting a shell,
+root gained through an unknown set-user-ID program, a change to who may become root or to library
+preloading are critical. A script or an `.htaccess` landing in an upload directory, new SSH keys,
+services, scheduled tasks and start-up scripts are high. What a snapshot an hour later could not
+show is critical too: a script that appears in the uploads and is gone within 15 minutes, an SSH
+key file written and removed, or changed and put back. While a package manager runs, changes to
+system configuration are one severity lower; process starts and uploads never are. The server's
+page lists its latest events and says whether the watchers run.
+
+The watchers need Linux and, for process events, `CAP_NET_ADMIN` in the host's network namespace,
+which the systemd unit grants. Where either is missing the sensor goes on with snapshots, and each
+snapshot tells the verifier which watchers are off and why. To see what they report on a machine,
+without a verifier:
+
+```sh
+sudo tripwatch-sensor -watch-only
+```
+
 ## Web stack
 
 The sensor reads the configuration of **nginx**, **Apache httpd** (Debian and Red Hat layouts) and
@@ -413,25 +451,6 @@ Positions advance only after the snapshot has been delivered.
 ## Detection compared
 
 <!-- bench:start -->
-Across 29 attack scenarios reproduced in a Debian container (commit `78d624e`), how many each
-tool detects with its default configuration:
-
-![Scenarios detected out of 29: tripwatch 27, AIDE 24, rkhunter 4, debsums 1](bench/detection.svg)
-
-| Category | Scenarios | tripwatch | AIDE | rkhunter | debsums |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Persistence | 10 | 10 | 10 | 2 | 0 |
-| Privileges | 4 | 4 | 4 | 0 | 0 |
-| System integrity | 5 | 5 | 5 | 1 | 1 |
-| Processes and network | 3 | 3 | 0 | 1 | 0 |
-| Web applications | 4 | 4 | 4 | 0 | 0 |
-| Limits: attacks between two checks, and traps | 3 | 1 | 1 | 0 | 0 |
-| **Total** | **29** | **27** | **24** | **4** | **1** |
-
-Detects means the data about the attack appears in the output of the tool; for tripwatch the
-judgement stays with the verifier. The scenarios in the "Limits" category (a dropper or an SSH key
-that appear and disappear between two checks) measure the limit of every tool that compares states,
-tripwatch included. Method, results per scenario, versions and cost in [bench/RESULTS.md](bench/RESULTS.md).
 <!-- bench:end -->
 
 Where AIDE and tripwatch both see a new file, AIDE only says the file appeared or changed;
@@ -458,11 +477,14 @@ not pretend otherwise, but aims to make both visible. Already today:
 - critical and high alerts do not close by themselves when the condition goes away: a
   compromised server could clean up and silence its own alerts, so a person closes them.
 
+- [real-time events](#real-time-events) leave the server within two seconds: a key used and
+  removed, a webshell dropped and deleted, a shell started by the web server are on the verifier
+  before the attacker can turn to the sensor.
+
 Coming next:
 
-- privilege escalation events shipped as they happen, before the attacker can act on the sensor
-  (until then, what happens between two snapshots, such as a process that lives a few seconds, is
-  not seen);
+- process and file events from eBPF on recent kernels, which also see what the process connector
+  cannot (connections, module loads, writes to files outside the watched directories);
 - checks that do not run on the server (pages fetched from outside, cloud provider APIs, canary
   tokens, disk snapshots verified offline), which cannot be silenced from there.
 
@@ -479,8 +501,12 @@ The full design is in [docs/architecture.md](docs/architecture.md).
 
 - Container storage (`/var/lib/docker` and similar) is not examined yet: it will come with the
   container collector, which will compare running containers with their images.
-- The sensor produces snapshots: what appears and disappears between two runs is not seen until
-  the real-time event stream lands.
+- Real-time events cover the watched places and the process starts listed in
+  [Real-time events](#real-time-events): a file that appears and disappears elsewhere between two
+  snapshots is not seen. inotify has a per-user watch limit (`fs.inotify.max_user_watches`): when
+  it is reached, the directories not watched are reported. A process that ends before the sensor
+  reads it from `/proc` is not described, and a flood of process starts is inspected up to 200 a
+  second, the rest counted and reported.
 - The host's package database is the reference: with root an attacker can update a checksum to
   cover a replaced binary. Its fingerprint changes and the verifier sees that between two
   snapshots; comparing with the repositories' signed metadata is still an open choice.
@@ -636,11 +662,14 @@ on any Linux machine:
 sudo tripwatch-sensor > snapshot.json
 ```
 
+With `-watch-only` it prints the real-time event batches as JSON lines until interrupted.
+
 A systemd unit with security restrictions is in [deploy/systemd](deploy/systemd).
 
 ## Roadmap
 
-1. Real-time events via eBPF or auditd, shipped as they happen.
+1. Real-time events from eBPF on kernels 5.8 and later, with the current watchers as the
+   fallback.
 2. Installation without a toolchain: signed `.deb`, `.rpm` and `.apk` packages and APT/YUM
    repositories (one-time token enrollment already exists), image and Helm chart for the
    DaemonSet; the verifier compares the running binary with the published release.
@@ -655,8 +684,8 @@ A systemd unit with security restrictions is in [deploy/systemd](deploy/systemd)
 
 Early development, usable end to end. Implemented and tested: the envelope protocol, environment
 and web stack discovery, the system, web, log and application collectors, the sensor as a
-service, the verifier with rules, alerts, email and web interface. The next step is real-time
-events.
+service with real-time events for critical paths and process starts, the verifier with rules,
+alerts, email and web interface. The next step is eBPF events on recent kernels.
 
 ## License
 

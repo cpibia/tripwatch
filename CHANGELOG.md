@@ -6,6 +6,41 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier first, then the sensors. The sensor's systemd unit gains `CAP_NET_ADMIN`:
+the packages install the new unit; a unit copied by hand has to be replaced.
+
+### Sensor
+
+- **Real-time events.** Between snapshots the sensor watches with inotify the account
+  databases, sudo, polkit and doas, the SSH server configuration and every account's
+  `authorized_keys`, cron and `at`, systemd units and generators, library preloading, start-up
+  scripts and the upload directories of the web applications, and sends each change within two
+  seconds with the file's size, SHA-256, owner and mode. From the kernel's process connector it
+  reports only the process starts that matter: the web server's user starting a shell, an
+  interpreter or a network tool; programs and scripts run from `/tmp`, `/dev/shm`, homes and web
+  roots; programs deleted after they started; root gained through a set-user-ID program outside
+  the system's directories.
+- Events travel in signed event envelopes of the same chain, in bounded batches with the count
+  of what was lost and whether a package manager was running; they wait in a bounded queue while
+  the verifier is unreachable. Each snapshot says whether the watchers run, and why not.
+- `tripwatch-sensor -watch-only` prints what the watchers report, without a verifier.
+
+### Verifier
+
+- Events are kept for seven days, at most 20,000 a server in 24 hours, and judged at once.
+  Critical: the web server's user starting a shell or a network tool, root gained through an
+  unknown set-user-ID program, changes to sudo or polkit rules and to `ld.so.preload`, and what
+  no hourly snapshot would show: a script appearing in the uploads and gone within 15 minutes,
+  an SSH key file written and removed or changed and put back. High: scripts and `.htaccess`
+  files in upload directories, SSH keys and server settings, services, scheduled tasks,
+  start-up scripts, programs run from unusual places or deleted after start. Changes to system
+  configuration made while a package manager runs are one severity lower. Lost events are an
+  alert of their own.
+- Each server's page lists its latest events, and its System block says whether files and
+  processes are watched.
+- The benchmark runs the sensor's watchers during each scenario and judges what they report with
+  the verifier's rules.
+
 ## [0.1.8] - 2026-10-23
 
 Update the verifier first, then the sensors (`tripwatch-sensor -update`).

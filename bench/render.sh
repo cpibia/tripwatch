@@ -84,7 +84,7 @@ END {
 
   print "# Detection benchmark"
   print ""
-  printf "Commit `%s`, %s, container %s on %s. Tools compared: AIDE %s, rkhunter %s, debsums %s,\n", commit, day, version["os"], arch, version["aide"], version["rkhunter"], version["debsums"]
+  printf "Commit `%s`, %s, container %s on %s, kernel %s. Tools compared: AIDE %s, rkhunter %s, debsums %s,\n", commit, day, version["os"], arch, (version["kernel"] == "" ? "not recorded" : version["kernel"]), version["aide"], version["rkhunter"], version["debsums"]
   print "with the default configuration of their Debian packages. Regenerate with `bench/run.sh`."
   print ""
   print "## Method"
@@ -93,8 +93,11 @@ END {
   print "which every tool has already taken its baseline. The scenario applies the attack, then every tool runs"
   print "once. A tool **detects** the scenario when the lines of its output that mention the artifact of the"
   print "attack (a path, the comment of a key, a port) differ from those of the baseline: something new appeared"
-  print "or something known changed. For tripwatch the JSON objects of the snapshot that contain the artifact are"
-  print "compared: the final judgement belongs to the verifier, here we measure whether the data arrives."
+  print "or something known changed. For tripwatch the JSON objects that contain the artifact are compared: those"
+  print "of the snapshot, where the final judgement belongs to the verifier and we measure whether the data"
+  print "arrives, and the alerts the real-time rules of the verifier raise on what the watchers of the sensor reported while"
+  print "the scenario ran, the watchers being started after a first snapshot as in daemon mode. Process events"
+  print "need a kernel with the process connector: the run says which kernel it had."
   print "**Blocked** means the tool did not finish within 900 s."
   print ""
   if (fp == "") print "The control scenario, with no attack, produces no differences for any tool."
@@ -141,8 +144,9 @@ END {
   print line > summary
   print "" > summary
   print "Detects means the data about the attack appears in the output of the tool; for tripwatch the" > summary
-  print "judgement stays with the verifier. The scenarios in the \"Limits\" category (a dropper or an SSH key" > summary
-  print "that appear and disappear between two checks) measure the limit of every tool that compares states," > summary
-  print "tripwatch included. Method, results per scenario, versions and cost in [bench/RESULTS.md](bench/RESULTS.md)." > summary
+  print "judgement stays with the verifier: its real-time rules run on what the watchers of the sensor saw while the" > summary
+  print "scenario ran. The scenarios in the \"Limits\" category (a dropper or an SSH key that appear and disappear" > summary
+  print "between two checks) are beyond any tool that only compares states; tripwatch sees them as they happen." > summary
+  print "Method, results per scenario, versions and cost in [bench/RESULTS.md](bench/RESULTS.md)." > summary
 }
 ' "$joined"

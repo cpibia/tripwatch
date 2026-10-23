@@ -24,6 +24,10 @@ var webTools = []string{
 	"base64", "xxd", "chmod", "chattr", "crontab", "at", "nohup", "setsid", "useradd", "usermod", "passwd",
 }
 
+// interpreters run a script named on their command line: /proc shows the interpreter as the
+// executable, and the script is what was put in place.
+var interpreters = []string{"sh", "bash", "dash", "zsh", "ksh", "ash", "busybox", "python", "python2", "python3", "perl", "ruby", "lua", "node", "php"}
+
 // unusualExecDirs are where programs are not installed: what starts from there was put there.
 var unusualExecDirs = []string{"/tmp/", "/var/tmp/", "/dev/shm/", "/run/user/", "/home/", "/root/", "/var/www/", "/srv/", "/run/lock/", "/var/lib/php/"}
 
@@ -60,16 +64,43 @@ func WebUsers(accounts *system.AccountsResult, processes *system.ProcessesResult
 	return out
 }
 
-// classifyExec says why a process that just started matters, or "" when it does not.
-func classifyExec(p system.Process, webUsers map[int]bool) string {
+// classifyExec says why a process that just started matters, or "" when it does not, and the
+// script it runs when the executable is an interpreter.
+func classifyExec(p system.Process, webUsers map[int]bool) (reason, script string) {
 	exe := p.Exe
+	tool := toolName(exe, p.Comm)
+	if slices.Contains(interpreters, tool) || strings.HasPrefix(tool, "php") {
+		script = scriptArg(p.Cmdline)
+	}
 	switch {
 	case p.ExeDeleted:
-		return ReasonDeleted
-	case webUsers[p.UID] && slices.Contains(webTools, toolName(exe, p.Comm)):
-		return ReasonWebShell
-	case exe != "" && slices.ContainsFunc(unusualExecDirs, func(d string) bool { return strings.HasPrefix(exe, d) }):
-		return ReasonUnusualPath
+		return ReasonDeleted, script
+	case webUsers[p.UID] && slices.Contains(webTools, tool):
+		return ReasonWebShell, script
+	case unusual(exe) || unusual(script):
+		return ReasonUnusualPath, script
+	}
+	return "", script
+}
+
+func unusual(p string) bool {
+	return p != "" && slices.ContainsFunc(unusualExecDirs, func(d string) bool { return strings.HasPrefix(p, d) })
+}
+
+// scriptArg is the script an interpreter's command line names: its first argument that is not
+// an option, unless the code is given inline.
+func scriptArg(cmdline string) string {
+	fields := strings.Fields(cmdline)
+	for _, f := range fields[min(1, len(fields)):] {
+		switch {
+		case f == "-c" || f == "-e" || f == "-r" || f == "-m":
+			return ""
+		case strings.HasPrefix(f, "-"):
+			continue
+		case strings.HasPrefix(f, "/"):
+			return f
+		}
+		return ""
 	}
 	return ""
 }

@@ -1,0 +1,32 @@
+name: bench
+
+# Runs the detection benchmark on a Linux kernel with the process connector, which desktop
+# virtual machines often lack; the results come back as an artifact to commit.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run every scenario
+        env:
+          BENCH_DOCKER_FLAGS: --network=host
+        run: bench/run.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench
+          path: |
+            bench/results.tsv
+            bench/versions.tsv
+            bench/RESULTS.md
+            bench/detection.svg
+            README.md

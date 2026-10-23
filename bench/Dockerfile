@@ -10,6 +10,7 @@ RUN apt-get update \
 
 COPY fixture/ /
 COPY tripwatch-sensor /usr/local/sbin/tripwatch-sensor
+COPY judge /usr/local/bin/judge
 COPY probe.sh /bench/probe.sh
 COPY scenarios/ /bench/scenarios/
 

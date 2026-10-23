@@ -36,7 +36,7 @@ jobs:
       - name: Memory bounds under load (without the race detector)
         run: go test -run 'Memory' ./internal/collector/logs/
       - name: Process events from the kernel (needs root and the initial network namespace)
-        run: sudo env "PATH=$PATH" "HOME=$HOME" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" TRIPWATCH_REQUIRE_PROC_CONNECTOR=1 go test -count=1 -run 'TestExecs' ./internal/watch/
+        run: sudo env "PATH=$PATH" "HOME=$HOME" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" TRIPWATCH_REQUIRE_PROC_CONNECTOR=1 go test -count=1 -v -run 'TestExecs' ./internal/watch/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage

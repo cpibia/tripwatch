@@ -161,10 +161,12 @@ func (x *Execs) message(m []byte) bool {
 			return true
 		}
 		x.mu.Lock()
-		reason := classifyExec(p, x.webUsers)
+		reason, script := classifyExec(p, x.webUsers)
 		x.mu.Unlock()
 		if reason != "" {
-			x.send(x.event(reason, p))
+			e := x.event(reason, p)
+			e.Script = clipText(script)
+			x.send(e)
 		}
 		return true
 	case procEventUID:

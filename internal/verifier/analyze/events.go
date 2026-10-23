@@ -157,6 +157,11 @@ func judgeExec(e watch.Event) (Finding, bool) {
 		who = "uid " + strconv.Itoa(*e.User)
 	}
 	proc := fmt.Sprintf("%s (started by %s, as %s, in %s): %s", orUnknown(e.Exe), orUnknown(e.Parent), who, orUnknown(e.Cwd), orUnknown(e.Cmdline))
+	// An interpreter's alerts are about the script it runs: /bin/sh is not what was planted.
+	subject := e.Exe
+	if e.Script != "" {
+		subject = e.Script
+	}
 	switch e.Reason {
 	case watch.ReasonWebShell:
 		return event("webshell", e.Exe, "critical", "The web server's user started "+path.Base(orUnknown(e.Exe)),
@@ -165,10 +170,10 @@ func judgeExec(e watch.Event) (Finding, bool) {
 		return event("privilege-gain", e.Exe, "critical", "A process became root through "+path.Base(orUnknown(e.Exe)),
 			"Process "+proc+" gained root through a set-user-ID program outside the system's binary directories: a backdoor left to get root back."), true
 	case watch.ReasonDeleted:
-		return event("deleted-exe", e.Exe, "high", "A program runs from a deleted file",
+		return event("deleted-exe", subject, "high", "A program runs from a deleted file",
 			"Process "+proc+". Its executable was removed after it started, which leaves nothing on disk to examine: malware does this, updates rarely do."), true
 	case watch.ReasonUnusualPath:
-		return event("unusual-exec", e.Exe, "high", "A program started from "+path.Dir(orUnknown(e.Exe)),
+		return event("unusual-exec", subject, "high", "A program started from "+path.Dir(orUnknown(subject)),
 			"Process "+proc+". Programs are not installed there: what runs from there was put there."), true
 	}
 	return Finding{}, false
