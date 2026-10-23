@@ -119,6 +119,11 @@ func TestPackageDatabaseChanges(t *testing.T) {
 	pkgs := func(db, status string) State {
 		return State{Packages: &system.PackagesResult{Manager: "dpkg", Packages: 500, DatabaseSHA256: db, StatusSHA256: status}}
 	}
+	states := func(db, status, v1, c1, v2, c2 string) State {
+		st := pkgs(db, status)
+		st.Packages.States = map[string]system.PackageState{"openssh-server": {Version: v1, Checksums: c1}, "libc6:amd64": {Version: v2, Checksums: c2}}
+		return st
+	}
 	for _, tc := range []struct {
 		name      string
 		prev, cur State
@@ -128,6 +133,8 @@ func TestPackageDatabaseChanges(t *testing.T) {
 		{"checksums rewritten", pkgs("d1", "s1"), pkgs("d2", "s1"), "high"},
 		{"unchanged", pkgs("d1", "s1"), pkgs("d1", "s1"), ""},
 		{"older sensor", pkgs("d1", ""), pkgs("d2", ""), "medium"},
+		{"one package rewritten while another upgrades", states("d1", "s1", "1.0", "aaaa", "2.0", "bbbb"), states("d2", "s2", "1.0", "cccc", "2.1", "dddd"), "high"},
+		{"upgrade with states", states("d1", "s1", "1.0", "aaaa", "2.0", "bbbb"), states("d2", "s2", "1.1", "cccc", "2.0", "bbbb"), ""},
 	} {
 		got := ""
 		for _, f := range Evaluate(&tc.prev, tc.cur) {

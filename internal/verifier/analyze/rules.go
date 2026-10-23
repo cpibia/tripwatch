@@ -985,6 +985,23 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			switch {
 			case p.DatabaseSHA256 == prev.Packages.DatabaseSHA256:
+			case len(p.States) > 0 && len(prev.Packages.States) > 0:
+				// Package by package: checksums that changed while the version did not were
+				// rewritten by hand, whatever else changed in the database at the same time.
+				var rewritten []string
+				for name, st := range p.States {
+					if old, ok := prev.Packages.States[name]; ok && old.Version == st.Version && old.Checksums != st.Checksums {
+						rewritten = append(rewritten, name)
+					}
+				}
+				slices.Sort(rewritten)
+				for i, name := range rewritten {
+					if i == maxRewrittenPackages {
+						break
+					}
+					change("packages-change", "rewritten:"+name+":"+p.States[name].Checksums, "high", "Package checksums changed without an upgrade: "+name,
+						fmt.Sprintf("The checksums recorded for %s %s changed while its version did not: the way to make a replaced file of the package pass verification. %d packages in all are in this state.", name, p.States[name].Version, len(rewritten)))
+				}
 			case p.StatusSHA256 != "" && prev.Packages.StatusSHA256 != "":
 				// The list of installed packages and versions tells an upgrade from checksums
 				// rewritten by hand, where the manager keeps them apart (dpkg).
@@ -1227,6 +1244,9 @@ func rawSocketFinding(so system.Socket) (Finding, bool) {
 	}
 	return f, true
 }
+
+// maxRewrittenPackages bounds the alerts raised for packages whose checksums changed.
+const maxRewrittenPackages = 20
 
 // packageDirs are where only packages install: /opt, /usr/local and /snap are left out, since
 // software there is installed by hand.

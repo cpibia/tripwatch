@@ -242,6 +242,14 @@ func dpkgHost() fstest.MapFS {
 
 func TestPackagesDpkg(t *testing.T) {
 	res := collect[PackagesResult](t, Packages{}, collector.Source{FS: dpkgHost()})
+	if st, ok := res.States["openssh-server"]; !ok || st.Version != "1:8.9p1" || len(st.Checksums) != 16 {
+		t.Errorf("states = %+v", res.States)
+	}
+	fsys := dpkgHost()
+	fsys["var/lib/dpkg/info/openssh-server.md5sums"] = text(md5hex("rewritten") + "  usr/sbin/sshd\n")
+	if again := collect[PackagesResult](t, Packages{}, collector.Source{FS: fsys}); again.States["openssh-server"].Checksums == res.States["openssh-server"].Checksums {
+		t.Error("rewritten checksums leave the package's state unchanged")
+	}
 
 	if res.Manager != ManagerDpkg || res.Packages != 2 {
 		t.Errorf("manager = %q packages = %d", res.Manager, res.Packages)

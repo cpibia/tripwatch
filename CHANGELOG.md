@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The packages collector reports, for each dpkg package, its version and a digest of the
+  checksums recorded for it (`states`).
 - The exemption for an account's own scripts is narrowed: the path is normalised, and only a
   job run by cron, from the account's home, from a file the account owns, outside every upload
   directory, is exempted. Python and Ruby application servers (gunicorn, uwsgi, puma, unicorn,
@@ -18,6 +20,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- Checksums of a dpkg package that changed while its version did not are a high "Package
+  checksums changed without an upgrade", package by package, whatever else changed in the
+  database at the same time.
 - Review of the 0.1.11 false-positive fixes, so that none opens a way around detection: a POST
   to a script in the uploads answered with a redirect stays high; nginx's configuration counts
   as read at its newest workers, Apache's and Caddy's at their oldest process; shared executable

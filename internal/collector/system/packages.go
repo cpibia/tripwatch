@@ -54,17 +54,89 @@ type PackagesResult struct {
 	// status file): it changes with every installation and upgrade, while checksums rewritten
 	// by hand leave it as it was. Where the manager keeps both in one file it equals
 	// DatabaseSHA256.
-	StatusSHA256 string         `json:"status_sha256,omitempty"`
-	Packages     int            `json:"packages"`
-	Checked      int            `json:"checked"`
-	Modified     []ModifiedFile `json:"modified"`
-	Missing      []string       `json:"missing,omitempty"`
-	Unowned      []string       `json:"unowned"`
+	StatusSHA256 string `json:"status_sha256,omitempty"`
+	// States maps each dpkg package to its version and a digest of the checksums recorded for it
+	// (its .md5sums and the conffiles of its status entry): checksums that change while the
+	// version does not were rewritten by hand, whatever else changed in the database.
+	States   map[string]PackageState `json:"states,omitempty"`
+	Packages int                     `json:"packages"`
+	Checked  int                     `json:"checked"`
+	Modified []ModifiedFile          `json:"modified"`
+	Missing  []string                `json:"missing,omitempty"`
+	Unowned  []string                `json:"unowned"`
 	// UnownedLinks are symlinks in the binary directories that no package installed, such as a
 	// sudo in /usr/local/bin, which comes first in PATH, pointing to a payload.
 	UnownedLinks []Link           `json:"unowned_links"`
 	Hidden       []string         `json:"hidden"`
 	Issues       collector.Issues `json:"issues,omitempty"`
+}
+
+// PackageState is a package's version and the digest of its recorded checksums.
+type PackageState struct {
+	Version   string `json:"v"`
+	Checksums string `json:"c"`
+}
+
+// maxPackageStates bounds the packages described one by one: some 7 JSON values each, well
+// within what the verifier accepts in a snapshot.
+const maxPackageStates = 20000
+
+// dpkgStates reads each installed package's version and checksums from dpkg's database.
+func dpkgStates(fsys fs.FS, issues *collector.Issues) map[string]PackageState {
+	status, err := fs.ReadFile(fsys, "var/lib/dpkg/status")
+	if err != nil {
+		return nil
+	}
+	out := map[string]PackageState{}
+	conffiles := map[string]string{}
+	for _, stanza := range strings.Split(string(status), "\n\n") {
+		var pkg, arch, version string
+		var conf strings.Builder
+		inConffiles := false
+		for _, line := range strings.Split(stanza, "\n") {
+			switch {
+			case strings.HasPrefix(line, "Package: "):
+				pkg = strings.TrimPrefix(line, "Package: ")
+			case strings.HasPrefix(line, "Architecture: "):
+				arch = strings.TrimPrefix(line, "Architecture: ")
+			case strings.HasPrefix(line, "Version: "):
+				version = strings.TrimPrefix(line, "Version: ")
+			case line == "Conffiles:":
+				inConffiles = true
+				continue
+			}
+			if inConffiles {
+				if !strings.HasPrefix(line, " ") {
+					inConffiles = false
+					continue
+				}
+				conf.WriteString(line + "\n")
+			}
+		}
+		if pkg == "" || version == "" || len(out) >= maxPackageStates {
+			continue
+		}
+		// A multi-arch package's files are named with its architecture: only the name that has
+		// an .md5sums is kept, the plain one otherwise.
+		name := pkg
+		if _, err := fs.Stat(fsys, "var/lib/dpkg/info/"+pkg+":"+arch+".md5sums"); err == nil {
+			name = pkg + ":" + arch
+		}
+		out[name] = PackageState{Version: clipField(version)}
+		conffiles[name] = conf.String()
+	}
+	for name, st := range out {
+		h := sha256.New()
+		h.Write([]byte(conffiles[name]))
+		if data, err := fs.ReadFile(fsys, "var/lib/dpkg/info/"+name+".md5sums"); err == nil {
+			h.Write(data)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			issues.Add(err)
+		}
+		st.Checksums = hex.EncodeToString(h.Sum(nil))[:16]
+		out[name] = st
+	}
+	return out
 }
 
 // expectedFile is a file a package installed, with the checksum the package manager recorded.
@@ -145,6 +217,7 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 	res.StatusSHA256 = res.DatabaseSHA256
 	if res.Manager == ManagerDpkg {
 		res.StatusSHA256 = fileHash(src.FS, "var/lib/dpkg/status", &res.Issues)
+		res.States = dpkgStates(src.FS, &res.Issues)
 	}
 	res.Hidden = hiddenEntries(src.FS, owned)
 	return res, nil
