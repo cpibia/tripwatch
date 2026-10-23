@@ -24,6 +24,10 @@ the packages install the new unit; a unit copied by hand has to be replaced.
   of what was lost and whether a package manager was running; they wait in a bounded queue while
   the verifier is unreachable. Each snapshot says whether the watchers run, and why not.
 - `tripwatch-sensor -watch-only` prints what the watchers report, without a verifier.
+- A new `kernel` collector: modules from both of the kernel's lists with their place in the
+  module tree, taint and lockdown, processes hidden from `/proc`'s listing (every PID the kernel
+  may have handed out is probed, within ten seconds), eBPF programs held by processes, pinned
+  BPF objects and dynamic kprobes.
 - A sensor that stops sends a last signed event saying so, and whether its package is being
   removed: the package's pre-removal script leaves a marker the running sensor reads.
 
@@ -40,6 +44,10 @@ the packages install the new unit; a unit copied by hand has to be replaced.
   alert of their own.
 - Each server's page lists its latest events, and its System block says whether files and
   processes are watched.
+- Kernel rules: a module hidden from either list, a process hidden from `/proc` and an eBPF
+  tracing program held by a program from an unusual place or a deleted one are critical; a
+  module outside the module tree, a module loaded with out-of-tree or unsigned taint, new taint
+  flags of that kind and new kprobes are high; new eBPF programs and pins are medium.
 - "Sensor removed" (high) when the sensor package is uninstalled, "Sensor stopped" (medium)
   when the service stops, by hand or for a reboot.
 - The benchmark runs the sensor's watchers during each scenario and judges what they report with

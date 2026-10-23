@@ -85,6 +85,7 @@ type State struct {
 	Web         *web.Result
 	Weblog      *logs.Result
 	Apps        *apps.Result
+	Kernel      *system.KernelResult
 	// Realtime is nil for sensors that predate the real-time watchers.
 	Realtime *watch.Status
 }
@@ -114,7 +115,7 @@ func Decode(payload []byte) (State, error) {
 	targets := map[string]any{
 		"accounts": &st.Accounts, "ssh": &st.SSH, "sudoers": &st.Sudoers, "scheduled": &st.Scheduled,
 		"services": &st.Services, "hooks": &st.Hooks, "processes": &st.Processes, "sockets": &st.Sockets,
-		"packages": &st.Packages, "privileged": &st.Privileged, "web": &st.Web, "weblog": &st.Weblog, "apps": &st.Apps,
+		"packages": &st.Packages, "privileged": &st.Privileged, "web": &st.Web, "weblog": &st.Weblog, "apps": &st.Apps, "kernel": &st.Kernel,
 	}
 	for name, raw := range r.Snapshot.Results {
 		target, ok := targets[name]

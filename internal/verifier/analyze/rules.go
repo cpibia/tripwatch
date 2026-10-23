@@ -41,7 +41,7 @@ func (f Finding) owned() bool { return f.Owner == "root" }
 var rootKinds = map[string]bool{
 	"accounts": true, "accounts-change": true, "ssh": true, "ssh-change": true,
 	"persistence": true, "persistence-change": true, "privileged": true, "privileged-change": true,
-	"packages": true, "packages-change": true,
+	"packages": true, "packages-change": true, "kernel": true, "kernel-change": true,
 }
 
 func kindOwner(kind string) string {
@@ -578,7 +578,7 @@ func homeOwner(p string) string {
 }
 
 // StateKinds are the kinds whose alerts resolve themselves when the condition disappears.
-var StateKinds = []string{"accounts", "ssh", "persistence", "processes", "packages", "privileged", "web", "apps", "sensor"}
+var StateKinds = []string{"accounts", "ssh", "persistence", "processes", "packages", "privileged", "web", "apps", "sensor", "kernel"}
 
 // Places a legitimate program does not run from.
 var suspiciousDirs = []string{"/tmp/", "/var/tmp/", "/dev/shm/", "/run/user/", "/var/www/", "/home/", "/run/lock/"}
@@ -892,6 +892,8 @@ func Evaluate(prev *State, cur State) []Finding {
 			state("persistence", "preload:"+lib, "critical", "Library loaded into every process", lib+" is in /etc/ld.so.preload: the technique of userspace rootkits.")
 		}
 	}
+
+	out = append(out, kernelFindings(prev, cur)...)
 
 	if p := cur.Processes; p != nil {
 		for _, pr := range p.Processes {
