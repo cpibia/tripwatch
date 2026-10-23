@@ -1,86 +1,86 @@
-# Benchmark di rilevamento
+# Detection benchmark
 
-Commit `78d624e`, 2026-10-22, container Debian GNU/Linux 12 (bookworm) su arm64. Strumenti di confronto: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
-con la configurazione di default dei pacchetti Debian. Si rigenera con `bench/run.sh`.
+Commit `78d624e`, 2026-10-22, container Debian GNU/Linux 12 (bookworm) on arm64. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
-## Metodo
+## Method
 
-Ogni scenario parte da un container pulito, uguale per tutti: una Debian con un sito WordPress, su cui
-ogni strumento ha già preso la sua baseline. Lo scenario applica l'attacco, poi tutti gli strumenti
-girano una volta. Uno strumento **rileva** lo scenario quando nel suo output le righe che citano
-l'artefatto dell'attacco (un percorso, il commento di una chiave, una porta) sono diverse da quelle
-della baseline: qualcosa di nuovo è comparso o qualcosa di noto è cambiato. Per tripwatch si confrontano
-gli oggetti JSON dello snapshot che contengono l'artefatto: il giudizio finale spetta al verificatore,
-qui si misura se il dato arriva. **Bloccato** vuol dire che lo strumento non ha finito entro 900 s.
+Every scenario starts from a clean container, the same for all: a Debian host with a WordPress site, on
+which every tool has already taken its baseline. The scenario applies the attack, then every tool runs
+once. A tool **detects** the scenario when the lines of its output that mention the artifact of the
+attack (a path, the comment of a key, a port) differ from those of the baseline: something new appeared
+or something known changed. For tripwatch the JSON objects of the snapshot that contain the artifact are
+compared: the final judgement belongs to the verifier, here we measure whether the data arrives.
+**Blocked** means the tool did not finish within 900 s.
 
-Lo scenario di controllo, senza attacco, non produce differenze per nessuno strumento.
+The control scenario, with no attack, produces no differences for any tool.
 
-## Risultati per scenario
+## Results per scenario
 
-### Persistenza
+### Persistence
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Chiave SSH aggiunta a root | ✅ | ✅ | ❌ | ❌ |
-| Nuovo account con UID 0 | ✅ | ✅ | ✅ | ❌ |
-| Regola sudo NOPASSWD per www-data | ✅ | ✅ | ❌ | ❌ |
+| SSH key added to root | ✅ | ✅ | ❌ | ❌ |
+| New account with UID 0 | ✅ | ✅ | ✅ | ❌ |
+| NOPASSWD sudo rule for www-data | ✅ | ✅ | ❌ | ❌ |
 | Job in /etc/cron.d | ✅ | ✅ | ❌ | ❌ |
-| Crontab dell'utente web | ✅ | ✅ | ❌ | ❌ |
-| Servizio systemd abilitato | ✅ | ✅ | ❌ | ❌ |
-| Generator systemd (gira da root a ogni boot) | ✅ | ✅ | ❌ | ❌ |
-| Libreria iniettata con /etc/ld.so.preload | ✅ | ✅ | ✅ | ❌ |
-| Script di login in /etc/profile.d | ✅ | ✅ | ❌ | ❌ |
-| Riga aggiunta al .bashrc di root | ✅ | ✅ | ❌ | ❌ |
+| Crontab of the web user | ✅ | ✅ | ❌ | ❌ |
+| Enabled systemd service | ✅ | ✅ | ❌ | ❌ |
+| systemd generator (runs as root at every boot) | ✅ | ✅ | ❌ | ❌ |
+| Library injected through /etc/ld.so.preload | ✅ | ✅ | ✅ | ❌ |
+| Login script in /etc/profile.d | ✅ | ✅ | ❌ | ❌ |
+| Line added to root's .bashrc | ✅ | ✅ | ❌ | ❌ |
 
-### Privilegi
-
-| Scenario | tripwatch | AIDE | rkhunter | debsums |
-|---|:-:|:-:|:-:|:-:|
-| Shell setuid in /var/tmp | ✅ | ✅ | ❌ | ❌ |
-| Shell setuid in /run/lock (tmpfs scrivibile da tutti) | ✅ | ✅ | ❌ | ❌ |
-| Capability cap_setuid su una copia di un binario | ✅ | ✅ | ❌ | ❌ |
-| Backdoor protetta con chattr +i | ✅ | ✅ | ❌ | ❌ |
-
-### Integrità del sistema
+### Privileges
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Binario di un pacchetto modificato | ✅ | ✅ | ❌ | ✅ |
-| PermitRootLogin abilitato in sshd_config | ✅ | ✅ | ❌ | ❌ |
-| Eseguibile estraneo ai pacchetti in /usr/local/bin | ✅ | ✅ | ❌ | ❌ |
-| Link che dirotta sudo da /usr/local/bin | ✅ | ✅ | ✅ | ❌ |
-| Directory nascosta sotto /usr/lib | ✅ | ✅ | ❌ | ❌ |
+| Setuid shell in /var/tmp | ✅ | ✅ | ❌ | ❌ |
+| Setuid shell in /run/lock (world-writable tmpfs) | ✅ | ✅ | ❌ | ❌ |
+| cap_setuid capability on a copy of a binary | ✅ | ✅ | ❌ | ❌ |
+| Backdoor protected with chattr +i | ✅ | ✅ | ❌ | ❌ |
 
-### Processi e rete
-
-| Scenario | tripwatch | AIDE | rkhunter | debsums |
-|---|:-:|:-:|:-:|:-:|
-| Processo avviato da un eseguibile poi cancellato | ✅ | ❌ | ❌ | ❌ |
-| Backdoor in ascolto sulla porta 31337 | ✅ | ❌ | ✅ | ❌ |
-| Processo con LD_PRELOAD nell'ambiente | ✅ | ❌ | ❌ | ❌ |
-
-### Applicazioni web
+### System integrity
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Webshell nelle upload di WordPress | ✅ | ✅ | ❌ | ❌ |
-| Immagine GIF con codice PHP in coda | ✅ | ✅ | ❌ | ❌ |
-| Backdoor iniettata in un file PHP esistente | ✅ | ✅ | ❌ | ❌ |
-| .htaccess che fa eseguire le immagini come PHP | ✅ | ✅ | ❌ | ❌ |
+| Modified package binary | ✅ | ✅ | ❌ | ✅ |
+| PermitRootLogin enabled in sshd_config | ✅ | ✅ | ❌ | ❌ |
+| Executable owned by no package in /usr/local/bin | ✅ | ✅ | ❌ | ❌ |
+| Link hijacking sudo from /usr/local/bin | ✅ | ✅ | ✅ | ❌ |
+| Hidden directory under /usr/lib | ✅ | ✅ | ❌ | ❌ |
 
-### Limiti: attacchi tra due controlli e trappole
+### Processes and network
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Dropper eseguito e cancellato tra due controlli | ❌ | ❌ | ❌ | ❌ |
-| Chiave SSH aggiunta, usata e rimossa tra due controlli | ❌ | ❌ | ❌ | ❌ |
-| FIFO al posto di authorized_keys dell'utente web | ✅ | ✅ | ❌ | ❌ |
+| Process started from an executable later deleted | ✅ | ❌ | ❌ | ❌ |
+| Backdoor listening on port 31337 | ✅ | ❌ | ✅ | ❌ |
+| Process with LD_PRELOAD in its environment | ✅ | ❌ | ❌ | ❌ |
 
-## Costo di un controllo completo
+### Web applications
 
-Misurato sullo scenario di controllo, nello stesso container.
+| Scenario | tripwatch | AIDE | rkhunter | debsums |
+|---|:-:|:-:|:-:|:-:|
+| Webshell in WordPress uploads | ✅ | ✅ | ❌ | ❌ |
+| GIF image with PHP code appended | ✅ | ✅ | ❌ | ❌ |
+| Backdoor injected into an existing PHP file | ✅ | ✅ | ❌ | ❌ |
+| .htaccess that runs images as PHP | ✅ | ✅ | ❌ | ❌ |
 
-| Strumento | Tempo | Memoria massima |
+### Limits: attacks between two checks, and traps
+
+| Scenario | tripwatch | AIDE | rkhunter | debsums |
+|---|:-:|:-:|:-:|:-:|
+| Dropper run and deleted between two checks | ❌ | ❌ | ❌ | ❌ |
+| SSH key added, used and removed between two checks | ❌ | ❌ | ❌ | ❌ |
+| FIFO in place of the web user's authorized_keys | ✅ | ✅ | ❌ | ❌ |
+
+## Cost of a full check
+
+Measured on the control scenario, in the same container.
+
+| Tool | Time | Peak memory |
 |---|--:|--:|
 | tripwatch | 1.1 s | 26 MB |
 | AIDE | 19.0 s | 34 MB |

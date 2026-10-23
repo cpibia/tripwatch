@@ -1,5 +1,5 @@
 # category: limits
-# title: Chiave SSH aggiunta, usata e rimossa tra due controlli
+# title: SSH key added, used and removed between two checks
 # indicator: bench-transient
 # indicator: /root/.ssh/authorized_keys
 mkdir -p /root/.ssh

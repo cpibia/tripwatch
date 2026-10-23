@@ -1,5 +1,5 @@
 # category: persistence
-# title: Servizio systemd abilitato
+# title: Enabled systemd service
 # indicator: bench-backdoor.service
 cat >/etc/systemd/system/bench-backdoor.service <<'UNIT'
 [Service]

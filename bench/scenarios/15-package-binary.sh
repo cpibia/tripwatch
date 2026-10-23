@@ -1,4 +1,4 @@
 # category: integrity
-# title: Binario di un pacchetto modificato
+# title: Modified package binary
 # indicator: /usr/bin/pinky
 printf '\x00bench' >>/usr/bin/pinky

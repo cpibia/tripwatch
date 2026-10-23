@@ -1,5 +1,5 @@
 # category: persistence
-# title: Chiave SSH aggiunta a root
+# title: SSH key added to root
 # indicator: bench-attacker
 # indicator: /root/.ssh/authorized_keys
 mkdir -p /root/.ssh

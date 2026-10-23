@@ -1,4 +1,4 @@
 # category: control
-# title: Nessun attacco (controllo dei falsi positivi)
+# title: No attack (false positive control)
 # indicator: bench-control-never-present
 true

@@ -1,5 +1,5 @@
 # category: privilege
-# title: Shell setuid in /run/lock (tmpfs scrivibile da tutti)
+# title: Setuid shell in /run/lock (world-writable tmpfs)
 # indicator: /run/lock/.bench-sh
 mkdir -p /run/lock
 cp /bin/bash /run/lock/.bench-sh
