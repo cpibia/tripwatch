@@ -17,6 +17,8 @@ False positives seen on a real server, fixed.
 - A program or script run by an account from its own home is no longer reported as started from
   an unusual place (a crontab calling a script in the deploy user's home); the same file run by
   another account, by root or by the web server's user still is.
+- The packages collector fingerprints dpkg's list of installed versions apart from the
+  checksums (`status_sha256`).
 - A web server's configuration counts as stale only if it changed after the server last read it:
   a reload starts new workers while the master keeps running.
 
@@ -25,6 +27,10 @@ False positives seen on a real server, fixed.
 - A process still running a replaced binary in the system's directories is a low "restart
   pending"; one whose binary is gone stays high. Shared anonymous regions reported by older
   sensors are ignored.
+- "Package database changed without installations" no longer follows every upgrade: with
+  sensors from 0.1.11 on dpkg hosts, an upgrade (the installed versions changed) raises
+  nothing, and checksums or file lists changed while no version did raise a high "Package
+  checksums changed without installations".
 - A script requested in an upload directory and answered with a redirect is low: the redirect
   is the server's own (to https, to a canonical host) and the request that follows is judged on
   its own status. Any other status but success stays high.

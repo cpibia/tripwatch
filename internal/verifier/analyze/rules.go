@@ -982,7 +982,16 @@ func Evaluate(prev *State, cur State) []Finding {
 					change("packages-change", "unowned:"+u, "medium", "New executable outside the packages: "+u, "")
 				}
 			}
-			if p.DatabaseSHA256 != prev.Packages.DatabaseSHA256 && p.Packages == prev.Packages.Packages {
+			switch {
+			case p.DatabaseSHA256 == prev.Packages.DatabaseSHA256:
+			case p.StatusSHA256 != "" && prev.Packages.StatusSHA256 != "":
+				// The list of installed packages and versions tells an upgrade from checksums
+				// rewritten by hand, where the manager keeps them apart (dpkg).
+				if p.StatusSHA256 == prev.Packages.StatusSHA256 && p.StatusSHA256 != p.DatabaseSHA256 {
+					change("packages-change", "database:"+p.DatabaseSHA256, "high", "Package checksums changed without installations",
+						"The checksums or file lists of the package database changed while no package was installed, removed or upgraded: the way to make a replaced system file pass verification.")
+				}
+			case p.Packages == prev.Packages.Packages:
 				change("packages-change", "database:"+p.DatabaseSHA256, "medium", "Package database changed without installations",
 					"The number of packages is the same but the database differs: a normal update, or checksums rewritten to cover a replaced file.")
 			}

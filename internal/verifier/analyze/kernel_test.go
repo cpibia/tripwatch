@@ -109,3 +109,30 @@ func TestProcessMemoryFindings(t *testing.T) {
 		t.Error("a debugger on an ordinary process raised an alert")
 	}
 }
+
+// An upgrade changes the list of installed versions; checksums rewritten by hand do not.
+func TestPackageDatabaseChanges(t *testing.T) {
+	pkgs := func(db, status string) State {
+		return State{Packages: &system.PackagesResult{Manager: "dpkg", Packages: 500, DatabaseSHA256: db, StatusSHA256: status}}
+	}
+	for _, tc := range []struct {
+		name      string
+		prev, cur State
+		want      string
+	}{
+		{"upgrade", pkgs("d1", "s1"), pkgs("d2", "s2"), ""},
+		{"checksums rewritten", pkgs("d1", "s1"), pkgs("d2", "s1"), "high"},
+		{"unchanged", pkgs("d1", "s1"), pkgs("d1", "s1"), ""},
+		{"older sensor", pkgs("d1", ""), pkgs("d2", ""), "medium"},
+	} {
+		got := ""
+		for _, f := range Evaluate(&tc.prev, tc.cur) {
+			if f.Kind == "packages-change" {
+				got = f.Severity
+			}
+		}
+		if got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

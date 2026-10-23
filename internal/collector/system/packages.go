@@ -49,12 +49,17 @@ type PackagesResult struct {
 	// DatabaseSHA256 fingerprints the package database itself (status and checksum lists): with
 	// root an attacker can update a checksum to match a replaced file, but not without changing
 	// this between two snapshots.
-	DatabaseSHA256 string         `json:"database_sha256,omitempty"`
-	Packages       int            `json:"packages"`
-	Checked        int            `json:"checked"`
-	Modified       []ModifiedFile `json:"modified"`
-	Missing        []string       `json:"missing,omitempty"`
-	Unowned        []string       `json:"unowned"`
+	DatabaseSHA256 string `json:"database_sha256,omitempty"`
+	// StatusSHA256 fingerprints the list of installed packages and their versions alone (dpkg's
+	// status file): it changes with every installation and upgrade, while checksums rewritten
+	// by hand leave it as it was. Where the manager keeps both in one file it equals
+	// DatabaseSHA256.
+	StatusSHA256 string         `json:"status_sha256,omitempty"`
+	Packages     int            `json:"packages"`
+	Checked      int            `json:"checked"`
+	Modified     []ModifiedFile `json:"modified"`
+	Missing      []string       `json:"missing,omitempty"`
+	Unowned      []string       `json:"unowned"`
 	// UnownedLinks are symlinks in the binary directories that no package installed, such as a
 	// sudo in /usr/local/bin, which comes first in PATH, pointing to a payload.
 	UnownedLinks []Link           `json:"unowned_links"`
@@ -136,6 +141,10 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 		res.DatabaseSHA256 = fileHash(src.FS, rpmDB, &res.Issues)
 	} else {
 		res.DatabaseSHA256 = databaseHash(src.FS, res.Manager, &res.Issues)
+	}
+	res.StatusSHA256 = res.DatabaseSHA256
+	if res.Manager == ManagerDpkg {
+		res.StatusSHA256 = fileHash(src.FS, "var/lib/dpkg/status", &res.Issues)
 	}
 	res.Hidden = hiddenEntries(src.FS, owned)
 	return res, nil
