@@ -53,3 +53,22 @@ func TestKernelFindings(t *testing.T) {
 		}
 	}
 }
+
+func TestRawSocketFindings(t *testing.T) {
+	for _, tc := range []struct {
+		so   system.Socket
+		want string
+	}{
+		{system.Socket{Proto: "packet", PID: 700, Process: "dhclient", Exe: "/usr/sbin/dhclient"}, ""},
+		{system.Socket{Proto: "packet", PID: 701, Process: "dhclient", Exe: "/var/tmp/.d/dhclient"}, "critical"},
+		{system.Socket{Proto: "packet", PID: 702, Process: "udevd", Exe: "/usr/sbin/udevd (deleted)"}, "critical"},
+		{system.Socket{Proto: "raw", PID: 703, Process: "agent", Exe: "/opt/agent/agent"}, "high"},
+		{system.Socket{Proto: "raw6"}, "medium"},
+		{system.Socket{Proto: "tcp", PID: 704, Exe: "/tmp/x"}, ""},
+	} {
+		f, ok := rawSocketFinding(tc.so)
+		if got := map[bool]string{true: f.Severity}[ok]; got != tc.want {
+			t.Errorf("%+v: %q, want %q", tc.so, got, tc.want)
+		}
+	}
+}

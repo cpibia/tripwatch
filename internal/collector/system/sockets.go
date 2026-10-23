@@ -31,6 +31,9 @@ type Socket struct {
 	PID     int    `json:"pid,omitempty"`
 	Process string `json:"process,omitempty"`
 	NetNS   string `json:"netns,omitempty"`
+	// Exe is recorded for packet and raw sockets only: they see traffic no port shows, which is
+	// how backdoors that open no port wait for their trigger, and a process name is free to fake.
+	Exe string `json:"exe,omitempty"`
 }
 
 type SocketsResult struct {
@@ -94,7 +97,7 @@ func (Sockets) Collect(ctx context.Context, src collector.Source) (any, error) {
 		if !ok {
 			continue
 		}
-		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
+		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6", "raw", "raw6"} {
 			lines, err := collector.ReadLines(src.FS, dir+proto)
 			res.Issues.Add(err)
 			for _, line := range lines {
@@ -105,12 +108,48 @@ func (Sockets) Collect(ctx context.Context, src collector.Source) (any, error) {
 				s.NetNS = ns
 				if pid, found := owners[inode]; found {
 					s.PID, s.Process = pid, comms[pid]
+					if strings.HasPrefix(proto, "raw") {
+						s.Exe = exeOf(src.FS, pid)
+					}
 				}
 				res.Sockets = append(res.Sockets, s)
 			}
 		}
+		lines, err := collector.ReadLines(src.FS, dir+"packet")
+		res.Issues.Add(err)
+		for _, line := range lines {
+			s, inode, ok := parsePacketLine(line)
+			if !ok {
+				continue
+			}
+			s.NetNS = ns
+			if pid, found := owners[inode]; found {
+				s.PID, s.Process, s.Exe = pid, comms[pid], exeOf(src.FS, pid)
+			}
+			res.Sockets = append(res.Sockets, s)
+		}
 	}
 	return res, nil
+}
+
+// parsePacketLine parses one row of /proc/net/packet (sk RefCnt Type Proto Iface R Rmem User
+// Inode) into a socket whose local address names the ethertype and the interface index.
+func parsePacketLine(line string) (Socket, string, bool) {
+	f := strings.Fields(line)
+	if len(f) < 9 || f[0] == "sk" {
+		return Socket{}, "", false
+	}
+	kind := map[string]string{"1": "stream", "2": "dgram", "3": "raw"}[f[2]]
+	if kind == "" {
+		kind = "type " + f[2]
+	}
+	uid, _ := strconv.Atoi(f[7])
+	return Socket{Proto: "packet", Local: fmt.Sprintf("ethertype 0x%s, interface %s", f[3], f[4]), State: kind, UID: uid}, f[8], true
+}
+
+func exeOf(fsys fs.FS, pid int) string {
+	exe, _ := fs.ReadLink(fsys, fmt.Sprintf("proc/%d/exe", pid))
+	return exe
 }
 
 // parseSocketLine parses one row of /proc/net/{tcp,udp}[6] and returns the socket inode.

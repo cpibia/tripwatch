@@ -578,7 +578,7 @@ func homeOwner(p string) string {
 }
 
 // StateKinds are the kinds whose alerts resolve themselves when the condition disappears.
-var StateKinds = []string{"accounts", "ssh", "persistence", "processes", "packages", "privileged", "web", "apps", "sensor", "kernel"}
+var StateKinds = []string{"accounts", "ssh", "persistence", "processes", "packages", "privileged", "web", "apps", "sensor", "kernel", "network"}
 
 // Places a legitimate program does not run from.
 var suspiciousDirs = []string{"/tmp/", "/var/tmp/", "/dev/shm/", "/run/user/", "/var/www/", "/home/", "/run/lock/"}
@@ -909,6 +909,14 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 	}
 
+	if s := cur.Sockets; s != nil {
+		for _, so := range s.Sockets {
+			if f, ok := rawSocketFinding(so); ok {
+				add(f)
+			}
+		}
+	}
+
 	if s := cur.Sockets; s != nil && prev != nil && prev.Sockets != nil {
 		known := set{}
 		for _, p := range prev.Sockets.Sockets {
@@ -1102,6 +1110,47 @@ func webFinding(f web.Finding) (string, string) {
 		return "medium", "Hidden file in data directories"
 	}
 	return "", ""
+}
+
+// packetTools are the programs that legitimately read raw traffic: DHCP clients and servers,
+// network managers, capture and intrusion detection tools, ping.
+var packetTools = []string{
+	"dhclient", "dhcpcd", "udhcpc", "dhcpd", "kea-dhcp4", "dnsmasq", "NetworkManager", "systemd-networkd", "wpa_supplicant",
+	"tcpdump", "tshark", "dumpcap", "wireshark", "lldpd", "keepalived", "arping", "ping", "ping6", "suricata", "snort", "zeek",
+	"iftop", "nethogs", "vnstatd", "pmacctd", "fprobe", "ladvd", "ntopng", "nmap", "traceroute", "mtr-packet",
+}
+
+// rawSocketFinding judges a packet or raw socket: it receives traffic before any port does, so a
+// backdoor that opens no port waits on one for its trigger packet. Known tools in the system's
+// directories are fine; a program elsewhere, deleted, or not found holding one is not.
+func rawSocketFinding(so system.Socket) (Finding, bool) {
+	if so.Proto != "packet" && !strings.HasPrefix(so.Proto, "raw") {
+		return Finding{}, false
+	}
+	exe, deleted := strings.CutSuffix(so.Exe, " (deleted)")
+	what := "Raw socket"
+	if so.Proto == "packet" {
+		what = "Packet socket"
+	}
+	where := fmt.Sprintf("%s %s (%s), process %s (PID %d, %s)", so.Proto, so.Local, so.State, orNone(so.Process), so.PID, orNone(so.Exe))
+	f := Finding{Kind: "network", State: true}
+	switch {
+	case so.PID == 0:
+		f.Severity, f.Title = "medium", what+" with no process"
+		f.Fingerprint = "network:raw-orphan:" + so.Proto + ":" + so.Local
+		f.Detail = where + ". No process in /proc holds it: a kernel component, or a process hidden from the listing."
+	case deleted || suspiciousPath(exe):
+		f.Severity, f.Title = "critical", what+" held by "+path.Base(exe)
+		f.Fingerprint = "network:raw:" + exe + ":" + so.Proto
+		f.Detail = where + ". A program from an unusual place or deleted from disk reads raw traffic: the way backdoors that open no port wait for their trigger packet."
+	case standardBinDir(exe) && slices.Contains(packetTools, path.Base(exe)):
+		return Finding{}, false
+	default:
+		f.Severity, f.Title = "high", what+" held by "+path.Base(orNone(exe))
+		f.Fingerprint = "network:raw:" + exe + ":" + so.Proto
+		f.Detail = where + ". It reads traffic before any port does; capture and network tools do this, and so do backdoors that open no port. Check that this program is expected."
+	}
+	return f, true
 }
 
 func standardBinDir(p string) bool {

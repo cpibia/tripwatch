@@ -67,14 +67,19 @@ func procHost() fstest.MapFS {
 
 		// The relative exe target lets fstest resolve the link the way the kernel resolves the
 		// /proc magic link, so the deleted binary can still be hashed.
-		"proc/4242/status":                   text("Name:\thelper\nPPid:\t1\nUid:\t33\t33\t33\t33\n"),
-		"proc/4242/comm":                     text("[kworker/0:2]\n"),
-		"proc/4242/cmdline":                  text("[kworker/0:2]\x00"),
-		"proc/4242/exe":                      link("../../var/www/.config/x/helper (deleted)"),
-		"proc/4242/cwd":                      link("/var/www/shop"),
-		"proc/4242/environ":                  text("PATH=/usr/bin\x00LD_PRELOAD=/usr/lib/libprocesshider.so\x00"),
-		"proc/4242/ns/net":                   link(hostNetNS),
-		"proc/4242/fd/5":                     link("socket:[30001]"),
+		"proc/4242/status":  text("Name:\thelper\nPPid:\t1\nUid:\t33\t33\t33\t33\n"),
+		"proc/4242/comm":    text("[kworker/0:2]\n"),
+		"proc/4242/cmdline": text("[kworker/0:2]\x00"),
+		"proc/4242/exe":     link("../../var/www/.config/x/helper (deleted)"),
+		"proc/4242/cwd":     link("/var/www/shop"),
+		"proc/4242/environ": text("PATH=/usr/bin\x00LD_PRELOAD=/usr/lib/libprocesshider.so\x00"),
+		"proc/4242/ns/net":  link(hostNetNS),
+		"proc/4242/fd/5":    link("socket:[30001]"),
+		"proc/4242/fd/9":    link("socket:[30009]"),
+		"proc/1/net/packet": text("sk       RefCnt Type Proto  Iface R Rmem   User   Inode\n" +
+			"ffff8880 3      3    0003   2     1 0      0      30009\n"),
+		"proc/1/net/raw": text("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
+			"   1: 00000000:0001 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 30010 2 0000000000000000 0\n"),
 		"var/www/.config/x/helper (deleted)": text("payload"),
 
 		"proc/5000/status":  text("Name:\tnginx\nPPid:\t4999\nUid:\t0\t0\t0\t0\n"),
@@ -148,6 +153,8 @@ func TestSockets(t *testing.T) {
 		{Proto: "tcp6", Local: "[::]:22", State: "listen", NetNS: hostNetNS},
 		{Proto: "tcp6", Local: "10.0.0.5:443", Remote: "1.2.3.4:54321", State: "established", UID: 33, NetNS: hostNetNS},
 		{Proto: "udp", Local: "127.0.0.53:53", State: "unconnected", UID: 101, NetNS: hostNetNS},
+		{Proto: "raw", Local: "0.0.0.0:1", State: "unconnected", NetNS: hostNetNS},
+		{Proto: "packet", Local: "ethertype 0x0003, interface 2", State: "raw", PID: 4242, Process: "[kworker/0:2]", NetNS: hostNetNS, Exe: "../../var/www/.config/x/helper (deleted)"},
 		{Proto: "tcp", Local: "0.0.0.0:80", State: "listen", PID: 5000, Process: "nginx", NetNS: containerNetNS},
 	}
 	if !slices.Equal(res.Sockets, want) {

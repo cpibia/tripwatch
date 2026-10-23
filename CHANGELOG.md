@@ -28,6 +28,8 @@ the packages install the new unit; a unit copied by hand has to be replaced.
   module tree, taint and lockdown, processes hidden from `/proc`'s listing (every PID the kernel
   may have handed out is probed, within ten seconds), eBPF programs held by processes, pinned
   BPF objects and dynamic kprobes.
+- The `sockets` collector also reports packet (`AF_PACKET`) and raw sockets, with the
+  executable of the process that holds each.
 - A sensor that stops sends a last signed event saying so, and whether its package is being
   removed: the package's pre-removal script leaves a marker the running sensor reads.
 
@@ -48,6 +50,8 @@ the packages install the new unit; a unit copied by hand has to be replaced.
   tracing program held by a program from an unusual place or a deleted one are critical; a
   module outside the module tree, a module loaded with out-of-tree or unsigned taint, new taint
   flags of that kind and new kprobes are high; new eBPF programs and pins are medium.
+- A packet or raw socket held by a program from an unusual place or deleted is critical, by a
+  program other than the known capture and network tools high, by no listed process medium.
 - "Sensor removed" (high) when the sensor package is uninstalled, "Sensor stopped" (medium)
   when the service stops, by hand or for a reboot.
 - The benchmark runs the sensor's watchers during each scenario and judges what they report with
