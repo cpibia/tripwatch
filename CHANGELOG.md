@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-23
+
+Update the verifier, then the sensors (`tripwatch-sensor -update`). This release fixes how
+0.1.10 and 0.1.11 lowered the alerts around a stopped sensor; until the sensors are updated,
+their stops are judged as stops on a running system.
+
 ### Sensor
 
 - The stop event says whether systemd was shutting the system down (`systemctl
@@ -358,7 +364,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/cpibia/tripwatch/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/cpibia/tripwatch/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/cpibia/tripwatch/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/cpibia/tripwatch/compare/v0.1.8...v0.1.9
