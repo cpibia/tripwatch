@@ -6,8 +6,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
-Update the verifier first, then the sensors. The sensor's systemd unit gains `CAP_NET_ADMIN`:
-the packages install the new unit; a unit copied by hand has to be replaced.
+## [0.1.9] - 2026-10-23
+
+Update the verifier first, then the sensors (`tripwatch-sensor -update`): a verifier older than
+this ignores the real-time events and the new collectors. The sensor's systemd unit gains
+`CAP_NET_ADMIN`, which the packages install with the new unit; a unit copied by hand has to be
+replaced. The first snapshot after the update runs the new rules on what is already there:
+modules built outside the kernel's tree, packet sockets of monitoring agents and native modules
+mapped from web roots show up then, and can be accepted once.
 
 ### Sensor
 
@@ -278,7 +284,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/cpibia/tripwatch/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/cpibia/tripwatch/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/cpibia/tripwatch/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/cpibia/tripwatch/compare/v0.1.5...v0.1.6

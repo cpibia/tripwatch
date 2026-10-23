@@ -323,8 +323,9 @@ what changes there within two seconds, in signed event envelopes of the same cha
   program whose file was deleted after it started; root gained through a set-user-ID program
   outside the system's binary directories.
 
-The verifier keeps the events for seven days (at most 20,000 a server in 24 hours, so a flood
-cannot push out the first ones) and judges them at once. The web server's user starting a shell,
+The verifier keeps the events for seven days (at most 20,000 a server in 24 hours for uploads
+and process starts and as many for system paths, so a flood cannot push out the first ones, nor
+noise in the uploads root's changes) and judges them at once. The web server's user starting a shell,
 root gained through an unknown set-user-ID program, a change to who may become root or to library
 preloading are critical. A script or an `.htaccess` landing in an upload directory, new SSH keys,
 services, scheduled tasks and start-up scripts are high. What a snapshot an hour later could not
@@ -633,7 +634,8 @@ is needed too, which closes them all.
   addresses, the web applications found on it, the last heartbeat and snapshot and the number
   of alerts; revoked servers listed apart.
 - **Server.** State, the system as the sensor read it (with the package manager and count, the
-  listening ports and the web applications), every alert, the silences of the last 7 days with
+  listening ports, the web applications and whether the real-time watchers run), every alert,
+  the latest real-time events, the silences of the last 7 days with
   their duration, the last snapshots received, revocation.
 - **Alerts.** To handle, acknowledged, resolved. At the side (above the list on smaller screens)
   the alert to look at first, chosen by severity and then by kind (a silent sensor, then code

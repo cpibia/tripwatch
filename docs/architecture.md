@@ -110,25 +110,33 @@ on files, so a file replaced by a rename is still seen: each target names a dire
 keeps. Upload directories are watched recursively down to four levels, including directories
 created later, whose contents are listed at once since a file can land there before the watch
 exists. Watches are capped at 8,192, use `IN_DONT_FOLLOW` and `IN_ONLYDIR`, and the file behind an
-event is described through the same confined view the collectors use, with `lstat` first so a
-planted link is reported and never read. After each snapshot the targets are set again from the
+event is described through the same confined view the collectors use, with `lstat` and no
+following of the final component, so a planted link is reported and never read or opened, and
+hashed only up to 1 MB and 16 MB a second, on the goroutine that reads the kernel's queue.
+Directories the depth, count or watch limits leave out are reported in the watchers' status.
+After each snapshot the targets are set again from the
 accounts' homes and the applications' upload directories.
 
 Processes come from the netlink process connector (`PROC_EVENT_EXEC` and `PROC_EVENT_UID`), which
-needs `CAP_NET_ADMIN` in the initial network namespace and no eBPF. Each new process is read from
+needs `CAP_NET_ADMIN` in the initial network namespace and no eBPF; the sensor drops the
+capability on every thread once subscribed, since receiving needs none. Each new process is read from
 `/proc` the way the processes collector reads it, command line redacted, at most 200 a second;
 only those matching a reason are reported (`web_user_tool`, `unusual_path`, `deleted_executable`,
 `privilege_gain`). For an interpreter the script it runs is reported as well, since `/proc` shows
 the interpreter as the executable.
 
 Events go through a bounded channel to a batcher that sends at most every two seconds, in batches
-under 192 KB, with the counts of what was lost (kernel queue overflow, full channel, full queue)
-and whether a package manager was running. If the transport cannot seal a batch because an
-earlier envelope is still pending, the batcher keeps it in a queue of 4,096 events and retries
-with a backoff up to a minute. Each snapshot carries the watchers' status.
+under 192 KB, with the counts of what was lost (kernel queue overflow, full channel, full queue,
+and among them the events on system paths) and whether a package manager was running, which is
+known from a lock of dpkg, rpm or apk held by a process of root in `/proc/locks`, never from a
+process name. If the transport cannot seal a batch because an earlier envelope is still pending,
+the batcher keeps it in a queue of 4,096 events, letting upload noise go first when it is full,
+and retries with a backoff up to a minute. When the sensor stops, what is queued is sent before
+the stop event. Each snapshot carries the watchers' status.
 
-The verifier stores the events (`events` table, seven days, at most 20,000 a host in 24 hours,
-past which they are counted, not stored) and judges each batch at once with the rules in
+The verifier stores the events (`events` table, seven days, at most 20,000 a host in 24 hours
+for uploads and process starts and as many for system paths, past which they are counted, not
+stored, but still judged within their batch) and judges each batch at once with the rules in
 `internal/verifier/analyze/events.go`, looking up the same path's earlier events for what
 appeared and disappeared within 15 minutes. Their alerts have kind `realtime` and, as changes,
 are never resolved by a snapshot.
