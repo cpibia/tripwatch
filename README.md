@@ -248,9 +248,9 @@ Il design completo è in [docs/architecture.md](docs/architecture.md).
   di 4 GB di quel server si riempie in circa un anno e mezzo invece di non riempirsi mai, e un file vero della stessa gravità arrivato in una giornata
   già satura di esche resta solo 48 ore (le esche di gravità media non toccano il budget dei
   critici). Ciò che solo root può causare (account con UID 0, chiavi SSH e crontab di root, file
-  setuid di root o setgid di un gruppo di sistema, persistenze di sistema, pacchetti) diventa
-  invece sempre prova, e le chiavi, le crontab, le unit e l'ambiente degli altri utenti non ne
-  prendono il posto.
+  setuid di root o setgid di un gruppo di sistema a cui il proprietario non appartiene,
+  persistenze di sistema, pacchetti) diventa invece sempre prova, e le chiavi, le crontab, le
+  unit e l'ambiente degli altri utenti non ne prendono il posto.
 - Un attacco molto costoso per il verificatore (oltre centomila tentativi di accesso in un'ora,
   ognuno con il suo controllo della password) può far rispondere più lentamente un'email
   inesistente nuova che quella di un utente, rivelando quali indirizzi esistono.

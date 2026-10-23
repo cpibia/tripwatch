@@ -72,12 +72,29 @@ var privilegedGroups = map[string]bool{
 }
 
 // privilegedOwner is root for a file that grants root's or a privileged group's rights when
-// run: setuid and owned by root, or setgid with a group named in privilegedGroups (by its name
-// in the host's group database) or with GID 0. Any other setuid or setgid file grants only what
-// its owner could already do, a web user's own group included.
-func privilegedOwner(f fileT, groups map[int]string) string {
+// run: setuid and owned by root, or setgid with GID 0 or a group named in privilegedGroups (by
+// its name in the host's group database) that the file's owner is not in. A setgid file of a
+// group its owner already belongs to, as primary group or as member, grants nothing the owner
+// did not have: a web user in adm or docker can make those itself.
+func privilegedOwner(f fileT, cur State) string {
 	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil {
-		if *f.GID == 0 || privilegedGroups[groups[int(*f.GID)]] {
+		gid := int(*f.GID)
+		name, members, owner, primary := "", []string(nil), "", -1
+		if cur.Accounts != nil {
+			for _, g := range cur.Accounts.Groups {
+				if g.GID == gid {
+					name, members = g.Name, g.Members
+				}
+			}
+			for _, a := range cur.Accounts.Accounts {
+				if f.UID != nil && a.UID == int(*f.UID) {
+					owner, primary = a.Name, a.GID
+				}
+			}
+		}
+		member := primary == gid || (owner != "" && slices.Contains(members, owner))
+		rootOwned := f.UID != nil && *f.UID == 0
+		if (gid == 0 || privilegedGroups[name]) && (!member || rootOwned) {
 			return "root"
 		}
 	}
@@ -87,7 +104,8 @@ func privilegedOwner(f fileT, groups map[int]string) string {
 // homeOwner names who wrote a configuration read from the given path: root for system
 // directories, otherwise the home it lies in.
 func homeOwner(p string) string {
-	p = "/" + strings.TrimPrefix(p, "/")
+	// Cleaned first: a sensor that lies could send /etc/../var/www to borrow /etc's owner.
+	p = path.Clean("/" + p)
 	if strings.HasPrefix(p, "/root/") {
 		return "root"
 	}
@@ -95,7 +113,9 @@ func homeOwner(p string) string {
 		uid, _, _ := strings.Cut(rest, "/")
 		return "uid " + uid
 	}
-	for _, dir := range []string{"/etc/", "/run/", "/usr/", "/lib/"} {
+	// Under /run only systemd's own directories are root's: other services and users write
+	// there too.
+	for _, dir := range []string{"/etc/", "/run/systemd/", "/run/environment.d/", "/usr/", "/lib/"} {
 		if strings.HasPrefix(p, dir) {
 			return "root"
 		}
@@ -365,12 +385,6 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 	}
 
-	groups := map[int]string{}
-	if cur.Accounts != nil {
-		for _, g := range cur.Accounts.Groups {
-			groups[g.GID] = g.Name
-		}
-	}
 	if p := cur.Privileged; p != nil {
 		var known set
 		if prev != nil && prev.Privileged != nil {
@@ -381,11 +395,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			case f.Immutable || f.AppendOnly:
 				state("privileged", "attr:"+f.Path, "high", "File protetto con chattr: "+f.Path, "Gli attributi immutable o append-only sono rari sui server e sono usati per rendere persistente un accesso.")
 			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
-				owner := privilegedOwner(f, groups)
+				owner := privilegedOwner(f, cur)
 				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+", hash "+f.SHA256+".")
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
-				owner := privilegedOwner(f, groups)
+				owner := privilegedOwner(f, cur)
 				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+".")
 			}
 		}
