@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"slices"
 	"strconv"
@@ -218,7 +219,8 @@ var packageLocks = []string{
 	"usr/lib/sysimage/rpm/.rpm.lock", "lib/apk/db/lock",
 }
 
-// lockIdentity returns the owner and inode of a lock file; tests replace it, since an fstest
+// lockIdentity returns the owner of a lock file and its device and inode the way /proc/locks
+// writes them (hexadecimal major and minor, decimal inode); tests replace it, since an fstest
 // file has neither.
 var lockIdentity = func(info fs.FileInfo) (uint32, string, bool) {
 	uid, ok := collector.Owner(info)
@@ -229,8 +231,15 @@ var lockIdentity = func(info fs.FileInfo) (uint32, string, bool) {
 	if !ok {
 		return 0, "", false
 	}
-	_, ino, _ := strings.Cut(id, ":")
-	return uid, ino, true
+	devText, ino, _ := strings.Cut(id, ":")
+	dev, err := strconv.ParseUint(devText, 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	// The kernel's dev_t encoding, as in glibc's gnu_dev_major and gnu_dev_minor.
+	major := (dev>>8)&0xfff | (dev>>32)&^uint64(0xfff)
+	minor := dev&0xff | (dev>>12)&^uint64(0xff)
+	return uid, fmt.Sprintf("%02x:%02x:%s", major, minor, ino), true
 }
 
 // PackageManagerRunning reports whether a process of root holds a package manager's lock, from
@@ -257,8 +266,7 @@ func PackageManagerRunning(fsys fs.FS) bool {
 		// "1: POSIX ADVISORY WRITE 4242 08:01:1312 0 EOF"; waiters carry an extra "->" field.
 		f := strings.Fields(line)
 		for i := 1; i < len(f); i++ {
-			parts := strings.Split(f[i], ":")
-			if len(parts) != 3 || !inodes[parts[2]] {
+			if !inodes[f[i]] {
 				continue
 			}
 			if pid, err := strconv.Atoi(f[i-1]); err == nil && rootProcess(fsys, pid) {

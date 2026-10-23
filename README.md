@@ -337,7 +337,8 @@ may become root, to accounts, to SSH keys and to library preloading never are, n
 starts and uploads. The server's page lists its latest events and says whether the watchers run.
 
 The watchers are bounded against the users they guard against: files are hashed only up to 1 MB
-and 16 MB a second, larger ones are reported with their metadata; when the queue is full, noise
+and 16 MB a second (root's files with a budget of their own, which other users cannot spend),
+larger ones are reported with their metadata; when the queue is full, noise
 in the uploads is dropped before any change to a system path, and losing one of those is an
 alert of its own; directories left unwatched by the depth or count limits are listed in the
 snapshot; and what is queued when the sensor stops is sent before its stop event.

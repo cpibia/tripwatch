@@ -106,12 +106,12 @@ func TestBatcherBoundsBatchesAndQueue(t *testing.T) {
 func TestPackageManagerRunning(t *testing.T) {
 	saved := lockIdentity
 	defer func() { lockIdentity = saved }()
-	lockIdentity = func(fs.FileInfo) (uint32, string, bool) { return 0, "1312", true }
+	lockIdentity = func(fs.FileInfo) (uint32, string, bool) { return 0, "08:01:1312", true }
 	fsys := fstest.MapFS{
 		"var/lib/dpkg/lock-frontend": {Mode: 0o640},
 		"proc/4242/comm":             {Data: []byte("dpkg\n")},
 		"proc/4242/status":           {Data: []byte("Name:\tdpkg\nUid:\t33\t33\t33\t33\n")},
-		"proc/locks":                 {Data: []byte("1: POSIX  ADVISORY  WRITE 4242 08:01:1312 0 EOF\n")},
+		"proc/locks":                 {Data: []byte("1: POSIX  ADVISORY  WRITE 4242 08:01:1312 0 EOF\n2: POSIX  ADVISORY  WRITE 1 00:2a:1312 0 EOF\n")},
 	}
 	if PackageManagerRunning(fsys) {
 		t.Fatal("a lock held by the web user's process counted")

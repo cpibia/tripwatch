@@ -79,7 +79,7 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		}
 		if e.Op == watch.OpDelete {
 			if first, ok := appeared(e, history); ok {
-				return event("upload-transient", e.Path, "critical", what+" appeared in an upload directory and was removed",
+				return event("upload-transient", e.Path+occurrence(first), "critical", what+" appeared in an upload directory and was removed",
 					fmt.Sprintf("%s was created at %s and removed at %s, too soon for any snapshot to show it. This is how a webshell is used and cleaned up: check the web server's logs for requests to it in that interval. %s",
 						e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))), true
 			}
@@ -105,14 +105,14 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		switch e.Op {
 		case watch.OpDelete:
 			if first, ok := appeared(e, history); ok {
-				return event("ssh-transient", e.Path, "critical", "SSH keys added and removed within minutes",
+				return event("ssh-transient", e.Path+occurrence(first), "critical", "SSH keys added and removed within minutes",
 					fmt.Sprintf("%s was written at %s and removed at %s: a key used for one login and then taken away, so that no snapshot shows it. Check the SSH logins in that interval. %s",
 						e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))), true
 			}
 			return event("removed", e.Path, "medium", "SSH keys file removed", e.Path+" was removed."), true
 		case watch.OpCreate, watch.OpWrite:
 			if back, ok := restored(e, history); ok {
-				return event("ssh-transient", e.Path, "critical", "SSH keys changed and put back within minutes",
+				return event("ssh-transient", e.Path+occurrence(back), "critical", "SSH keys changed and put back within minutes",
 					fmt.Sprintf("%s was changed at %s and restored to its earlier content at %s: a key added for one login and then taken away, so that no snapshot shows it. Check the SSH logins in that interval.",
 						e.Path, back.At.Format("15:04:05"), e.At.Format("15:04:05"))), true
 			}
@@ -240,6 +240,15 @@ func restored(e watch.Event, history History) (watch.Event, bool) {
 		}
 	}
 	return watch.Event{}, false
+}
+
+// occurrence tells transient alerts apart: each appearance is an alert of its own, so one
+// acknowledged does not silence the next on the same path.
+func occurrence(e watch.Event) string {
+	if e.SHA256 != "" {
+		return " sha256:" + e.SHA256[:min(16, len(e.SHA256))]
+	}
+	return " at:" + strconv.FormatInt(e.At.Unix(), 10)
 }
 
 func describeFile(e watch.Event) string {

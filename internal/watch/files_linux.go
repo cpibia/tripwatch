@@ -47,8 +47,10 @@ type Files struct {
 	// gaps are the places left unwatched by the bounds since the sensor started, kept across
 	// Set: a directory too deep or too full stays a gap until someone looks at it.
 	gaps []string
-	// hashed counts the bytes hashed in the current second, against hashBudget.
-	hashed   int64
+	// hashed counts the bytes hashed in the current second against hashBudget, apart for files
+	// of root and of other users: a user cannot create files of root, so cannot spend their
+	// budget and leave root's changes without a hash.
+	hashed   [2]int64
 	hashedAt time.Time
 	// Dropped counts events lost because the consumer did not keep up.
 	Dropped atomic.Int64
@@ -256,8 +258,14 @@ func (f *Files) event(wd int, mask uint32, name string) {
 		if !t.wants(name) {
 			continue
 		}
-		if isDir && op == OpCreate && t.Recursive && w.depth < MaxDepth {
-			f.watchNew(full, t, w.depth+1)
+		if isDir && op == OpCreate && t.Recursive {
+			if w.depth < MaxDepth {
+				f.watchNew(full, t, w.depth+1)
+			} else {
+				f.mu.Lock()
+				f.gap(fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", w.dir, MaxDepth, t.Dir))
+				f.mu.Unlock()
+			}
 		}
 		f.send(f.describe(t.Class, op, full, isDir))
 	}
@@ -327,7 +335,7 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 		return e
 	}
 	e.Size = info.Size()
-	if info.Size() > maxEventHash || !f.spend(info.Size()) {
+	if info.Size() > maxEventHash || !f.spend(info.Size(), e.UID != nil && *e.UID == 0) {
 		return e
 	}
 	file, err := collector.DescribeNoFollow(f.src, collector.Rel(p))
@@ -338,16 +346,20 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 	return e
 }
 
-// spend takes n bytes from this second's hashing budget.
-func (f *Files) spend(n int64) bool {
+// spend takes n bytes from this second's hashing budget, root's or the other users'.
+func (f *Files) spend(n int64, root bool) bool {
 	now := f.now()
 	if now.Sub(f.hashedAt) >= time.Second {
-		f.hashed, f.hashedAt = 0, now
+		f.hashed, f.hashedAt = [2]int64{}, now
 	}
-	if f.hashed+n > hashBudget {
+	i := 0
+	if root {
+		i = 1
+	}
+	if f.hashed[i]+n > hashBudget {
 		return false
 	}
-	f.hashed += n
+	f.hashed[i] += n
 	return true
 }
 

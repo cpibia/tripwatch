@@ -56,9 +56,9 @@ func TestEventBatchesRaiseAlerts(t *testing.T) {
 		got[a.Fingerprint] = a.Severity
 	}
 	want := map[string]string{
-		"realtime:upload-script:" + shell + " sha256:ab12": "high",
-		"realtime:upload-transient:" + shell:               "critical",
-		"realtime:hook:/etc/profile.d/z.sh sha256:cd34":    "high",
+		"realtime:upload-script:" + shell + " sha256:ab12":    "high",
+		"realtime:upload-transient:" + shell + " sha256:ab12": "critical",
+		"realtime:hook:/etc/profile.d/z.sh sha256:cd34":       "high",
 		"events:lost": "high",
 	}
 	for fp, sev := range want {

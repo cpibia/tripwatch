@@ -167,6 +167,30 @@ func TestFilesReportGapsAndSkipDevices(t *testing.T) {
 	if !found {
 		t.Fatalf("depth gap not reported: %v", f.Issues())
 	}
+	// A directory created later past the depth limit is a gap too.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	if err := os.Mkdir(filepath.Join(root, "srv/u/a/b/c/x"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if err := os.Mkdir(filepath.Join(root, "srv/u/a/b/c/x/y"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(strings.Join(f.Issues(), "\n"), "/srv/u/a/b/c/x has directories deeper") {
+		if time.Now().After(deadline) {
+			t.Fatalf("live depth gap not reported: %v", f.Issues())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Root's files have a hashing budget the other users cannot spend.
+	for f.spend(1<<20, false) {
+	}
+	if !f.spend(1<<20, true) {
+		t.Fatal("the users' hashing spent root's budget")
+	}
 	if err := os.Symlink("/dev/tty", filepath.Join(root, "srv/u/x.php")); err != nil {
 		t.Fatal(err)
 	}

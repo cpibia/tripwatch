@@ -34,7 +34,7 @@ mapped from web roots show up then, and can be accepted once.
   followed, and no device is ever opened while reading file attributes (`O_NOCTTY` everywhere,
   attributes read only from regular files and directories), so a terminal planted by the web
   server's user can no longer become the sensor's controlling terminal; hashing is bounded to
-  files up to 1 MB and 16 MB a second; a package manager is recognised by a lock only root can
+  files up to 1 MB and 16 MB a second, with a budget of its own for root's files; a package manager is recognised by a lock only root can
   hold, not by a process name; upload noise is dropped before system events when the queue is
   full; what is queued at a stop is sent before the stop event; directories left unwatched by
   the bounds are reported; `CAP_NET_ADMIN` is given up right after subscribing to process
