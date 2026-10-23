@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -236,10 +237,12 @@ func (x *Execs) message(m []byte) bool {
 	return false
 }
 
-// cronNames are the process names of cron daemons.
-var cronNames = []string{"cron", "crond", "CRON", "anacron", "fcron"}
+// cronNames are the executable names of cron daemons.
+var cronNames = []string{"cron", "crond", "anacron", "fcron"}
 
-// fromCron walks up to four ancestors of a process looking for a cron daemon.
+// fromCron walks up to four ancestors of a process looking for a cron daemon, known by the
+// executable it runs from the system's directories and by running as root: a process name is
+// free to set (/proc/self/comm), an executable path and a UID are not.
 func (x *Execs) fromCron(p system.Process) bool {
 	ppid := p.PPID
 	for range 4 {
@@ -250,7 +253,8 @@ func (x *Execs) fromCron(p system.Process) bool {
 		if !ok {
 			return false
 		}
-		if slices.Contains(cronNames, parent.Comm) {
+		if parent.UID == 0 && !parent.ExeDeleted && slices.Contains(cronNames, path.Base(parent.Exe)) &&
+			slices.ContainsFunc(systemBinDirs, func(d string) bool { return strings.HasPrefix(parent.Exe, d) }) {
 			return true
 		}
 		ppid = parent.PPID
