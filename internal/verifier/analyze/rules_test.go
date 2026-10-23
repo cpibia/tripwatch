@@ -506,3 +506,28 @@ func TestPolicyFileAccess(t *testing.T) {
 		t.Error("a group that can write a policy directory is not privileged")
 	}
 }
+
+// The detail of a writable policy says who can write it, why that gives root and the usual fix.
+func TestPolicyWriteDetailIsPlain(t *testing.T) {
+	u0, u1000 := uint32(0), uint32(1000)
+	acc := &system.AccountsResult{
+		Accounts: []system.Account{{Name: "root", UID: 0}, {Name: "deploy", UID: 1000, GID: 1000}},
+		Groups:   []system.Group{{Name: "root", GID: 0}, {Name: "deploy", GID: 1000}},
+	}
+	trusted := policyAccounts(acc)
+	root := policyWriteDetail(collector.File{Path: "/", UID: &u0, GID: &u0, Mode: "drwxrwxrwx"}, trusted, acc)
+	for _, want := range []string{"Qualunque utente del server può scriverci (permessi 777)", "rinominare o sostituire", "/etc/sudoers", "chmod 755 /", "Dati raccolti: proprietario 0, gruppo 0, modo drwxrwxrwx."} {
+		if !strings.Contains(root, want) {
+			t.Errorf("detail of / lacks %q:\n%s", want, root)
+		}
+	}
+	group := policyWriteDetail(collector.File{Path: "/etc/sudoers.d/ops", UID: &u0, GID: &u1000, Mode: "-rw-rw-r--"}, trusted, acc)
+	for _, want := range []string{"Può scriverci il gruppo deploy (GID 1000), di cui fanno parte deploy", "chmod 440 /etc/sudoers.d/ops"} {
+		if !strings.Contains(group, want) {
+			t.Errorf("detail of a group-writable file lacks %q:\n%s", want, group)
+		}
+	}
+	if octal("rwxr-x---") != "750" || octal("rwsr-xr-x") != "755" {
+		t.Error("octal")
+	}
+}

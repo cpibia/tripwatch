@@ -564,7 +564,9 @@ The interface is in Italian.
   such as a file a library ships: it is not raised again while its evidence (for a file, its size
   and SHA-256) stays the same, and a changed file or a new one is an alert again. The server's
   page lists what was accepted, by whom and when, and puts any of it back under watch. Silences,
-  broken chains, sensor events and the verifier's own alerts cannot be accepted.
+  broken chains, sensor events and the verifier's own alerts cannot be accepted. Every alert
+  page also has **Copia per un assistente IA**, which copies the alert as Markdown to paste into
+  an AI chat, with the collected detail marked as data.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 

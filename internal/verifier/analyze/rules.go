@@ -245,6 +245,120 @@ func foreignWritable(f collector.File, t policyTrust) bool {
 	return perm[7] == 'w' || perm[4] == 'w' && f.GID != nil && t.groupWriters(int(*f.GID), polkit)
 }
 
+// policyWriteDetail explains in plain words who other than root can change a privilege policy
+// file or directory, why that gives root, and the usual fix; the raw data closes the text.
+func policyWriteDetail(f collector.File, t policyTrust, accounts *system.AccountsResult) string {
+	var who []string
+	if f.Mount != "" {
+		who = append(who, "si trova su un filesystem montato da un utente ("+f.Mount+"), che ne decide proprietario e permessi")
+	}
+	if f.ACLWrite {
+		who = append(who, "un'ACL concede la scrittura a un utente o a un gruppo ("+f.ACL+")")
+	}
+	if f.UID != nil && *f.UID != 0 {
+		who = append(who, "appartiene all'account "+accountName(accounts, int(*f.UID)))
+	}
+	if len(f.Mode) >= 9 {
+		perm := f.Mode[len(f.Mode)-9:]
+		if perm[7] == 'w' {
+			who = append(who, "qualunque utente del server può scriverci (permessi "+octal(perm)+")")
+		}
+		if perm[4] == 'w' && f.GID != nil && t.groupWriters(int(*f.GID), strings.Contains(f.Path+"/", "/polkit-1/")) {
+			g := int(*f.GID)
+			text := "può scriverci il gruppo " + groupLabel(accounts, g)
+			if m := groupMembers(accounts, g); len(m) > 0 {
+				text += ", di cui fanno parte " + strings.Join(m, ", ")
+			}
+			who = append(who, text)
+		}
+	}
+	if len(who) == 0 {
+		who = append(who, "un account diverso da root può modificarla")
+	}
+	var b strings.Builder
+	b.WriteString(strings.ToUpper(who[0][:1]) + who[0][1:])
+	for _, w := range who[1:] {
+		b.WriteString("; " + w)
+	}
+	b.WriteString(".\n\n")
+	name := policyName(f.Path)
+	if strings.HasPrefix(f.Mode, "d") {
+		fmt.Fprintf(&b, "È una cartella che contiene le regole di %s, cioè chi può diventare root. Chi può scriverci può rinominare o sostituire ciò che c'è dentro (per esempio %s) e darsi i privilegi di root, poi rimettere tutto com'era prima del controllo successivo.\n\n", name, policyExample(name))
+		fmt.Fprintf(&b, "Di solito si corregge con: chown root:root %s && chmod 755 %s", f.Path, f.Path)
+	} else {
+		fmt.Fprintf(&b, "È un file con le regole di %s, cioè chi può diventare root. Chi può modificarlo può darsi i privilegi di root e togliere la riga prima del controllo successivo.\n\n", name)
+		mode := "644"
+		if name == "sudo" {
+			mode = "440"
+		}
+		fmt.Fprintf(&b, "Di solito si corregge con: chown root:root %s && chmod %s %s", f.Path, mode, f.Path)
+	}
+	b.WriteString("\n\nDati raccolti: " + fileAccess(f) + ".")
+	return b.String()
+}
+
+func policyExample(name string) string {
+	switch name {
+	case "polkit":
+		return "le regole in /etc/polkit-1"
+	case "doas":
+		return "/etc/doas.conf"
+	}
+	return "/etc/sudoers"
+}
+
+// octal turns the nine permission letters into the numeric mode chmod takes.
+func octal(perm string) string {
+	n := 0
+	for i, c := range perm {
+		if c != '-' && c != 'S' && c != 'T' {
+			n |= 1 << (8 - i)
+		}
+	}
+	return fmt.Sprintf("%03o", n)
+}
+
+func accountName(r *system.AccountsResult, uid int) string {
+	if r != nil {
+		for _, a := range r.Accounts {
+			if a.UID == uid {
+				return fmt.Sprintf("%s (UID %d)", a.Name, uid)
+			}
+		}
+	}
+	return fmt.Sprintf("con UID %d", uid)
+}
+
+func groupLabel(r *system.AccountsResult, gid int) string {
+	if r == nil {
+		return fmt.Sprintf("con GID %d", gid)
+	}
+	return fmt.Sprintf("%s (GID %d)", groupNames(r.Groups, gid), gid)
+}
+
+// groupMembers lists the accounts in a group: those with it as primary group and those listed.
+func groupMembers(r *system.AccountsResult, gid int) []string {
+	if r == nil {
+		return nil
+	}
+	var out []string
+	for _, a := range r.Accounts {
+		if a.GID == gid {
+			out = append(out, a.Name)
+		}
+	}
+	for _, g := range r.Groups {
+		if g.GID == gid {
+			for _, m := range append(g.Members, g.ShadowMembers...) {
+				if !slices.Contains(out, m) {
+					out = append(out, m)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // groupWritable reports whether a file's group may write it.
 func groupWritable(f collector.File) bool {
 	return len(f.Mode) >= 9 && f.Mode[len(f.Mode)-5] == 'w' && f.GID != nil && *f.GID != 0
@@ -659,8 +773,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			// The access is in the fingerprint: a known exception taken in charge does not
 			// absorb a later handover of the same file to another account.
-			stateBy("root", "persistence", "policy-writable:"+f.Path+"|"+fileAccess(f), "critical", "Politica dei privilegi modificabile da altri: "+f.Path,
-				fileAccess(f)+". Chi può scriverla può concedersi i privilegi di root e toglierla prima del controllo dopo.")
+			title := "Politica dei privilegi modificabile da altri: " + f.Path
+			if strings.HasPrefix(f.Mode, "d") {
+				title = "Cartella delle politiche dei privilegi modificabile da altri: " + f.Path
+			}
+			stateBy("root", "persistence", "policy-writable:"+f.Path+"|"+fileAccess(f), "critical", title, policyWriteDetail(f, trusted, cur.Accounts))
 		}
 	}
 

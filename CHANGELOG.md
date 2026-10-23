@@ -6,6 +6,17 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier.
+
+### Verifier
+
+- Every alert page has **Copia per un assistente IA**: the alert in Markdown (what tripwatch is,
+  the alert's facts, the collected detail fenced as data, and the question to answer), ready to
+  paste into an AI chat.
+- A privilege policy file or directory writable by someone other than root is explained in plain
+  words: who can write it (every user, a named group and its members, an account, an ACL), why
+  that gives root, and the usual fix. The raw owner and mode close the text.
+
 ## [0.1.2] - 2026-10-23
 
 Update both the verifier and the sensors.

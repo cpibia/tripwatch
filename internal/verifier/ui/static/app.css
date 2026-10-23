@@ -312,9 +312,11 @@ input[type="checkbox"] { accent-color: var(--ink); margin: 0; }
   max-height: 60vh; overflow: auto;
 }
 
-.diff { margin-top: 12px; }
-.diff summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
-.diff summary:hover { color: var(--ink); }
+.diff, .brief { margin-top: 12px; }
+.diff summary, .brief summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.diff summary:hover, .brief summary:hover { color: var(--ink); }
+.brief .actions { margin: 0 0 8px; }
+.brief pre { white-space: pre-wrap; }
 
 .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: 32px; align-items: start; }
 

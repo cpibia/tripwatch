@@ -971,6 +971,7 @@ func (s *server) alert(w http.ResponseWriter, r *http.Request, se session) {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.Log.Error("alert diff", "alert", a.ID, "err", err)
 	}
+	v.Brief = brief(a, v.Diff)
 	s.render(w, r, http.StatusOK, "alert", page{Title: a.Title, Nav: "alerts", User: se.Email, CSRF: se.csrf(), Data: v})
 }
 
@@ -978,6 +979,8 @@ func (s *server) alert(w http.ResponseWriter, r *http.Request, se session) {
 type alertView struct {
 	store.Alert
 	Diff *alertDiff
+	// Brief is the alert in Markdown, to paste into an AI assistant.
+	Brief string
 }
 
 type alertDiff struct {
