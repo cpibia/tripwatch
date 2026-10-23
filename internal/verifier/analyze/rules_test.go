@@ -399,7 +399,9 @@ func TestPrivilegedGIDsAreLinear(t *testing.T) {
 	if gids := privilegedGIDs(st); len(gids) != 80_001 {
 		t.Fatalf("%d privileged GIDs", len(gids))
 	}
-	if took := time.Since(start); took > time.Second {
+	// Linear work takes well under a second (a few under the race detector); the per-name scan
+	// this replaced took close to a minute.
+	if took := time.Since(start); took > 10*time.Second {
 		t.Fatalf("privilegedGIDs took %v", took)
 	}
 }
