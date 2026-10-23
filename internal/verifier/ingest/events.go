@@ -106,7 +106,7 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 		}, now)
 	}
 	if b.Skipped > 0 {
-		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:skipped", Severity: "medium", Kind: "sensor",
+		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:skipped", Severity: "low", Kind: "sensor",
 			Title:  "Process starts not inspected",
 			Detail: fmt.Sprintf("More processes started than the sensor inspects in a second: %d were not looked at. A build or a busy cron job does this; so does an attempt to slip a process past the sensor.", b.Skipped),
 		}, now)

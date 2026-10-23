@@ -882,7 +882,11 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, g := range s.Generators {
 			if knownGenerators != nil && !knownGenerators.has(g.Path) {
-				change("persistence-change", "generator:"+g.Path, "high", "New systemd generator", g.Path+": root runs it at every boot.")
+				sev, detail := "high", g.Path+": root runs it at every boot."
+				if packagesChanged(prev, cur) && standardBinDir(g.Path) {
+					sev, detail = "medium", detail+" Packages were installed or upgraded since the previous snapshot, which ship generators in this directory."
+				}
+				change("persistence-change", "generator:"+g.Path, sev, "New systemd generator", detail)
 			}
 		}
 	}
@@ -1015,7 +1019,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
 				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
-				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "New privileged file: "+f.Path, "Mode "+f.Mode+", owner "+owner+".")
+				sev, detail := "high", "Mode "+f.Mode+", owner "+owner+"."
+				if packagesChanged(prev, cur) && standardBinDir(f.Path) {
+					sev, detail = "medium", detail+" Packages were installed or upgraded since the previous snapshot, which install set-user-ID programs in this directory."
+				}
+				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, sev, "New privileged file: "+f.Path, detail)
 			}
 		}
 	}
@@ -1153,6 +1161,19 @@ func webFinding(f web.Finding) (string, string) {
 		return "medium", "Hidden file in data directories"
 	}
 	return "", ""
+}
+
+// packagesChanged reports whether packages were installed, removed or upgraded between two
+// snapshots, as far as the list of installed versions shows.
+func packagesChanged(prev *State, cur State) bool {
+	if prev == nil || prev.Packages == nil || cur.Packages == nil {
+		return false
+	}
+	p, c := prev.Packages, cur.Packages
+	if p.StatusSHA256 != "" && c.StatusSHA256 != "" {
+		return p.StatusSHA256 != c.StatusSHA256
+	}
+	return p.Packages != c.Packages || p.DatabaseSHA256 != c.DatabaseSHA256
 }
 
 // scratchDirs are writable by everyone and hold no installed code.

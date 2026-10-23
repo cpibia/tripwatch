@@ -3,6 +3,7 @@ package analyze
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -138,6 +139,9 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 			"Code here runs at each login, boot or authentication, as whoever triggers it.")
 
 	case watch.ClassService:
+		if !loadable(e.Path) {
+			return Finding{}, false
+		}
 		return systemChange(e, "service", "high", "Service added or changed",
 			"A unit or a generator here starts with the system, as root unless it says otherwise.")
 
@@ -155,9 +159,31 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 // systemChange judges a change to a system configuration file: additions and changes at the
 // rule's severity, removals at medium, changes of attributes only when they make a file
 // writable by others.
+// unitTypes are the suffixes systemd loads units from.
+var unitTypes = []string{".service", ".socket", ".timer", ".path", ".mount", ".automount", ".target", ".slice", ".scope", ".swap", ".device"}
+
+// loadable reports whether systemd would act on a file at this path: a unit, a drop-in in a
+// unit's .d directory, or anything in a generator directory. Temporary names of atomic writes
+// (netplan-ovs-cleanup.service.MA2FX3) are never loaded; the rename that ends the write is.
+func loadable(p string) bool {
+	dir := path.Dir(p)
+	switch {
+	case strings.HasSuffix(dir, "-generators"):
+		return true
+	case strings.HasSuffix(dir, ".d"):
+		return path.Ext(p) == ".conf"
+	}
+	return slices.Contains(unitTypes, path.Ext(p))
+}
+
 func systemChange(e watch.Event, rule, severity, title, why string) (Finding, bool) {
 	switch e.Op {
 	case watch.OpDelete:
+		// Removing a service or a scheduled task stops something from running: cleanup, which
+		// tools and package scripts do all the time, not a foothold.
+		if e.Class == watch.ClassService || e.Class == watch.ClassSchedule {
+			return Finding{}, false
+		}
 		return event("removed", e.Path, "medium", "Configuration file removed",
 			fmt.Sprintf("%s was removed. %s", e.Path, why)), true
 	case watch.OpAttrib:

@@ -31,6 +31,11 @@ False positives seen on a real server, fixed.
   sensors from 0.1.11 on dpkg hosts, an upgrade (the installed versions changed) raises
   nothing, and checksums or file lists changed while no version did raise a high "Package
   checksums changed without installations".
+- Real-time events in systemd's directories count only for files systemd loads (units,
+  drop-ins, generators): the temporary names of atomic writes no longer raise alerts, and
+  removing a service or a scheduled task raises none. Uninspected process starts are low.
+- A new generator or set-user-ID program in the system's directories is medium, not high, when
+  packages were installed or upgraded since the previous snapshot.
 - A script requested in an upload directory and answered with a redirect is low: the redirect
   is the server's own (to https, to a canonical host) and the request that follows is judged on
   its own status. Any other status but success stays high.
