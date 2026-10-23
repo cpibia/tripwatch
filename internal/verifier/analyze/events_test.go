@@ -62,6 +62,7 @@ func TestEvaluateEvents(t *testing.T) {
 			if fs := EvaluateEvents([]watch.Event{tc.event}, tc.packageManager, history); len(fs) == 1 {
 				f := fs[0]
 				fp, _, _ := strings.Cut(f.Fingerprint, " sha256:")
+				fp, _, _ = strings.Cut(fp, " at:")
 				rule := fp[len(EventKind)+1:]
 				rule = rule[:len(rule)-len(tc.event.Path)-len(tc.event.Exe)-1]
 				got = rule + " " + f.Severity

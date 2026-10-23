@@ -269,12 +269,15 @@ func restored(e watch.Event, history History) (watch.Event, bool) {
 }
 
 // occurrence tells transient alerts apart: each appearance is an alert of its own, so one
-// acknowledged does not silence the next on the same path.
+// acknowledged does not silence the next on the same path, even with the same content.
 func occurrence(e watch.Event) string {
+	// The time keeps the same content reused days later apart from an alert already taken in
+	// charge; the hash keeps two contents of the same second apart.
+	out := " at:" + strconv.FormatInt(e.At.Unix(), 10)
 	if e.SHA256 != "" {
-		return " sha256:" + e.SHA256[:min(16, len(e.SHA256))]
+		out += " sha256:" + e.SHA256[:min(16, len(e.SHA256))]
 	}
-	return " at:" + strconv.FormatInt(e.At.Unix(), 10)
+	return out
 }
 
 func describeFile(e watch.Event) string {
