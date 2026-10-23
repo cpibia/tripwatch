@@ -460,15 +460,23 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 	return e
 }
 
-// rootDir reports whether only root can change the entries of a directory: there a file of
-// root cannot have been renamed in by another user.
+// rootDir reports whether only root can change the entries of a directory and of every
+// directory above it: there a file of root cannot have been renamed in by another user, nor a
+// directory of root moved in by the owner of a parent.
 func (f *Files) rootDir(dir string) bool {
-	info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
-		return false
+	for {
+		info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
+		if err != nil || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+			return false
+		}
+		if uid, ok := collector.Owner(info); !ok || uid != 0 {
+			return false
+		}
+		if dir == "/" || dir == "." {
+			return true
+		}
+		dir = path.Dir(dir)
 	}
-	uid, ok := collector.Owner(info)
-	return ok && uid == 0
 }
 
 // spend takes n bytes from this second's hashing budget, root's or the other users'.
