@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-23
+
+Update the verifier; the sensors stay on 0.1.5.
+
 ### Verifier
 
 - Revoked servers no longer count in the overview: they are left out of the figures, the charts,
@@ -168,7 +172,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/cpibia/tripwatch/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/cpibia/tripwatch/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/cpibia/tripwatch/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/cpibia/tripwatch/compare/v0.1.2...v0.1.3
