@@ -395,17 +395,25 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 
 // enterData handles the root of an upload or data directory, which may itself be a symlink
 // (deploy tools link uploads to a shared directory): it is followed once, confined to the
-// observed root, and its content scanned as data.
+// observed root, and its content scanned as data. That link is the deploy pattern, not a
+// finding, as long as it leads to a directory followable() allows: what it leads to is scanned
+// like any upload directory. Any other link in its place is reported.
 func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inUploads bool) {
 	if e.Type()&fs.ModeSymlink != 0 {
 		target, _ := fs.ReadLink(s.src.FS, name)
-		s.inspectSymlink(name, e, target, true)
 		resolved, ok := s.followable(name)
+		var info fs.FileInfo
+		var err error
+		if ok {
+			info, err = fs.Lstat(s.src.FS, resolved)
+		}
+		if !ok || err != nil || !info.IsDir() || isScript(strings.ToLower(e.Name())) {
+			s.inspectSymlink(name, e, target, true)
+		}
 		if !ok {
 			s.issues = append(s.issues, fmt.Sprintf("/%s -> %s not followed: target outside the application and its deploy directory", name, target))
 			return
 		}
-		info, err := fs.Lstat(s.src.FS, resolved)
 		if err != nil || !info.IsDir() {
 			return
 		}

@@ -64,10 +64,13 @@ type PackagesResult struct {
 
 // expectedFile is a file a package installed, with the checksum the package manager recorded.
 type expectedFile struct {
-	path     string
-	pkg      string
-	checksum string
-	config   bool
+	path      string
+	pkg       string
+	checksum  string
+	config    bool
+	missingOK bool
+	// newHash overrides the manager's algorithm: rpm records one per package.
+	newHash func() hash.Hash
 }
 
 // Packages verifies installed files against the package manager database, the way debsums
@@ -82,6 +85,7 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 	var owned map[string]bool
 	var newHash func() hash.Hash
 	var encode func([]byte) string
+	var rpmDB string
 
 	switch {
 	case exists(src.FS, "var/lib/dpkg/status"):
@@ -95,7 +99,8 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 		encode = func(b []byte) string { return "Q1" + base64.StdEncoding.EncodeToString(b) }
 	case exists(src.FS, "var/lib/rpm"):
 		res.Manager = ManagerRpm
-		res.Issues = append(res.Issues, "rpm database verification is not implemented yet")
+		expected, owned, res.Packages, rpmDB = readRpm(src.FS, &res.Issues)
+		encode = hex.EncodeToString
 	default:
 		return res, nil
 	}
@@ -104,10 +109,14 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		sum, err := checksum(src.FS, f.path, newHash)
+		h := newHash
+		if f.newHash != nil {
+			h = f.newHash
+		}
+		sum, err := checksum(src.FS, f.path, h)
 		switch {
 		case isNotExist(err):
-			if !slices.ContainsFunc(excludedMissing, func(p string) bool { return strings.HasPrefix(f.path, p) }) &&
+			if !f.missingOK && !slices.ContainsFunc(excludedMissing, func(p string) bool { return strings.HasPrefix(f.path, p) }) &&
 				len(res.Missing) < maxMissingReported {
 				res.Missing = append(res.Missing, "/"+f.path)
 			}
@@ -123,7 +132,11 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 	}
 
 	res.Unowned, res.UnownedLinks = unownedExecutables(src.FS, owned)
-	res.DatabaseSHA256 = databaseHash(src.FS, res.Manager, &res.Issues)
+	if rpmDB != "" {
+		res.DatabaseSHA256 = fileHash(src.FS, rpmDB, &res.Issues)
+	} else {
+		res.DatabaseSHA256 = databaseHash(src.FS, res.Manager, &res.Issues)
+	}
 	res.Hidden = hiddenEntries(src.FS, owned)
 	return res, nil
 }
@@ -312,6 +325,17 @@ func databaseHash(fsys fs.FS, manager string, issues *collector.Issues) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// fileHash fingerprints a single database file, streamed: rpm's are far larger than
+// collector.MaxReadSize.
+func fileHash(fsys fs.FS, name string, issues *collector.Issues) string {
+	sum, err := checksum(fsys, name, sha256.New)
+	if err != nil {
+		issues.Add(err)
+		return ""
+	}
+	return hex.EncodeToString(sum)
+}
+
 func unownedExecutables(fsys fs.FS, owned map[string]bool) ([]string, []Link) {
 	out := []string{}
 	links := []Link{}
@@ -353,10 +377,20 @@ func alternative(fsys fs.FS, p string, owned map[string]bool) bool {
 	return err == nil && owned[collector.Rel(path.Clean(final))]
 }
 
+// Trees under /usr that no system package manages and that legitimately hold dot-files:
+// source checkouts built by hand (.git, .github, libtool's .libs) and the package trees of
+// language managers (npm's .bin, the CI files packages ship). A hidden name there says
+// nothing; executables and modified system files are still covered by the other checks.
+var hiddenExemptPaths = []string{"usr/src", "usr/local/src"}
+
+var hiddenExemptDirs = []string{"node_modules", "site-packages", "dist-packages"}
+
 // hiddenEntries lists dot-named files and directories under /usr that no package installed:
 // attackers like to hide tools there. Packages do ship a few (kernel headers, build-id
-// directories); inside such a directory everything must be owned too, so a file dropped in a
-// packaged hidden directory is still reported. Without a package database every one is listed.
+// directories); inside such a directory every file must be owned too, so a file dropped in a
+// packaged hidden directory is still reported. Subdirectories there are walked rather than
+// reported: rpm lists the build-id links but not the directories holding them. Without a
+// package database every hidden entry is listed.
 func hiddenEntries(fsys fs.FS, owned map[string]bool) []string {
 	out := []string{}
 	ownedHidden := ""
@@ -364,12 +398,16 @@ func hiddenEntries(fsys fs.FS, owned map[string]bool) []string {
 		if err != nil || name == "usr" {
 			return nil
 		}
+		if d.IsDir() && (slices.Contains(hiddenExemptPaths, name) || slices.Contains(hiddenExemptDirs, d.Name())) {
+			return fs.SkipDir
+		}
 		if ownedHidden != "" && !strings.HasPrefix(name, ownedHidden+"/") {
 			ownedHidden = ""
 		}
 		suspect := strings.HasPrefix(d.Name(), ".") || ownedHidden != ""
 		switch {
 		case !suspect:
+		case !owned[name] && d.IsDir() && ownedHidden != "":
 		case !owned[name]:
 			out = append(out, "/"+name)
 			if d.IsDir() {

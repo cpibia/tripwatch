@@ -280,11 +280,7 @@ func TestPackagesApk(t *testing.T) {
 	}
 }
 
-func TestPackagesUnsupportedOrAbsent(t *testing.T) {
-	rpm := collect[PackagesResult](t, Packages{}, collector.Source{FS: fstest.MapFS{"var/lib/rpm/rpmdb.sqlite": text("")}})
-	if rpm.Manager != ManagerRpm || len(rpm.Issues) != 1 || !strings.Contains(rpm.Issues[0], "not implemented") {
-		t.Errorf("rpm = %+v", rpm)
-	}
+func TestPackagesAbsent(t *testing.T) {
 	none := collect[PackagesResult](t, Packages{}, collector.Source{FS: fstest.MapFS{}})
 	if none.Manager != "" {
 		t.Errorf("no package manager = %+v", none)

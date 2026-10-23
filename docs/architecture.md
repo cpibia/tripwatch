@@ -159,7 +159,8 @@ findings with signatures, or withdraws them if the file is an empty placeholder.
 are read as a stream and not hashed; a code directory with more entries than the limit is
 inspected the same way. Inside uploads, symlinks are reported and never followed; the only link
 followed is an upload directory that is itself a link, and only towards the application or the
-directory that holds its releases.
+directory that holds its releases. That link is not a finding when it leads to a directory there;
+one leading anywhere else, or named like a script, is.
 
 ## Web server logs
 

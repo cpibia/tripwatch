@@ -6,6 +6,25 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- rpm hosts are verified like dpkg and apk ones: the sensor reads the rpm database directly,
+  Berkeley DB (RHEL/CentOS 7 and 8, Amazon Linux 2) or SQLite (RHEL 9, Amazon Linux 2023,
+  Fedora, including transactions still in the write-ahead log), and reports system files that no
+  longer match their package. Files rpm itself leaves out of verification (`%ghost`,
+  `%verify(not md5)`, languages and documentation not installed) are skipped. Until now every
+  dot-file under `/usr` on these hosts (`.hmac` checksums of crypto libraries, `.build-id`,
+  manual pages) was a "Hidden entry in /usr" alert, because no package database was read.
+- Hidden entries under `/usr` are no longer searched in source trees (`/usr/src`,
+  `/usr/local/src`) and language package trees (`node_modules`, `site-packages`,
+  `dist-packages`), where checkouts and packages ship `.git`, `.github` and CI files. Unowned
+  subdirectories of a packaged hidden directory (rpm lists the `.build-id` links, not the
+  directories holding them) are walked instead of reported; files added there still are.
+- An upload directory that is a link to a directory inside the application or its deploy
+  directory (`releases/5/uploads -> ../../shared/uploads`) is no longer a "Suspicious link": it
+  is the usual layout of release-based deploys, and its content is still scanned. A link leading
+  anywhere else, or named like a script, is still reported.
+
 ## [0.1.4] - 2026-10-23
 
 Update the verifier and the sensors.

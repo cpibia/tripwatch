@@ -486,7 +486,8 @@ func TestApplicationInsideUploads(t *testing.T) {
 	}
 }
 
-// An upload directory that is a symlink to a shared directory is scanned through the link.
+// An upload directory that is a symlink to a shared directory is scanned through the link,
+// and the link itself, the usual layout of release-based deploys, is not a finding.
 func TestSymlinkedUploadDirectoryIsScanned(t *testing.T) {
 	tr := newTree(t)
 	tr.file("var/www/releases/5/index.php", "<?php echo 1;")
@@ -498,6 +499,9 @@ func TestSymlinkedUploadDirectoryIsScanned(t *testing.T) {
 	// Followed trees are walked by their real path.
 	if !slices.Contains(got, KindScriptInUploads+" /var/www/shared/uploads/2026/shell.php") {
 		t.Errorf("findings = %v", got)
+	}
+	if slices.Contains(got, KindSuspiciousSymlink+" /var/www/releases/5/uploads") {
+		t.Errorf("the deploy link to the shared upload directory was reported: %v", got)
 	}
 }
 
@@ -590,8 +594,10 @@ func TestLinksInsideUploadsAreNotFollowed(t *testing.T) {
 
 	res := tr.scan()
 	got := findingsOf(res)
-	if !slices.Contains(got, KindSuspiciousSymlink+" /var/www/site/uploads/everything") {
-		t.Errorf("link not reported: %v", got)
+	for _, want := range []string{KindSuspiciousSymlink + " /var/www/site/uploads/everything", KindSuspiciousSymlink + " /var/www/other/uploads"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("link not reported: %q in %v", want, got)
+		}
 	}
 	if slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "secret.php") }) {
 		t.Errorf("a link out of the application was followed: %v", got)

@@ -293,7 +293,7 @@ leaves it, `docker compose down -v` deletes it with the CA and every enrollment.
 | `hooks` | `ld.so.preload`, `rc.local`, `profile.d`, PAM, `update-motd.d`, package manager hooks, the shell rc files of every account |
 | `processes` | every process with its executable (flagged if deleted from disk), hash, working directory, `LD_PRELOAD` and namespaces; command lines with passwords, tokens and credentials redacted; kernel threads (kernel flag) are only counted, processes imitating their names are listed |
 | `sockets` | listening sockets, open connections and pending outbound attempts, in every network namespace (containers included), mapped to their process |
-| `packages` | system files that no longer match the package database (dpkg, apk), a fingerprint of the database itself, executables and symlinks no package owns, hidden entries under `/usr` that no package installed (and anything added inside a packaged hidden directory) |
+| `packages` | system files that no longer match the package database (dpkg, apk, rpm), a fingerprint of the database itself, executables and symlinks no package owns, hidden entries under `/usr` that no package installed (and anything added inside a packaged hidden directory). The rpm database is read directly, Berkeley DB (RHEL/CentOS 7 and 8, Amazon Linux 2) or SQLite (RHEL 9, Amazon Linux 2023, Fedora), never through the host's `rpm`; files rpm itself excludes from verification (`%ghost`, `%verify(not md5)`, languages and documentation not installed) are skipped. Source trees (`/usr/src`, `/usr/local/src`) and language package trees (`node_modules`, `site-packages`, `dist-packages`) are not searched for hidden entries: checkouts and packages ship dot-files there |
 | `privileged` | a scan of the whole filesystem (including the world-writable directories in `/run` and `/dev/shm`) for setuid and setgid binaries, files with Linux capabilities, immutable and append-only files; files on a FUSE filesystem mounted by a user other than root are marked with that mount, since that user chooses their owner and mode |
 | `weblog` | web server access and error logs, read incrementally: attack events grouped by rule, IP and path, statistics on IPs and POST targets |
 | `apps` | for WordPress, Magento, Drupal and Laravel: administrators in the database, active extensions, scripts stored in settings and content with the domains they load from or send to, development settings left on in production |
@@ -334,7 +334,10 @@ For each application the `web` collector produces:
 - per-directory configuration files (`.htaccess`, `.user.ini`, `web.config`) with their hash,
   and a finding when they sit in an upload directory, naming the directives that make files run
   as scripts;
-- applications nested in an upload or data directory, and suspicious symlinks.
+- applications nested in an upload or data directory, and suspicious symlinks. An upload
+  directory that is itself a link to a directory inside the application or its deploy directory
+  (`releases/5/uploads -> ../../shared/uploads`) is the usual deploy layout: it is followed and
+  scanned, not reported.
 
 `reachable` tells whether a file would be executed according to the configuration on disk. It is
 a hint, never a reason to lower a finding's severity: whoever controls the configuration can
@@ -636,7 +639,7 @@ A systemd unit with security restrictions is in [deploy/systemd](deploy/systemd)
 4. Containers: differences of running containers from their image, privileged containers.
 5. Kubernetes and AWS: DaemonSet, audit logs, CloudTrail, VPC Flow Logs.
 6. External checks and canary tokens.
-7. rpm package verification.
+7. rpm ndb databases (SUSE).
 8. PostgreSQL databases for the application profiles (Django, Rails, Drupal on PostgreSQL).
 
 ## Status
