@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300" role="img" aria-labelledby="title desc">
-<title id="title">Attack scenarios detected out of 29</title>
-<desc id="desc">tripwatch 28, AIDE 24, rkhunter 4, debsums 1 out of 29 scenarios.</desc>
+<title id="title">Attack scenarios detected out of 31</title>
+<desc id="desc">tripwatch 31, AIDE 25, rkhunter 4, debsums 1 out of 31 scenarios.</desc>
 <style>
 svg { --surface: #fcfcfb; --track: #ebeae6; --bar: #2a78d6; --text: #0b0b0b; --muted: #52514e; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
 @media (prefers-color-scheme: dark) { svg { --surface: #1a1a19; --track: #2e2e2c; --bar: #3987e5; --text: #f0efec; --muted: #c3c2b7; } }
@@ -9,27 +9,27 @@ svg { --surface: #fcfcfb; --track: #ebeae6; --bar: #2a78d6; --text: #0b0b0b; --m
 .name { fill: var(--text); font-size: 15px; } .value { fill: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; } .foot { font-size: 12px; }
 </style>
 <rect class="surface" width="720" height="300" rx="12"/>
-<text class="title" x="28" y="42">Attack scenarios detected out of 29</text>
+<text class="title" x="28" y="42">Attack scenarios detected out of 31</text>
 <text class="sub" x="28" y="64">Same Debian host for every tool, each with its default configuration</text>
 <text class="name" x="28" y="110">tripwatch</text>
 <rect class="track" x="132" y="96" width="460" height="18" rx="4"/>
-<rect class="bar" x="132" y="96" width="444" height="18" rx="4"/>
+<rect class="bar" x="132" y="96" width="460" height="18" rx="4"/>
 <rect class="bar" x="132" y="96" width="4" height="18"/>
-<text class="value" x="606" y="110">28 of 29</text>
+<text class="value" x="606" y="110">31 of 31</text>
 <text class="name" x="28" y="154">AIDE</text>
 <rect class="track" x="132" y="140" width="460" height="18" rx="4"/>
-<rect class="bar" x="132" y="140" width="381" height="18" rx="4"/>
+<rect class="bar" x="132" y="140" width="371" height="18" rx="4"/>
 <rect class="bar" x="132" y="140" width="4" height="18"/>
-<text class="value" x="606" y="154">24 of 29</text>
+<text class="value" x="606" y="154">25 of 31</text>
 <text class="name" x="28" y="198">rkhunter</text>
 <rect class="track" x="132" y="184" width="460" height="18" rx="4"/>
-<rect class="bar" x="132" y="184" width="63" height="18" rx="4"/>
+<rect class="bar" x="132" y="184" width="59" height="18" rx="4"/>
 <rect class="bar" x="132" y="184" width="4" height="18"/>
-<text class="value" x="606" y="198">4 of 29</text>
+<text class="value" x="606" y="198">4 of 31</text>
 <text class="name" x="28" y="242">debsums</text>
 <rect class="track" x="132" y="228" width="460" height="18" rx="4"/>
-<rect class="bar" x="132" y="228" width="16" height="18" rx="4"/>
+<rect class="bar" x="132" y="228" width="15" height="18" rx="4"/>
 <rect class="bar" x="132" y="228" width="4" height="18"/>
-<text class="value" x="606" y="242">1 of 29</text>
-<text class="foot" x="28" y="280">Commit bf6e1d8, Debian GNU/Linux 12 (bookworm). Method and per-scenario detail in bench/RESULTS.md</text>
+<text class="value" x="606" y="242">1 of 31</text>
+<text class="foot" x="28" y="280">Commit b2ba475, Debian GNU/Linux 12 (bookworm). Method and per-scenario detail in bench/RESULTS.md</text>
 </svg>

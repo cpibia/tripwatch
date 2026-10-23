@@ -1,6 +1,6 @@
 # Detection benchmark
 
-Commit `bf6e1d8`, 2026-10-23, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 6.17.0-1022-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+Commit `b2ba475`, 2026-10-24, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 6.17.0-1022-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
 with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
 ## Method
@@ -61,6 +61,8 @@ The control scenario, with no attack, produces no differences for any tool.
 | Process started from an executable later deleted | ✅ | ❌ | ❌ | ❌ |
 | Backdoor listening on port 31337 | ✅ | ❌ | ✅ | ❌ |
 | Process with LD_PRELOAD in its environment | ✅ | ❌ | ❌ | ❌ |
+| Backdoor waiting on a packet socket, no port open | ✅ | ✅ | ❌ | ❌ |
+| Fileless implant run from memory (memfd) | ✅ | ❌ | ❌ | ❌ |
 
 ### Web applications
 
@@ -75,7 +77,7 @@ The control scenario, with no attack, produces no differences for any tool.
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Dropper run and deleted between two checks | ❌ | ❌ | ❌ | ❌ |
+| Dropper run and deleted between two checks | ✅ | ❌ | ❌ | ❌ |
 | SSH key added, used and removed between two checks | ✅ | ❌ | ❌ | ❌ |
 | FIFO in place of the web user's authorized_keys | ✅ | ✅ | ❌ | ❌ |
 
@@ -85,7 +87,7 @@ Measured on the control scenario, in the same container.
 
 | Tool | Time | Peak memory |
 |---|--:|--:|
-| tripwatch | 1.4 s | 38 MB |
-| AIDE | 49.3 s | 35 MB |
-| rkhunter | 129.1 s | 11 MB |
+| tripwatch | 1.3 s | 29 MB |
+| AIDE | 48.8 s | 35 MB |
+| rkhunter | 130.0 s | 11 MB |
 | debsums | 1.0 s | 13 MB |
