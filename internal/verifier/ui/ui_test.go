@@ -206,7 +206,7 @@ func TestEnrollTokenShownOnce(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
 	res, body := h.post("/enroll", url.Values{"host": {"web-07"}, "csrf": {csrf}})
-	m := regexp.MustCompile(`echo '(tw1\.[A-Za-z0-9_-]+)' \| tripwatch-sensor enroll -token-file -`).FindStringSubmatch(body)
+	m := regexp.MustCompile(`echo '(tw1\.[A-Za-z0-9_-]+)' \| sudo tripwatch-sensor enroll -token-file -`).FindStringSubmatch(body)
 	if res.StatusCode != http.StatusOK || m == nil {
 		t.Fatalf("token page: status %d", res.StatusCode)
 	}

@@ -140,7 +140,7 @@ gh attestation verify tripwatch-sensor_0.1.0_amd64.deb -R cpibia/tripwatch
 ### 3. Enrollment
 
 In the web interface open "Registra server", choose the server's name and run the command it
-shows on the server. As a user with sudo, `sudo` goes after the pipe:
+shows on the server:
 
 ```sh
 echo 'tw1....' | sudo tripwatch-sensor enroll -token-file - && sudo systemctl enable --now tripwatch-sensor

@@ -6,7 +6,7 @@
 <section class="issued" aria-labelledby="token-h">
   <div class="section-head"><h2 id="token-h">Token per <span class="mono">{{$d.Host}}</span></h2><p class="aside">vale una volta sola, fino alle {{clock $d.Expires}}</p></div>
   <p class="note">Esegui sul server, come root, dopo aver installato il binario del sensore. Il token passa sullo standard input, dove gli altri utenti del server non lo vedono; le chiavi vengono generate lì e non lasciano il server; il token non compare più dopo questa pagina.</p>
-  <pre class="datum command" id="command">echo '{{$d.Token}}' | tripwatch-sensor enroll -token-file - &amp;&amp; systemctl enable --now tripwatch-sensor</pre>
+  <pre class="datum command" id="command">echo '{{$d.Token}}' | sudo tripwatch-sensor enroll -token-file - &amp;&amp; sudo systemctl enable --now tripwatch-sensor</pre>
   <p class="actions"><button type="button" data-copy="command">Copia i comandi</button> <a href="/enroll">Registra un altro server</a></p>
 </section>
 {{else}}
@@ -30,7 +30,7 @@
 <ol class="steps">
   <li>Con il token, sul server basta un comando: il sensore genera chiave TLS e chiave di firma, verifica che il verificatore sia quello giusto con l'impronta della CA contenuta nel token, e scrive <span class="mono">/etc/tripwatch/bundle.json</span>. Il token vale un'ora e una volta sola.</li>
   <li>Il pacchetto da scaricare contiene invece le chiavi private: si scarica una sola volta, va copiato in <span class="mono">/etc/tripwatch/bundle.json</span> con proprietario root e permessi <span class="mono">600</span>, e va trattato come una password.</li>
-  <li>Poi si avvia il sensore con <span class="mono">systemctl enable --now tripwatch-sensor</span>: il primo battito arriva entro un minuto e il server compare nella panoramica.</li>
+  <li>Poi si avvia il sensore con <span class="mono">sudo systemctl enable --now tripwatch-sensor</span>: il primo battito arriva entro un minuto e il server compare nella panoramica.</li>
   <li>Il sensore si collega a <span class="mono">{{$d.IngestURL}}</span>.</li>
 </ol>
 </div>
