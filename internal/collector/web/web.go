@@ -76,7 +76,7 @@ var overrideNames = []string{".htaccess", ".user.ini", "web.config"}
 
 var allowedHidden = []string{
 	".htaccess", ".user.ini", ".gitignore", ".gitkeep", ".keep", ".gitattributes", ".well-known",
-	".php-cs-fixer.php", ".php-cs-fixer.dist.php", ".php_cs", ".php_cs.dist", ".phpstorm.meta.php",
+	".php-cs-fixer.php", ".php-cs-fixer.dist.php", ".php_cs", ".php_cs.dist", ".php_cs.php", ".php_cs.dist.php", ".phpstorm.meta.php",
 	".DS_Store", ".regenerate.lock", ".maintenance.flag", ".maintenance.ip",
 }
 
@@ -90,6 +90,10 @@ var uploadExtensions = []string{".gif", ".jpg", ".jpeg", ".png", ".ico", ".webp"
 
 // Libraries and VCS metadata: never treated as upload directories, and .git is not walked.
 var thirdPartyDirs = []string{"vendor", "node_modules", "bower_components"}
+
+// Test directories of a library, which ship hidden files on purpose: code analysers test how they
+// treat them.
+var dependencyTestDirs = []string{"tests", "test", "fixtures", "__fixtures__"}
 
 type Finding struct {
 	Kind       string   `json:"kind"`
@@ -626,7 +630,8 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 		}
 	}
 	hidden := isSuspiciousHidden(e.Name())
-	if script && hidden {
+	// Signatures above still apply to these: only the hidden name stops being a finding.
+	if script && hidden && !inDependencyTests(name) {
 		s.add(KindHiddenScript, name, e, nil)
 	} else if inData && hidden {
 		s.add(KindHiddenInData, name, e, nil)
@@ -818,6 +823,21 @@ func (s *scanner) markReachable(name string) {
 	if len(s.report.Reachable) < maxReachableList {
 		s.report.Reachable = append(s.report.Reachable, "/"+name)
 	}
+}
+
+// inDependencyTests reports whether name lies in a test directory of a library installed under a
+// third-party directory, such as vendor/acme/lib/tests/.
+func inDependencyTests(name string) bool {
+	parts := strings.Split(name, "/")
+	for i, p := range parts {
+		if !slices.Contains(thirdPartyDirs, p) {
+			continue
+		}
+		return slices.ContainsFunc(parts[i+1:len(parts)-1], func(d string) bool {
+			return slices.Contains(dependencyTestDirs, strings.ToLower(d))
+		})
+	}
+	return false
 }
 
 func isSuspiciousHidden(name string) bool {

@@ -316,7 +316,8 @@ For each application the `web` collector produces:
 - **webshell signatures**: `eval` of decoded payloads, commands run with request input, droppers
   that write code through library classes and more, matched after stripping comments from the
   source; very long encoded blobs are reported separately as a weak indicator;
-- **hidden files** among scripts and in data directories;
+- **hidden files** among scripts and in data directories, except the tool configurations and
+  test fixtures that libraries ship on purpose (signatures are still searched in those);
 - per-directory configuration files (`.htaccess`, `.user.ini`, `web.config`) with their hash,
   and a finding when they sit in an upload directory, naming the directives that make files run
   as scripts;

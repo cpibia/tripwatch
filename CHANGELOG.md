@@ -6,6 +6,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- Hidden scripts that libraries ship on purpose are no longer reported as hidden: the
+  `.php_cs.php` and `.php_cs.dist.php` tool configurations, and hidden files inside the test
+  directories of a dependency (`vendor/`, `node_modules/`, `bower_components/`, under `tests/`,
+  `test/`, `fixtures/`). Webshell signatures are still searched in them.
+
 ### Documentation
 
 - The verifier's compose defaults to the `latest` image; pinning a release is documented as the

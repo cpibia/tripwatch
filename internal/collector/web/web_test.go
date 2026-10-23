@@ -56,6 +56,9 @@ func compromisedShop() fstest.MapFS {
 		"var/www/commerce/vendor/magento/module-checkout/Model/PaymentInformationManagement.php": text("<?php class PaymentInformationManagement {}"),
 		"var/www/commerce/vendor/acme/files/Handler.php":                                         text("<?php class Handler {}"),
 		"var/www/commerce/vendor/acme/lib/.loader.php":                                           text("<?php include 'x';"),
+		"var/www/commerce/vendor/acme/lib/.php_cs.php":                                           text("<?php return [];"),
+		"var/www/commerce/vendor/acme/sniffer/tests/Fixtures/.hidden/.HiddenSniff.php":           text("<?php class HiddenSniff {}"),
+		"var/www/commerce/vendor/acme/sniffer/tests/Fixtures/.shell.php":                         text(`<?php eval(base64_decode($_GET['c']));`),
 		"var/www/commerce/.git/HEAD":                                                             text("ref: refs/heads/main"),
 		"var/www/commerce/generated/link":                                                        {Data: []byte("../vendor"), Mode: 0o777 | 1<<27},
 	}
@@ -103,6 +106,7 @@ func TestFindings(t *testing.T) {
 		{KindSignature, "/var/www/commerce/pub/helper.php", "eval_decoded_payload,eval_request_input", false},
 		{KindHiddenInData, "/var/www/commerce/var/log/.data.tmp", "", false},
 		{KindHiddenScript, "/var/www/commerce/vendor/acme/lib/.loader.php", "", false},
+		{KindSignature, "/var/www/commerce/vendor/acme/sniffer/tests/Fixtures/.shell.php", "eval_decoded_payload,eval_request_input", false},
 	}
 	slices.SortFunc(got, func(a, b finding) int { return strings.Compare(a.path, b.path) })
 	slices.SortFunc(want, func(a, b finding) int { return strings.Compare(a.path, b.path) })
