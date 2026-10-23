@@ -450,6 +450,9 @@ func (a *Analyzer) raise(ctx context.Context, al store.Alert) bool {
 	return fresh
 }
 
+// cleanStopGrace is how long a silence after a clean stop stays medium.
+const cleanStopGrace = 24 * time.Hour
+
 // Silent raises an alert for every enrolled host whose last heartbeat is older than limit, or
 // whose snapshots stopped while heartbeats still arrive (a sensor tampered with to send only
 // "I am alive"), and resolves them once the host reports again.
@@ -472,9 +475,20 @@ func (a *Analyzer) Silent(ctx context.Context, limit, snapshotLimit time.Duratio
 		if now.Sub(last) > limit {
 			fp := "sensor:silent"
 			current = append(current, fp)
-			a.raise(ctx, store.Alert{HostID: h.ID, Fingerprint: fp, Severity: "critical", Kind: "silence",
+			al := store.Alert{HostID: h.ID, Fingerprint: fp, Severity: "critical", Kind: "silence",
 				Title:  "The sensor is silent",
-				Detail: fmt.Sprintf("No heartbeat for %s (last: %s). The sensor is stopped, the server is unreachable, or someone turned it off.", span(now.Sub(last)), formatTime(last))})
+				Detail: fmt.Sprintf("No heartbeat for %s (last: %s). The sensor is stopped, the server is unreachable, or someone turned it off.", span(now.Sub(last)), formatTime(last))}
+			// A sensor that said it was stopping, after its last heartbeat, went away cleanly: a
+			// shutdown or an administrator. That silence is medium for a day, the length of a
+			// server switched off at night; the next start tells a reboot from a restart.
+			if run, err := a.Store.Run(ctx, h.ID); err == nil && !run.StoppedAt.IsZero() && !run.StoppedAt.Before(last.Add(-2*time.Minute)) {
+				al.Severity, al.Title = "medium", "The sensor stopped and has not come back"
+				al.Detail = fmt.Sprintf("The sensor reported at %s that it was stopping, and has been silent for %s since: the server is off, or the service was stopped. Past a day this becomes high.", formatTime(run.StoppedAt), span(now.Sub(run.StoppedAt)))
+				if now.Sub(run.StoppedAt) > cleanStopGrace {
+					al.Severity = "high"
+				}
+			}
+			a.raise(ctx, al)
 		}
 		lastSnap := h.LastSnapshot
 		if lastSnap.IsZero() {

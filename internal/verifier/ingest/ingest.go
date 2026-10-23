@@ -547,31 +547,69 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 	if ev.Event != "sensor_started" {
 		return
 	}
-	detail := fmt.Sprintf("The sensor started (version %s, system boot %s). If the server was not rebooted and the sensor was not updated, someone stopped and restarted it: check what happened while it was down.", ev.Version, ev.BootID)
-	if _, err := s.Store.Raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:started:" + strconv.FormatUint(e.Sequence, 10), Severity: "high", Kind: "sensor-event",
-		Title: "Sensor started", Detail: detail}, now); err != nil {
-		s.Log.Error("raise start alert", "host", host, "err", err)
+	s.started(ctx, host, e, clipVersion(ev.Version), clipVersion(ev.BootID), now)
+}
+
+// started judges a start of the sensor against how its previous run ended. A new system boot
+// after a clean stop is a server switched off and on, and a new version on the same boot an
+// update: one low event each, so a server that is turned off every night does not raise three
+// alerts a day. The same boot and version means the service was restarted without a reboot,
+// which nobody needs to do: that stays high, as does a start whose history is unknown. A new
+// boot without a clean stop is a crash, a power cut, or a sensor killed before a reboot.
+func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, version, boot string, now time.Time) {
+	run, err := s.Store.Run(ctx, host)
+	if err != nil {
+		s.Log.Error("read sensor run", "host", host, "err", err)
+	}
+	// Every start keeps the "sensor:started:" prefix: the version shown for older sensors, and
+	// the boot remembered for hosts started before the run record, are read from these alerts.
+	a := store.Alert{HostID: host, Fingerprint: "sensor:started:" + strconv.FormatUint(e.Sequence, 10), Severity: "high", Kind: "sensor-event",
+		Title:  "Sensor started",
+		Detail: fmt.Sprintf("The sensor started (version %s, system boot %s). If the server was not rebooted and the sensor was not updated, someone stopped and restarted it: check what happened while it was down.", version, boot),
+	}
+	known := run.BootID != "" && boot != ""
+	switch {
+	case known && boot != run.BootID && !run.StoppedAt.IsZero():
+		a.Severity, a.Title = "low", "Server was off"
+		a.Detail = fmt.Sprintf("The sensor stopped cleanly at %s and started again at %s after a new system boot (version %s, system boot %s): the server was shut down or rebooted. If nobody did, check who could.", run.StoppedAt.Format(time.RFC3339), now.Format(time.RFC3339), version, boot)
+	case known && boot != run.BootID:
+		a.Severity, a.Title = "medium", "Server restarted without a clean stop"
+		a.Detail = fmt.Sprintf("The sensor started after a new system boot (version %s, system boot %s) without having reported that it was stopping: a crash, a power cut, or a sensor killed before the reboot. Check what happened before it.", version, boot)
+	case known && version != run.Version && run.Version != "":
+		a.Severity, a.Title = "low", "Sensor updated"
+		a.Detail = fmt.Sprintf("The sensor started again on the same system boot with a new version: %s, before %s (system boot %s). Updating it restarts it; if nobody updated it, someone replaced it.", version, run.Version, boot)
+	case known:
+		a.Title = "Sensor restarted without a reboot"
+		a.Detail = fmt.Sprintf("The sensor started again on the same system boot and version (%s, system boot %s): someone stopped and restarted the service, which neither updates nor reboots require. Check what happened while it was down.", version, boot)
+		if !run.StoppedAt.IsZero() {
+			a.Detail += " It stopped at " + run.StoppedAt.Format(time.RFC3339) + "."
+		}
+	}
+	s.raise(ctx, a, now)
+	if err := s.Store.Started(ctx, host, boot, version); err != nil {
+		s.Log.Error("record sensor start", "host", host, "err", err)
 	}
 }
 
 // stopping records a sensor saying it goes away. A removal is high: whoever removes the sensor
-// leaves the server unwatched. A stop is medium: reboots stop it too, and the start that follows
-// is an alert of its own.
+// leaves the server unwatched. A plain stop raises nothing by itself: the silence that follows
+// does, and the next start says whether a reboot explains it.
 func (s *Server) stopping(ctx context.Context, host string, e protocol.Envelope, now time.Time) {
 	var ev struct {
 		Version string `json:"version"`
 		Reason  string `json:"reason"`
 	}
 	_ = json.Unmarshal(e.Payload, &ev)
-	a := store.Alert{HostID: host, Fingerprint: "sensor:stopped:" + strconv.FormatUint(e.Sequence, 10), Severity: "medium", Kind: "sensor-event",
-		Title:  "Sensor stopped",
-		Detail: fmt.Sprintf("The sensor (version %s) reported that it was stopping. A reboot or an administrator stopping the service does this; if neither happened, someone stopped it: nothing on the server is watched until it starts again.", clipVersion(ev.Version)),
+	if err := s.Store.Stopped(ctx, host, now); err != nil {
+		s.Log.Error("record sensor stop", "host", host, "err", err)
 	}
-	if ev.Reason == "package_removed" {
-		a.Severity, a.Title = "high", "Sensor removed"
-		a.Detail = fmt.Sprintf("The sensor package (version %s) was removed from the server and the sensor stopped: nothing on it is watched any more. If no administrator uninstalled it, someone with root did, and the server should be checked from outside.", clipVersion(ev.Version))
+	if ev.Reason != "package_removed" {
+		return
 	}
-	s.raise(ctx, a, now)
+	s.raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:removed:" + strconv.FormatUint(e.Sequence, 10), Severity: "high", Kind: "sensor-event",
+		Title:  "Sensor removed",
+		Detail: fmt.Sprintf("The sensor package (version %s) was removed from the server and the sensor stopped: nothing on it is watched any more. If no administrator uninstalled it, someone with root did, and the server should be checked from outside.", clipVersion(ev.Version)),
+	}, now)
 }
 
 func clipVersion(v string) string {

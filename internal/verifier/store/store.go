@@ -102,6 +102,12 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_host ON events(host_id, received_at);
 CREATE INDEX IF NOT EXISTS events_path ON events(host_id, path, at);
+CREATE TABLE IF NOT EXISTS sensor_runs (
+	host_id    TEXT PRIMARY KEY,
+	boot_id    TEXT NOT NULL DEFAULT '',
+	version    TEXT NOT NULL DEFAULT '',
+	stopped_at INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS enroll_tokens (
 	host_id    TEXT PRIMARY KEY,
 	token_hash BLOB NOT NULL UNIQUE,

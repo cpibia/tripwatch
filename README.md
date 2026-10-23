@@ -508,7 +508,12 @@ not pretend otherwise, but aims to make both visible. Already today:
   signed event and every gap between two heartbeats over 100 seconds becomes an alert, so even a
   stop or a suspension shorter than the silence threshold leaves a trace; a sensor that is
   stopped says so in a last signed event, and one removed with its package (`apt remove`,
-  `dnf remove`) raises a high alert at once instead of only falling silent;
+  `dnf remove`) raises a high alert at once instead of only falling silent; each start is judged
+  against how the previous run ended, from the system boot it reports: a new boot after a clean
+  stop is one low "Server was off" event (a server switched off every night raises no more), a
+  new version on the same boot is an update, a new boot without a clean stop is medium, and the
+  same boot and version, a service restarted by hand, stays high. The silence after a clean stop
+  is medium for a day, then high, while an unannounced silence is critical;
 - critical and high alerts do not close by themselves when the condition goes away: a
   compromised server could clean up and silence its own alerts, so a person closes them.
 

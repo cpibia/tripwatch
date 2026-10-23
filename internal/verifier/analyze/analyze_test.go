@@ -146,6 +146,25 @@ func TestSilentSensor(t *testing.T) {
 		t.Fatal("a host sending heartbeats is reported silent")
 	}
 
+	// A sensor that said it was stopping is silent at medium for a day, then high.
+	h.clock = h.clock.Add(time.Minute)
+	h.deliver(protocol.KindHeartbeat, nil)
+	if err := h.store.Stopped(ctx, "web-01", h.clock); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		after time.Duration
+		want  string
+	}{{8 * time.Hour, "medium"}, {20 * time.Hour, "high"}} {
+		h.clock = h.clock.Add(step.after)
+		h.an.Silent(ctx, 3*time.Minute, 300*time.Hour)
+		if got := h.open()["sensor:silent"].Severity; got != step.want {
+			t.Fatalf("silence %s after a clean stop: %q, want %q", step.after, got, step.want)
+		}
+	}
+	h.deliver(protocol.KindHeartbeat, nil)
+	h.an.Silent(ctx, 3*time.Minute, 300*time.Hour)
+
 	// A revoked host is no longer watched.
 	if err := h.store.Revoke(ctx, "web-01"); err != nil {
 		t.Fatal(err)

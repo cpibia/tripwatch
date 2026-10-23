@@ -430,21 +430,56 @@ func TestSensorStartRaisesAnAlert(t *testing.T) {
 	}
 }
 
-// A sensor going away says so: a removal of its package is high, a stop medium.
-func TestSensorStopAndRemovalRaiseAlerts(t *testing.T) {
+// A sensor going away says so: a removal of its package is high at once, a plain stop is only
+// recorded, and the next start is judged against it.
+func TestSensorStopsAndStarts(t *testing.T) {
 	h := newHarness(t)
 	c, _ := h.sensor("web-01")
-	for _, reason := range []string{"stopped", "package_removed"} {
-		if err := c.Send(context.Background(), protocol.KindEvent, []byte(`{"event":"sensor_stopping","version":"1.2.0","reason":"`+reason+`"}`), now); err != nil {
+	ctx := context.Background()
+	send := func(payload string) {
+		t.Helper()
+		h.clock = h.clock.Add(time.Hour)
+		if err := c.Send(ctx, protocol.KindEvent, []byte(payload), h.clock); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := map[string]string{}
-	for _, a := range h.alerts() {
-		got[a.Title] = a.Severity
+	latest := func() store.Alert {
+		t.Helper()
+		var last store.Alert
+		for _, a := range h.alerts() {
+			if a.ID > last.ID {
+				last = a
+			}
+		}
+		return last
 	}
-	if len(got) != 2 || got["Sensor stopped"] != "medium" || got["Sensor removed"] != "high" {
-		t.Fatalf("alerts = %v", got)
+	started := func(version, boot string) string {
+		return `{"event":"sensor_started","version":"` + version + `","boot_id":"` + boot + `"}`
+	}
+	const stop = `{"event":"sensor_stopping","version":"1.2.0","reason":"stopped"}`
+
+	send(started("1.2.0", "aaaaaaaa-1"))
+	if a := latest(); a.Title != "Sensor started" || a.Severity != "high" {
+		t.Fatalf("first start: %+v", a)
+	}
+	send(stop)
+	if n := len(h.alerts()); n != 1 {
+		t.Fatalf("a plain stop raised an alert: %d alerts", n)
+	}
+	for _, step := range []struct{ payload, title, severity string }{
+		{started("1.2.0", "bbbbbbbb-2"), "Server was off", "low"},
+		{started("1.2.1", "bbbbbbbb-2"), "Sensor updated", "low"},
+		{started("1.2.1", "bbbbbbbb-2"), "Sensor restarted without a reboot", "high"},
+		{started("1.2.1", "cccccccc-3"), "Server restarted without a clean stop", "medium"},
+	} {
+		send(step.payload)
+		if a := latest(); a.Title != step.title || a.Severity != step.severity {
+			t.Fatalf("%s: got %q %s", step.title, a.Title, a.Severity)
+		}
+	}
+	send(`{"event":"sensor_stopping","version":"1.2.1","reason":"package_removed"}`)
+	if a := latest(); a.Title != "Sensor removed" || a.Severity != "high" {
+		t.Fatalf("removal: %+v", a)
 	}
 }
 

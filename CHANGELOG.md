@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- Each sensor start is judged against how the previous run ended, from the system boot it
+  reports: a new boot after a clean stop is one low "Server was off" event, a new version on the
+  same boot a low "Sensor updated", a new boot without a clean stop a medium "Server restarted
+  without a clean stop"; the same boot and version, a service restarted by hand, stays a high
+  "Sensor restarted without a reboot". A plain stop raises nothing by itself, and the silence
+  that follows it is medium for a day, then high. A server switched off every night no longer
+  raises three alerts a day. Starts seen before this version are read back from their alerts.
+
 ## [0.1.9] - 2026-10-23
 
 Update the verifier first, then the sensors (`tripwatch-sensor -update`): a verifier older than
