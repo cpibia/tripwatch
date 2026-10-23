@@ -20,7 +20,8 @@ runs on plain hosts, Docker hosts, Kubernetes nodes and AWS Fargate.
   - [3. Enrollment](#3-enrollment)
   - [Kubernetes](#kubernetes)
   - [Updates](#updates)
-  - [Updating and removing](#updating-and-removing)
+  - [Updating](#updating)
+  - [Removing](#removing)
   - [Building from source](#building-from-source)
 - [What the sensor collects](#what-the-sensor-collects)
 - [Web stack](#web-stack)
@@ -64,7 +65,7 @@ manifest produced by the build (checked against the lockfile: `composer.lock`,
 
 Every [release](https://github.com/cpibia/tripwatch/releases) publishes the sensor as `.deb` and
 `.rpm` packages and the verifier as a container image (`ghcr.io/cpibia/tripwatch-verifier`).
-Nothing needs to be cloned or compiled on the servers. The commands below use release `0.1.0`:
+Nothing needs to be cloned or compiled on the servers. The commands below use release `0.1.1`:
 replace it with the latest one.
 
 ### 1. Verifier
@@ -82,7 +83,7 @@ In `.env` set at least the release, the name the sensors will use, the public ad
 first user:
 
 ```sh
-TRIPWATCH_VERSION=0.1.0
+TRIPWATCH_VERSION=0.1.1
 TRIPWATCH_HOSTNAMES=tripwatch.example.net
 TRIPWATCH_PUBLIC_INGEST_URL=https://tripwatch.example.net:8443/v1/envelopes
 TRIPWATCH_PUBLIC_UI_URL=https://tripwatch.example.net
@@ -116,26 +117,26 @@ Debian and Ubuntu (the download goes to `/tmp`, which apt's unprivileged `_apt` 
 
 ```sh
 cd /tmp
-curl -fsSLO https://github.com/cpibia/tripwatch/releases/download/v0.1.0/tripwatch-sensor_0.1.0_amd64.deb
-sudo apt install ./tripwatch-sensor_0.1.0_amd64.deb
+curl -fsSLO https://github.com/cpibia/tripwatch/releases/download/v0.1.1/tripwatch-sensor_0.1.1_amd64.deb
+sudo apt install ./tripwatch-sensor_0.1.1_amd64.deb
 ```
 
 RHEL, AlmaLinux, Rocky, Fedora and Amazon Linux:
 
 ```sh
-sudo dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.0/tripwatch-sensor-0.1.0-1.x86_64.rpm
+sudo dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.1/tripwatch-sensor-0.1.1-1.x86_64.rpm
 ```
 
 On ARM servers use `arm64` in the `.deb` name and `aarch64` in the `.rpm` name. The package
 installs `/usr/bin/tripwatch-sensor` and its systemd unit, and creates `/etc/tripwatch`; the
 service starts only after enrollment. On other distributions use the static binary from the
-release (`tripwatch-sensor_0.1.0_linux_amd64`) with the unit in [deploy/systemd](deploy/systemd).
+release (`tripwatch-sensor_0.1.1_linux_amd64`) with the unit in [deploy/systemd](deploy/systemd).
 
 Every file of a release is listed in `SHA256SUMS` and has a build provenance attestation, which
 proves it was built by this repository's release workflow from the tagged source:
 
 ```sh
-gh attestation verify tripwatch-sensor_0.1.0_amd64.deb -R cpibia/tripwatch
+gh attestation verify tripwatch-sensor_0.1.1_amd64.deb -R cpibia/tripwatch
 ```
 
 ### 3. Enrollment
@@ -191,14 +192,48 @@ docker compose exec verifier /tripwatch-verifier -version          # next to the
 The verifier also logs its version when it starts, and every sensor sends its version in the
 signed event of each start.
 
-### Updating and removing
+### Updating
 
-- **Sensor:** install the package of the new release the same way; a running sensor is
-  restarted. `apt remove tripwatch-sensor` or `dnf remove tripwatch-sensor` stops and removes it,
-  and keeps the bundle in `/etc/tripwatch` and the state in `/var/lib/tripwatch`, so a reinstall
-  resumes the same chain.
-- **Verifier:** set the new `TRIPWATCH_VERSION` in `.env`, then
-  `docker compose pull && docker compose up -d`. The state stays in the `data` volume.
+Update the verifier first: a newer verifier accepts the envelopes of older sensors, and its
+enrollment page then installs the sensor of its own release.
+
+**Verifier.** `TRIPWATCH_VERSION` in `.env` chooses the image. Docker never fetches a newer image
+by itself: `docker compose up -d` keeps running the image already downloaded, even with
+`latest`, so an update is always a pull followed by a restart.
+
+- With a pinned release (recommended, the update is a choice you make), write the new number,
+  for example `TRIPWATCH_VERSION=0.1.1`, then:
+
+  ```sh
+  docker compose pull && docker compose up -d
+  ```
+
+- With `TRIPWATCH_VERSION=latest`, the same two commands move to the newest release.
+
+The state stays in the `data` volume and the sensors keep their chain. On Coolify, change the
+image tag in the service's compose and redeploy.
+
+**Sensor.** Install the package of the new release the same way as the first time; a running
+sensor is restarted by the package and resumes the same chain. Debian and Ubuntu:
+
+```sh
+cd /tmp && curl -fsSLO https://github.com/cpibia/tripwatch/releases/download/v0.1.1/tripwatch-sensor_0.1.1_amd64.deb && sudo apt install ./tripwatch-sensor_0.1.1_amd64.deb && rm tripwatch-sensor_0.1.1_amd64.deb
+```
+
+RHEL family and Amazon Linux:
+
+```sh
+sudo dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.1/tripwatch-sensor-0.1.1-1.x86_64.rpm
+```
+
+Check the result with `tripwatch-sensor -version`.
+
+### Removing
+
+`apt remove tripwatch-sensor` or `dnf remove tripwatch-sensor` stops and removes the sensor, and
+keeps the bundle in `/etc/tripwatch` and the state in `/var/lib/tripwatch`, so a reinstall
+resumes the same chain. The verifier keeps its state in the `data` volume: `docker compose down`
+leaves it, `docker compose down -v` deletes it with the CA and every enrollment.
 
 ### Building from source
 
