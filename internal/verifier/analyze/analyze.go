@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -197,9 +199,12 @@ const maxBaseWalk = 50
 // base is what a snapshot is compared with: for each collector, its result in the last
 // snapshot where it succeeded. A collector made to fail once would otherwise let a change made
 // in that window become the reference with no alert.
-func (a *Analyzer) base(ctx context.Context, cur State, prevSnap *store.Snapshot) *State {
+// It also names the collectors cur has that no snapshot within maxBaseWalk has: their changes
+// cannot be compared.
+func (a *Analyzer) base(ctx context.Context, cur State, prevSnap *store.Snapshot) (*State, []string) {
 	var out *State
-	for walked := 0; prevSnap != nil && walked < maxBaseWalk; walked++ {
+	walked := 0
+	for ; prevSnap != nil && walked < maxBaseWalk; walked++ {
 		if p, err := Decode(prevSnap.Payload); err == nil {
 			if out == nil {
 				out = &p
@@ -216,7 +221,52 @@ func (a *Analyzer) base(ctx context.Context, cur State, prevSnap *store.Snapshot
 		}
 		prevSnap = &older
 	}
-	return out
+	if out == nil || walked < maxBaseWalk {
+		return out, nil
+	}
+	var lost []string
+	b, c := collectorResults(out), collectorResults(&cur)
+	names := reflect.TypeFor[State]()
+	for i, j := 0, 0; i < names.NumField(); i++ {
+		if names.Field(i).Type.Kind() != reflect.Pointer {
+			continue
+		}
+		if b[j].IsNil() && !c[j].IsNil() {
+			lost = append(lost, strings.ToLower(names.Field(i).Name))
+		}
+		j++
+	}
+	return out, lost
+}
+
+// failingSnapshots is how many snapshots in a row a collector may fail before it is an alert
+// that stays open: a collector kept failing is a part of the host nobody compares.
+const failingSnapshots = 3
+
+// persistentErrors returns the collectors that failed in cur and in the snapshots just before it.
+func (a *Analyzer) persistentErrors(ctx context.Context, cur State, prevSnap *store.Snapshot) map[string]string {
+	failing := maps.Clone(cur.Errors)
+	for range failingSnapshots - 1 {
+		if len(failing) == 0 || prevSnap == nil {
+			return nil
+		}
+		p, err := Decode(prevSnap.Payload)
+		if err != nil {
+			return nil
+		}
+		for name := range failing {
+			if _, ok := p.Errors[name]; !ok {
+				delete(failing, name)
+			}
+		}
+		older, err := a.Store.SnapshotBefore(ctx, prevSnap.HostID, prevSnap.ID)
+		if err != nil {
+			prevSnap = nil
+		} else {
+			prevSnap = &older
+		}
+	}
+	return failing
 }
 
 // collectorResults are the State fields holding a collector's result.
@@ -267,9 +317,19 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			Title: "Snapshot rifiutato", Detail: err.Error() + ". Un sensore integro non produce snapshot così: il server può essere compromesso."})
 		return
 	}
-	prev := a.base(ctx, state, prevSnap)
+	prev, lost := a.base(ctx, state, prevSnap)
 
 	findings := Evaluate(prev, state)
+	for _, name := range lost {
+		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:baseline-lost:" + name, Severity: "high",
+			Title:  "Collector " + name + " senza termine di confronto",
+			Detail: fmt.Sprintf("Nessuno dei %d snapshot precedenti contiene il risultato di %s: i cambiamenti fatti mentre non rispondeva non sono segnalati. Va controllato sul server.", maxBaseWalk, name)})
+	}
+	for name, msg := range a.persistentErrors(ctx, state, prevSnap) {
+		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:error-persistent:" + name, Severity: "high", State: true,
+			Title:  fmt.Sprintf("Collector %s non completato per %d snapshot di fila", name, failingSnapshots),
+			Detail: msg + "\nFinché non risponde, le modifiche a ciò che legge non sono confrontate. L'allarme resta aperto anche quando riprende."})
+	}
 	current := map[string][]string{}
 	for _, f := range findings {
 		if f.State {

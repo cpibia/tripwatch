@@ -418,7 +418,7 @@ func TestRuleDiffShowsGrantsFirst(t *testing.T) {
 	if lines[0] != "+ www-data ALL=(ALL) NOPASSWD: ALL" || lines[1] != "- deny www-data" {
 		t.Fatalf("grants not first:\n%s", got)
 	}
-	if len(lines) != maxDiffLines+1 || lines[maxDiffLines] != "(altre 3 righe aggiunte e 0 tolte non mostrate)" {
+	if len(lines) != maxDiffLines+1 || lines[maxDiffLines] != "(altre 3 righe aggiunte e 0 tolte non mostrate: il confronto completo è nella pagina dell'allarme)" {
 		t.Fatalf("cut not stated:\n%s", got)
 	}
 }
@@ -438,7 +438,7 @@ func TestPolicyFileAccess(t *testing.T) {
 	for _, f := range Evaluate(&prev, State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{file(33, "-rw-r--r--")}, Dirs: []collector.File{dir}}}) {
 		got[f.Fingerprint] = f
 	}
-	if f := got["persistence:policy-writable:/etc/polkit-1/rules.d/50.rules"]; f.Severity != "critical" || f.Owner != "root" {
+	if f := got["persistence:policy-writable:/etc/polkit-1/rules.d/50.rules|proprietario 33, gruppo 0, modo -rw-r--r--"]; f.Severity != "critical" || f.Owner != "root" {
 		t.Fatalf("writable policy: %+v", got)
 	}
 	if f := got["persistence-change:policy-access:/etc/polkit-1/rules.d/50.rules|proprietario 33, gruppo 0, modo -rw-r--r--"]; f.Severity != "high" || f.Owner != "root" {
@@ -446,12 +446,28 @@ func TestPolicyFileAccess(t *testing.T) {
 	}
 	wide := dir
 	wide.Mode = "dtrwxrwxrwx"
-	for _, f := range []collector.File{wide, {Mode: "-rw-rw-r--", UID: uid(0), GID: uid(100)}, {Mode: "-rw-r--r--", UID: uid(0), Mount: "fuse uid 1000"}} {
-		if !foreignWritable(f) {
+	acl := dir
+	acl.ACL = "0123456789abcdef"
+	none := policyIDs{}
+	for _, f := range []collector.File{wide, acl, {Mode: "-rw-rw-r--", UID: uid(0), GID: uid(100)}, {Mode: "-rw-r--r--", UID: uid(0), Mount: "fuse uid 1000"}} {
+		if !foreignWritable(f, none) {
 			t.Errorf("not writable by others: %+v", f)
 		}
 	}
-	if foreignWritable(collector.File{Mode: "-rw-rw-r--", UID: uid(0), GID: uid(0)}) {
+	if foreignWritable(collector.File{Mode: "-rw-rw-r--", UID: uid(0), GID: uid(0)}, none) {
 		t.Error("root group counted as foreign")
+	}
+
+	// polkit's own account owns its rule directories on a standard install; elsewhere it is
+	// an account like any other.
+	accounts := &system.AccountsResult{Accounts: []system.Account{{Name: "polkitd", UID: 997}}, Groups: []system.Group{{Name: "polkitd", GID: 997}}}
+	daemon := collector.File{Path: "/usr/share/polkit-1/rules.d", UID: uid(997), GID: uid(997), Mode: "drwx------"}
+	st := State{Accounts: accounts, Sudoers: &system.SudoersResult{Dirs: []collector.File{daemon}}}
+	if fs := Evaluate(nil, st); len(fs) != 0 {
+		t.Fatalf("polkitd's directory raised: %+v", fs)
+	}
+	daemon.Path = "/etc/sudoers.d"
+	if !foreignWritable(daemon, policyAccounts(accounts)) {
+		t.Error("polkitd trusted outside polkit")
 	}
 }

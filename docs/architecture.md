@@ -58,7 +58,10 @@ firma non cambia.
 - **Analisi** (`internal/verifier/analyze`): una coda nel database, analizzata in ordine. Ogni
   snapshot è decompresso con limiti di dimensione, numero di valori e profondità, poi confrontato,
   collector per collector, con l'ultimo snapshot in cui quel collector ha risposto: un collector
-  fatto fallire una volta non trasforma in base la modifica fatta nel frattempo. Le regole producono condizioni (stato pericoloso in sé, chiuse quando
+  fatto fallire una volta non trasforma in base la modifica fatta nel frattempo. Un collector
+  che fallisce per 3 snapshot di fila dà un allarme alto che resta aperto anche alla ripresa; se
+  nessuno dei 50 snapshot precedenti ha il suo risultato, un allarme alto dice che il confronto
+  non è stato possibile. Le regole producono condizioni (stato pericoloso in sé, chiuse quando
   spariscono, tranne critiche e alte) e cambiamenti. Ogni minuto un controllo solleva l'allarme
   per i server muti e per quelli che mandano battiti ma non più snapshot.
 - **Allarmi**: un'impronta per condizione e server; la stessa condizione aggiorna l'allarme

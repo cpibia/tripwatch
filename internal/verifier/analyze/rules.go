@@ -59,7 +59,7 @@ var noLogin = map[string]bool{"/usr/sbin/nologin": true, "/sbin/nologin": true, 
 // grantWords mark policy lines that name who gets a power or take it away: sudo user specs,
 // polkit results and identities, doas permit and deny. Plain substrings: a regexp over a large
 // policy took seconds.
-var grantWords = []string{"NOPASSWD", "ALL", "Result.YES", "Result.AUTH", "permit", "deny", "unix-user", "unix-group", "isInGroup", "subject.user", "Identity", "ResultAny"}
+var grantWords = []string{"NOPASSWD", "ALL", "authenticate", "Runas_", "SETENV", "Result.", `"yes"`, "permit", "deny", "nopass", "keepenv", "unix-user", "unix-group", "isInGroup", "subject.user", "Identity", "ResultAny"}
 
 func grantLine(l string) bool {
 	if strings.HasPrefix(l, "%") || len(l) > 1 && l[0] == '#' && l[1] >= '0' && l[1] <= '9' {
@@ -75,6 +75,26 @@ const maxDiffLines = 40
 // Lines that grant or deny come first and the cut is always stated: a grant hidden behind
 // harmless lines would otherwise never reach the alert.
 func ruleDiff(old, cur []string) string {
+	lines := diffLines(old, cur)
+	if lines == nil {
+		return "Contenuto cambiato senza righe nuove o tolte (ordine o spazi)."
+	}
+	if len(lines) > maxDiffLines {
+		hiddenAdded, hiddenRemoved := 0, 0
+		for _, l := range lines[maxDiffLines:] {
+			if l[0] == '+' {
+				hiddenAdded++
+			} else {
+				hiddenRemoved++
+			}
+		}
+		lines = append(lines[:maxDiffLines], fmt.Sprintf("(altre %d righe aggiunte e %d tolte non mostrate: il confronto completo è nella pagina dell'allarme)", hiddenAdded, hiddenRemoved))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// diffLines lists every added and removed line, grants first; nil when no line differs.
+func diffLines(old, cur []string) []string {
 	was, now := set{}, set{}
 	was.add(old...)
 	now.add(cur...)
@@ -90,7 +110,7 @@ func ruleDiff(old, cur []string) string {
 		}
 	}
 	if len(added)+len(removed) == 0 {
-		return "Contenuto cambiato senza righe nuove o tolte (ordine o spazi)."
+		return nil
 	}
 	// Grants added, grants removed, then the other removed lines (a removed condition can widen
 	// a rule) and the other added ones.
@@ -105,18 +125,7 @@ func ruleDiff(old, cur []string) string {
 			}
 		}
 	}
-	if len(lines) > maxDiffLines {
-		hiddenAdded, hiddenRemoved := 0, 0
-		for _, l := range lines[maxDiffLines:] {
-			if l[0] == '+' {
-				hiddenAdded++
-			} else {
-				hiddenRemoved++
-			}
-		}
-		lines = append(lines[:maxDiffLines], fmt.Sprintf("(altre %d righe aggiunte e %d tolte non mostrate)", hiddenAdded, hiddenRemoved))
-	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 // fileAccess describes who can change a file: owner, group, mode and the FUSE mount it is on.
@@ -128,23 +137,56 @@ func fileAccess(f collector.File) string {
 		return strconv.FormatUint(uint64(*v), 10)
 	}
 	out := "proprietario " + id(f.UID) + ", gruppo " + id(f.GID) + ", modo " + f.Mode
+	if f.ACL != "" {
+		out += ", ACL " + f.ACL
+	}
 	if f.Mount != "" {
 		out += ", su " + f.Mount
 	}
 	return out
 }
 
+// policyIDs are the system accounts and groups a policy daemon runs as. polkit's rule
+// directories belong to polkitd and are mode 0700 on a standard install.
+type policyIDs struct{ uids, gids map[int]bool }
+
+var policyDaemons = map[string]bool{"polkitd": true, "polkit": true}
+
+func policyAccounts(a *system.AccountsResult) policyIDs {
+	ids := policyIDs{uids: map[int]bool{}, gids: map[int]bool{}}
+	if a == nil {
+		return ids
+	}
+	for _, acc := range a.Accounts {
+		if policyDaemons[acc.Name] && acc.UID > 0 {
+			ids.uids[acc.UID] = true
+		}
+	}
+	for _, g := range a.Groups {
+		if policyDaemons[g.Name] && g.GID > 0 {
+			ids.gids[g.GID] = true
+		}
+	}
+	return ids
+}
+
 // foreignWritable reports whether an account other than root can change a file: it owns it,
-// it is on a user's FUSE mount, or the mode lets others (or a group other than root's) write.
-func foreignWritable(f collector.File) bool {
-	if f.Mount != "" || f.UID != nil && *f.UID != 0 {
+// it is on a user's FUSE mount, an ACL is set, or the mode lets others (or a group other than
+// root's) write. polkit's own account and group are trusted on polkit's files.
+func foreignWritable(f collector.File, trusted policyIDs) bool {
+	polkit := strings.Contains(f.Path+"/", "/polkit-1/")
+	if f.Mount != "" || f.ACL != "" {
+		return true
+	}
+	if f.UID != nil && *f.UID != 0 && (!polkit || !trusted.uids[int(*f.UID)]) {
 		return true
 	}
 	if len(f.Mode) < 9 {
 		return false
 	}
 	perm := f.Mode[len(f.Mode)-9:]
-	return perm[7] == 'w' || perm[4] == 'w' && f.GID != nil && *f.GID != 0
+	groupOK := f.GID == nil || *f.GID == 0 || polkit && trusted.gids[int(*f.GID)]
+	return perm[7] == 'w' || perm[4] == 'w' && !groupOK
 }
 
 // policyName names the privilege policy a file belongs to.
@@ -539,11 +581,14 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, f := range s.Files {
 			files = append(files, f.File)
 		}
+		trusted := policyAccounts(cur.Accounts)
 		for _, f := range append(files, s.Dirs...) {
-			if !foreignWritable(f) {
+			if !foreignWritable(f, trusted) {
 				continue
 			}
-			stateBy("root", "persistence", "policy-writable:"+f.Path, "critical", "Politica dei privilegi modificabile da altri: "+f.Path,
+			// The access is in the fingerprint: a known exception taken in charge does not
+			// absorb a later handover of the same file to another account.
+			stateBy("root", "persistence", "policy-writable:"+f.Path+"|"+fileAccess(f), "critical", "Politica dei privilegi modificabile da altri: "+f.Path,
 				fileAccess(f)+". Chi può scriverla può concedersi i privilegi di root e toglierla prima del controllo dopo.")
 		}
 	}

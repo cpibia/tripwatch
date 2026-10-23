@@ -26,6 +26,9 @@ type Attrs struct {
 	Immutable    bool `json:"immutable,omitempty"`
 	AppendOnly   bool `json:"append_only,omitempty"`
 	Capabilities bool `json:"capabilities,omitempty"`
+	// ACL fingerprints the file's extended POSIX ACLs, empty when it has none: an ACL can let
+	// another account write a file whose mode says it cannot.
+	ACL string `json:"acl,omitempty"`
 }
 
 // Any reports whether any attribute is set.

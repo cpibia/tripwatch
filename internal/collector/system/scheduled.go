@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -148,7 +149,7 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 		if f.Path == "" {
 			continue
 		}
-		dirs = append(dirs, path.Dir(name))
+		dirs = append(dirs, name)
 		lines, err := collector.ReadLines(src.FS, name)
 		res.Issues.Add(err)
 		rules := sudoersRules(lines)
@@ -182,7 +183,7 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 			if f.Path == "" {
 				continue
 			}
-			dirs = append(dirs, path.Dir(name))
+			dirs = append(dirs, name)
 			lines, err := collector.ReadLines(src.FS, name)
 			res.Issues.Add(err)
 			res.Files = append(res.Files, SudoersFile{File: f, Rules: sudoersRules(lines)})
@@ -191,11 +192,27 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 	dirs = append(dirs, policyDirs...)
 	dirs = append(dirs, collector.Glob(src.FS, "etc/polkit-1/localauthority/*")...)
 	dirs = append(dirs, collector.Glob(src.FS, "var/lib/polkit-1/localauthority/*")...)
-	slices.Sort(dirs)
-	for _, name := range slices.Compact(dirs) {
+	// Every directory above a policy file, up to the root and along the target of each link:
+	// write access to any of them lets a directory be swapped for one with other rules.
+	chain := map[string]bool{".": true}
+	add := func(name string) {
+		for ; name != "." && name != "/" && name != ""; name = path.Dir(name) {
+			chain[name] = true
+		}
+	}
+	for _, name := range dirs {
+		add(name)
+		if target, err := collector.ResolvePath(src.FS, name); err == nil {
+			add(target)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(chain)) {
 		f, err := collector.Describe(src, name)
 		res.Issues.Add(err)
 		if f.Path != "" && f.Mode != "" && f.Mode[0] == 'd' {
+			if name == "." {
+				f.Path = "/"
+			}
 			res.Dirs = append(res.Dirs, f)
 		}
 	}

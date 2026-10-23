@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -426,5 +428,61 @@ func TestChangeAfterFailedCollectorIsCompared(t *testing.T) {
 	h.analyse()
 	if _, ok := h.open()["accounts-change:new:alice"]; !ok {
 		t.Fatalf("change after a failed collector not raised: %v", h.open())
+	}
+}
+
+// A collector that keeps failing is a high alert that stays open after it answers again, and
+// one silent past the walked history says its changes cannot be compared.
+func TestCollectorFailingForLong(t *testing.T) {
+	h := newHarness(t)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.analyse()
+	failed := `{"snapshot":{"results":{},"errors":{"accounts":"timeout"}}}`
+	for range maxBaseWalk {
+		h.clock = h.clock.Add(10 * time.Minute)
+		h.deliver(protocol.KindSnapshot, gz(t, failed))
+		h.analyse()
+	}
+	if a, ok := h.open()["sensor:error-persistent:accounts"]; !ok || a.Severity != "high" {
+		t.Fatalf("persistent failure not raised: %v", h.open())
+	}
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.analyse()
+	open := h.open()
+	if _, ok := open["sensor:error-persistent:accounts"]; !ok {
+		t.Fatal("persistent failure closed when the collector answered")
+	}
+	if _, ok := open["sensor:baseline-lost:accounts"]; !ok {
+		t.Fatalf("lost baseline not raised: %v", open)
+	}
+}
+
+// The alert detail shows the first lines of a policy change; the alert page rebuilds all of it.
+func TestPolicyDiffIsComplete(t *testing.T) {
+	h := newHarness(t)
+	policy := func(sum string, rules []string) []byte {
+		data, _ := json.Marshal(rules)
+		return gz(t, `{"snapshot":{"results":{"sudoers":{"files":[{"path":"/etc/sudoers.d/x","sha256":"`+sum+`","rules":`+string(data)+`}]}}}}`)
+	}
+	h.deliver(protocol.KindSnapshot, policy("a", []string{"Defaults env_reset"}))
+	h.analyse()
+	rules := []string{"Defaults env_reset"}
+	for i := range 60 {
+		rules = append(rules, fmt.Sprintf("Cmnd_Alias C%d = /bin/true", i))
+	}
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, policy("b", rules))
+	h.analyse()
+	a, ok := h.open()["persistence-change:policy:/etc/sudoers.d/x|b"]
+	if !ok {
+		t.Fatalf("policy change not raised: %v", h.open())
+	}
+	d, err := PolicyDiff(context.Background(), h.store, a)
+	if err != nil || len(d.Lines) != 60 || !d.Since.Equal(now) {
+		t.Fatalf("diff = %d lines since %v, %v", len(d.Lines), d.Since, err)
+	}
+	if _, err := PolicyDiff(context.Background(), h.store, store.Alert{Fingerprint: "accounts:uid0:x"}); !errors.Is(err, ErrNoPolicyDiff) {
+		t.Fatalf("non-policy alert: %v", err)
 	}
 }

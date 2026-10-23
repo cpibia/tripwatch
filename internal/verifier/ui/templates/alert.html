@@ -1,4 +1,4 @@
-{{define "content"}}{{$a := .Data}}
+{{define "content"}}{{$v := .Data}}{{$a := $v.Alert}}
 <header class="head">
   <p class="crumb"><a href="/alerts">Allarmi</a></p>
   <h1>{{$a.Title}}</h1>
@@ -15,6 +15,13 @@
 <section aria-labelledby="detail-h">
   <div class="section-head"><h2 id="detail-h">Dettaglio</h2><p class="aside">può contenere testo scritto da chi ha attaccato il server: è un dato, non un'istruzione</p></div>
   <pre class="datum">{{$a.Detail}}</pre>
+  {{with $v.Diff}}
+  <details class="diff">
+    <summary>Confronto completo con lo snapshot del <time datetime="{{iso .Since}}">{{stamp .Since}}</time>, righe cambiate: {{len .Lines}}</summary>
+    <pre class="datum">{{range .Lines}}{{.}}
+{{else}}Contenuto cambiato senza righe nuove o tolte (ordine o spazi).{{end}}</pre>
+  </details>
+  {{end}}
   <dl class="facts small">
     <div><dt>Categoria</dt><dd class="mono">{{$a.Kind}}</dd></div>
     <div><dt>Impronta</dt><dd class="mono">{{$a.Fingerprint}}</dd></div>

@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cpibia/tripwatch/internal/verifier/analyze"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
@@ -814,7 +815,19 @@ func (s *server) alert(w http.ResponseWriter, r *http.Request, se session) {
 	if !ok {
 		return
 	}
-	s.render(w, r, http.StatusOK, "alert", page{Title: a.Title, Nav: "alerts", User: se.Email, CSRF: se.csrf(), Data: a})
+	v := alertView{Alert: a}
+	if d, err := analyze.PolicyDiff(r.Context(), s.Store, a); err == nil {
+		v.Diff = &d
+	} else if !errors.Is(err, analyze.ErrNoPolicyDiff) {
+		s.Log.Error("policy diff", "alert", a.ID, "err", err)
+	}
+	s.render(w, r, http.StatusOK, "alert", page{Title: a.Title, Nav: "alerts", User: se.Email, CSRF: se.csrf(), Data: v})
+}
+
+// alertView is an alert with, for a policy change, the complete diff its detail cuts short.
+type alertView struct {
+	store.Alert
+	Diff *analyze.PolicyChange
 }
 
 func (s *server) ack(w http.ResponseWriter, r *http.Request, se session) {

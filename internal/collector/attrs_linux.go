@@ -3,6 +3,8 @@
 package collector
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"syscall"
 	"unsafe"
@@ -24,6 +26,8 @@ func ReadAttrs(path string) (Attrs, error) {
 		attrs.Capabilities = true
 	}
 
+	attrs.ACL = aclDigest(path)
+
 	// O_NONBLOCK keeps a FIFO or device from blocking the open.
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
@@ -44,4 +48,27 @@ func ReadAttrs(path string) (Attrs, error) {
 	attrs.Immutable = flags&fsImmutableFl != 0
 	attrs.AppendOnly = flags&fsAppendFl != 0
 	return attrs, nil
+}
+
+// aclDigest hashes the access and default ACLs of path. The kernel stores an ACL as an extended
+// attribute only when it has entries beyond the mode bits.
+func aclDigest(path string) string {
+	h := sha256.New()
+	found := false
+	for _, name := range []string{"system.posix_acl_access", "system.posix_acl_default"} {
+		buf := make([]byte, 4096)
+		n, err := syscall.Getxattr(path, name, buf)
+		if errors.Is(err, syscall.ERANGE) {
+			n, buf = 0, nil
+		} else if err != nil || n <= 0 {
+			continue
+		}
+		found = true
+		h.Write([]byte(name))
+		h.Write(buf[:n])
+	}
+	if !found {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }

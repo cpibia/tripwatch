@@ -502,6 +502,11 @@ func (s *Store) SnapshotPair(ctx context.Context, id int64) (Snapshot, *Snapshot
 	return cur, &prev, nil
 }
 
+// LatestEvidence returns the newest snapshot kept as evidence of an alert.
+func (s *Store) LatestEvidence(ctx context.Context, alertID int64) (Snapshot, error) {
+	return s.snapshot(ctx, `WHERE id = (SELECT MAX(snapshot_id) FROM snapshot_evidence WHERE alert_id = ?)`, alertID)
+}
+
 // SnapshotBefore returns the snapshot of a host that precedes id.
 func (s *Store) SnapshotBefore(ctx context.Context, host string, id int64) (Snapshot, error) {
 	return s.snapshot(ctx, `WHERE host_id = ? AND id < ? ORDER BY id DESC LIMIT 1`, host, id)

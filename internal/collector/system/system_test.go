@@ -528,6 +528,8 @@ func TestSudoersUIDLinesAndIncludes(t *testing.T) {
 		"etc/host.web01":               text("b ALL=(ALL) ALL\n"),
 		"etc/sudo x":                   text("c ALL=(ALL) ALL\n"),
 		"etc/polkit-1/rules.d/a.rules": text("polkit.addRule(function () {});\n"),
+		"etc/polkit-1/rules.d/b.rules": &fstest.MapFile{Data: []byte("../../../opt/p/b.rules"), Mode: fs.ModeSymlink},
+		"opt/p/b.rules":                text("polkit.addRule(function () {});\n"),
 	}
 	res := collect[SudoersResult](t, Sudoers{}, collector.Source{FS: fsys})
 	got := map[string]bool{}
@@ -544,7 +546,7 @@ func TestSudoersUIDLinesAndIncludes(t *testing.T) {
 	for _, d := range res.Dirs {
 		dirs = append(dirs, d.Path)
 	}
-	if !slices.Equal(dirs, []string{"/etc", "/etc/polkit-1/rules.d"}) {
+	if !slices.Equal(dirs, []string{"/", "/etc", "/etc/polkit-1", "/etc/polkit-1/rules.d", "/opt", "/opt/p"}) {
 		t.Errorf("policy dirs = %v", dirs)
 	}
 }
