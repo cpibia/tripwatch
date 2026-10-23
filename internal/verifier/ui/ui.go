@@ -99,7 +99,7 @@ func New(c Config) (http.Handler, error) {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "host", "alerts", "alert", "enroll", "error"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +143,7 @@ func New(c Config) (http.Handler, error) {
 func headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
@@ -221,6 +221,9 @@ type page struct {
 	Refresh bool
 	Notify  bool
 	Path    string
+	// Alarm is set while a critical alert is open, Release is the running version.
+	Alarm   bool
+	Release string
 	Data    any
 }
 
@@ -228,10 +231,18 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	p.Theme = themeOf(r)
 	p.Notify = s.Notify
 	p.Path = r.URL.RequestURI()
+	p.Release = s.release()
+	if p.User != "" {
+		alarm, err := s.Store.Alarming(r.Context())
+		if err != nil {
+			s.Log.Error("alarm state", "err", err)
+		}
+		p.Alarm = alarm
+	}
 	var buf bytes.Buffer
 	if err := s.pages[name].ExecuteTemplate(&buf, "layout", p); err != nil {
 		s.Log.Error("render page", "page", name, "err", err)
-		http.Error(w, "errore interno", http.StatusInternalServerError)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -701,6 +712,9 @@ type alertTable struct {
 	Selected int64
 	// Picked is set when someone chose the selected alert: its group opens to show it.
 	Picked bool
+	// NoActions leaves the actions out of the rows: on the overview they live in the side panel
+	// and on each alert's page, where there is the context to decide.
+	NoActions bool
 }
 
 // focus is the side panel of a page: the alert it shows and whether someone picked it.
@@ -775,6 +789,24 @@ func pickTable(alerts []store.Alert, csrf, back, base string, f focus) alertTabl
 		t.Selected, t.Picked = f.Alert.ID, f.Picked
 	}
 	return t
+}
+
+// boardTable is pickTable for the overview, whose rows carry no actions.
+func boardTable(alerts []store.Alert, csrf, back, base string, f focus) alertTable {
+	t := pickTable(alerts, csrf, back, base, f)
+	t.NoActions = true
+	return t
+}
+
+// subject is what a fingerprint names beyond its rule, such as a file's path, when the title
+// does not already show it: it tells apart the rows of a group.
+func subject(a store.Alert) string {
+	fp, _, _ := strings.Cut(a.Fingerprint, "|")
+	parts := strings.SplitN(fp, ":", 3)
+	if len(parts) < 3 || parts[2] == "" || strings.Contains(a.Title, parts[2]) {
+		return ""
+	}
+	return parts[2]
 }
 
 // hostTable is table for a page about one host, where a host column would repeat its name.

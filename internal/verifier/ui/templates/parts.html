@@ -1,4 +1,4 @@
-{{define "glyph"}}<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path class="g-frame" d="M0.5 0.5H15.5V15.5H0.5Z"/><path class="g-mark" d="M8 4L12 11.5H4Z"/></svg>{{end}}
+{{define "glyph"}}<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path class="g-post" d="M2 3V14M14 3V14"/><path class="g-wire" d="M2 7.5H6.6L7.6 5.8M14 7.5H9.4L8.4 9.2"/></svg>{{end}}
 
 {{define "sevmark"}}{{if eq .Kind "silence"}}<span class="sev sev-critical{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape "silent" .Status}}silent</span>{{else}}<span class="sev sev-{{.Severity}}{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape .Severity .Status}}{{sev .Severity}}</span>{{end}}{{end}}
 
@@ -8,11 +8,11 @@
 <tr class="row-{{.Status}}{{if and $t.Select (eq .ID $t.Selected)}} is-picked{{end}}"{{if $t.Select}} data-href="{{$t.SelectURL .ID}}"{{end}}>
   <td>{{template "sevmark" .}}</td>
   {{if not $t.OneHost}}<td class="host">{{template "hostlink" .HostID}}</td>{{end}}
-  <td class="what"><a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{.Title}}</a></td>
+  <td class="what"><a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{.Title}}</a>{{with subject .}}<span class="subject mono">{{.}}</span>{{end}}</td>
   <td class="num start"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
   <td class="num count">{{if gt .Occurrences 1}}{{.Occurrences}}×{{end}}</td>
   <td class="state">{{status .Status}}{{if .AckedBy}}<span class="by">{{.AckedBy}}</span>{{end}}</td>
-  <td class="act">{{template "actions" (actx . $t.CSRF $t.Back)}}</td>
+  {{if not $t.NoActions}}<td class="act">{{template "actions" (actx . $t.CSRF $t.Back)}}</td>{{end}}
 </tr>
 {{end}}{{end}}
 
@@ -20,27 +20,30 @@
 <tr class="group-head row-{{.Lead.Status}}">
   <td>{{template "sevmark" .Lead}}</td>
   {{if not $t.OneHost}}<td class="host">{{template "hostlink" .Lead.HostID}}</td>{{end}}
-  <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span><span class="tally-n">{{len .Alerts}}</span></button></td>
+  <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span> <span class="tally-n">{{len .Alerts}}</span></button></td>
   <td class="num start"><time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{clock .Since}}</time></td>
   <td class="num count"></td>
   <td class="state">{{if .Open}}<span>{{.Open}} open</span>{{end}}{{if .Acked}}<span>{{.Acked}} acknowledged</span>{{end}}{{if .Resolved}}<span>{{.Resolved}} resolved</span>{{end}}</td>
-  <td class="act">{{with .Pending}}<div class="actions">
+  {{if not $t.NoActions}}<td class="act">{{with .Pending}}{{$n := len .}}{{$serious := or (eq $.Group.Lead.Severity "critical") (eq $.Group.Lead.Severity "high")}}<div class="actions">
     {{if $.Group.Open}}<form method="post" action="/bulk/ack"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}{{if eq .Status "open"}}<input type="hidden" name="id" value="{{.ID}}">{{end}}{{end}}<button type="submit">Acknowledge all<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
-    <form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit">Resolve all<span class="sr">: {{$.Group.Label}}</span></button></form>
-    {{if acceptable $.Group.Lead}}<form method="post" action="/bulk/accept"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit" title="Stop raising them while they stay identical">Accept all<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
-  </div>{{end}}</td>
+    {{if $serious}}<details class="confirm"><summary>Resolve all<span class="sr">: {{$.Group.Label}}</span></summary>
+      <form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit" class="danger">Resolve {{$n}} {{sev $.Group.Lead.Severity}} {{plural $n "alert" "alerts"}}</button></form>
+    </details>{{else}}<form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit">Resolve all<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
+    {{if acceptable $.Group.Lead}}<details class="confirm"><summary>Accept all<span class="sr">: {{$.Group.Label}}</span></summary>
+      <form method="post" action="/bulk/accept"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<p>Not raised again while each stays identical.</p><button type="submit" class="danger">Accept {{$n}} {{plural $n "alert" "alerts"}}</button></form>
+    </details>{{end}}
+  </div>{{end}}</td>{{end}}
 </tr>
 {{end}}{{end}}
 
 {{define "actions"}}{{$a := .Alert}}{{if ne $a.Status "resolved"}}<div class="actions">
 {{if eq $a.Status "open"}}<form method="post" action="/alerts/{{$a.ID}}/ack"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Acknowledge<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
 <form method="post" action="/alerts/{{$a.ID}}/resolve"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Resolve<span class="sr">: {{$a.Title}}</span></button></form>
-{{if acceptable $a}}<form method="post" action="/alerts/{{$a.ID}}/accept"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit" title="Stop raising it while it stays identical">Accept<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
 </div>{{end}}{{end}}
 
 {{define "alerttable"}}
 <table class="grid alerts">
-<thead><tr><th scope="col">Severity</th>{{if not .OneHost}}<th scope="col">Server</th>{{end}}<th scope="col">Alert</th><th scope="col" class="num">Started</th><th scope="col" class="num"><span class="sr">Occurrences</span></th><th scope="col">Status</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+<thead><tr><th scope="col">Severity</th>{{if not .OneHost}}<th scope="col">Server</th>{{end}}<th scope="col">Alert</th><th scope="col" class="num">Started</th><th scope="col" class="num"><span class="sr">Occurrences</span></th><th scope="col">Status</th>{{if not .NoActions}}<th scope="col"><span class="sr">Actions</span></th>{{end}}</tr></thead>
 {{range .Groups}}{{if eq (len .Alerts) 1}}
 <tbody>{{template "alertrow" (rowx .Lead $)}}</tbody>
 {{else}}

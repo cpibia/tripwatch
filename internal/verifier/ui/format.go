@@ -15,7 +15,8 @@ var statusLabels = map[string]string{"open": "open", "acknowledged": "acknowledg
 
 func funcs(now func() time.Time) template.FuncMap {
 	return template.FuncMap{
-		"clock": func(t time.Time) string { return clock(t, now()) },
+		"clock":   func(t time.Time) string { return clock(t, now()) },
+		"updated": func() string { return now().In(time.Local).Format("15:04") },
 		"stamp": func(t time.Time) string {
 			if t.IsZero() {
 				return "never"

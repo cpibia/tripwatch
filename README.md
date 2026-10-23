@@ -545,10 +545,11 @@ is needed too, which closes them all.
 
 - **Overview.** A control room board: everything is grey until something deviates. At the top
   the counters (critical, silent, high, acknowledged, each with the age of the oldest); below, the
-  server table with deviating servers on top and the oldest first; then the alerts to handle. On
-  wide screens, at the side, the detail of the alert to look at first, with its actions; clicking
-  another alert (also from the Alerts page) shows that one in the panel, with a link to its
-  detail. Every severity has a shape as well as a color (diamond for silent, triangle critical,
+  server table with deviating servers on top and the oldest first; then the alerts to handle,
+  without buttons in the rows. At the side (above the tables on smaller screens) the alert to look
+  at first, chosen by severity and then by kind (a silent sensor, then code planted in a web
+  application, then the rest), with its actions; clicking another alert (also from the Alerts
+  page) shows that one in the panel, with a link to its detail. Every severity has a shape as well as a color (diamond for silent, triangle critical,
   square high, circle medium, hollow circle low), and a silent server is a present mark with a
   dashed row, not a dimmed row.
 - **Server.** State, every alert, the silences of the last 7 days with their duration, the last
@@ -556,9 +557,11 @@ is needed too, which closes them all.
 - **Alerts.** To handle, acknowledged, resolved. Every alert can be acknowledged and resolved;
   the detail shows the text collected from the server as data, without interpreting it. Alerts
   of the same rule, server and severity (one per file, request or process) are one row that opens
-  onto them, with actions that acknowledge or resolve the whole group; an open group stays open
-  across the automatic refresh. Resolving closes an alert, but a condition still present comes
-  back with the next snapshot. **Accept** (on one alert or a whole group) declares it legitimate,
+  onto them, each row showing the file or item that tells it apart, with actions that
+  acknowledge or resolve the whole group; resolving or accepting a group of critical or high
+  alerts asks once more with their number. An open group stays open across the automatic
+  refresh. In long lists the actions appear on the row being pointed at. Resolving closes an alert, but a condition still present comes
+  back with the next snapshot. **Accept as legitimate** (on an alert's page, or for a whole group) declares it legitimate,
   such as a file a library ships: it is not raised again while its evidence (for a file, its size
   and SHA-256) stays the same, and a changed file or a new one is an alert again. The server's
   page lists what was accepted, by whom and when, and puts any of it back under watch. Silences,
@@ -569,7 +572,9 @@ is needed too, which closes them all.
   bundle with the keys to download once; the verifier keeps neither.
 
 Light and dark theme (follows the system, or chosen from the menu), refreshes by itself every
-minute and works on a phone too. Pages run no inline scripts or styles (strict Content Security
+minute and works on a phone too. The mark in the menu, a tripwire cut in the middle, and the
+browser tab icon turn red while a critical alert is open; a verifier without email shows it as a
+warning in the menu. Fonts (IBM Plex) are embedded in the binary and served by the verifier. Pages run no inline scripts or styles (strict Content Security
 Policy), forms are protected by CSRF tokens, and sign-in attempts for the same email address go
 through one at a time, with a delay that grows after five failures up to 15 seconds, whatever
 address they come from: guessing the password becomes very slow even in parallel. A browser that
@@ -630,4 +635,5 @@ events.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE). The embedded IBM Plex fonts are under the SIL Open Font License
+1.1, included as [internal/verifier/ui/static/fonts/OFL.txt](internal/verifier/ui/static/fonts/OFL.txt).

@@ -22,13 +22,6 @@
 {{end}}</pre>
   </details>
   {{end}}
-  <div class="brief">
-    <p class="actions"><button type="button" data-copy="brief">Copy for an AI assistant</button></p>
-    <details>
-      <summary>Text that is copied</summary>
-      <pre class="datum" id="brief">{{$v.Brief}}</pre>
-    </details>
-  </div>
   <dl class="facts small">
     <div><dt>Kind</dt><dd class="mono">{{$a.Kind}}</dd></div>
     <div><dt>Fingerprint</dt><dd class="mono">{{$a.Fingerprint}}</dd></div>
@@ -36,10 +29,28 @@
 </section>
 
 {{if ne $a.Status "resolved"}}
-<section aria-labelledby="act-h">
+<section class="manage" aria-labelledby="act-h">
   <div class="section-head"><h2 id="act-h">Handling</h2></div>
   <p class="note">{{if or (eq $a.Severity "critical") (eq $a.Severity "high")}}Critical and high alerts are closed by hand only: a compromised server could hide the condition that raised them.{{else}}It closes by itself when a later snapshot no longer shows the condition.{{end}}</p>
   {{template "actions" (actx $a .CSRF .Path)}}
+  {{if acceptable $a}}
+  <form class="accept" method="post" action="/alerts/{{$a.ID}}/accept">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Path}}">
+    <p class="note"><strong>Accept as legitimate</strong> when this is expected, such as a file a library ships: it is not raised again while it stays exactly the same, and comes back as soon as it changes. The server's page lists what was accepted.</p>
+    <button type="submit">Accept as legitimate</button>
+  </form>
+  {{end}}
 </section>
 {{end}}
+
+<section aria-labelledby="brief-h">
+  <div class="section-head"><h2 id="brief-h">Ask an assistant</h2><p class="aside">the alert as Markdown, with the collected text marked as data</p></div>
+  <div class="brief">
+    <p class="actions"><button type="button" data-copy="brief">Copy for an AI assistant</button></p>
+    <details>
+      <summary>Text that is copied</summary>
+      <pre class="datum" id="brief">{{$v.Brief}}</pre>
+    </details>
+  </div>
+</section>
 {{end}}

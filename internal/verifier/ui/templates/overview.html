@@ -1,6 +1,6 @@
 {{define "content"}}{{$d := .Data}}
 <header class="head">
-  <h1>Overview</h1>
+  <div class="title-line"><h1>Overview</h1><p class="aside">updated {{updated}}, refreshes every minute</p></div>
   <dl class="counters">
     {{range $d.Counters}}
     <div class="counter c-{{.Key}}{{if .N}} on{{end}}">
@@ -42,7 +42,7 @@
 
 <section aria-labelledby="alerts-h">
   <div class="section-head"><h2 id="alerts-h">Alerts to handle</h2><p class="aside"><a href="/alerts?view=all">all alerts</a></p></div>
-  {{if $d.Alerts}}{{template "alerttable" (picktable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
+  {{if $d.Alerts}}{{template "alerttable" (boardtable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
   {{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Showing the first {{$d.Limit}}, the most severe and recent: <a href="/alerts">all alerts to handle</a>.</p>{{end}}
   {{else}}<p class="empty">No open or acknowledged alerts.</p>{{end}}
 </section>

@@ -730,7 +730,7 @@ func TestAlertsOfOneRuleAreGrouped(t *testing.T) {
 
 	csrf := h.login()
 	_, body := h.get("/hosts/web-01")
-	heads := regexp.MustCompile(`<button type="button" class="disclose"[^>]*aria-controls="(rows-[0-9a-f]+)"[^>]*><span class="label">([^<]*)</span><span class="tally-n">(\d+)</span>`).FindAllStringSubmatch(body, -1)
+	heads := regexp.MustCompile(`<button type="button" class="disclose"[^>]*aria-controls="(rows-[0-9a-f]+)"[^>]*><span class="label">([^<]*)</span>\s*<span class="tally-n">(\d+)</span>`).FindAllStringSubmatch(body, -1)
 	if len(heads) != 1 || heads[0][2] != "Hidden entry under /usr" || heads[0][3] != "3" {
 		t.Fatalf("group heads = %q", heads)
 	}
@@ -852,5 +852,41 @@ func TestAlertBriefForAnAssistant(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("brief lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+// The overview shows deviations without actions in its rows, the tab icon turns red while a
+// critical alert is open, and closing a group of serious alerts asks once more with their number.
+func TestBoardLeadsWithDeviations(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/srv/app/uploads/a.php", "/srv/app/uploads/b.php"} {
+		if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: "web:script_in_uploads:" + p, Severity: "critical", Kind: "web", Title: "Script in upload directories", Detail: p}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.login()
+	res, body := h.get("/")
+	if strings.Contains(body, `<td class="act">`) {
+		t.Error("the overview's rows carry actions")
+	}
+	if !strings.Contains(body, `href="/static/mark-alarm.svg"`) || !strings.Contains(body, `class="wordmark alarm"`) {
+		t.Error("an open critical alert does not turn the mark red")
+	}
+	if !strings.Contains(res.Header.Get("Content-Security-Policy"), "font-src 'self'") {
+		t.Error("the embedded fonts are not allowed")
+	}
+	_, body = h.get("/alerts")
+	if !strings.Contains(body, `<details class="confirm"><summary>Resolve all`) || !strings.Contains(body, "Resolve 2 critical alerts") {
+		t.Error("resolving a group of critical alerts does not ask with their number")
+	}
+	if !strings.Contains(body, `<span class="subject mono">/srv/app/uploads/a.php</span>`) {
+		t.Error("the rows of a group do not show what tells them apart")
+	}
+	if res, _ := h.get("/static/fonts/plex-sans.woff2"); res.StatusCode != http.StatusOK {
+		t.Errorf("font: status %d", res.StatusCode)
 	}
 }

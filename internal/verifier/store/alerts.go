@@ -458,3 +458,11 @@ func repeat(s string, n int) string {
 	}
 	return out
 }
+
+// Alarming reports whether a critical alert is open, silences included: what turns the console's
+// tab icon red.
+func (s *Store) Alarming(ctx context.Context) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM alerts WHERE status = 'open' AND severity = 'critical')`).Scan(&n)
+	return n == 1, err
+}

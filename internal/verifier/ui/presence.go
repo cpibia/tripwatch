@@ -67,6 +67,9 @@ func mostUrgent(alerts []store.Alert) *store.Alert {
 		if ra, rb := severityRank(a.Severity), severityRank(b.Severity); ra != rb {
 			return ra < rb
 		}
+		if ka, kb := kindRank(a.Kind), kindRank(b.Kind); ka != kb {
+			return ka < kb
+		}
 		return a.CreatedAt.Before(b.CreatedAt)
 	}
 	for i := range alerts {
@@ -79,4 +82,16 @@ func mostUrgent(alerts []store.Alert) *store.Alert {
 		}
 	}
 	return best
+}
+
+// kindRank orders alerts of the same severity by what usually needs eyes first: a silent sensor,
+// then code planted in the web applications, then the rest.
+func kindRank(kind string) int {
+	switch kind {
+	case "silence":
+		return 0
+	case "web":
+		return 1
+	}
+	return 2
 }

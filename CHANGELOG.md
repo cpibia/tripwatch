@@ -6,6 +6,26 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier.
+
+### Verifier
+
+- Interface redesign in the same control-room direction, after a design review:
+  - IBM Plex Sans and Mono embedded in the binary, one type scale, section titles above body
+    text, clearer button hierarchy;
+  - the overview's rows carry no buttons; actions live in the side panel and on each alert's
+    page, where Acknowledge is the primary action, and in long lists they show on the row being
+    pointed at;
+  - "Accept as legitimate" only on an alert's page, with what it does, or for a whole group;
+  - resolving or accepting a group of critical or high alerts asks once more with their number;
+  - each row of a group shows the file or item that tells it apart;
+  - the side panel puts a silent sensor and planted web code ahead of other alerts of the same
+    severity, and comes before the tables on smaller screens;
+  - new mark, a tripwire cut in the middle, in ink; the wire and the browser tab icon turn red
+    while a critical alert is open;
+  - email not configured shows as a warning in the menu; the running version is shown;
+  - contrast of red and muted text raised above 4.5:1 in both themes, larger touch targets.
+
 ## [0.1.3] - 2026-10-23
 
 Update the verifier; the sensors stay on 0.1.2.

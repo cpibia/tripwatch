@@ -9,7 +9,7 @@
   <div><dt>Last heartbeat</dt><dd><time datetime="{{iso $h.LastHeartbeat}}" title="{{stamp $h.LastHeartbeat}}">{{clock $h.LastHeartbeat}}</time></dd></div>
   <div><dt>Last snapshot</dt><dd><time datetime="{{iso $h.LastSnapshot}}" title="{{stamp $h.LastSnapshot}}">{{clock $h.LastSnapshot}}</time></dd></div>
   <div><dt>Enrolled</dt><dd><time datetime="{{iso $h.EnrolledAt}}" title="{{stamp $h.EnrolledAt}}">{{clock $h.EnrolledAt}}</time></dd></div>
-  <div><dt>Envelopes in the chain</dt><dd>{{$h.Chain.Sequence}}</dd></div>
+  <div><dt>Messages received</dt><dd>{{$h.Chain.Sequence}}</dd></div>
 </dl>
 
 <section aria-labelledby="alerts-h">
@@ -59,8 +59,8 @@
 </div>
 
 {{if not $h.Revoked}}
-<section class="danger" aria-labelledby="revoke-h">
-  <div class="section-head"><h2 id="revoke-h">Revoke</h2></div>
+<details class="danger revoke" aria-labelledby="revoke-h">
+  <summary><h2 id="revoke-h">Revoke this server</h2></summary>
   <p>The verifier will refuse every envelope from this server. Bringing it back takes a new enrollment, with new keys.</p>
   <form method="post" action="/hosts/{{$h.ID}}/revoke" class="form inline">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -68,6 +68,6 @@
     <input id="confirm" name="confirm" type="text" autocomplete="off" spellcheck="false" required>
     <button class="danger" type="submit">Revoke the server</button>
   </form>
-</section>
+</details>
 {{end}}
 {{end}}
