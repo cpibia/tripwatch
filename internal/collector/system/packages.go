@@ -124,7 +124,7 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 
 	res.Unowned, res.UnownedLinks = unownedExecutables(src.FS, owned)
 	res.DatabaseSHA256 = databaseHash(src.FS, res.Manager, &res.Issues)
-	res.Hidden = hiddenEntries(src.FS)
+	res.Hidden = hiddenEntries(src.FS, owned)
 	return res, nil
 }
 
@@ -353,19 +353,30 @@ func alternative(fsys fs.FS, p string, owned map[string]bool) bool {
 	return err == nil && owned[collector.Rel(path.Clean(final))]
 }
 
-// hiddenEntries lists dot-named files and directories under /usr, where packages do not put
-// any and attackers like to hide tools in dot-directories.
-func hiddenEntries(fsys fs.FS) []string {
+// hiddenEntries lists dot-named files and directories under /usr that no package installed:
+// attackers like to hide tools there. Packages do ship a few (kernel headers, build-id
+// directories); inside such a directory everything must be owned too, so a file dropped in a
+// packaged hidden directory is still reported. Without a package database every one is listed.
+func hiddenEntries(fsys fs.FS, owned map[string]bool) []string {
 	out := []string{}
+	ownedHidden := ""
 	_ = fs.WalkDir(fsys, "usr", func(name string, d fs.DirEntry, err error) error {
-		if err != nil {
+		if err != nil || name == "usr" {
 			return nil
 		}
-		if strings.HasPrefix(d.Name(), ".") && name != "usr" {
+		if ownedHidden != "" && !strings.HasPrefix(name, ownedHidden+"/") {
+			ownedHidden = ""
+		}
+		suspect := strings.HasPrefix(d.Name(), ".") || ownedHidden != ""
+		switch {
+		case !suspect:
+		case !owned[name]:
 			out = append(out, "/"+name)
 			if d.IsDir() {
 				return fs.SkipDir
 			}
+		case d.IsDir() && ownedHidden == "":
+			ownedHidden = name
 		}
 		return nil
 	})

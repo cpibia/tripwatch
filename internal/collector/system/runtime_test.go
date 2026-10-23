@@ -193,7 +193,9 @@ func dpkgHost() fstest.MapFS {
 		"var/lib/dpkg/info/coreutils:amd64.md5sums": text(md5hex("ls") + "  bin/ls\n" +
 			md5hex("original x") + "  usr/bin/x\n"),
 		"var/lib/dpkg/info/coreutils:amd64.list": text("/bin/ls\n/usr/bin/x\n/usr/bin/vim.basic\n"),
-		"var/lib/dpkg/diversions":                text("/usr/bin/x\n/usr/bin/x.distrib\nother-package\n"),
+		"var/lib/dpkg/info/linux-headers.list": text("/usr/src/linux-headers-6.8/.config\n/usr/src/linux-headers-6.8/tools/.fixdep.o.d\n" +
+			"/usr/lib/modules/6.8/vdso/.build-id\n/usr/lib/modules/6.8/vdso/.build-id/ab\n/usr/lib/modules/6.8/vdso/.build-id/ab/cdef.debug\n"),
+		"var/lib/dpkg/diversions": text("/usr/bin/x\n/usr/bin/x.distrib\nother-package\n"),
 
 		"bin":                         link("usr/bin"),
 		"usr/bin/ls":                  text("ls"),
@@ -212,6 +214,11 @@ func dpkgHost() fstest.MapFS {
 		"usr/lib/.syslib/fnd":         text("find"),
 		"usr/share/.placeholder":      text(""),
 		"usr/lib/python3/__init__.py": text(""),
+
+		"usr/src/linux-headers-6.8/.config":                text("CONFIG_X=y"),
+		"usr/src/linux-headers-6.8/tools/.fixdep.o.d":      text(""),
+		"usr/lib/modules/6.8/vdso/.build-id/ab/cdef.debug": text("elf"),
+		"usr/lib/modules/6.8/vdso/.build-id/ab/payload":    text("planted in a packaged hidden directory"),
 	}
 }
 
@@ -244,8 +251,8 @@ func TestPackagesDpkg(t *testing.T) {
 	if !slices.Equal(res.Unowned, []string{"/usr/bin/backdoor"}) {
 		t.Errorf("unowned = %v; merged-/usr and diverted paths are owned, symlinks are skipped", res.Unowned)
 	}
-	if !slices.Equal(res.Hidden, []string{"/usr/lib/.syslib", "/usr/share/.placeholder"}) {
-		t.Errorf("hidden = %v", res.Hidden)
+	if !slices.Equal(res.Hidden, []string{"/usr/lib/.syslib", "/usr/lib/modules/6.8/vdso/.build-id/ab/payload", "/usr/share/.placeholder"}) {
+		t.Errorf("hidden = %v; packaged hidden entries are skipped, what was added inside them is not", res.Hidden)
 	}
 }
 
