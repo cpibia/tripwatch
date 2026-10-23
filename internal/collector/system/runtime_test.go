@@ -78,6 +78,8 @@ func procHost() fstest.MapFS {
 			"7f00c000-7f00d000 r-xp 00000000 00:01 7 /memfd:stage2 (deleted)\n" +
 			"7f00e000-7f00f000 rw-p 00000000 08:01 55 /dev/shm/data\n" +
 			"7f010000-7f011000 r-xp 00000000 08:01 56 /dev/shm/.inject.so\n" +
+			"7f020000-7f021000 r-xs 08000000 00:01 9 /dev/zero (deleted)\n" +
+			"7f030000-7f031000 r-xs 00000000 00:01 10 /memfd:doublemapper (deleted)\n" +
 			"7ffd0000-7ffd1000 rwxp 00000000 00:00 0 [stack]\n"),
 		"proc/4242/ns/net": link(hostNetNS),
 		"proc/4242/fd/5":   link("socket:[30001]"),

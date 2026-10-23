@@ -77,6 +77,7 @@ func TestRules(t *testing.T) {
 		{req("POST", "/media/catalog/x.php", 404, "-"), []string{"script_in_upload_path:high"}},
 		{req("GET", "/media/catalog/x.php/a.jpg", 200, "-"), []string{"script_in_upload_path:critical"}},
 		{req("GET", "/wp-content/uploads/2026/x.phtml", 403, "-"), []string{"script_in_upload_path:high"}},
+		{req("GET", "/wp-content/uploads/dsa.php", 301, "-"), []string{"script_in_upload_path:low"}},
 		{req("GET", "/wso.php", 404, "-"), []string{"known_webshell_name:low"}},
 		{req("POST", "/wso.php", 404, "-"), []string{"known_webshell_name:high"}},
 		{req("GET", "/tools/c99.php/x", 200, "-"), []string{"known_webshell_name:critical"}},

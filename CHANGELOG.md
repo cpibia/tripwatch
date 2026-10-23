@@ -6,6 +6,26 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+False positives seen on a real server, fixed.
+
+### Sensor
+
+- Only private executable mappings are reported: shared ones are what OPcache's JIT and other
+  JITs map, a shared anonymous region showing as `/dev/zero (deleted)`.
+- A process whose deleted executable has been replaced by a new file at the same path is marked
+  as such (`exe_replaced`): a package upgrade it was not restarted for.
+- A web server's configuration counts as stale only if it changed after the server last read it:
+  a reload starts new workers while the master keeps running.
+
+### Verifier
+
+- A process still running a replaced binary in the system's directories is a low "restart
+  pending"; one whose binary is gone stays high. Shared anonymous regions reported by older
+  sensors are ignored.
+- A script requested in an upload directory and answered with a redirect is low: the redirect
+  is the server's own (to https, to a canonical host) and the request that follows is judged on
+  its own status. Any other status but success stays high.
+
 ## [0.1.10] - 2026-10-23
 
 Update the verifier; the sensors stay on 0.1.9.

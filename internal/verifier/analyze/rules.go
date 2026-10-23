@@ -902,6 +902,10 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, pr := range p.Processes {
 			for _, m := range pr.Mapped {
+				// Sensors before 0.1.11 also reported shared anonymous regions (OPcache, JITs).
+				if m == "/dev/zero (deleted)" || strings.HasPrefix(m, "/SYSV") {
+					continue
+				}
 				// Applications ship native modules under homes and web roots (Node addons, Python
 				// wheels): code from there is high, from the scratch directories critical.
 				sev, why := "high", "a file in a home or a web root, where applications may keep native modules but injected libraries also land"
@@ -925,6 +929,9 @@ func Evaluate(prev *State, cur State) []Finding {
 			case strings.HasPrefix(pr.Exe, "/memfd:"):
 				state("processes", "memfd:"+pr.Comm+":"+pr.ExeSHA256, "critical", "Fileless process: "+pr.Comm,
 					fmt.Sprintf("PID %d (%s) runs %s, a file that exists only in memory: malware runs this way to leave nothing on disk. UID %d, hash %s, command line %s.", pr.PID, pr.Comm, pr.Exe, pr.UID, pr.ExeSHA256, pr.Cmdline))
+			case pr.ExeDeleted && pr.ExeReplaced && standardBinDir(pr.Exe):
+				state("processes", "restart-pending:"+pr.Exe, "low", "Process still runs a replaced binary: "+pr.Comm,
+					fmt.Sprintf("PID %d (%s) still runs the old %s: the file was replaced, most likely by a package upgrade, and the process has not been restarted since. Restart it to run the new version.", pr.PID, pr.Comm, pr.Exe))
 			case pr.ExeDeleted:
 				state("processes", "deleted:"+pr.Exe+":"+pr.ExeSHA256, "high", "Process from a deleted executable", fmt.Sprintf("PID %d (%s) runs %s, removed from disk. Hash %s.", pr.PID, pr.Comm, pr.Exe, pr.ExeSHA256))
 			case suspiciousPath(pr.Exe):

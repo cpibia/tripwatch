@@ -53,7 +53,7 @@ func Inspect(fsys fs.FS) Inventory {
 		sites, files, issues := srv.parse(fsys)
 		inv.Sites = append(inv.Sites, sites...)
 		inv.Issues = append(inv.Issues, issues...)
-		started, running := processStart(fsys, srv.processes)
+		started, running := configLoaded(fsys, srv.processes)
 		for _, name := range files {
 			f, err := collector.Describe(collector.Source{FS: fsys}, name)
 			inv.Issues.Add(err)
@@ -110,10 +110,11 @@ func runtimeName(comm string) (string, bool) {
 // userHZ is the unit of process start times in /proc/<pid>/stat on every mainstream Linux.
 const userHZ = 100
 
-// processStart returns when the earliest process with one of the given names started, from
-// the start time in /proc/<pid>/stat (ticks since boot) and the boot time in /proc/stat. The
-// timestamps of /proc entries themselves are not usable: procfs sets them at first lookup.
-func processStart(fsys fs.FS, names []string) (time.Time, bool) {
+// configLoaded returns when the web server last read its configuration: the start of its most
+// recent process, since a reload starts new workers while the master keeps running. It comes
+// from the start time in /proc/<pid>/stat (ticks since boot) and the boot time in /proc/stat.
+// The timestamps of /proc entries themselves are not usable: procfs sets them at first lookup.
+func configLoaded(fsys fs.FS, names []string) (time.Time, bool) {
 	boot, ok := bootTime(fsys)
 	if !ok {
 		return time.Time{}, false
@@ -122,7 +123,7 @@ func processStart(fsys fs.FS, names []string) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	var earliest time.Time
+	var latest time.Time
 	for _, e := range entries {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
@@ -148,11 +149,11 @@ func processStart(fsys fs.FS, names []string) (time.Time, bool) {
 			continue
 		}
 		start := boot.Add(time.Duration(ticks) * time.Second / userHZ)
-		if earliest.IsZero() || start.Before(earliest) {
-			earliest = start
+		if start.After(latest) {
+			latest = start
 		}
 	}
-	return earliest, !earliest.IsZero()
+	return latest, !latest.IsZero()
 }
 
 func bootTime(fsys fs.FS) (time.Time, bool) {

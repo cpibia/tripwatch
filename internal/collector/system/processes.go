@@ -28,11 +28,14 @@ type Process struct {
 	Cmdline    string `json:"cmdline"`
 	Exe        string `json:"exe,omitempty"`
 	ExeDeleted bool   `json:"exe_deleted,omitempty"`
-	ExeSHA256  string `json:"exe_sha256,omitempty"`
-	Cwd        string `json:"cwd,omitempty"`
-	Preload    string `json:"ld_preload,omitempty"`
-	NetNS      string `json:"netns,omitempty"`
-	MntNS      string `json:"mntns,omitempty"`
+	// ExeReplaced means a file exists again where a deleted executable was: a package upgrade
+	// that the process has not been restarted for, not a binary that removed itself.
+	ExeReplaced bool   `json:"exe_replaced,omitempty"`
+	ExeSHA256   string `json:"exe_sha256,omitempty"`
+	Cwd         string `json:"cwd,omitempty"`
+	Preload     string `json:"ld_preload,omitempty"`
+	NetNS       string `json:"netns,omitempty"`
+	MntNS       string `json:"mntns,omitempty"`
 	// Tracer is the PID attached to this process with ptrace, what debuggers do and what
 	// injectors and credential stealers do to a running sshd or su.
 	Tracer int `json:"tracer,omitempty"`
@@ -80,6 +83,11 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 			p.ExeSHA256 = exeHash(src, pid, hashes, &res.Issues)
 		}
 		p.Mapped = mappedCode(src.FS, pid, p.Exe)
+		if p.ExeDeleted && strings.HasPrefix(p.Exe, "/") {
+			if info, err := fs.Lstat(src.FS, collector.Rel(p.Exe)); err == nil && info.Mode().IsRegular() {
+				p.ExeReplaced = true
+			}
+		}
 		res.Processes = append(res.Processes, p)
 	}
 	return res, nil
@@ -131,9 +139,11 @@ func mappedCode(fsys fs.FS, pid int, exe string) []string {
 	}
 	var out []string
 	for _, line := range strings.Split(string(data), "\n") {
-		// address perms offset dev inode path
+		// address perms offset dev inode path. Only private executable mappings count: shared
+		// ones are what JITs and caches such as OPcache map, a shared anonymous region showing
+		// as "/dev/zero (deleted)"; a library loaded into a process is mapped private.
 		f := strings.SplitN(line, " ", 6)
-		if len(f) < 6 || len(f[1]) < 3 || f[1][2] != 'x' {
+		if len(f) < 6 || len(f[1]) < 4 || f[1][2] != 'x' || f[1][3] != 'p' {
 			continue
 		}
 		file := strings.TrimSpace(f[5])

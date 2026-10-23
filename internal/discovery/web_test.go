@@ -502,9 +502,14 @@ func TestStaleConfig(t *testing.T) {
 		"etc/nginx/nginx.conf": &fstest.MapFile{Data: []byte("http { include sites/*; }"), ModTime: boot.Add(30 * time.Minute)},
 		"etc/nginx/sites/a":    &fstest.MapFile{Data: []byte("server { root /srv; }"), ModTime: boot.Add(90 * time.Minute)},
 	}
-	// The master started an hour after boot; the worker later does not move that.
-	inv := Inspect(fsys)
-	if !slices.Equal(inv.StaleConfig, []string{"/etc/nginx/sites/a"}) {
+	// The master started an hour after boot and a reload two hours after boot started the
+	// worker: the configuration changed at 90 minutes is the one running.
+	if inv := Inspect(fsys); len(inv.StaleConfig) != 0 {
+		t.Errorf("stale after a reload = %v", inv.StaleConfig)
+	}
+	// Without the reload, the file changed after the server started is stale.
+	fsys["proc/11/stat"] = text("11 (nginx) S 10 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 360000 0 0")
+	if inv := Inspect(fsys); !slices.Equal(inv.StaleConfig, []string{"/etc/nginx/sites/a"}) {
 		t.Errorf("stale = %v", inv.StaleConfig)
 	}
 }
