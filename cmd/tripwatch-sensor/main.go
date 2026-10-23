@@ -296,6 +296,8 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 
 	// Every start is reported: a stop shorter than the silence threshold would otherwise leave
 	// no trace. If the verifier is unreachable the event stays pending and goes out first.
+	// A marker left by an earlier removal of the package means nothing to this run.
+	_ = os.Remove(filepath.Join(stateDir, removingMarker))
 	bootID, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	started, _ := json.Marshal(map[string]string{"event": "sensor_started", "version": buildinfo.Version, "boot_id": strings.TrimSpace(string(bootID))})
 	if err := client.Send(ctx, protocol.KindEvent, started, time.Now()); err != nil && ctx.Err() == nil {
@@ -347,9 +349,29 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 		}
 		select {
 		case <-ctx.Done():
+			stopping(log, client, stateDir)
 			return nil
 		case <-time.After(interval):
 		}
+	}
+}
+
+// removingMarker is left in the state directory by the package's pre-removal script.
+const removingMarker = "removing"
+
+// stopping tells the verifier, as the last envelope of the chain, that the sensor is going away
+// and why: removed with its package, or stopped (by hand, or for a reboot). Without it a stop
+// shows only as silence minutes later.
+func stopping(log *slog.Logger, client *transport.Client, stateDir string) {
+	reason := "stopped"
+	if _, err := os.Stat(filepath.Join(stateDir, removingMarker)); err == nil {
+		reason = "package_removed"
+	}
+	payload, _ := json.Marshal(map[string]string{"event": "sensor_stopping", "version": buildinfo.Version, "reason": reason})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Send(ctx, protocol.KindEvent, payload, time.Now()); err != nil {
+		log.Warn("stop not reported to the verifier", "reason", reason, "err", err)
 	}
 }
 

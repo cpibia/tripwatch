@@ -430,6 +430,24 @@ func TestSensorStartRaisesAnAlert(t *testing.T) {
 	}
 }
 
+// A sensor going away says so: a removal of its package is high, a stop medium.
+func TestSensorStopAndRemovalRaiseAlerts(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	for _, reason := range []string{"stopped", "package_removed"} {
+		if err := c.Send(context.Background(), protocol.KindEvent, []byte(`{"event":"sensor_stopping","version":"1.2.0","reason":"`+reason+`"}`), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]string{}
+	for _, a := range h.alerts() {
+		got[a.Title] = a.Severity
+	}
+	if len(got) != 2 || got["Sensor stopped"] != "medium" || got["Sensor removed"] != "high" {
+		t.Fatalf("alerts = %v", got)
+	}
+}
+
 func TestClientCertificateRenewal(t *testing.T) {
 	h := newHarness(t)
 	_, b := h.sensor("web-01")

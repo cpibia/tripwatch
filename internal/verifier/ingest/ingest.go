@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -539,6 +540,10 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 		s.watched(ctx, host, e, now)
 		return
 	}
+	if ev.Event == "sensor_stopping" {
+		s.stopping(ctx, host, e, now)
+		return
+	}
 	if ev.Event != "sensor_started" {
 		return
 	}
@@ -547,6 +552,33 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 		Title: "Sensor started", Detail: detail}, now); err != nil {
 		s.Log.Error("raise start alert", "host", host, "err", err)
 	}
+}
+
+// stopping records a sensor saying it goes away. A removal is high: whoever removes the sensor
+// leaves the server unwatched. A stop is medium: reboots stop it too, and the start that follows
+// is an alert of its own.
+func (s *Server) stopping(ctx context.Context, host string, e protocol.Envelope, now time.Time) {
+	var ev struct {
+		Version string `json:"version"`
+		Reason  string `json:"reason"`
+	}
+	_ = json.Unmarshal(e.Payload, &ev)
+	a := store.Alert{HostID: host, Fingerprint: "sensor:stopped:" + strconv.FormatUint(e.Sequence, 10), Severity: "medium", Kind: "sensor-event",
+		Title:  "Sensor stopped",
+		Detail: fmt.Sprintf("The sensor (version %s) reported that it was stopping. A reboot or an administrator stopping the service does this; if neither happened, someone stopped it: nothing on the server is watched until it starts again.", clipVersion(ev.Version)),
+	}
+	if ev.Reason == "package_removed" {
+		a.Severity, a.Title = "high", "Sensor removed"
+		a.Detail = fmt.Sprintf("The sensor package (version %s) was removed from the server and the sensor stopped: nothing on it is watched any more. If no administrator uninstalled it, someone with root did, and the server should be checked from outside.", clipVersion(ev.Version))
+	}
+	s.raise(ctx, a, now)
+}
+
+func clipVersion(v string) string {
+	if len(v) > 64 {
+		v = v[:64]
+	}
+	return strings.ToValidUTF8(v, "")
 }
 
 func writeAck(w http.ResponseWriter, seq uint64) {

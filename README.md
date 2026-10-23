@@ -473,7 +473,9 @@ not pretend otherwise, but aims to make both visible. Already today:
 - the heartbeat reveals a stopped sensor within minutes, and a sensor that keeps sending
   heartbeats but no more snapshots raises an alert of its own; every sensor start arrives as a
   signed event and every gap between two heartbeats over 100 seconds becomes an alert, so even a
-  stop or a suspension shorter than the silence threshold leaves a trace;
+  stop or a suspension shorter than the silence threshold leaves a trace; a sensor that is
+  stopped says so in a last signed event, and one removed with its package (`apt remove`,
+  `dnf remove`) raises a high alert at once instead of only falling silent;
 - critical and high alerts do not close by themselves when the condition goes away: a
   compromised server could clean up and silence its own alerts, so a person closes them.
 
