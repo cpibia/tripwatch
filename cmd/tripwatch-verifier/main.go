@@ -245,14 +245,11 @@ func enroll(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := st.Enroll(context.Background(), *host, pub, now); err != nil {
-		return err
-	}
 	serial, err := pki.Serial([]byte(bundle.Cert))
 	if err != nil {
 		return err
 	}
-	if err := st.SetCertificate(context.Background(), *host, serial, false); err != nil {
+	if err := st.EnrollWithCertificate(context.Background(), *host, pub, serial, now); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(bundle, "", "  ")

@@ -74,7 +74,11 @@ func (h *harness) sensor(host string) (*transport.Client, pki.Bundle) {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	if err := h.store.Enroll(context.Background(), host, pub, now); err != nil {
+	serial, err := pki.Serial([]byte(b.Cert))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := h.store.EnrollWithCertificate(context.Background(), host, pub, serial, now); err != nil {
 		h.t.Fatal(err)
 	}
 	return h.client(b, h.t.TempDir()), b
@@ -727,5 +731,34 @@ func TestFailedUploadIsPenalised(t *testing.T) {
 	}
 	if codes[0] != http.StatusBadRequest || codes[1] != http.StatusServiceUnavailable {
 		t.Fatalf("statuses %v, want the failure and then the penalty", codes)
+	}
+}
+
+// After a re-enrollment only the new certificate works, from the very first request: a copy of
+// the old bundle cannot win a race to become the host's. A host with no certificate recorded
+// accepts none.
+func TestReenrollmentBindsTheNewCertificateAtOnce(t *testing.T) {
+	h := newHarness(t)
+	old, oldBundle := h.sensor("web-01")
+	ctx := context.Background()
+	if err := old.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := h.sensor("web-01")
+	if err := h.client(oldBundle, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) {
+		t.Fatalf("the old bundle still works after re-enrollment: %v", err)
+	}
+	if err := fresh.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil {
+		t.Fatalf("the new certificate is refused: %v", err)
+	}
+	b, pub, err := h.ca.Enroll("web-02", h.srv.URL+Path, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Enroll(ctx, "web-02", pub, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.client(b, t.TempDir()).Send(ctx, protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) {
+		t.Fatalf("a host with no certificate recorded took the first one presented: %v", err)
 	}
 }

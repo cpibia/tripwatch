@@ -104,12 +104,10 @@ func (s *Server) currentCertificate(ctx context.Context, w http.ResponseWriter, 
 	serial := presented.SerialNumber.Text(16)
 	switch {
 	case host.CertSerial == "":
-		// Enrolled before certificates were recorded: the first one presented becomes the
-		// host's, and any other is refused from then on.
-		if err := s.Store.SetCertificate(ctx, host.ID, serial, false); err != nil {
-			s.Log.Error("record certificate", "host", host.ID, "err", err)
-		}
-		return true
+		// No certificate recorded: none is the host's. Taking the first one presented would let
+		// a copy of an old bundle win the race against a re-enrollment.
+		http.Error(w, "no client certificate recorded for this host: enroll it again", http.StatusForbidden)
+		return false
 	case serial == host.CertSerial:
 		if host.PrevSerial != "" && serial == host.CertSerial {
 			if err := s.Store.CertificateUsed(ctx, host.ID); err != nil {
@@ -445,14 +443,19 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if err := s.Store.Enroll(r.Context(), host, ed25519.PublicKey(req.SigningKey), now); err != nil {
+	serial, err := pki.Serial(certPEM)
+	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	serial, err := pki.Serial(certPEM)
-	if err == nil {
-		err = s.Store.SetCertificate(r.Context(), host, serial, false)
+	// The host's lock keeps envelopes of the old enrollment from interleaving with the new one.
+	unlock, ok := s.lock(r.Context(), host)
+	if !ok {
+		http.Error(w, "busy", http.StatusServiceUnavailable)
+		return
 	}
+	err = s.Store.EnrollWithCertificate(r.Context(), host, ed25519.PublicKey(req.SigningKey), serial, now)
+	unlock()
 	if err != nil {
 		s.fail(w, err)
 		return

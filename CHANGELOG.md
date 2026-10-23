@@ -38,6 +38,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- Security fix: an enrollment records the host's new certificate in the same statement as its
+  key, and a host with no certificate recorded accepts none. Before, the first certificate
+  presented after a re-enrollment became the host's, so a copy of the old bundle could win
+  against the new sensor. Hosts enrolled before certificates were recorded must be enrolled
+  again.
 - Checksums of a dpkg package that changed while its version did not are a high "Package
   checksums changed without an upgrade", package by package, whatever else changed in the
   database at the same time.

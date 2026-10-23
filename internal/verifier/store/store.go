@@ -282,6 +282,15 @@ func (s *Store) Enroll(ctx context.Context, id string, pub ed25519.PublicKey, no
 	return err
 }
 
+// EnrollWithCertificate is Enroll and the recording of the host's first client certificate in
+// one statement: between the two, no other certificate of the host can be taken for its own.
+func (s *Store) EnrollWithCertificate(ctx context.Context, id string, pub ed25519.PublicKey, serial string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (id, public_key, enrolled_at, cert_serial) VALUES (?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET public_key = excluded.public_key, enrolled_at = excluded.enrolled_at,
+		revoked = 0, last_seq = 0, last_digest = NULL, cert_serial = excluded.cert_serial, prev_serial = ''`, id, []byte(pub), now.Unix(), serial)
+	return err
+}
+
 // SetCertificate records a newly issued client certificate of a host. On renewal the previous
 // one stays accepted until the new one is used, so a lost answer does not lock the sensor out;
 // on enrollment (renewal false) every earlier certificate stops working at once.

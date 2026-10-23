@@ -1292,12 +1292,13 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	if err := s.Store.Enroll(r.Context(), host, pub, now); err != nil {
+	serial, err := pki.Serial([]byte(bundle.Cert))
+	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
-	if serial, err := pki.Serial([]byte(bundle.Cert)); err != nil || s.Store.SetCertificate(r.Context(), host, serial, false) != nil {
-		s.internal(w, r, errors.New("record the certificate of "+host))
+	if err := s.Store.EnrollWithCertificate(r.Context(), host, pub, serial, now); err != nil {
+		s.internal(w, r, err)
 		return
 	}
 	s.Log.Info("host enrolled", "host", host, "by", se.Email, "replaced", existing.ID != "")
