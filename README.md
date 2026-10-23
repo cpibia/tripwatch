@@ -19,6 +19,7 @@ runs on plain hosts, Docker hosts, Kubernetes nodes and AWS Fargate.
   - [2. Sensor](#2-sensor)
   - [3. Enrollment](#3-enrollment)
   - [Kubernetes](#kubernetes)
+  - [Updates](#updates)
   - [Updating and removing](#updating-and-removing)
   - [Building from source](#building-from-source)
 - [What the sensor collects](#what-the-sensor-collects)
@@ -172,6 +173,23 @@ On a Kubernetes node, mount the host root into the pod and tell the sensor where
 ```sh
 tripwatch-sensor -root /host
 ```
+
+### Updates
+
+Every new version is a [GitHub release](https://github.com/cpibia/tripwatch/releases). To be told
+when one comes out, open the repository on GitHub, choose **Watch → Custom → Releases**, and
+GitHub sends an email for each release; the same list is also a feed for any RSS reader at
+`https://github.com/cpibia/tripwatch/releases.atom`.
+
+To see which version is installed:
+
+```sh
+tripwatch-sensor -version                                          # on a monitored server
+docker compose exec verifier /tripwatch-verifier -version          # next to the verifier's compose file
+```
+
+The verifier also logs its version when it starts, and every sensor sends its version in the
+signed event of each start.
 
 ### Updating and removing
 
