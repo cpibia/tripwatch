@@ -45,13 +45,9 @@ func kindOwner(kind string) string {
 	return ""
 }
 
-// unitOwner is the user a systemd unit runs for: the user of a user unit, root otherwise.
-func unitOwner(u unitT) string {
-	if u.User != "" && u.User != "root" {
-		return u.User
-	}
-	return homeOwner(u.Path)
-}
+// unitOwner is who could write a systemd unit, decided by where it lies: a unit in a home is
+// that home's, whatever User= it names; a unit in the system directories is root's.
+func unitOwner(u unitT) string { return homeOwner(u.Path) }
 
 // cronOwner is the user a crontab belongs to: a user's spool file is theirs, the system's
 // tables are root's.
@@ -69,12 +65,21 @@ func uidOwner(uid *uint32) string {
 	return fmt.Sprintf("uid %d", *uid)
 }
 
-// privilegedOwner is root for a file that grants root's or a system group's rights when run:
-// setuid and owned by root, or setgid with a system group (disk, shadow, adm, sudo...). Any
-// other setuid or setgid file grants only its owner's rights.
-func privilegedOwner(f fileT) string {
-	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil && *f.GID < 1000 {
-		return "root"
+// privilegedGroups grant root's power or close to it to whoever runs as them.
+var privilegedGroups = map[string]bool{
+	"root": true, "wheel": true, "disk": true, "shadow": true, "sudo": true, "adm": true, "admin": true,
+	"docker": true, "lxd": true, "kmem": true, "tty": true, "sys": true, "systemd-journal": true,
+}
+
+// privilegedOwner is root for a file that grants root's or a privileged group's rights when
+// run: setuid and owned by root, or setgid with a group named in privilegedGroups (by its name
+// in the host's group database) or with GID 0. Any other setuid or setgid file grants only what
+// its owner could already do, a web user's own group included.
+func privilegedOwner(f fileT, groups map[int]string) string {
+	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil {
+		if *f.GID == 0 || privilegedGroups[groups[int(*f.GID)]] {
+			return "root"
+		}
 	}
 	return uidOwner(f.UID)
 }
@@ -83,6 +88,13 @@ func privilegedOwner(f fileT) string {
 // directories, otherwise the home it lies in.
 func homeOwner(p string) string {
 	p = "/" + strings.TrimPrefix(p, "/")
+	if strings.HasPrefix(p, "/root/") {
+		return "root"
+	}
+	if rest, ok := strings.CutPrefix(p, "/run/user/"); ok {
+		uid, _, _ := strings.Cut(rest, "/")
+		return "uid " + uid
+	}
 	for _, dir := range []string{"/etc/", "/run/", "/usr/", "/lib/"} {
 		if strings.HasPrefix(p, dir) {
 			return "root"
@@ -183,6 +195,14 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 	}
 
+	// Accounts by name, to tell whose keys and crontabs are root's: any account with UID 0 is.
+	uids := map[string]int{}
+	if cur.Accounts != nil {
+		for _, acc := range cur.Accounts.Accounts {
+			uids[acc.Name] = acc.UID
+		}
+	}
+
 	if s := cur.SSH; s != nil {
 		if s.Settings["permitrootlogin"] == "yes" {
 			state("ssh", "root-login", "medium", "SSH: login di root con password consentito", "PermitRootLogin yes.")
@@ -193,12 +213,6 @@ func Evaluate(prev *State, cur State) []Finding {
 		var known set
 		if prev != nil && prev.SSH != nil {
 			known = setOf(prev.SSH.Keys, func(p keyT) string { return p.User + "\x00" + p.Fingerprint })
-		}
-		uids := map[string]int{}
-		if cur.Accounts != nil {
-			for _, acc := range cur.Accounts.Accounts {
-				uids[acc.Name] = acc.UID
-			}
 		}
 		for _, k := range s.Keys {
 			if known != nil && !known.has(k.User+"\x00"+k.Fingerprint) {
@@ -233,7 +247,9 @@ func Evaluate(prev *State, cur State) []Finding {
 		if prev != nil && prev.Scheduled != nil {
 			known = set{}
 			for _, p := range prev.Scheduled.Tables {
-				known.add(p.Entries...)
+				for _, e := range p.Entries {
+					known.add(p.Path + "\x00" + e)
+				}
 			}
 		}
 		for _, t := range s.Tables {
@@ -241,8 +257,14 @@ func Evaluate(prev *State, cur State) []Finding {
 				state("persistence", "immutable-cron:"+t.Path, "critical", "Crontab protetto con chattr +i", t.Path+": il file non si può modificare né cancellare, nemmeno da root, finché non si toglie l'attributo.")
 			}
 			for _, e := range t.Entries {
-				if known != nil && !known.has(e) {
-					changeBy(cronOwner(t.Path), "persistence-change", "cron:"+t.Path+"|"+e, "high", "Nuova riga di cron", e+"\nin "+t.Path)
+				// A line is new to its table: the same line in another user's crontab earlier
+				// does not make it known in root's.
+				if known != nil && !known.has(t.Path+"\x00"+e) {
+					owner := cronOwner(t.Path)
+					if uid, ok := uids[owner]; ok && uid == 0 {
+						owner = "root"
+					}
+					changeBy(owner, "persistence-change", "cron:"+t.Path+"|"+e, "high", "Nuova riga di cron", e+"\nin "+t.Path)
 				}
 			}
 		}
@@ -343,6 +365,12 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 	}
 
+	groups := map[int]string{}
+	if cur.Accounts != nil {
+		for _, g := range cur.Accounts.Groups {
+			groups[g.GID] = g.Name
+		}
+	}
 	if p := cur.Privileged; p != nil {
 		var known set
 		if prev != nil && prev.Privileged != nil {
@@ -353,11 +381,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			case f.Immutable || f.AppendOnly:
 				state("privileged", "attr:"+f.Path, "high", "File protetto con chattr: "+f.Path, "Gli attributi immutable o append-only sono rari sui server e sono usati per rendere persistente un accesso.")
 			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
-				owner := privilegedOwner(f)
+				owner := privilegedOwner(f, groups)
 				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+", hash "+f.SHA256+".")
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
-				owner := privilegedOwner(f)
+				owner := privilegedOwner(f, groups)
 				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+".")
 			}
 		}

