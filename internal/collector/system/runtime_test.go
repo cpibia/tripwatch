@@ -79,6 +79,7 @@ func procHost() fstest.MapFS {
 			"7f00e000-7f00f000 rw-p 00000000 08:01 55 /dev/shm/data\n" +
 			"7f010000-7f011000 r-xp 00000000 08:01 56 /dev/shm/.inject.so\n" +
 			"7f020000-7f021000 r-xs 08000000 00:01 9 /dev/zero (deleted)\n" +
+			"7f040000-7f041000 r-xs 00000000 08:01 11 /dev/zero (deleted)\n" +
 			"7f030000-7f031000 r-xs 00000000 00:01 10 /memfd:doublemapper (deleted)\n" +
 			"7ffd0000-7ffd1000 rwxp 00000000 00:00 0 [stack]\n"),
 		"proc/4242/ns/net": link(hostNetNS),
@@ -139,7 +140,7 @@ func TestProcesses(t *testing.T) {
 	case shell.Preload != "/usr/lib/libprocesshider.so" || shell.Cwd != "/var/www/shop":
 		t.Errorf("preload = %q cwd = %q", shell.Preload, shell.Cwd)
 	}
-	if !slices.Equal(shell.Mapped, []string{"/var/www/.config/x/helper (deleted)", "/memfd:stage2 (deleted)", "/dev/shm/.inject.so", "/memfd:doublemapper (deleted)"}) {
+	if !slices.Equal(shell.Mapped, []string{"/var/www/.config/x/helper (deleted)", "/memfd:stage2 (deleted)", "/dev/shm/.inject.so", "/dev/zero (deleted)", "/memfd:doublemapper (deleted)"}) {
 		t.Errorf("mapped = %q", shell.Mapped)
 	}
 }

@@ -913,9 +913,9 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, pr := range p.Processes {
 			for _, m := range pr.Mapped {
-				// Sensors before 0.1.11 also reported shared anonymous regions (OPcache, JITs); a
-				// private mapping never has this name.
-				if m == "/dev/zero (deleted)" {
+				// Sensors before 0.1.11 also reported shared anonymous regions (OPcache, JITs);
+				// later ones tell them from a file of that name by their device.
+				if m == "/dev/zero (deleted)" && sensorBefore(cur, 0, 1, 11) {
 					continue
 				}
 				// Applications ship native modules under homes and web roots (Node addons, Python
@@ -1258,6 +1258,28 @@ func rawSocketFinding(so system.Socket) (Finding, bool) {
 
 // maxRewrittenPackages bounds the alerts raised for packages whose checksums changed.
 const maxRewrittenPackages = 20
+
+// sensorBefore reports whether the snapshot comes from a sensor older than the given release;
+// one that does not say is old.
+func sensorBefore(st State, release ...int) bool {
+	sys := st.Environment.System
+	if sys == nil {
+		return true
+	}
+	v := strings.TrimPrefix(sys.SensorVersion, "v")
+	if i := strings.IndexAny(v, "-+ "); i >= 0 {
+		v = v[:i]
+	}
+	var parts []int
+	for _, p := range strings.Split(v, ".") {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return false
+		}
+		parts = append(parts, n)
+	}
+	return slices.Compare(parts, release) < 0
+}
 
 // packageDirs are where only packages install: /opt, /usr/local and /snap are left out, since
 // software there is installed by hand.

@@ -153,7 +153,9 @@ func mappedCode(fsys fs.FS, pid int, exe string) []string {
 		if len(f) < 6 || len(f[1]) < 4 || f[1][2] != 'x' {
 			continue
 		}
-		if f[1][3] == 's' && strings.TrimSpace(f[5]) == "/dev/zero (deleted)" {
+		// The kernel's internal shmem mount is the first anonymous device, 00:01: a real file
+		// someone named /dev/zero and deleted lives elsewhere.
+		if f[1][3] == 's' && f[3] == "00:01" && strings.TrimSpace(f[5]) == "/dev/zero (deleted)" {
 			continue
 		}
 		file := strings.TrimSpace(f[5])
