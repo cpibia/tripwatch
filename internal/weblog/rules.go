@@ -116,7 +116,8 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 		switch {
 		case ok:
 			hit("script_in_upload_path", SeverityCritical)
-		case (r.Status == 301 || r.Status == 308) && (r.Method == "GET" || r.Method == "HEAD") && q == "":
+		case (r.Status == 301 || r.Status == 308) && (r.Method == "GET" || r.Method == "HEAD") && q == "" &&
+			!strings.Contains(r.URI, "?") && hasScriptSegment(path.Base(p)):
 			hit("script_in_upload_path", SeverityLow)
 		default:
 			hit("script_in_upload_path", SeverityHigh)

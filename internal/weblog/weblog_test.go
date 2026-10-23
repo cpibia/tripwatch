@@ -81,6 +81,8 @@ func TestRules(t *testing.T) {
 		{req("POST", "/wp-content/uploads/dsa.php", 302, "-"), []string{"script_in_upload_path:high"}},
 		{req("GET", "/wp-content/uploads/dsa.php?page=2", 301, "-"), []string{"script_in_upload_path:high"}},
 		{req("GET", "/wp-content/uploads/dsa.php", 302, "-"), []string{"script_in_upload_path:high"}},
+		{req("GET", "/wp-content/uploads/dsa.php/id", 301, "-"), []string{"script_in_upload_path:high"}},
+		{req("GET", "/wp-content/uploads/dsa.php?", 301, "-"), []string{"script_in_upload_path:high"}},
 		{req("GET", "/wso.php", 404, "-"), []string{"known_webshell_name:low"}},
 		{req("POST", "/wso.php", 404, "-"), []string{"known_webshell_name:high"}},
 		{req("GET", "/tools/c99.php/x", 200, "-"), []string{"known_webshell_name:critical"}},

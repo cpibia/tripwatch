@@ -237,6 +237,9 @@ func (x *Execs) message(m []byte) bool {
 	return false
 }
 
+// shells may stand between cron and the job it runs (sh -c "...").
+var shells = []string{"sh", "bash", "dash", "zsh", "ksh", "ash", "busybox"}
+
 // cronNames are the executable names of cron daemons.
 var cronNames = []string{"cron", "crond", "anacron", "fcron"}
 
@@ -256,6 +259,11 @@ func (x *Execs) fromCron(p system.Process) bool {
 		if parent.UID == 0 && !parent.ExeDeleted && slices.Contains(cronNames, path.Base(parent.Exe)) &&
 			slices.ContainsFunc(systemBinDirs, func(d string) bool { return strings.HasPrefix(parent.Exe, d) }) {
 			return true
+		}
+		// Only the job itself: between cron and it there are shells, nothing else. A program a
+		// job started, an application launched @reboot and what it runs, is not the job.
+		if !slices.Contains(shells, path.Base(parent.Exe)) {
+			return false
 		}
 		ppid = parent.PPID
 	}
