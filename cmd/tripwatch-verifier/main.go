@@ -128,7 +128,14 @@ func serve(log *slog.Logger) error {
 		Handler:           in,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       2 * time.Minute,
+		// Over TLS the write deadline runs from the start of the request, so it outlasts the read.
+		WriteTimeout:   3 * time.Minute,
+		IdleTimeout:    time.Minute,
+		MaxHeaderBytes: 16 << 10,
+		// Sensors speak HTTP/1.1 only: HTTP/2 would be surface nobody uses.
+		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
 		TLSConfig: &tls.Config{
+			NextProtos:   []string{"http/1.1"},
 			Certificates: []tls.Certificate{cert},
 			ClientCAs:    ca.Pool(),
 			// Verified when given; required by every path except enrollment, which is how a

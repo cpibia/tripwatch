@@ -43,6 +43,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   presented after a re-enrollment became the host's, so a copy of the old bundle could win
   against the new sensor. Hosts enrolled before certificates were recorded must be enrolled
   again.
+- The ingest endpoint speaks HTTP/1.1 only, as the sensors do, with write and idle timeouts
+  and a 16 KB header limit.
 - `tripwatch-verifier enroll` validates the host name as the console does and refuses to enroll
   an existing host again without `-replace`.
 - User emails are stored and looked up in lower case everywhere: a password reset from the
