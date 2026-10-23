@@ -114,6 +114,9 @@ func TestFindings(t *testing.T) {
 		t.Errorf("findings:\n got  %+v\n want %+v", got, want)
 	}
 
+	if !slices.Contains(app.UploadDirs, "/var/www/commerce/pub/media") {
+		t.Errorf("upload dirs = %v", app.UploadDirs)
+	}
 	wantReachable := []string{"/var/www/commerce/pub/adminer.php", "/var/www/commerce/pub/errors/503.php", "/var/www/commerce/pub/index.php"}
 	if !slices.Equal(app.Reachable, wantReachable) || app.ReachableCount != 3 {
 		t.Errorf("reachable = %v (%d), want %v", app.Reachable, app.ReachableCount, wantReachable)

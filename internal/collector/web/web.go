@@ -113,7 +113,13 @@ type AppReport struct {
 	Reachable      []string          `json:"reachable_scripts"`
 	ReachableCount int               `json:"reachable_count"`
 	Truncated      bool              `json:"truncated,omitempty"`
+	// UploadDirs are the upload directories found in the application, for the sensor to watch
+	// between snapshots.
+	UploadDirs []string `json:"upload_dirs,omitempty"`
 }
+
+// maxUploadDirs bounds the upload directories listed for one application.
+const maxUploadDirs = 64
 
 type Result struct {
 	Inventory discovery.Inventory `json:"inventory"`
@@ -362,6 +368,9 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 		if isData {
 			if slices.Contains(s.nested, name) {
 				s.add(KindAppInData, name, e, nil)
+			}
+			if childUploads && !inUploads && maybeDir && len(s.report.UploadDirs) < maxUploadDirs {
+				s.report.UploadDirs = append(s.report.UploadDirs, "/"+name)
 			}
 			s.enterData(ctx, name, e, childUploads)
 			continue
