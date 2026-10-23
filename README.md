@@ -79,11 +79,11 @@ curl -fsSLO https://github.com/cpibia/tripwatch/releases/latest/download/docker-
 curl -fsSL -o .env https://github.com/cpibia/tripwatch/releases/latest/download/verifier.env.example
 ```
 
-In `.env` set at least the release, the name the sensors will use, the public addresses and the
+In `.env` set at least the name the sensors will use, the public addresses and the
 first user:
 
 ```sh
-TRIPWATCH_VERSION=0.1.1
+TRIPWATCH_VERSION=latest
 TRIPWATCH_HOSTNAMES=tripwatch.example.net
 TRIPWATCH_PUBLIC_INGEST_URL=https://tripwatch.example.net:8443/v1/envelopes
 TRIPWATCH_PUBLIC_UI_URL=https://tripwatch.example.net
@@ -197,21 +197,20 @@ signed event of each start.
 Update the verifier first: a newer verifier accepts the envelopes of older sensors, and its
 enrollment page then installs the sensor of its own release.
 
-**Verifier.** `TRIPWATCH_VERSION` in `.env` chooses the image. Docker never fetches a newer image
-by itself: `docker compose up -d` keeps running the image already downloaded, even with
-`latest`, so an update is always a pull followed by a restart.
+**Verifier.** `TRIPWATCH_VERSION` in `.env` chooses the image: `latest` by default, or a
+release number such as `0.1.1`. Docker never fetches a newer image by itself, so with `latest`
+the update happens only when you ask for it:
 
-- With a pinned release (recommended, the update is a choice you make), write the new number,
-  for example `TRIPWATCH_VERSION=0.1.1`, then:
+```sh
+docker compose pull && docker compose up -d
+```
 
-  ```sh
-  docker compose pull && docker compose up -d
-  ```
+To decide release by release instead, pin a number in `TRIPWATCH_VERSION` and change it before
+running the same two commands. Pinning matters where a platform redeploys for you: one that pulls
+images on every deploy moves `latest` forward without being asked.
 
-- With `TRIPWATCH_VERSION=latest`, the same two commands move to the newest release.
-
-The state stays in the `data` volume and the sensors keep their chain. On Coolify, change the
-image tag in the service's compose and redeploy.
+The state stays in the `data` volume and the sensors keep their chain. On a platform such as
+Coolify, change the tag in the service's compose, or with `latest` pull the image, and redeploy.
 
 **Sensor.** Install the package of the new release the same way as the first time; a running
 sensor is restarted by the package and resumes the same chain. Debian and Ubuntu:
