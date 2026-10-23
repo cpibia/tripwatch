@@ -56,6 +56,12 @@ type Files struct {
 	scratchSecond time.Time
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
 	known map[string]string
+	// targets are the last ones Set was given; replanAt, when set, is when Run sets them again,
+	// after a watched root moved away or the kernel's queue overflowed; missing are the roots
+	// that existed and are gone, with the retries left.
+	targets  []Target
+	replanAt time.Time
+	missing  map[string]int
 	// moves are renames of watched directories waiting for their second half, by cookie;
 	// renamed marks the watches whose records already follow a rename.
 	moves   map[uint32]string
@@ -82,7 +88,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}, missing: map[string]int{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}}, nil
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -133,6 +139,7 @@ func (f *Files) Watches() int {
 func (f *Files) Set(targets []Target) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.targets = append([]Target(nil), targets...)
 	f.issues, f.unwatched = nil, nil
 	keep := map[string][]Target{}
 	depths := map[string]int{}
@@ -192,7 +199,17 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 	}
 	info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
 	if err != nil || !info.IsDir() {
+		if tries, gone := f.missing[dir]; gone && dir == t.Dir {
+			f.gap(t.Class, fmt.Sprintf("watch: %s was moved away or removed and is not back", dir))
+			if tries > 0 {
+				f.missing[dir] = tries - 1
+				f.replanAt = f.now().Add(replanDelay)
+			}
+		}
 		return
+	}
+	if dir == t.Dir {
+		delete(f.missing, dir)
 	}
 	if _, seen := keep[dir]; !seen {
 		if limit := classBudget[t.Class]; limit > 0 {
@@ -262,6 +279,47 @@ func (f *Files) forget(wd int) {
 	f.classWatches[classOf(w.targets)]--
 	delete(f.byWD, wd)
 	delete(f.byDir, w.dir)
+}
+
+// Replanning after a watched root went away: soon, and for a minute at most.
+const (
+	replanDelay   = 2 * time.Second
+	replanRetries = 30
+)
+
+// rootGone reports the root of a watched place moved away or removed, as an event and as a
+// gap, and plans its watch again: moved back, or recreated, it is watched within seconds.
+// Callers hold f.mu.
+func (f *Files) rootGone(w *watched) {
+	for _, t := range w.targets {
+		if t.Dir != w.dir {
+			continue
+		}
+		f.gap(t.Class, fmt.Sprintf("watch: %s was moved away or removed", w.dir))
+		f.missing[w.dir] = replanRetries
+		f.replanAt = f.now().Add(replanDelay)
+		e := Event{At: f.now().UTC(), Class: t.Class, Op: OpDelete, Path: w.dir, Dir: true, Root: true}
+		select {
+		case f.out <- e:
+		default:
+			f.Dropped.Add(1)
+		}
+		return
+	}
+}
+
+// replanIfDue sets the targets again once a replan is due.
+func (f *Files) replanIfDue() {
+	f.mu.Lock()
+	due := !f.replanAt.IsZero() && !f.now().Before(f.replanAt)
+	targets := f.targets
+	if due {
+		f.replanAt = time.Time{}
+	}
+	f.mu.Unlock()
+	if due {
+		f.Set(targets)
+	}
 }
 
 // maxMoves bounds the renames waiting for their second half.
@@ -366,6 +424,7 @@ func (f *Files) Run(ctx context.Context) error {
 		if err != nil && !errors.Is(err, unix.EINTR) {
 			return err
 		}
+		f.replanIfDue()
 		if n <= 0 {
 			continue
 		}
@@ -400,7 +459,12 @@ func (f *Files) handle(b []byte) {
 
 func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 	if mask&unix.IN_Q_OVERFLOW != 0 {
+		// Events were lost, renames among them: the records may no longer match the kernel's
+		// watches, so they are planned again from the targets.
 		f.Dropped.Add(1)
+		f.mu.Lock()
+		f.replanAt = f.now().Add(time.Second)
+		f.mu.Unlock()
 		return
 	}
 	f.mu.Lock()
@@ -408,6 +472,9 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 	if w != nil && name == "" {
 		switch {
 		case mask&(unix.IN_DELETE_SELF|unix.IN_IGNORED) != 0:
+			if mask&unix.IN_DELETE_SELF != 0 {
+				f.rootGone(w)
+			}
 			f.forget(wd)
 		case mask&unix.IN_MOVE_SELF != 0:
 			// The kernel reports the moved directory after both sides of the rename: if the
@@ -416,6 +483,7 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 			if f.renamed[wd] {
 				delete(f.renamed, wd)
 			} else {
+				f.rootGone(w)
 				f.unwatchTree(w.dir)
 			}
 		}

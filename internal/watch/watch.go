@@ -64,6 +64,9 @@ type Event struct {
 	// PrevSHA256 is the content the sensor last knew the file to have, for system paths: a key
 	// added and then removed by rewriting a file that existed long before shows as a return to it.
 	PrevSHA256 string `json:"prev_sha256,omitempty"`
+	// Root marks the root of a watched place moved away or removed: until it is back, nothing
+	// in it is seen.
+	Root bool `json:"root,omitempty"`
 	// WebUser marks a file in a scratch directory owned by the web server's user.
 	WebUser bool    `json:"web_user,omitempty"`
 	UID     *uint32 `json:"uid,omitempty"`

@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The root of a watched place moved away or removed is reported at once and watched again within
+  seconds when it is back, retried for a minute; after the kernel's event queue overflows, the
+  watches are planned again from scratch.
 - A watched directory renamed within the watched places keeps reporting under its new name, its
   subdirectories with it; one moved out of them has its watches removed from the kernel. Before,
   a rename (an upload directory, a unit's drop-in directory) left the directory silent until the
@@ -45,6 +48,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   and JITs is left out; new generators and set-user-ID programs are high again whatever packages
   did; removing an activation link (a unit disabled) is low.
 - Lost real-time events are one alert a day, not a single one kept open for good.
+- A watched directory moved away or removed is a high alert (medium for the scratch
+  directories): moving it away and back blinds the watch on it until it is placed again.
 - Places left without a real-time watch are an alert per class: high for the system, the homes
   and the uploads, medium for the scratch directories. The list is computed again at each
   snapshot.

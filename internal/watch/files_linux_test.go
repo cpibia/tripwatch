@@ -407,3 +407,48 @@ func TestFilesFollowRenamedDirectories(t *testing.T) {
 		t.Fatalf("the kernel holds %d watches, the sensor knows %d", kernel, known)
 	}
 }
+
+// The root of a watched place moved away and back is reported and watched again within
+// seconds.
+func TestFilesRootMovedAndBack(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv/app/uploads"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, []string{"/srv/app/uploads"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	up := filepath.Join(root, "srv/app/uploads")
+	if err := os.Rename(up, up+".x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(up+".x", up); err != nil {
+		t.Fatal(err)
+	}
+	gone := false
+	deadline := time.After(5 * time.Second)
+	for !gone {
+		select {
+		case e := <-ch:
+			gone = e.Root && e.Path == "/srv/app/uploads"
+		case <-deadline:
+			t.Fatal("the moved root was not reported")
+		}
+	}
+	time.Sleep(3 * time.Second)
+	if err := os.WriteFile(filepath.Join(up, "shell.php"), []byte("<?php"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, ch, 1); !has(got, ClassUpload, OpCreate, "/srv/app/uploads/shell.php") {
+		t.Fatalf("the root moved back is not watched again: %+v", got)
+	}
+}

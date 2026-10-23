@@ -66,6 +66,7 @@ func TestEvaluateEvents(t *testing.T) {
 		{"build output in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/go-build1/a.out", Mode: "-rwxr-xr-x", UID: &dev1000}, false, "scratch-exec:uid1000 medium"},
 		{"plain file in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpCreate, Path: "/tmp/sess", Mode: "-rw-------"}, false, ""},
 		{"dropper removed", watch.Event{At: t0.Add(time.Minute), Class: watch.ClassScratch, Op: watch.OpDelete, Path: "/tmp/.bench-dropper"}, false, "scratch-transient:uid0 critical"},
+		{"watched root moved", watch.Event{Class: watch.ClassUpload, Op: watch.OpDelete, Path: "/srv/app/uploads", Dir: true, Root: true}, false, "watch-root high"},
 		{"directory", watch.Event{Class: watch.ClassSchedule, Op: watch.OpCreate, Path: "/var/spool/cron/x", Dir: true}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
