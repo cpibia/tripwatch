@@ -19,7 +19,7 @@
 {{define "grouphead"}}{{$t := .Table}}{{with .Group}}
 <tr class="group-head row-{{.Lead.Status}}">
   <td>{{template "sevmark" .Lead}}</td>
-  {{if not $t.OneHost}}<td class="host">{{template "hostlink" .Lead.HostID}}</td>{{end}}
+  {{if not $t.OneHost}}<td class="host">{{if gt .Hosts 1}}<span class="hosts-n">{{.Hosts}} servers</span>{{else}}{{template "hostlink" .Lead.HostID}}{{end}}</td>{{end}}
   <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span> <span class="tally-n">{{len .Alerts}}</span></button></td>
   <td class="num start"><time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{clock .Since}}</time></td>
   <td class="num count"></td>
@@ -51,6 +51,7 @@
 <tbody class="group-rows" id="rows-{{.Key}}"{{if not .Expanded}} hidden{{end}}>{{range .Alerts}}{{template "alertrow" (rowx . $)}}{{end}}</tbody>
 {{end}}{{end}}
 </table>
+{{with .HiddenGroups}}<p class="more-groups">{{.}} more {{plural . "group" "groups"}} of open alerts: <a href="/alerts">all alerts</a></p>{{end}}
 {{end}}
 
 {{define "legend"}}<ul class="legend" aria-label="Legend of the marks">

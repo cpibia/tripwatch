@@ -466,3 +466,62 @@ func (s *Store) Alarming(ctx context.Context) (bool, error) {
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM alerts WHERE status = 'open' AND severity = 'critical')`).Scan(&n)
 	return n == 1, err
 }
+
+// Raised is an alert as the overview's charts need it: when it was raised, how severe, by which
+// rule, on which host, and how often it was seen.
+type Raised struct {
+	HostID      string
+	Fingerprint string
+	Severity    string
+	Kind        string
+	Title       string
+	Detail      string
+	Status      string
+	CreatedAt   time.Time
+	Occurrences int
+}
+
+// RaisedSince lists the alerts raised since a time, whatever their status. Resolved medium and
+// low alerts are pruned after MinorResolvedRetention, so periods longer than that undercount them.
+func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT host_id, fingerprint, severity, kind, title,
+		CASE WHEN kind = 'weblog' THEN detail ELSE '' END, status, created_at, occurrences
+		FROM alerts WHERE created_at >= ? ORDER BY created_at`, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Raised
+	for rows.Next() {
+		var r Raised
+		var created int64
+		if err := rows.Scan(&r.HostID, &r.Fingerprint, &r.Severity, &r.Kind, &r.Title, &r.Detail, &r.Status, &created, &r.Occurrences); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = unix(created)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// OpenBySeverity counts the unresolved alerts of every host by severity, silences included.
+func (s *Store) OpenBySeverity(ctx context.Context) (map[string]map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT host_id, severity, COUNT(*) FROM alerts WHERE status != 'resolved' GROUP BY host_id, severity`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]map[string]int{}
+	for rows.Next() {
+		var host, sev string
+		var n int
+		if err := rows.Scan(&host, &sev, &n); err != nil {
+			return nil, err
+		}
+		if out[host] == nil {
+			out[host] = map[string]int{}
+		}
+		out[host][sev] = n
+	}
+	return out, rows.Err()
+}

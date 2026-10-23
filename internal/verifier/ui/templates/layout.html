@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}>
+<html lang="en" data-theme="{{.Theme}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -25,7 +25,7 @@
     {{if .Notify}}<p class="notify">Email alerts on</p>{{else}}<p class="notify off" title="Critical and high alerts are not sent by email: set TRIPWATCH_SMTP_HOST">{{shape "high" ""}}<span>Email <span class="long">not configured</span><span class="short">off</span></span></p>{{end}}
     <form method="post" action="/theme">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Path}}">
-      <button class="link" type="submit">Theme: {{if eq .Theme "light"}}light{{else if eq .Theme "dark"}}dark{{else}}system{{end}}</button>
+      <button class="link" type="submit">Theme: {{.Theme}}</button>
     </form>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf" value="{{.CSRF}}">

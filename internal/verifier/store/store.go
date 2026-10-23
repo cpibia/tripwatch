@@ -80,6 +80,7 @@ DROP INDEX IF EXISTS alerts_host_status;
 -- Partial indexes over unresolved alerts only: the counts that bound a host's alerts must not
 -- walk the resolved ones, which a noisy host accumulates by the million.
 CREATE INDEX IF NOT EXISTS alerts_open_host ON alerts(host_id) WHERE status != 'resolved';
+CREATE INDEX IF NOT EXISTS alerts_created ON alerts(created_at);
 CREATE INDEX IF NOT EXISTS alerts_open_group ON alerts(host_id, severity, fingerprint) WHERE status != 'resolved';
 CREATE TABLE IF NOT EXISTS activity (
 	host_id TEXT NOT NULL,

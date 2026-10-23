@@ -99,7 +99,7 @@ func New(c Config) (http.Handler, error) {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "host", "alerts", "alert", "enroll", "error"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -275,10 +275,10 @@ func (s *server) cookie(w http.ResponseWriter, name, value string, maxAge time.D
 }
 
 func themeOf(r *http.Request) string {
-	if c, err := r.Cookie(themeCookie); err == nil && (c.Value == "light" || c.Value == "dark") {
+	if c, err := r.Cookie(themeCookie); err == nil && (c.Value == "light" || c.Value == "system") {
 		return c.Value
 	}
-	return ""
+	return "dark"
 }
 
 // localPath accepts only paths on this site as redirect targets.
@@ -443,8 +443,9 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, se session) {
 
 // theme cycles between the system's theme, light and dark.
 func (s *server) theme(w http.ResponseWriter, r *http.Request, _ session) {
-	next := map[string]string{"": "light", "light": "dark", "dark": ""}[themeOf(r)]
-	if next == "" {
+	// Dark is the default and needs no cookie; the button cycles dark, light, system.
+	next := map[string]string{"dark": "light", "light": "system", "system": "dark"}[themeOf(r)]
+	if next == "dark" {
 		s.cookie(w, themeCookie, "", -time.Second)
 	} else {
 		s.cookie(w, themeCookie, next, 365*24*time.Hour)
@@ -551,11 +552,19 @@ type overviewData struct {
 	Focus    focus
 	Base     string
 	Healthy  int
+	KPIs     []kpi
+	Timeline timeline
+	Rules    []rankRow
+	Loaded   []rankRow
+	Web      webAttacks
 }
 
 // overviewAlerts bounds the alert table of the overview; counters and host rows are computed
 // over all alerts.
 const overviewAlerts = 200
+
+// overviewGroups is how many rows of open alerts the overview shows before linking to the rest.
+const overviewGroups = 10
 
 func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 	ctx := r.Context()
@@ -594,7 +603,19 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 	silent := &counter{Key: "silent", Label: "silent"}
 	high := &counter{Key: "high", Label: "high", N: tallies["high"].N, Oldest: tallies["high"].Oldest}
 	acked := &counter{Key: "acked", Label: "acknowledged", N: tallies["acknowledged"].N, Oldest: tallies["acknowledged"].Oldest}
-	d := overviewData{Alerts: open, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r)}
+	now := s.Now()
+	raised, err := s.Store.RaisedSince(ctx, now.Add(-7*24*time.Hour-time.Hour))
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	bySeverity, err := s.Store.OpenBySeverity(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	d := overviewData{Alerts: open, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r),
+		Timeline: buildTimeline(raised, r.URL.Query().Get("range"), now), Rules: buildRules(raised, 8), Loaded: buildHosts(bySeverity, 8), Web: buildWeb(raised, 6)}
 	for _, h := range hosts {
 		sum, has := summaries[h.ID]
 		row := s.hostRow(h, sum, has)
@@ -606,6 +627,7 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		}
 		d.Hosts = append(d.Hosts, row)
 	}
+	d.KPIs = buildKPIs(tallies, raised, silent, now)
 	slices.SortStableFunc(d.Hosts, func(a, b hostRow) int {
 		if ra, rb := a.rank(), b.rank(); ra != rb {
 			return ra - rb
@@ -715,6 +737,10 @@ type alertTable struct {
 	// NoActions leaves the actions out of the rows: on the overview they live in the side panel
 	// and on each alert's page, where there is the context to decide.
 	NoActions bool
+	// AcrossHosts groups one rule's alerts of all hosts together, and MaxGroups bounds how many
+	// groups are shown: the overview lists what deviates at a glance, the Alerts page in full.
+	AcrossHosts bool
+	MaxGroups   int
 }
 
 // focus is the side panel of a page: the alert it shows and whether someone picked it.
@@ -791,11 +817,9 @@ func pickTable(alerts []store.Alert, csrf, back, base string, f focus) alertTabl
 	return t
 }
 
-// boardTable is pickTable for the overview, whose rows carry no actions.
-func boardTable(alerts []store.Alert, csrf, back, base string, f focus) alertTable {
-	t := pickTable(alerts, csrf, back, base, f)
-	t.NoActions = true
-	return t
+// boardTable is table for the overview: its rows carry no actions and open each alert's page.
+func boardTable(alerts []store.Alert, csrf, back, _ string, _ focus) alertTable {
+	return alertTable{Alerts: alerts, CSRF: csrf, Back: back, NoActions: true, AcrossHosts: true, MaxGroups: overviewGroups}
 }
 
 // subject is what a fingerprint names beyond its rule, such as a file's path, when the title
@@ -847,6 +871,8 @@ type alertGroup struct {
 	Acked    int
 	Resolved int
 	Expanded bool
+	// Hosts counts the distinct hosts of the group.
+	Hosts int
 }
 
 // Pending are the alerts a bulk action applies to: those not resolved yet.
@@ -865,7 +891,10 @@ func (t alertTable) Groups() []alertGroup {
 	index := map[string]int{}
 	var groups []alertGroup
 	for _, a := range t.Alerts {
-		k := a.HostID + "\x00" + a.Severity + "\x00" + alertRule(a.Fingerprint)
+		k := a.Severity + "\x00" + alertRule(a.Fingerprint)
+		if !t.AcrossHosts {
+			k = a.HostID + "\x00" + k
+		}
 		i, ok := index[k]
 		if !ok {
 			sum := sha256.Sum256([]byte(k))
@@ -892,8 +921,26 @@ func (t alertTable) Groups() []alertGroup {
 	}
 	for i := range groups {
 		groups[i].Label = commonLabel(groups[i].Alerts)
+		seen := map[string]bool{}
+		for _, a := range groups[i].Alerts {
+			seen[a.HostID] = true
+		}
+		groups[i].Hosts = len(seen)
+	}
+	if t.MaxGroups > 0 && len(groups) > t.MaxGroups {
+		groups = groups[:t.MaxGroups]
 	}
 	return groups
+}
+
+// HiddenGroups is how many groups MaxGroups left out.
+func (t alertTable) HiddenGroups() int {
+	if t.MaxGroups == 0 {
+		return 0
+	}
+	all := t
+	all.MaxGroups = 0
+	return max(len(all.Groups())-t.MaxGroups, 0)
 }
 
 // alertRule is the rule part of a fingerprint: the kind and the rule, without the file, request

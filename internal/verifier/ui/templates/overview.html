@@ -1,53 +1,97 @@
 {{define "content"}}{{$d := .Data}}
 <header class="head">
   <div class="title-line"><h1>Overview</h1><p class="aside">updated {{updated}}, refreshes every minute</p></div>
-  <dl class="counters">
-    {{range $d.Counters}}
-    <div class="counter c-{{.Key}}{{if .N}} on{{end}}">
-      <dt>{{if and .N (ne .Key "acked")}}{{shape .Key ""}}{{end}}{{.Label}}</dt>
-      <dd><span class="n">{{.N}}</span>{{if .N}}<span class="age">oldest for {{since .Oldest}}</span>{{end}}</dd>
-    </div>
-    {{end}}
-    <div class="counter c-ok"><dt>healthy</dt><dd><span class="n">{{$d.Healthy}}</span><span class="age">of {{len $d.Hosts}} {{plural (len $d.Hosts) "server" "servers"}}</span></dd></div>
-  </dl>
 </header>
 
-<div class="board{{if $d.Focus.Alert}} with-focus{{end}}">
-<div class="board-main">
-<section aria-labelledby="hosts-h">
-  <div class="section-head"><h2 id="hosts-h">Servers</h2><p class="aside">deviating ones on top, the oldest first</p></div>
+<section class="kpis" aria-label="Open alerts by severity">
+  {{range $d.KPIs}}
+  <a class="kpi k-{{.Key}}{{if .N}} on{{end}}" href="/alerts">
+    <span class="kpi-label">{{shape .Key ""}}{{.Label}}</span>
+    <span class="kpi-n">{{.N}}</span>
+    <span class="kpi-meta">{{if .New}}<b>+{{.New}}</b> in 24 h{{else}}none new in 24 h{{end}}{{if .N}}<span>oldest {{since .Oldest}}</span>{{end}}</span>
+    <svg class="spark" viewBox="0 0 70 20" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{.Spark}}"/></svg>
+  </a>
+  {{end}}
+</section>
+
+<div class="dash">
+<section class="panel p-time" aria-labelledby="time-h">
+  <div class="panel-head">
+    <h2 id="time-h">Alerts raised</h2>
+    <nav class="seg" aria-label="Period">
+      <a href="/?range=24h"{{if eq $d.Timeline.Range "24h"}} aria-current="true"{{end}}>24 h</a><a href="/?range=7d"{{if eq $d.Timeline.Range "7d"}} aria-current="true"{{end}}>7 days</a>
+    </nav>
+  </div>
+  {{with $d.Timeline}}
+  <p class="panel-note"><b>{{.Total}}</b> {{plural .Total "alert" "alerts"}} in the period{{if .Max}}, at most {{.Max}} in one {{if eq .Range "7d"}}day{{else}}hour{{end}}{{end}}</p>
+  <svg class="columns" viewBox="0 0 {{num .Width}} {{num .Height}}" preserveAspectRatio="none" role="img" aria-label="Alerts raised per {{if eq .Range "7d"}}day{{else}}hour{{end}}, stacked by severity">
+    {{range .Columns}}<g><title>{{.Title}}</title>{{range .Segments}}<rect class="s-{{.Severity}}" x="{{num .X}}" y="{{num .Y}}" width="{{num .W}}" height="{{num .H}}"/>{{end}}</g>{{end}}
+    <rect class="baseline" x="0" y="{{num .Height}}" width="{{num .Width}}" height="1"/>
+  </svg>
+  <ol class="ticks ticks-{{.Range}}" aria-hidden="true">{{range .Ticks}}<li>{{.}}</li>{{end}}</ol>
+  <ul class="key" aria-label="Severities"><li>{{shape "critical" ""}}critical</li><li>{{shape "high" ""}}high</li><li>{{shape "medium" ""}}medium</li><li>{{shape "low" ""}}low</li></ul>
+  {{end}}
+</section>
+
+<section class="panel p-fleet" aria-labelledby="fleet-h">
+  <div class="panel-head">
+    <h2 id="fleet-h">Servers</h2>
+    <p class="aside">{{$d.Healthy}} of {{len $d.Hosts}} healthy</p>
+  </div>
   {{if $d.Hosts}}
-  <table class="grid hosts">
-    <thead><tr><th scope="col"><span class="sr">State</span></th><th scope="col">Server</th><th scope="col" class="num">Last heartbeat</th><th scope="col" class="num">Last snapshot</th><th scope="col">Worst alert</th><th scope="col" class="num">For</th></tr></thead>
-    <tbody>
+  <ul class="fleet">
     {{range $d.Hosts}}
-    <tr class="st-{{.State}}">
-      <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}<span class="sr">silent</span>{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}<span class="sr">{{sev .Worst.Severity}}</span>{{end}}</td>
-      <td class="host"><a class="mono" href="/hosts/{{.ID}}" title="{{.ID}}">{{.ID}}</a></td>
-      <td class="num"><time datetime="{{iso .LastHeartbeat}}" title="{{stamp .LastHeartbeat}}">{{clock .LastHeartbeat}}</time></td>
-      <td class="num"><time datetime="{{iso .LastSnapshot}}" title="{{stamp .LastSnapshot}}">{{clock .LastSnapshot}}</time></td>
-      <td class="what">{{if eq .State "silent"}}<span class="flag">{{.StateText}}</span>{{if .Worst}} · <a href="{{selecturl $d.Base .Worst.ID}}">{{.Worst.Title}}</a>{{end}}
-        {{else if .Worst}}<a href="{{selecturl $d.Base .Worst.ID}}">{{.Worst.Title}}</a>{{with .More}} <span class="more">+{{.}}</span>{{end}}
-        {{else}}<span class="quiet">{{.StateText}}</span>{{end}}</td>
-      <td class="num">{{if not .Since.IsZero}}<time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{since .Since}}</time>{{end}}</td>
-    </tr>
+    <li class="cell st-{{.State}}">
+      <a href="/hosts/{{.ID}}">
+        <span class="cell-top">{{if eq .State "silent"}}{{shape "silent" ""}}{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}{{else}}<span class="ok-dot" aria-hidden="true"></span>{{end}}<span class="mono name" title="{{.ID}}">{{.ID}}</span></span>
+        <span class="cell-state">{{.StateText}}{{if not .Since.IsZero}} · {{since .Since}}{{end}}</span>
+        <span class="cell-beat">heartbeat {{clock .LastHeartbeat}} · snapshot {{clock .LastSnapshot}}</span>
+      </a>
+    </li>
     {{end}}
-    </tbody>
-  </table>
-  {{template "legend"}}
+  </ul>
   {{else}}
   <p class="empty">No server enrolled yet. <a href="/enroll">Enroll the first server</a>: it shows up here with its first heartbeat.</p>
   {{end}}
 </section>
 
-<section aria-labelledby="alerts-h">
-  <div class="section-head"><h2 id="alerts-h">Alerts to handle</h2><p class="aside"><a href="/alerts?view=all">all alerts</a></p></div>
+<section class="panel p-open" aria-labelledby="alerts-h">
+  <div class="panel-head">
+    <h2 id="alerts-h">Open alerts</h2>
+    <p class="aside">most severe first, alerts of one rule grouped · <a href="/alerts">all alerts</a></p>
+  </div>
   {{if $d.Alerts}}{{template "alerttable" (boardtable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
-  {{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Showing the first {{$d.Limit}}, the most severe and recent: <a href="/alerts">all alerts to handle</a>.</p>{{end}}
   {{else}}<p class="empty">No open or acknowledged alerts.</p>{{end}}
 </section>
-</div>
 
-{{template "focus" $d.Focus}}
+<section class="panel p-rules" aria-labelledby="rules-h">
+  <div class="panel-head"><h2 id="rules-h">Top rules</h2><p class="aside">alerts raised, last 7 days</p></div>
+  {{if $d.Rules}}{{template "ranking" $d.Rules}}{{else}}<p class="empty">No alerts in the last 7 days.</p>{{end}}
+</section>
+
+<section class="panel p-load" aria-labelledby="load-h">
+  <div class="panel-head"><h2 id="load-h">Alerts by server</h2><p class="aside">unresolved</p></div>
+  {{if $d.Loaded}}{{template "ranking" $d.Loaded}}{{else}}<p class="empty">No unresolved alerts.</p>{{end}}
+</section>
+
+<section class="panel p-web" aria-labelledby="web-h">
+  <div class="panel-head"><h2 id="web-h">Web attacks</h2><p class="aside">{{$d.Web.Total}} flagged {{plural $d.Web.Total "request" "requests"}}, last 7 days</p></div>
+  {{if $d.Web.Total}}
+  <div class="web-split">
+    <div><h3>Sources</h3>{{template "ranking" $d.Web.Sources}}</div>
+    <div><h3>Targets</h3>{{template "ranking" $d.Web.Targets}}</div>
+  </div>
+  {{else}}<p class="empty">No attack seen in the web server logs in the last 7 days.</p>{{end}}
+</section>
 </div>
 {{end}}
+
+{{define "ranking"}}<ol class="ranking">
+  {{range .}}
+  <li>
+    <span class="r-label">{{if .Href}}<a class="mono" href="{{.Href}}">{{.Label}}</a>{{else}}<span{{if not .Severity}} class="mono"{{end}}>{{.Label}}</span>{{end}}{{with .Sub}}<span class="r-sub mono">{{.}}</span>{{end}}</span>
+    <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{{range .Segments}}<rect class="s-{{if .Severity}}{{.Severity}}{{else}}neutral{{end}}" x="{{num .X}}" y="0" width="{{num .W}}" height="10"><title>{{.N}}</title></rect>{{end}}</svg>
+    <span class="r-n">{{.N}}</span>
+  </li>
+  {{end}}
+</ol>{{end}}

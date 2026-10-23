@@ -284,8 +284,8 @@ func TestOverviewShowsSilentHostFirst(t *testing.T) {
 	if quiet < 0 || alive < 0 || quiet > alive {
 		t.Fatal("the silent host is not listed before the responding one")
 	}
-	if !regexp.MustCompile(`c-silent on">\s*<dt><svg[^>]*>.*?</svg>silent</dt>\s*<dd><span class="n">1</span>`).MatchString(body) {
-		t.Fatal("the counters do not count the silent host")
+	if !regexp.MustCompile(`kpi k-silent on"[^>]*>\s*<span class="kpi-label"><svg[^>]*>.*?</svg>Silent sensors</span>\s*<span class="kpi-n">1</span>`).MatchString(body) {
+		t.Fatal("the figures do not count the silent host")
 	}
 }
 
@@ -423,7 +423,7 @@ func TestLogoutAndTheme(t *testing.T) {
 		m := regexp.MustCompile(`Theme: ([a-z ]+)<`).FindStringSubmatch(body)
 		themes = append(themes, m[1])
 	}
-	if strings.Join(themes, ",") != "light,dark,system" {
+	if strings.Join(themes, ",") != "light,system,dark" {
 		t.Fatalf("theme cycle = %v", themes)
 	}
 
@@ -466,16 +466,19 @@ func TestPanelFollowsTheSelectedAlert(t *testing.T) {
 	medium := alerts[1].ID
 	h.login()
 
-	_, body := h.get("/")
+	if _, body := h.get("/"); !strings.Contains(body, `href="/alerts/`+itoa(medium)+`"`) {
+		t.Fatal("the overview's rows do not open their alert")
+	}
+	_, body := h.get("/alerts")
 	if !strings.Contains(body, "Look at this first") || !strings.Contains(body, "first detail") {
 		t.Fatal("without a selection the panel does not show the most urgent alert")
 	}
-	link := "/?a=" + itoa(medium) + "#focus"
+	link := "/alerts?a=" + itoa(medium) + "#focus"
 	if !strings.Contains(body, `href="`+link+`"`) {
 		t.Fatalf("rows do not link to their selection (%s)", link)
 	}
 
-	for _, page := range []string{"/?a=", "/alerts?view=open&a="} {
+	for _, page := range []string{"/alerts?a=", "/alerts?view=open&a="} {
 		_, body = h.get(page + itoa(medium))
 		if !strings.Contains(body, "Selected alert") || !strings.Contains(body, "second detail") || strings.Contains(body, "first detail") {
 			t.Errorf("%s: the panel does not show the selected alert", page)
@@ -484,7 +487,7 @@ func TestPanelFollowsTheSelectedAlert(t *testing.T) {
 			t.Errorf("%s: no way into the selected alert", page)
 		}
 	}
-	if _, body = h.get("/?a=999"); !strings.Contains(body, "Look at this first") {
+	if _, body = h.get("/alerts?a=999"); !strings.Contains(body, "Look at this first") {
 		t.Error("an unknown selection does not fall back to the most urgent alert")
 	}
 }
