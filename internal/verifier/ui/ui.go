@@ -45,6 +45,10 @@ const (
 // and a file name on the operator's machine.
 var hostPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,62}$`)
 
+// ValidHostName reports whether a name may be given to a new host, from the console or the
+// command line alike. "verifier" is the verifier's own host in alerts.
+func ValidHostName(name string) bool { return hostPattern.MatchString(name) && name != "verifier" }
+
 // releasePattern matches the version of a published release, whose sensor packages the
 // enrollment command can download; development builds offer the enrollment alone.
 var releasePattern = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)$`)
@@ -1259,7 +1263,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 		d.Error = msg
 		s.render(w, r, status, "enroll", page{Title: "Enroll a server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
 	}
-	if !hostPattern.MatchString(host) || host == "verifier" {
+	if !ValidHostName(host) {
 		again(http.StatusBadRequest, "The name may contain lowercase letters, digits, dots and hyphens, and must start with a letter or a digit.")
 		return
 	}

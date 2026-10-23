@@ -224,9 +224,13 @@ func enroll(args []string) error {
 	host := fs.String("host", "", "name of the host to enroll (its certificate's common name)")
 	url := fs.String("url", os.Getenv("TRIPWATCH_PUBLIC_INGEST_URL"), "address sensors use to reach the ingest endpoint")
 	out := fs.String("out", "", "file to write the bundle to, readable by its owner only (- for standard output)")
+	replace := fs.Bool("replace", false, "enroll again a host that already exists: its earlier keys and certificates stop working")
 	_ = fs.Parse(args)
 	if *host == "" || *url == "" || *out == "" {
 		return errors.New("enroll needs -host, -out and -url (or TRIPWATCH_PUBLIC_INGEST_URL)")
+	}
+	if !ui.ValidHostName(*host) {
+		return fmt.Errorf("host name %q: use lowercase letters, digits, dots and hyphens, starting with a letter or a digit, and not \"verifier\"", *host)
 	}
 	if !strings.HasPrefix(*url, "https://") {
 		return fmt.Errorf("ingest URL %q is not https", *url)
@@ -236,6 +240,12 @@ func enroll(args []string) error {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+	switch _, err := st.Host(context.Background(), *host); {
+	case err == nil && !*replace:
+		return fmt.Errorf("host %s is already enrolled: pass -replace to enroll it again, which revokes its current keys", *host)
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		return err
+	}
 	now := time.Now().UTC()
 	ca, err := pki.LoadOrCreate(filepath.Join(dataDir(), "pki"), now)
 	if err != nil {
