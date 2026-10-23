@@ -63,8 +63,8 @@ type Files struct {
 	gaps []string
 	// unwatched are the gaps outside the scratch directories, which the verifier raises.
 	unwatched []string
-	// scratchWatches counts the watches serving only scratch directories.
-	scratchWatches int
+	// classWatches counts the watches serving a single class, for the classes with a budget.
+	classWatches map[string]int
 	// hashed counts the bytes hashed in the current second against hashBudget, apart for files
 	// of root and of other users: a user cannot create files of root, so cannot spend their
 	// budget and leave root's changes without a hash.
@@ -80,7 +80,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}, classWatches: map[string]int{}}, nil
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -105,8 +105,8 @@ func (f *Files) Unwatched() []string {
 
 // gap records a place the bounds leave unwatched. Callers hold f.mu.
 func (f *Files) gap(class, msg string) {
-	if class != ClassScratch && !slices.Contains(f.unwatched, msg) && len(f.unwatched) < maxGaps {
-		f.unwatched = append(f.unwatched, msg)
+	if entry := class + ": " + msg; !slices.Contains(f.unwatched, entry) && len(f.unwatched) < maxGaps {
+		f.unwatched = append(f.unwatched, entry)
 	}
 	if slices.Contains(f.gaps, msg) {
 		return
@@ -131,12 +131,12 @@ func (f *Files) Watches() int {
 func (f *Files) Set(targets []Target) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.issues = nil
+	f.issues, f.unwatched = nil, nil
 	keep := map[string][]Target{}
 	depths := map[string]int{}
-	scratch := 0
+	planned := map[string]int{}
 	for _, t := range targets {
-		f.expand(t, t.Dir, 0, keep, depths, &scratch)
+		f.expand(t, t.Dir, 0, keep, depths, planned)
 	}
 	for dir, wd := range f.byDir {
 		if _, ok := keep[dir]; !ok {
@@ -183,7 +183,7 @@ func (f *Files) remember(p, sha string) string {
 }
 
 // expand collects dir for target t and, for a recursive target, its subdirectories.
-func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target, depths map[string]int, scratch *int) {
+func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target, depths map[string]int, planned map[string]int) {
 	if len(keep) >= MaxWatches {
 		f.gap(t.Class, fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
 		return
@@ -192,12 +192,14 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 	if err != nil || !info.IsDir() {
 		return
 	}
-	if _, planned := keep[dir]; !planned && t.Class == ClassScratch {
-		if *scratch >= MaxScratchWatches {
-			f.gap(t.Class, fmt.Sprintf("watch: more than %d directories in the scratch directories: %s and others are not watched", MaxScratchWatches, dir))
-			return
+	if _, seen := keep[dir]; !seen {
+		if limit := classBudget[t.Class]; limit > 0 {
+			if planned[t.Class] >= limit {
+				f.gap(t.Class, fmt.Sprintf("watch: more than %d directories of class %s: %s and others are not watched", limit, t.Class, dir))
+				return
+			}
+			planned[t.Class]++
 		}
-		*scratch++
 	}
 	keep[dir] = append(keep[dir], t)
 	depths[dir] = depth
@@ -216,21 +218,21 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 			f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, t.depth(), t.Dir))
 			break
 		}
-		f.expand(t, path.Join(dir, e.Name()), depth+1, keep, depths, scratch)
+		f.expand(t, path.Join(dir, e.Name()), depth+1, keep, depths, planned)
 	}
 }
 
 // add places or refreshes the watch on dir. Callers hold f.mu.
 func (f *Files) add(dir string, targets []Target, depth int) {
 	class := targets[0].Class
-	onlyScratch := !slices.ContainsFunc(targets, func(t Target) bool { return t.Class != ClassScratch })
+	cls := classOf(targets)
 	_, existing := f.byDir[dir]
 	if !existing && len(f.byWD) >= MaxWatches {
 		f.gap(class, fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
 		return
 	}
-	if !existing && onlyScratch && f.scratchWatches >= MaxScratchWatches {
-		f.gap(class, fmt.Sprintf("watch: more than %d directories in the scratch directories: %s and others are not watched", MaxScratchWatches, dir))
+	if limit := classBudget[cls]; !existing && limit > 0 && f.classWatches[cls] >= limit {
+		f.gap(class, fmt.Sprintf("watch: more than %d directories of class %s: %s and others are not watched", limit, cls, dir))
 		return
 	}
 	wd, err := unix.InotifyAddWatch(f.fd, f.abs(dir), watchMask)
@@ -240,14 +242,12 @@ func (f *Files) add(dir string, targets []Target, depth int) {
 		}
 		return
 	}
-	if w := f.byWD[wd]; w != nil && w.scratchOnly() {
-		f.scratchWatches--
+	if w := f.byWD[wd]; w != nil {
+		f.classWatches[classOf(w.targets)]--
 	}
 	f.byDir[dir] = wd
 	f.byWD[wd] = &watched{dir: dir, targets: targets, depth: depth}
-	if onlyScratch {
-		f.scratchWatches++
-	}
+	f.classWatches[cls]++
 }
 
 // forget drops the record of a watch the kernel removed or Set no longer wants. Callers hold
@@ -257,9 +257,7 @@ func (f *Files) forget(wd int) {
 	if w == nil {
 		return
 	}
-	if w.scratchOnly() {
-		f.scratchWatches--
-	}
+	f.classWatches[classOf(w.targets)]--
 	delete(f.byWD, wd)
 	delete(f.byDir, w.dir)
 }
@@ -333,8 +331,21 @@ func sameTargets(a, b []Target) bool {
 	return true
 }
 
-func (w *watched) scratchOnly() bool {
-	return !slices.ContainsFunc(w.targets, func(t Target) bool { return t.Class != ClassScratch })
+// classBudget caps the watches of the classes anyone can fill with directories, so that they
+// never take the watches of the system and the homes, at startup or later.
+var classBudget = map[string]int{ClassScratch: MaxScratchWatches, ClassUpload: MaxUploadWatches}
+
+// classOf is the class all of a watch's targets share, or "" when they differ.
+func classOf(targets []Target) string {
+	if len(targets) == 0 {
+		return ""
+	}
+	for _, t := range targets[1:] {
+		if t.Class != targets[0].Class {
+			return ""
+		}
+	}
+	return targets[0].Class
 }
 
 func (f *Files) abs(dir string) string {

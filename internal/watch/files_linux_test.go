@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -307,8 +308,8 @@ func TestFilesScratchCannotStarveSystemWatches(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 	f.Set(Targets([]Home{{User: "root", Dir: "/root"}}, nil))
-	if f.scratchWatches > MaxScratchWatches || len(f.Unwatched()) != 0 {
-		t.Fatalf("scratch watches %d, unwatched %v", f.scratchWatches, f.Unwatched())
+	if f.classWatches[ClassScratch] > MaxScratchWatches || slices.ContainsFunc(f.Unwatched(), func(u string) bool { return !strings.HasPrefix(u, ClassScratch+":") }) {
+		t.Fatalf("scratch watches %d, unwatched %v", f.classWatches[ClassScratch], f.Unwatched())
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

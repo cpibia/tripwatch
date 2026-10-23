@@ -20,6 +20,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   Passenger) count as the web server.
 - A process still running a replaced binary is marked as packaged (`exe_packaged`) only when
   dpkg's file lists name the path; only then is it a "restart pending".
+- The uploads have a budget of their own too (6,144 watches), also for directories created
+  later, so a web user filling them leaves room for the system and the homes.
 - The scratch directories come last and have a budget of their own (512 watches, two levels
   deep): directories anyone creates there can no longer take the watches of the system, the
   homes or the uploads. Places of those left unwatched by the bounds are listed in each snapshot.
@@ -41,8 +43,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   mappings of real files (memfd ones included) count again, only the anonymous region of OPcache
   and JITs is left out; new generators and set-user-ID programs are high again whatever packages
   did; removing an activation link (a unit disabled) is low.
-- Places of the system, the homes or the uploads left without a real-time watch are a high
-  alert.
+- Places left without a real-time watch are an alert per class: high for the system, the homes
+  and the uploads, medium for the scratch directories. The list is computed again at each
+  snapshot.
 - An executable file in a scratch directory is high when root or the web server's user owns it,
   medium otherwise (builds and installers); one that appears and is removed within 15 minutes is
   critical for root and the web server's user, high otherwise. Each account's drops are a group

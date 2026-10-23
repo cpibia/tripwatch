@@ -11,6 +11,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector"
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
+	"github.com/cpibia/tripwatch/internal/watch"
 	"github.com/cpibia/tripwatch/internal/weblog"
 )
 
@@ -896,14 +897,27 @@ func Evaluate(prev *State, cur State) []Finding {
 	out = append(out, kernelFindings(prev, cur)...)
 
 	if rt := cur.Realtime; rt != nil && len(rt.Unwatched) > 0 {
-		// Anyone able to create directories can push the watches past their bounds: places of
-		// the system, the homes and the uploads left without one are an alert, not a note.
-		list := rt.Unwatched
-		if len(list) > 10 {
-			list = list[:10]
+		// Anyone able to create directories can push the watches past their bounds: places left
+		// without one are an alert, one per class, high for the system, the homes and the uploads,
+		// medium for the scratch directories, which anyone fills.
+		byClass := map[string][]string{}
+		for _, u := range rt.Unwatched {
+			class, msg, ok := strings.Cut(u, ": ")
+			if !ok {
+				class, msg = "other", u
+			}
+			if len(byClass[class]) < 10 {
+				byClass[class] = append(byClass[class], msg)
+			}
 		}
-		state("sensor", "unwatched", "high", "Places left without real-time watch",
-			"The real-time watcher could not cover every watched place; changes there show only in snapshots. Someone filling a watched tree with directories causes this.\n"+strings.Join(list, "\n"))
+		for class, list := range byClass {
+			sev := "high"
+			if class == watch.ClassScratch {
+				sev = "medium"
+			}
+			state("sensor", "unwatched:"+class, sev, "Places left without real-time watch: "+class,
+				"The real-time watcher could not cover every watched place of this class; changes there show only in snapshots. Someone filling a watched tree with directories causes this.\n"+strings.Join(list, "\n"))
+		}
 	}
 
 	if p := cur.Processes; p != nil {

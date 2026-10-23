@@ -152,12 +152,15 @@ func TestPackageDatabaseChanges(t *testing.T) {
 }
 
 func TestUnwatchedPlacesRaiseAlert(t *testing.T) {
-	cur := State{Realtime: &watch.Status{Files: true, Unwatched: []string{"watch: more than 8192 directories to watch: /srv/app/uploads/x and others are not watched"}}}
-	found := false
+	cur := State{Realtime: &watch.Status{Files: true, Unwatched: []string{
+		"upload: watch: more than 6144 directories of class upload: /srv/app/uploads/x and others are not watched",
+		"scratch: watch: /tmp/a/b has directories deeper than 2 levels below /tmp, not watched",
+	}}}
+	got := map[string]string{}
 	for _, f := range Evaluate(nil, cur) {
-		found = found || (f.Fingerprint == "sensor:unwatched" && f.Severity == "high")
+		got[f.Fingerprint] = f.Severity
 	}
-	if !found {
-		t.Fatal("places left unwatched raised nothing")
+	if got["sensor:unwatched:upload"] != "high" || got["sensor:unwatched:scratch"] != "medium" {
+		t.Fatalf("unwatched alerts %v", got)
 	}
 }

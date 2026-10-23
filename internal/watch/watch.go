@@ -102,7 +102,9 @@ const (
 	MaxDepth   = 4
 	// The scratch directories get at most MaxScratchWatches of the watches, ScratchDepth deep.
 	MaxScratchWatches = 512
-	ScratchDepth      = 2
+	// The uploads get at most MaxUploadWatches, leaving the rest to the system and the homes.
+	MaxUploadWatches = 6144
+	ScratchDepth     = 2
 )
 
 // ErrUnsupported is returned where the kernel interfaces the watcher needs do not exist.
