@@ -88,6 +88,20 @@ CREATE TABLE IF NOT EXISTS activity (
 	kind    TEXT NOT NULL,
 	PRIMARY KEY (host_id, minute, kind)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS events (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	host_id         TEXT NOT NULL,
+	seq             INTEGER NOT NULL,
+	at              INTEGER NOT NULL,
+	received_at     INTEGER NOT NULL,
+	class           TEXT NOT NULL,
+	op              TEXT NOT NULL,
+	path            TEXT NOT NULL,
+	package_manager INTEGER NOT NULL DEFAULT 0,
+	data            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_host ON events(host_id, received_at);
+CREATE INDEX IF NOT EXISTS events_path ON events(host_id, path, at);
 CREATE TABLE IF NOT EXISTS enroll_tokens (
 	host_id    TEXT PRIMARY KEY,
 	token_hash BLOB NOT NULL UNIQUE,

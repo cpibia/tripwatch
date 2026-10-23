@@ -19,6 +19,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/protocol"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
+	"github.com/cpibia/tripwatch/internal/watch"
 )
 
 // Size limits per envelope kind. A compressed snapshot of a large server is a few MB and its
@@ -531,7 +532,14 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 		Version string `json:"version"`
 		BootID  string `json:"boot_id"`
 	}
-	if json.Unmarshal(e.Payload, &ev) != nil || ev.Event != "sensor_started" {
+	if json.Unmarshal(e.Payload, &ev) != nil {
+		return
+	}
+	if ev.Event == watch.BatchEvent {
+		s.watched(ctx, host, e, now)
+		return
+	}
+	if ev.Event != "sensor_started" {
 		return
 	}
 	detail := fmt.Sprintf("The sensor started (version %s, system boot %s). If the server was not rebooted and the sensor was not updated, someone stopped and restarted it: check what happened while it was down.", ev.Version, ev.BootID)

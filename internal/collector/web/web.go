@@ -880,3 +880,11 @@ func isScript(base string) bool {
 	}
 	return strings.Contains(base, ".php.") || strings.Contains(base, ".phtml.") || strings.Contains(base, ".phar.")
 }
+
+// IsScript reports whether the web server may run a file of this name as a script, by its
+// extension: what the scan counts as a script, for the real-time rules to judge alike.
+func IsScript(name string) bool { return isScript(strings.ToLower(path.Base(name))) }
+
+// IsOverride reports whether a file of this name changes how the web server treats its
+// directory, such as an .htaccess.
+func IsOverride(name string) bool { return slices.Contains(overrideNames, path.Base(name)) }
