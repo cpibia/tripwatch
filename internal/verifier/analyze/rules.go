@@ -933,8 +933,8 @@ func Evaluate(prev *State, cur State) []Finding {
 			case strings.HasPrefix(pr.Exe, "/memfd:"):
 				state("processes", "memfd:"+pr.Comm+":"+pr.ExeSHA256, "critical", "Fileless process: "+pr.Comm,
 					fmt.Sprintf("PID %d (%s) runs %s, a file that exists only in memory: malware runs this way to leave nothing on disk. UID %d, hash %s, command line %s.", pr.PID, pr.Comm, pr.Exe, pr.UID, pr.ExeSHA256, pr.Cmdline))
-			case pr.ExeDeleted && pr.ExeReplaced && standardBinDir(pr.Exe):
-				state("processes", "restart-pending:"+pr.Exe, "low", "Process still runs a replaced binary: "+pr.Comm,
+			case pr.ExeDeleted && pr.ExeReplaced && packagedPath(pr.Exe, cur.Packages):
+				state("processes", "restart-pending:"+pr.Exe+":"+pr.ExeSHA256, "low", "Process still runs a replaced binary: "+pr.Comm,
 					fmt.Sprintf("PID %d (%s) still runs the old %s: the file was replaced, most likely by a package upgrade, and the process has not been restarted since. Restart it to run the new version.", pr.PID, pr.Comm, pr.Exe))
 			case pr.ExeDeleted:
 				state("processes", "deleted:"+pr.Exe+":"+pr.ExeSHA256, "high", "Process from a deleted executable", fmt.Sprintf("PID %d (%s) runs %s, removed from disk. Hash %s.", pr.PID, pr.Comm, pr.Exe, pr.ExeSHA256))
@@ -1246,6 +1246,22 @@ func rawSocketFinding(so system.Socket) (Finding, bool) {
 		f.Detail = where + ". It reads traffic before any port does; capture and network tools do this, and so do backdoors that open no port. Check that this program is expected."
 	}
 	return f, true
+}
+
+// packageDirs are where only packages install: /opt, /usr/local and /snap are left out, since
+// software there is installed by hand.
+var packageDirs = []string{"/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/lib/", "/usr/libexec/", "/lib/"}
+
+// packagedPath reports whether a path lies where packages install and the packages collector
+// did not find it unowned or modified there.
+func packagedPath(p string, pkgs *system.PackagesResult) bool {
+	if pkgs == nil || !slices.ContainsFunc(packageDirs, func(d string) bool { return strings.HasPrefix(p, d) }) {
+		return false
+	}
+	if slices.Contains(pkgs.Unowned, p) || slices.ContainsFunc(pkgs.Modified, func(m system.ModifiedFile) bool { return m.Path == p }) {
+		return false
+	}
+	return true
 }
 
 func standardBinDir(p string) bool {

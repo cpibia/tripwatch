@@ -74,13 +74,15 @@ func TestRawSocketFindings(t *testing.T) {
 }
 
 func TestProcessMemoryFindings(t *testing.T) {
-	cur := State{Processes: &system.ProcessesResult{Processes: []system.Process{
+	cur := State{Packages: &system.PackagesResult{Manager: "dpkg", Unowned: []string{"/usr/bin/planted"}}, Processes: &system.ProcessesResult{Processes: []system.Process{
 		{PID: 10, Comm: "sshd", Exe: "/usr/sbin/sshd", Tracer: 66},
 		{PID: 11, Comm: "app", Exe: "/usr/bin/app", Tracer: 67},
 		{PID: 12, Comm: "node", Exe: "/usr/bin/node", Mapped: []string{"/var/www/app/node_modules/x/build/x.node", "/dev/shm/.l.so", "/memfd:s (deleted)"}},
 		{PID: 13, Comm: "x", Exe: "/memfd:x", ExeDeleted: true},
 		{PID: 14, Comm: "agetty", Exe: "/usr/sbin/agetty", ExeDeleted: true, ExeReplaced: true},
 		{PID: 15, Comm: "agetty", Exe: "/usr/sbin/gone", ExeDeleted: true},
+		{PID: 17, Comm: "tool", Exe: "/usr/local/bin/tool", ExeDeleted: true, ExeReplaced: true},
+		{PID: 18, Comm: "planted", Exe: "/usr/bin/planted", ExeDeleted: true, ExeReplaced: true},
 		{PID: 16, Comm: "php-fpm8.4", Exe: "/usr/sbin/php-fpm8.4", Mapped: []string{"/dev/zero (deleted)"}},
 		{PID: 66, Comm: "gdb", Exe: "/usr/bin/gdb"},
 		{PID: 67, Comm: "gdb", Exe: "/usr/bin/gdb"},
@@ -95,7 +97,9 @@ func TestProcessMemoryFindings(t *testing.T) {
 		"processes:mapped:node:/dev/shm/.l.so":                           "critical",
 		"processes:mapped:node:/memfd:s (deleted)":                       "critical",
 		"processes:memfd:x:":                                             "critical",
-		"processes:restart-pending:/usr/sbin/agetty":                     "low",
+		"processes:restart-pending:/usr/sbin/agetty:":                    "low",
+		"processes:deleted:/usr/local/bin/tool:":                         "high",
+		"processes:deleted:/usr/bin/planted:":                            "high",
 		"processes:deleted:/usr/sbin/gone:":                              "high",
 	} {
 		if got[fp] != sev {

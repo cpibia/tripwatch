@@ -66,6 +66,9 @@ func (Processes) Name() string { return "processes" }
 func (Processes) Collect(ctx context.Context, src collector.Source) (any, error) {
 	var res ProcessesResult
 	hashes := map[string]string{}
+	// The host's mount namespace: a path is looked up in the observed root, which is that
+	// namespace's view, never a container's.
+	hostMnt, _ := fs.ReadLink(src.FS, "proc/1/ns/mnt")
 
 	for _, pid := range pids(src.FS) {
 		if err := ctx.Err(); err != nil {
@@ -83,9 +86,13 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 			p.ExeSHA256 = exeHash(src, pid, hashes, &res.Issues)
 		}
 		p.Mapped = mappedCode(src.FS, pid, p.Exe)
-		if p.ExeDeleted && strings.HasPrefix(p.Exe, "/") {
-			if info, err := fs.Lstat(src.FS, collector.Rel(p.Exe)); err == nil && info.Mode().IsRegular() {
-				p.ExeReplaced = true
+		// Replaced only where the path means the same file for the process and for the sensor,
+		// and only by a file of root nobody else can write: anyone could put a file there.
+		if p.ExeDeleted && strings.HasPrefix(p.Exe, "/") && hostMnt != "" && p.MntNS == hostMnt {
+			if info, err := fs.Lstat(src.FS, collector.Rel(p.Exe)); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o022 == 0 {
+				if uid, ok := collector.Owner(info); ok && uid == 0 {
+					p.ExeReplaced = true
+				}
 			}
 		}
 		res.Processes = append(res.Processes, p)
