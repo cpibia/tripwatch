@@ -321,3 +321,88 @@ func TestFilesScratchCannotStarveSystemWatches(t *testing.T) {
 		t.Fatalf("root's keys unwatched behind a flood of /tmp: %+v", got)
 	}
 }
+
+// kernelWatches counts the watches the kernel holds on an inotify instance.
+func kernelWatches(t *testing.T, fd int) int {
+	t.Helper()
+	data, err := os.ReadFile("/proc/self/fdinfo/" + strconv.Itoa(fd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(data), "inotify wd:")
+}
+
+// A watched directory renamed within the perimeter keeps reporting under its new name, and a
+// loop of renames leaves the kernel holding no more watches than the sensor knows of.
+func TestFilesFollowRenamedDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"srv/app/uploads/2024/a", "etc/systemd/system/x.service.d", "tmp/w"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 4096)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, []string{"/srv/app/uploads"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	for _, mv := range [][2]string{{"srv/app/uploads/2024", "srv/app/uploads/2025"}, {"etc/systemd/system/x.service.d", "etc/systemd/system/y.service.d"}} {
+		if err := os.Rename(filepath.Join(root, mv[0]), filepath.Join(root, mv[1])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	for len(ch) > 0 {
+		<-ch
+	}
+	writes := map[string]string{
+		"srv/app/uploads/2025/a/shell.php":             "<?php system($_GET['c']);",
+		"etc/systemd/system/y.service.d/override.conf": "[Service]\nExecStartPre=/tmp/x\n",
+	}
+	for p, content := range writes {
+		if err := os.WriteFile(filepath.Join(root, p), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := collect(t, ch, 2)
+	if !has(got, ClassUpload, OpCreate, "/srv/app/uploads/2025/a/shell.php") || !has(got, ClassService, OpCreate, "/etc/systemd/system/y.service.d/override.conf") {
+		t.Fatalf("events after renames: %+v", got)
+	}
+	for i := range 300 {
+		dir := filepath.Join(root, "tmp/w", "d"+strconv.Itoa(i))
+		if err := os.Mkdir(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(dir, dir+"x"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(dir + "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Out of the perimeter: the watches go with the directory.
+	for i := range 300 {
+		dir := filepath.Join(root, "tmp/w", "o"+strconv.Itoa(i))
+		if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+		if err := os.Rename(dir, filepath.Join(root, "out"+strconv.Itoa(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+	f.mu.Lock()
+	known := len(f.byWD)
+	f.mu.Unlock()
+	if kernel := kernelWatches(t, f.fd); kernel != known {
+		t.Fatalf("the kernel holds %d watches, the sensor knows %d", kernel, known)
+	}
+}

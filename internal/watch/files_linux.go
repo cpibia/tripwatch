@@ -54,6 +54,10 @@ type Files struct {
 	scratchSecond time.Time
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
 	known map[string]string
+	// moves are renames of watched directories waiting for their second half, by cookie;
+	// renamed marks the watches whose records already follow a rename.
+	moves   map[uint32]string
+	renamed map[int]bool
 	// gaps are the places left unwatched by the bounds since the sensor started, kept across
 	// Set: a directory too deep or too full stays a gap until someone looks at it.
 	gaps []string
@@ -76,7 +80,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}}, nil
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -260,6 +264,75 @@ func (f *Files) forget(wd int) {
 	delete(f.byDir, w.dir)
 }
 
+// maxMoves bounds the renames waiting for their second half.
+const maxMoves = 1024
+
+// moved follows a watched directory renamed within the perimeter: the first half of a rename
+// records its old path by cookie, the second moves the records of the directory and of every
+// directory below it to the new path, so their events keep coming under the right names.
+// Callers hold f.mu.
+func (f *Files) moved(mask, cookie uint32, full string, parent *watched) {
+	if mask&unix.IN_MOVED_FROM != 0 {
+		if _, watched := f.byDir[full]; watched {
+			if len(f.moves) >= maxMoves {
+				clear(f.moves)
+			}
+			f.moves[cookie] = full
+		}
+		return
+	}
+	old, ok := f.moves[cookie]
+	if !ok {
+		return
+	}
+	delete(f.moves, cookie)
+	wd, ok := f.byDir[old]
+	if !ok {
+		return
+	}
+	// A move into another kind of place (from the uploads to /tmp) is a new directory there:
+	// the old watches go now, and the event that follows places new ones.
+	if moving := f.byWD[wd]; moving == nil || !sameTargets(moving.targets, parent.targets) {
+		f.unwatchTree(old)
+		return
+	}
+	for dir, d := range f.byDir {
+		if dir != old && !strings.HasPrefix(dir, old+"/") {
+			continue
+		}
+		renamed := full + strings.TrimPrefix(dir, old)
+		delete(f.byDir, dir)
+		f.byDir[renamed] = d
+		if rec := f.byWD[d]; rec != nil {
+			rec.dir = renamed
+		}
+	}
+	f.renamed[wd] = true
+}
+
+// unwatchTree removes from the kernel and from the records the watches of dir and of every
+// directory below it. Callers hold f.mu.
+func (f *Files) unwatchTree(dir string) {
+	for d, wd := range f.byDir {
+		if d == dir || strings.HasPrefix(d, dir+"/") {
+			_, _ = unix.InotifyRmWatch(f.fd, uint32(wd)) //nolint:gosec // watch descriptors the kernel returned are never negative
+			f.forget(wd)
+		}
+	}
+}
+
+func sameTargets(a, b []Target) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Dir != b[i].Dir || a[i].Class != b[i].Class {
+			return false
+		}
+	}
+	return true
+}
+
 func (w *watched) scratchOnly() bool {
 	return !slices.ContainsFunc(w.targets, func(t Target) bool { return t.Class != ClassScratch })
 }
@@ -304,7 +377,7 @@ func (f *Files) handle(b []byte) {
 			return
 		}
 		name := strings.TrimRight(string(b[unix.SizeofInotifyEvent:size]), "\x00")
-		f.event(int(raw.Wd), raw.Mask, name)
+		f.event(int(raw.Wd), raw.Mask, raw.Cookie, name)
 		b = b[size:]
 	}
 	if len(b) > 0 && f.out != nil {
@@ -312,15 +385,27 @@ func (f *Files) handle(b []byte) {
 	}
 }
 
-func (f *Files) event(wd int, mask uint32, name string) {
+func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 	if mask&unix.IN_Q_OVERFLOW != 0 {
 		f.Dropped.Add(1)
 		return
 	}
 	f.mu.Lock()
 	w := f.byWD[wd]
-	if w != nil && mask&(unix.IN_DELETE_SELF|unix.IN_MOVE_SELF|unix.IN_IGNORED) != 0 && name == "" {
-		f.forget(wd)
+	if w != nil && name == "" {
+		switch {
+		case mask&(unix.IN_DELETE_SELF|unix.IN_IGNORED) != 0:
+			f.forget(wd)
+		case mask&unix.IN_MOVE_SELF != 0:
+			// The kernel reports the moved directory after both sides of the rename: if the
+			// new side was in the perimeter its records already follow it; otherwise it left,
+			// and its watches, kept by the kernel on the inode, are removed with it.
+			if f.renamed[wd] {
+				delete(f.renamed, wd)
+			} else {
+				f.unwatchTree(w.dir)
+			}
+		}
 	}
 	f.mu.Unlock()
 	if w == nil || name == "" {
@@ -328,6 +413,11 @@ func (f *Files) event(wd int, mask uint32, name string) {
 	}
 	full := path.Join(w.dir, name)
 	isDir := mask&unix.IN_ISDIR != 0
+	if isDir && mask&(unix.IN_MOVED_FROM|unix.IN_MOVED_TO) != 0 {
+		f.mu.Lock()
+		f.moved(mask, cookie, full, w)
+		f.mu.Unlock()
+	}
 	op := ""
 	switch {
 	case mask&(unix.IN_CREATE|unix.IN_MOVED_TO) != 0:

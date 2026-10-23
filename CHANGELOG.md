@@ -8,6 +8,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A watched directory renamed within the watched places keeps reporting under its new name, its
+  subdirectories with it; one moved out of them has its watches removed from the kernel. Before,
+  a rename (an upload directory, a unit's drop-in directory) left the directory silent until the
+  next snapshot and its watch held by the kernel.
 - The packages collector reports, for each dpkg package, its version and a digest of the
   checksums recorded for it (`states`).
 - The exemption for an account's own scripts is narrowed: the path is normalised, and only a
