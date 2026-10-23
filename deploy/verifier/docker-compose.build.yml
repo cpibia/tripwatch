@@ -1,0 +1,6 @@
+services:
+  verifier:
+    build:
+      context: ../..
+      dockerfile: deploy/verifier/Dockerfile
+    image: tripwatch-verifier:local

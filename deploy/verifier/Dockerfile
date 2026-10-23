@@ -1,14 +1,15 @@
 # Base images are pinned by digest: the verifier holds the certificate authority of every
 # monitored host.
-FROM golang:1.27.3-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+ARG TARGETOS TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=none
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
       -ldflags "-s -w -X github.com/cpibia/tripwatch/internal/buildinfo.Version=${VERSION} -X github.com/cpibia/tripwatch/internal/buildinfo.Commit=${COMMIT}" \
       -o /out/tripwatch-verifier ./cmd/tripwatch-verifier \
  && mkdir -p /out/data

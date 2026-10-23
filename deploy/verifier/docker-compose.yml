@@ -2,15 +2,15 @@
 # bound to localhost: publish it through an HTTPS reverse proxy).
 #
 #   cp .env.example .env    # then edit it
-#   docker compose up -d --build
+#   docker compose up -d
 #   (umask 077; docker compose exec -T verifier /tripwatch-verifier enroll -host web-01 -out - > web-01.json)
+#
+# To build the image from a checkout instead of pulling the release:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 services:
   verifier:
-    build:
-      context: ../..
-      dockerfile: deploy/verifier/Dockerfile
-    image: tripwatch-verifier:local
+    image: ghcr.io/cpibia/tripwatch-verifier:${TRIPWATCH_VERSION:-latest}
     restart: unless-stopped
     env_file: .env
     environment:

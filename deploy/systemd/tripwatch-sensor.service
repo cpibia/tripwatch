@@ -2,9 +2,11 @@
 Description=tripwatch sensor
 After=network-online.target
 Wants=network-online.target
+# Installed by the package before the host is enrolled; enrolling writes the bundle.
+ConditionPathExists=/etc/tripwatch/bundle.json
 
 [Service]
-ExecStart=/usr/local/bin/tripwatch-sensor -bundle /etc/tripwatch/bundle.json
+ExecStart=/usr/bin/tripwatch-sensor -bundle /etc/tripwatch/bundle.json
 Restart=always
 RestartSec=5
 

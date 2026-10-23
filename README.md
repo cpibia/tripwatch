@@ -38,20 +38,27 @@ manifest produced by the build (checked against the lockfile: `composer.lock`,
 
 ## Getting started
 
-You need a dedicated machine for the verifier (a small VPS is enough) with Docker, a DNS name
-pointing to it, and Go on the machine where you build the sensor (the version is in `go.mod`).
+Every release publishes the sensor as `.deb` and `.rpm` packages and the verifier as a container
+image (`ghcr.io/cpibia/tripwatch-verifier`). Nothing needs to be cloned or compiled on the
+servers. The commands below use release `0.1.0`: take the current number from the
+[releases page](https://github.com/cpibia/tripwatch/releases).
 
-**1. Start the verifier** on the dedicated machine:
+### 1. Install the verifier
+
+You need a dedicated machine with Docker (a small VPS is enough), outside the servers you will
+monitor, and a DNS name pointing to it, here `tripwatch.example.net`.
 
 ```sh
-git clone https://github.com/cpibia/tripwatch.git
-cd tripwatch/deploy/verifier
-cp .env.example .env
+mkdir tripwatch && cd tripwatch
+curl -fsSLO https://github.com/cpibia/tripwatch/releases/latest/download/docker-compose.yml
+curl -fsSL -o .env https://github.com/cpibia/tripwatch/releases/latest/download/verifier.env.example
 ```
 
-In `.env` set at least the name the sensors will use, the public addresses and the first user:
+In `.env` set at least the release, the name the sensors will use, the public addresses and the
+first user:
 
 ```sh
+TRIPWATCH_VERSION=0.1.0
 TRIPWATCH_HOSTNAMES=tripwatch.example.net
 TRIPWATCH_PUBLIC_INGEST_URL=https://tripwatch.example.net:8443/v1/envelopes
 TRIPWATCH_PUBLIC_UI_URL=https://tripwatch.example.net
@@ -60,39 +67,75 @@ TRIPWATCH_ADMIN_PASSWORD=a-password-of-12-characters-or-more
 ```
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 ```
 
-Open port `8443` in the firewall to the monitored servers: it carries mutual TLS and must reach
+Open port `8443` in the firewall to the monitored servers. It carries mutual TLS and must reach
 the container directly, never through a reverse proxy that terminates TLS. The web interface
-listens on `127.0.0.1:8080`: publish it through an HTTPS reverse proxy, or reach it with
-`ssh -L 8080:127.0.0.1:8080 your-vps` and open http://localhost:8080.
+listens on `127.0.0.1:8080`: put an HTTPS reverse proxy in front of it. With Caddy on the same
+machine the whole configuration is:
 
-**2. Build and install the sensor.** On your machine:
-
-```sh
-make dist
+```
+tripwatch.example.net {
+	reverse_proxy 127.0.0.1:8080
+}
 ```
 
-Copy `dist/tripwatch-sensor-linux-amd64` (or `-arm64`) and `deploy/systemd/tripwatch-sensor.service`
-to the server to monitor, then as root:
+Without a proxy, `ssh -L 8080:127.0.0.1:8080 your-vps` and http://localhost:8080 also work.
+Then sign in with the first user and remove `TRIPWATCH_ADMIN_PASSWORD` from `.env`.
+
+### 2. Install the sensor
+
+On every server to monitor, as root.
+
+Debian and Ubuntu:
 
 ```sh
-install -o root -g root -m 755 tripwatch-sensor-linux-amd64 /usr/local/bin/tripwatch-sensor
-install -o root -g root -m 644 tripwatch-sensor.service /etc/systemd/system/
-systemctl daemon-reload
+curl -fsSLO https://github.com/cpibia/tripwatch/releases/download/v0.1.0/tripwatch-sensor_0.1.0_amd64.deb
+apt install ./tripwatch-sensor_0.1.0_amd64.deb
 ```
 
-**3. Enroll the server.** In the web interface open "Registra server", choose the server's name
-and run the command it shows on the server, as root:
+RHEL, AlmaLinux, Rocky, Fedora and Amazon Linux:
+
+```sh
+dnf install https://github.com/cpibia/tripwatch/releases/download/v0.1.0/tripwatch-sensor-0.1.0-1.x86_64.rpm
+```
+
+On ARM servers use `arm64` in the `.deb` name and `aarch64` in the `.rpm` name. The package
+installs `/usr/bin/tripwatch-sensor` and its systemd unit, and creates `/etc/tripwatch`; the
+service starts only after enrollment. On other distributions use the static binary from the
+release (`tripwatch-sensor_0.1.0_linux_amd64`) with the unit in [deploy/systemd](deploy/systemd).
+
+Every file of a release is listed in `SHA256SUMS` and has a build provenance attestation, which
+proves it was built by this repository's release workflow from the tagged source:
+
+```sh
+gh attestation verify tripwatch-sensor_0.1.0_amd64.deb -R cpibia/tripwatch
+```
+
+### 3. Enroll the server
+
+In the web interface open "Registra server", choose the server's name and run the command it
+shows on the server, as root:
 
 ```sh
 echo 'tw1....' | tripwatch-sensor enroll -token-file - && systemctl enable --now tripwatch-sensor
 ```
 
 The server shows up in the overview with its first heartbeat within a minute; the first full
-snapshot follows shortly. To see what the sensor collects without a verifier, run
-`sudo tripwatch-sensor > snapshot.json` on any Linux machine.
+snapshot follows shortly.
+
+### Updating and removing
+
+- **Sensor:** install the package of the new release the same way; a running sensor is
+  restarted. `apt remove tripwatch-sensor` or `dnf remove tripwatch-sensor` stops and removes it,
+  and keeps the bundle in `/etc/tripwatch` and the state in `/var/lib/tripwatch`, so a reinstall
+  resumes the same chain.
+- **Verifier:** set the new `TRIPWATCH_VERSION` in `.env`, then
+  `docker compose pull && docker compose up -d`. The state stays in the `data` volume.
+
+To see what the sensor collects without a verifier, run `sudo tripwatch-sensor > snapshot.json`
+on any Linux machine.
 
 ## What the sensor collects
 
@@ -326,6 +369,10 @@ make cover   # tests with the coverage threshold
 make lint    # go vet and golangci-lint
 ```
 
+Releases are built by GoReleaser (`.goreleaser.yaml`) when a `v*` tag is pushed: the workflow in
+`.github/workflows/release.yml` publishes binaries, packages, checksums and the verifier image,
+each with a build provenance attestation.
+
 ## Verifier
 
 The verifier runs on a dedicated machine, outside the monitored servers, as a `docker-compose`
@@ -337,9 +384,15 @@ stack. It exposes two ports:
   reverse proxy (nginx, Caddy, Traefik) or reach it with an SSH tunnel.
 
 ```sh
+cp .env.example .env      # release, names, public URLs, first user, SMTP
+docker compose up -d
+```
+
+To run a build of your own checkout instead of the published image:
+
+```sh
 cd deploy/verifier
-cp .env.example .env      # names, public URLs, first user, SMTP
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 On first start the verifier creates the CA, the server certificate for the names in

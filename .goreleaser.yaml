@@ -1,0 +1,79 @@
+# Release build: static binaries, deb and rpm packages of the sensor, checksums and the files
+# needed to run the verifier, attached to the GitHub release of a v* tag. The verifier image is
+# built by the release workflow.
+version: 2
+
+project_name: tripwatch
+
+builds:
+  - id: sensor
+    main: ./cmd/tripwatch-sensor
+    binary: tripwatch-sensor
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/cpibia/tripwatch/internal/buildinfo.Version={{ .Version }} -X github.com/cpibia/tripwatch/internal/buildinfo.Commit={{ .ShortCommit }}
+  - id: verifier
+    main: ./cmd/tripwatch-verifier
+    binary: tripwatch-verifier
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/cpibia/tripwatch/internal/buildinfo.Version={{ .Version }} -X github.com/cpibia/tripwatch/internal/buildinfo.Commit={{ .ShortCommit }}
+
+archives:
+  - formats: [binary]
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - id: sensor
+    ids: [sensor]
+    package_name: tripwatch-sensor
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: tripwatch
+    homepage: https://github.com/cpibia/tripwatch
+    maintainer: Cristian pibia <cristian@pibia.it>
+    description: |-
+      Sensor of tripwatch, which detects unauthorized changes on servers.
+      Collects accounts, SSH keys, persistence, privileged files, package integrity, processes,
+      sockets, web applications and web server logs, and reports them signed to a verifier.
+    license: Apache-2.0
+    section: admin
+    priority: optional
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    contents:
+      - src: deploy/systemd/tripwatch-sensor.service
+        dst: /usr/lib/systemd/system/tripwatch-sensor.service
+      - dst: /etc/tripwatch
+        type: dir
+        file_info:
+          mode: 0700
+    scripts:
+      postinstall: deploy/package/postinstall.sh
+      preremove: deploy/package/preremove.sh
+      postremove: deploy/package/postremove.sh
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+  extra_files:
+    - glob: deploy/verifier/docker-compose.yml
+    - glob: deploy/verifier/.env.example
+      name_template: verifier.env.example
+
+release:
+  extra_files:
+    - glob: deploy/verifier/docker-compose.yml
+    - glob: deploy/verifier/.env.example
+      name_template: verifier.env.example
+
+changelog:
+  use: github
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
