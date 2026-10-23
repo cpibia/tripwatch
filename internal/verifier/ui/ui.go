@@ -84,7 +84,7 @@ type server struct {
 // New returns the web interface handler.
 func New(c Config) (http.Handler, error) {
 	s := &server{Config: c, pages: map[string]*template.Template{}, logins: newLimiter(time.Second, 15*time.Second),
-		checks: make(chan struct{}, max(1, runtime.NumCPU()-1)), knownCheck: make(chan struct{}, 1)}
+		checks: make(chan struct{}, max(1, runtime.GOMAXPROCS(0)-1)), knownCheck: make(chan struct{}, 1)}
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}

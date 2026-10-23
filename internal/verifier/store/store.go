@@ -459,12 +459,26 @@ func (s *Store) HasEvidenceSince(ctx context.Context, alertID int64, digest stri
 	return n > 0, err
 }
 
-// EvidenceSnapshotsSince counts a host's snapshots kept as evidence among those received since
-// the given time.
-func (s *Store) EvidenceSnapshotsSince(ctx context.Context, host string, since time.Time) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM snapshots WHERE host_id = ? AND keep = 1 AND received_at >= ?`, host, since.Unix()).Scan(&n)
-	return n, err
+// EvidenceSnapshotsSince counts, by alert kind, a host's snapshots kept as evidence among those
+// received since the given time.
+func (s *Store) EvidenceSnapshotsSince(ctx context.Context, host string, since time.Time) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT a.kind, COUNT(DISTINCT sn.id) FROM snapshot_evidence ev
+		JOIN snapshots sn ON sn.id = ev.snapshot_id JOIN alerts a ON a.id = ev.alert_id
+		WHERE sn.host_id = ? AND sn.received_at >= ? GROUP BY a.kind`, host, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int{}
+	for rows.Next() {
+		var kind string
+		var n int
+		if err := rows.Scan(&kind, &n); err != nil {
+			return nil, err
+		}
+		out[kind] = n
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) MarkAnalyzed(ctx context.Context, id int64) error {

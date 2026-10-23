@@ -35,8 +35,8 @@ const (
 	maxSnapshotDepth  = 32
 )
 
-// maxEvidencePerDay bounds the snapshots a host keeps as evidence each day: one an hour on
-// average, while the daily thinning keeps the last of each day anyway.
+// maxEvidencePerDay bounds the snapshots a host keeps as evidence each day for one kind of
+// alert: one an hour on average, while the daily thinning keeps the last of each day anyway.
 const maxEvidencePerDay = 24
 
 // maxFindings bounds the alerts one snapshot can raise.
@@ -241,20 +241,29 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	// host as it was: both are kept beyond the thinning. One proof a day per alert and content,
 	// so an alert made to reopen at every snapshot keeps one, while a decoy raised early in the
 	// day does not take the place of different content raised later; and at most
-	// maxEvidencePerDay a day per host, whatever the number of files swapped back and forth.
+	// maxEvidencePerDay a day per host and kind of alert, whatever the number of files swapped
+	// back and forth.
 	var links []store.Evidence
 	day := a.Now().Truncate(24 * time.Hour)
-	if kept, err := a.Store.EvidenceSnapshotsSince(ctx, host, day); err == nil && kept < maxEvidencePerDay {
-		for _, f := range evidenceOf {
-			alertID, err := a.Store.AlertID(ctx, host, f.Fingerprint)
-			if err != nil {
-				continue
-			}
-			sum := sha256.Sum256([]byte(f.Severity + "\x00" + f.Detail))
-			digest := hex.EncodeToString(sum[:8])
-			if seen, err := a.Store.HasEvidenceSince(ctx, alertID, digest, day); err == nil && !seen {
-				links = append(links, store.Evidence{AlertID: alertID, Digest: digest})
-			}
+	kept, err := a.Store.EvidenceSnapshotsSince(ctx, host, day)
+	if err != nil {
+		a.Log.Error("count evidence", "host", host, "err", err)
+		kept = map[string]int{}
+	}
+	for _, f := range evidenceOf {
+		// The daily bound is per kind of alert, so noise of one kind (files in the uploads)
+		// cannot use up another's; critical alerts are always kept.
+		if f.Severity != "critical" && kept[f.Kind] >= maxEvidencePerDay {
+			continue
+		}
+		alertID, err := a.Store.AlertID(ctx, host, f.Fingerprint)
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256([]byte(f.Severity + "\x00" + f.Detail))
+		digest := hex.EncodeToString(sum[:8])
+		if seen, err := a.Store.HasEvidenceSince(ctx, alertID, digest, day); err == nil && !seen {
+			links = append(links, store.Evidence{AlertID: alertID, Digest: digest})
 		}
 	}
 	if len(links) > 0 {

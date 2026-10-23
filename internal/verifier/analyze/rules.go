@@ -275,6 +275,11 @@ func Evaluate(prev *State, cur State) []Finding {
 					continue
 				}
 				detail := f.Path
+				// Size and hash tell one file from another at the same path, for the operator
+				// and for the evidence kept of each content.
+				if f.SHA256 != "" {
+					detail += fmt.Sprintf("\n%d byte, SHA-256 %s", f.Size, f.SHA256)
+				}
 				if len(f.Signatures) > 0 {
 					detail += "\nFirme: " + strings.Join(f.Signatures, ", ")
 				}

@@ -2,6 +2,8 @@ package analyze
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -269,21 +271,45 @@ func rootWith(name, home string) string {
 	return `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0},{"name":"` + name + `","uid":0,"home":"` + home + `"}]}}}}`
 }
 
-// However many different alerts a host raises in a day, it keeps at most maxEvidencePerDay
-// snapshots as their evidence.
-func TestEvidencePerHostAndDayIsBounded(t *testing.T) {
+func noPassword(name string, extra string) string {
+	return `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0}` + extra + `,{"name":"` + name + `","uid":1500,"shell":"/bin/bash","password":"empty"}]}}}}`
+}
+
+// However many different alerts of one kind a host raises in a day, it keeps at most
+// maxEvidencePerDay snapshots as their evidence; a critical alert afterwards is still kept.
+func TestEvidencePerKindAndDayIsBounded(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
 	h.analyse()
 	for i := range 40 {
 		h.clock = h.clock.Add(10 * time.Minute)
-		h.deliver(protocol.KindSnapshot, gz(t, rootWith(fmt.Sprintf("r%d", i), "/root")))
+		h.deliver(protocol.KindSnapshot, gz(t, noPassword(fmt.Sprintf("u%d", i), "")))
 		h.analyse()
 	}
-	if kept, _ := h.store.EvidenceSnapshotsSince(ctx, "web-01", now.Truncate(24*time.Hour)); kept > maxEvidencePerDay+1 {
-		t.Fatalf("%d snapshots kept as evidence in a day", kept)
+	day := now.Truncate(24 * time.Hour)
+	kept, _ := h.store.EvidenceSnapshotsSince(ctx, "web-01", day)
+	if kept["accounts"] == 0 || kept["accounts"] > maxEvidencePerDay+1 {
+		t.Fatalf("%d snapshots kept as evidence of one kind in a day", kept["accounts"])
 	}
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, gz(t, noPassword("u0", `,{"name":"backup","uid":0}`)))
+	h.analyse()
+	id, _ := h.store.AlertID(ctx, "web-01", "accounts:uid0:backup")
+	if ok, _ := h.store.HasEvidenceSince(ctx, id, criticalDigest(t, h, id), day); !ok {
+		t.Fatal("a critical alert after the noise was not kept as evidence")
+	}
+}
+
+// criticalDigest is the digest the analyser gave the alert's current content.
+func criticalDigest(t *testing.T, h *harness, id int64) string {
+	t.Helper()
+	a, err := h.store.Alert(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(a.Severity + "\x00" + a.Detail))
+	return hex.EncodeToString(sum[:8])
 }
 
 // A harmless decoy raised early does not take the day's proof from different content raised

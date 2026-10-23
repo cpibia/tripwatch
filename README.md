@@ -242,6 +242,9 @@ Il design completo è in [docs/architecture.md](docs/architecture.md).
   interfacce Linux.
 - Con un battito al minuto, un sensore sospeso per meno di 100 secondi non si distingue da un
   ritardo di rete e non dà allarme; pause più lunghe sì, anche se poi i battiti riprendono.
+- Un utente del web server che crea e cancella file nascosti a ritmo continuo può far conservare
+  fino a 24 snapshot al giorno come prove: la quota di 4 GB di quel server si riempie in qualche
+  anno invece di non riempirsi mai. Gli allarmi critici diventano comunque sempre prova.
 - Un attacco molto costoso per il verificatore (oltre centomila tentativi di accesso in un'ora,
   ognuno con il suo controllo della password) può far rispondere più lentamente un'email
   inesistente nuova che quella di un utente, rivelando quali indirizzi esistono.

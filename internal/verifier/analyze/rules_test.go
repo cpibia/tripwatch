@@ -131,3 +131,21 @@ func TestDroppedLogEventsRaiseAnAlert(t *testing.T) {
 		t.Fatalf("findings = %+v", findings)
 	}
 }
+
+// Two files at the same path differ in their alert's detail by size and hash.
+func TestWebFindingDetailCarriesTheHash(t *testing.T) {
+	finding := func(sum string, size int64) Finding {
+		cur := State{Web: &web.Result{Apps: []web.AppReport{{Findings: []web.Finding{{Kind: web.KindHiddenInData, File: collector.File{Path: "/var/www/u/.x", SHA256: sum, Size: size}}}}}}}
+		for _, f := range Evaluate(nil, cur) {
+			if f.Kind == "web" {
+				return f
+			}
+		}
+		t.Fatal("no web finding")
+		return Finding{}
+	}
+	decoy, genuine := finding("aaaa", 10), finding("bbbb", 4000)
+	if decoy.Fingerprint != genuine.Fingerprint || decoy.Detail == genuine.Detail || !strings.Contains(genuine.Detail, "bbbb") {
+		t.Fatalf("decoy %q, genuine %q", decoy.Detail, genuine.Detail)
+	}
+}
