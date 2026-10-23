@@ -251,6 +251,11 @@ func restored(e watch.Event, history History) (watch.Event, bool) {
 		if h.At.After(e.At) || (h.At.Equal(e.At) && h.Op == e.Op && h.SHA256 == e.SHA256) {
 			break
 		}
+		// A change within the window away from the content the file has again now: the content
+		// before it may be months old, known to the sensor rather than to any event here.
+		if h.PrevSHA256 == e.SHA256 && h.SHA256 != "" && h.SHA256 != e.SHA256 {
+			return h, true
+		}
 		if h.SHA256 != "" {
 			before = append(before, h)
 		}

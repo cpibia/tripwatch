@@ -199,3 +199,43 @@ func TestFilesReportGapsAndSkipDevices(t *testing.T) {
 		t.Fatalf("a link was followed: %+v", e)
 	}
 }
+
+// A keys file that existed before the watch carries its earlier content into the events, so a
+// key added and then removed shows as a return to it.
+func TestFilesRememberPreviousContent(t *testing.T) {
+	root := t.TempDir()
+	keys := filepath.Join(root, "home/ops/.ssh/authorized_keys")
+	if err := os.MkdirAll(filepath.Dir(keys), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keys, []byte("ssh-ed25519 AAAA ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets([]Home{{User: "ops", Dir: "/home/ops"}}, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	for _, content := range []string{"ssh-ed25519 AAAA ops\nssh-ed25519 BBBB intruder\n", "ssh-ed25519 AAAA ops\n"} {
+		if err := os.WriteFile(keys, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	var writes []Event
+	for _, e := range collect(t, ch, 2) {
+		if e.Op == OpWrite && e.Path == "/home/ops/.ssh/authorized_keys" {
+			writes = append(writes, e)
+		}
+	}
+	if len(writes) != 2 || writes[0].PrevSHA256 == "" || writes[1].SHA256 != writes[0].PrevSHA256 || writes[1].PrevSHA256 != writes[0].SHA256 {
+		t.Fatalf("writes = %+v", writes)
+	}
+}

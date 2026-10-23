@@ -12,8 +12,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
   is-system-running` answering `stopping`) and whether the stop is for an update: the package's
   post-installation script and `-update` leave a marker before restarting the sensor.
 
+- Events on files outside the uploads carry the content the sensor last knew them to have
+  (`prev_sha256`), read from the keys files when the watch starts.
+
 ### Verifier
 
+- An SSH keys file that existed long before, changed and put back within 15 minutes, is the
+  critical "SSH keys changed and put back" it should be; before, the original content had to be
+  within the window. Transient alerts are distinct by the time they appeared, so the same key
+  or webshell reused later raises a new alert and email.
 - Security fix for the nightly shutdown handling of 0.1.10 and 0.1.11: severities are lowered only
   on what the sensor signed. A stop on a running system keeps the silence critical and the next
   start high, even after a reboot ("Sensor stopped before a reboot"); a new boot without a clean

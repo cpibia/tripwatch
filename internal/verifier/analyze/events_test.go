@@ -12,6 +12,7 @@ func TestEvaluateEvents(t *testing.T) {
 	t0 := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	uid := 33
 	keys := "/root/.ssh/authorized_keys"
+	oldKeys := "/home/ops/.ssh/authorized_keys"
 	past := map[string][]watch.Event{
 		keys: {
 			{At: t0, Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "aaaa"},
@@ -19,6 +20,8 @@ func TestEvaluateEvents(t *testing.T) {
 			{At: t0.Add(2 * time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "aaaa"},
 		},
 		"/srv/app/uploads/old.php": {{At: t0.Add(-time.Hour), Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/srv/app/uploads/old.php"}},
+		// A file unchanged for months, then a key added: the sensor knew the content before it.
+		oldKeys: {{At: t0.Add(time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: oldKeys, SHA256: "1111", PrevSHA256: "0000"}},
 	}
 	history := func(p string, since time.Time) []watch.Event {
 		var out []watch.Event
@@ -54,6 +57,7 @@ func TestEvaluateEvents(t *testing.T) {
 		{"old script removed", watch.Event{At: t0, Class: watch.ClassUpload, Op: watch.OpDelete, Path: "/srv/app/uploads/old.php"}, false, ""},
 		{"key put back", watch.Event{At: t0.Add(2 * time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "aaaa"}, false, "ssh-transient critical"},
 		{"key added", watch.Event{At: t0.Add(time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "bbbb"}, false, "ssh-keys high"},
+		{"key removed from an old file", watch.Event{At: t0.Add(2 * time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: oldKeys, SHA256: "0000", PrevSHA256: "1111"}, false, "ssh-transient critical"},
 		{"known hosts", watch.Event{Class: watch.ClassSSH, Op: watch.OpWrite, Path: "/root/.ssh/known_hosts"}, false, ""},
 		{"directory", watch.Event{Class: watch.ClassSchedule, Op: watch.OpCreate, Path: "/var/spool/cron/x", Dir: true}, false, ""},
 	} {

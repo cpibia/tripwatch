@@ -44,6 +44,8 @@ type Files struct {
 	byWD   map[int]*watched
 	byDir  map[string]int
 	issues collector.Issues
+	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
+	known map[string]string
 	// gaps are the places left unwatched by the bounds since the sensor started, kept across
 	// Set: a directory too deep or too full stays a gap until someone looks at it.
 	gaps []string
@@ -62,7 +64,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}}, nil
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -119,6 +121,39 @@ func (f *Files) Set(targets []Target) {
 	for dir, ts := range keep {
 		f.add(dir, ts, depths[dir])
 	}
+	// The keys files' content as the watch starts, so that a key added and removed later is
+	// recognised even if the file has not changed in months.
+	for dir, ts := range keep {
+		for _, t := range ts {
+			if t.Class != ClassSSH {
+				continue
+			}
+			for _, name := range []string{"authorized_keys", "authorized_keys2"} {
+				p := path.Join(dir, name)
+				if info, err := fs.Lstat(f.src.FS, collector.Rel(p)); err == nil && info.Mode().IsRegular() && info.Size() <= maxEventHash {
+					if file, err := collector.DescribeNoFollow(f.src, collector.Rel(p)); err == nil && file.SHA256 != "" {
+						f.remember(p, file.SHA256)
+					}
+				}
+			}
+		}
+	}
+}
+
+// maxKnown bounds the contents remembered.
+const maxKnown = 4096
+
+// remember records the content of a file outside the uploads and returns the one before.
+// Callers hold f.mu.
+func (f *Files) remember(p, sha string) string {
+	prev := f.known[p]
+	switch {
+	case sha == "":
+		delete(f.known, p)
+	case prev != "" || len(f.known) < maxKnown:
+		f.known[p] = sha
+	}
+	return prev
 }
 
 // expand collects dir for target t and, for a recursive target, its subdirectories.
@@ -322,6 +357,11 @@ const (
 // sensor read, or open, what it points to.
 func (f *Files) describe(class, op, p string, isDir bool) Event {
 	e := Event{At: f.now().UTC(), Class: class, Op: op, Path: p, Dir: isDir}
+	if op == OpDelete && class != ClassUpload {
+		f.mu.Lock()
+		e.PrevSHA256 = f.remember(p, "")
+		f.mu.Unlock()
+	}
 	if op == OpDelete || isDir {
 		return e
 	}
@@ -345,6 +385,11 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 		return e
 	}
 	e.Size, e.SHA256, e.UID, e.Mode = file.Size, file.SHA256, file.UID, file.Mode
+	if class != ClassUpload {
+		f.mu.Lock()
+		e.PrevSHA256 = f.remember(p, e.SHA256)
+		f.mu.Unlock()
+	}
 	return e
 }
 
