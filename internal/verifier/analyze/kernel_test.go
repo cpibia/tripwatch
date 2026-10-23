@@ -72,3 +72,32 @@ func TestRawSocketFindings(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessMemoryFindings(t *testing.T) {
+	cur := State{Processes: &system.ProcessesResult{Processes: []system.Process{
+		{PID: 10, Comm: "sshd", Exe: "/usr/sbin/sshd", Tracer: 66},
+		{PID: 11, Comm: "app", Exe: "/usr/bin/app", Tracer: 67},
+		{PID: 12, Comm: "node", Exe: "/usr/bin/node", Mapped: []string{"/var/www/app/node_modules/x/build/x.node", "/dev/shm/.l.so", "/memfd:s (deleted)"}},
+		{PID: 13, Comm: "x", Exe: "/memfd:x", ExeDeleted: true},
+		{PID: 66, Comm: "gdb", Exe: "/usr/bin/gdb"},
+		{PID: 67, Comm: "gdb", Exe: "/usr/bin/gdb"},
+	}}}
+	got := map[string]string{}
+	for _, f := range Evaluate(nil, cur) {
+		got[f.Fingerprint] = f.Severity
+	}
+	for fp, sev := range map[string]string{
+		"processes:traced:sshd:/usr/bin/gdb":                             "critical",
+		"processes:mapped:node:/var/www/app/node_modules/x/build/x.node": "high",
+		"processes:mapped:node:/dev/shm/.l.so":                           "critical",
+		"processes:mapped:node:/memfd:s (deleted)":                       "critical",
+		"processes:memfd:x:":                                             "critical",
+	} {
+		if got[fp] != sev {
+			t.Errorf("%s: %q, want %q", fp, got[fp], sev)
+		}
+	}
+	if _, ok := got["processes:traced:app:/usr/bin/gdb"]; ok {
+		t.Error("a debugger on an ordinary process raised an alert")
+	}
+}

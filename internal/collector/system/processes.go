@@ -33,6 +33,13 @@ type Process struct {
 	Preload    string `json:"ld_preload,omitempty"`
 	NetNS      string `json:"netns,omitempty"`
 	MntNS      string `json:"mntns,omitempty"`
+	// Tracer is the PID attached to this process with ptrace, what debuggers do and what
+	// injectors and credential stealers do to a running sshd or su.
+	Tracer int `json:"tracer,omitempty"`
+	// Mapped lists the executable mappings of files a process should not run code from: memfd
+	// files, files under the unusual directories, files deleted outside the system's library
+	// directories (a library deleted there is only an upgrade the process was not restarted for).
+	Mapped []string `json:"mapped,omitempty"`
 
 	kernel bool
 }
@@ -72,6 +79,7 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 		if p.Exe != "" {
 			p.ExeSHA256 = exeHash(src, pid, hashes, &res.Issues)
 		}
+		p.Mapped = mappedCode(src.FS, pid, p.Exe)
 		res.Processes = append(res.Processes, p)
 	}
 	return res, nil
@@ -100,6 +108,50 @@ func exeHash(src collector.Source, pid int, cache map[string]string, issues *col
 		cache[id] = f.SHA256
 	}
 	return f.SHA256
+}
+
+// Bounds on reading memory maps: a JVM or a browser maps thousands of regions.
+const (
+	maxMapsSize   = 4 << 20
+	maxMappedList = 20
+)
+
+// unusualCodeDirs are where no code a process maps should come from.
+var unusualCodeDirs = []string{"/tmp/", "/var/tmp/", "/dev/shm/", "/run/user/", "/home/", "/root/", "/var/www/", "/srv/", "/run/lock/", "/var/lib/php/"}
+
+// systemLibDirs hold packaged code: a deleted file there is an upgrade, not an intrusion.
+var systemLibDirs = []string{"/usr/", "/lib/", "/lib64/", "/bin/", "/sbin/", "/opt/", "/snap/", "/nix/store/"}
+
+// mappedCode reads a process's executable mappings and keeps those of files it should not run
+// code from, its own executable aside: the rules on the executable cover it.
+func mappedCode(fsys fs.FS, pid int, exe string) []string {
+	data, err := fs.ReadFile(fsys, fmt.Sprintf("proc/%d/maps", pid))
+	if err != nil || len(data) > maxMapsSize {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		// address perms offset dev inode path
+		f := strings.SplitN(line, " ", 6)
+		if len(f) < 6 || len(f[1]) < 3 || f[1][2] != 'x' {
+			continue
+		}
+		file := strings.TrimSpace(f[5])
+		if !strings.HasPrefix(file, "/") {
+			continue
+		}
+		name, deleted := strings.CutSuffix(file, deletedSuffix)
+		keep := strings.HasPrefix(name, "/memfd:") ||
+			slices.ContainsFunc(unusualCodeDirs, func(d string) bool { return strings.HasPrefix(name, d) }) ||
+			(deleted && !slices.ContainsFunc(systemLibDirs, func(d string) bool { return strings.HasPrefix(name, d) }))
+		if keep && name != exe && !slices.Contains(out, file) {
+			out = append(out, clipField(file))
+			if len(out) == maxMappedList {
+				break
+			}
+		}
+	}
+	return out
 }
 
 // pids lists the numeric entries of /proc, in ascending order.
@@ -143,6 +195,8 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 		case key == "Uid" && len(fields) > 1:
 			p.UID, _ = strconv.Atoi(fields[0])
 			p.EUID, _ = strconv.Atoi(fields[1])
+		case key == "TracerPid" && len(fields) > 0:
+			p.Tracer, _ = strconv.Atoi(fields[0])
 		}
 	}
 

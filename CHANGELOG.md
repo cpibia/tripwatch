@@ -30,6 +30,9 @@ the packages install the new unit; a unit copied by hand has to be replaced.
   BPF objects and dynamic kprobes.
 - The `sockets` collector also reports packet (`AF_PACKET`) and raw sockets, with the
   executable of the process that holds each.
+- The `processes` collector reports the process tracing each one with ptrace and the
+  executable mappings of memory-only files, of files under scratch directories, homes and web
+  roots, and of files deleted outside the system's library directories.
 - A sensor that stops sends a last signed event saying so, and whether its package is being
   removed: the package's pre-removal script leaves a marker the running sensor reads.
 
@@ -52,6 +55,10 @@ the packages install the new unit; a unit copied by hand has to be replaced.
   flags of that kind and new kprobes are high; new eBPF programs and pins are medium.
 - A packet or raw socket held by a program from an unusual place or deleted is critical, by a
   program other than the known capture and network tools high, by no listed process medium.
+- Fileless processes (run from `memfd`) and code mapped from memory-only files or scratch
+  directories are critical, code mapped from homes, web roots or deleted files high. A process
+  traced by something other than a known debugger is high, critical when it is sshd, su, sudo
+  or another holder of secrets, or when the tracer is unknown or out of place.
 - "Sensor removed" (high) when the sensor package is uninstalled, "Sensor stopped" (medium)
   when the service stops, by hand or for a reboot.
 - The benchmark runs the sensor's watchers during each scenario and judges what they report with

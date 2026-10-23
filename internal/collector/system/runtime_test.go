@@ -73,9 +73,15 @@ func procHost() fstest.MapFS {
 		"proc/4242/exe":     link("../../var/www/.config/x/helper (deleted)"),
 		"proc/4242/cwd":     link("/var/www/shop"),
 		"proc/4242/environ": text("PATH=/usr/bin\x00LD_PRELOAD=/usr/lib/libprocesshider.so\x00"),
-		"proc/4242/ns/net":  link(hostNetNS),
-		"proc/4242/fd/5":    link("socket:[30001]"),
-		"proc/4242/fd/9":    link("socket:[30009]"),
+		"proc/4242/maps": text("55d0a000-55d0b000 r-xp 00000000 08:01 1234 /var/www/.config/x/helper (deleted)\n" +
+			"7f00a000-7f00b000 r-xp 00000000 08:01 99 /usr/lib/x86_64-linux-gnu/libc.so.6 (deleted)\n" +
+			"7f00c000-7f00d000 r-xp 00000000 00:01 7 /memfd:stage2 (deleted)\n" +
+			"7f00e000-7f00f000 rw-p 00000000 08:01 55 /dev/shm/data\n" +
+			"7f010000-7f011000 r-xp 00000000 08:01 56 /dev/shm/.inject.so\n" +
+			"7ffd0000-7ffd1000 rwxp 00000000 00:00 0 [stack]\n"),
+		"proc/4242/ns/net": link(hostNetNS),
+		"proc/4242/fd/5":   link("socket:[30001]"),
+		"proc/4242/fd/9":   link("socket:[30009]"),
 		"proc/1/net/packet": text("sk       RefCnt Type Proto  Iface R Rmem   User   Inode\n" +
 			"ffff8880 3      3    0003   2     1 0      0      30009\n"),
 		"proc/1/net/raw": text("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
@@ -130,6 +136,9 @@ func TestProcesses(t *testing.T) {
 		t.Errorf("exe hash = %q", shell.ExeSHA256)
 	case shell.Preload != "/usr/lib/libprocesshider.so" || shell.Cwd != "/var/www/shop":
 		t.Errorf("preload = %q cwd = %q", shell.Preload, shell.Cwd)
+	}
+	if !slices.Equal(shell.Mapped, []string{"/var/www/.config/x/helper (deleted)", "/memfd:stage2 (deleted)", "/dev/shm/.inject.so"}) {
+		t.Errorf("mapped = %q", shell.Mapped)
 	}
 }
 

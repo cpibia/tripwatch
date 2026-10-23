@@ -896,8 +896,35 @@ func Evaluate(prev *State, cur State) []Finding {
 	out = append(out, kernelFindings(prev, cur)...)
 
 	if p := cur.Processes; p != nil {
+		byPID := map[int]system.Process{}
 		for _, pr := range p.Processes {
+			byPID[pr.PID] = pr
+		}
+		for _, pr := range p.Processes {
+			for _, m := range pr.Mapped {
+				// Applications ship native modules under homes and web roots (Node addons, Python
+				// wheels): code from there is high, from the scratch directories critical.
+				sev, why := "high", "a file in a home or a web root, where applications may keep native modules but injected libraries also land"
+				switch {
+				case strings.HasPrefix(m, "/memfd:"):
+					sev, why = "critical", "a memory-only file (memfd), code that never touched the disk"
+				case slices.ContainsFunc(scratchDirs, func(d string) bool { return strings.HasPrefix(m, d) }):
+					sev, why = "critical", "a file in a scratch directory, where no code is installed"
+				case !suspiciousPath(m) && !strings.HasPrefix(m, "/root/") && !strings.HasPrefix(m, "/srv/"):
+					why = "a file deleted from disk after it was loaded"
+				}
+				state("processes", "mapped:"+pr.Comm+":"+m, sev, "Code injected into "+pr.Comm,
+					fmt.Sprintf("PID %d (%s, %s) runs code from %s: %s. Libraries are loaded from the system's directories; this is how injected code and in-memory implants look.", pr.PID, pr.Comm, pr.Exe, m, why))
+			}
+			if pr.Tracer != 0 {
+				if f, ok := tracedFinding(pr, byPID[pr.Tracer]); ok {
+					add(f)
+				}
+			}
 			switch {
+			case strings.HasPrefix(pr.Exe, "/memfd:"):
+				state("processes", "memfd:"+pr.Comm+":"+pr.ExeSHA256, "critical", "Fileless process: "+pr.Comm,
+					fmt.Sprintf("PID %d (%s) runs %s, a file that exists only in memory: malware runs this way to leave nothing on disk. UID %d, hash %s, command line %s.", pr.PID, pr.Comm, pr.Exe, pr.UID, pr.ExeSHA256, pr.Cmdline))
 			case pr.ExeDeleted:
 				state("processes", "deleted:"+pr.Exe+":"+pr.ExeSHA256, "high", "Process from a deleted executable", fmt.Sprintf("PID %d (%s) runs %s, removed from disk. Hash %s.", pr.PID, pr.Comm, pr.Exe, pr.ExeSHA256))
 			case suspiciousPath(pr.Exe):
@@ -1110,6 +1137,37 @@ func webFinding(f web.Finding) (string, string) {
 		return "medium", "Hidden file in data directories"
 	}
 	return "", ""
+}
+
+// scratchDirs are writable by everyone and hold no installed code.
+var scratchDirs = []string{"/tmp/", "/var/tmp/", "/dev/shm/", "/run/user/", "/run/lock/"}
+
+// debuggers attach to processes with ptrace for a living.
+var debuggers = []string{"gdb", "strace", "ltrace", "lldb", "lldb-server", "perf", "valgrind", "rr", "dlv", "criu", "py-spy", "rbspy", "gdbserver", "systemd-coredump"}
+
+// secretHolders are the processes whose memory holds passwords and keys as they are typed or
+// used: what a tracer attached to them is after.
+var secretHolders = []string{"sshd", "sshd-session", "su", "sudo", "login", "passwd", "ssh-agent", "gpg-agent", "ssh", "polkitd", "gnome-keyring-d"}
+
+// tracedFinding judges a process another one is attached to with ptrace.
+func tracedFinding(pr, tracer system.Process) (Finding, bool) {
+	exe := strings.TrimSuffix(tracer.Exe, " (deleted)")
+	known := tracer.PID != 0 && standardBinDir(exe) && slices.Contains(debuggers, path.Base(exe)) && !tracer.ExeDeleted
+	secret := slices.Contains(secretHolders, pr.Comm)
+	if known && !secret {
+		return Finding{}, false
+	}
+	sev := "high"
+	if secret || tracer.PID == 0 || suspiciousPath(exe) || tracer.ExeDeleted {
+		sev = "critical"
+	}
+	by := fmt.Sprintf("PID %d", pr.Tracer)
+	if tracer.PID != 0 {
+		by = fmt.Sprintf("PID %d (%s, %s)", tracer.PID, tracer.Comm, tracer.Exe)
+	}
+	return Finding{Kind: "processes", State: true, Severity: sev, Fingerprint: "processes:traced:" + pr.Comm + ":" + exe,
+		Title:  "Process under ptrace: " + pr.Comm,
+		Detail: fmt.Sprintf("PID %d (%s, %s) is traced by %s, which can read and change its memory: debuggers do this, and so do tools that steal passwords from sshd or su and inject code into running processes.", pr.PID, pr.Comm, pr.Exe, by)}, true
 }
 
 // packetTools are the programs that legitimately read raw traffic: DHCP clients and servers,
