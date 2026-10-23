@@ -155,7 +155,7 @@ func serve(log *slog.Logger) error {
 	}
 
 	web, err := ui.New(ui.Config{
-		Store: st, CA: ca, IngestURL: ingestURL,
+		Store: st, CA: ca, IngestURL: ingestURL, Release: buildinfo.Version,
 		Notify: mailer.Enabled(), SecureCookies: strings.HasPrefix(os.Getenv("TRIPWATCH_PUBLIC_UI_URL"), "https://"),
 		SilenceAfter: silence, Now: now, Log: log,
 	})

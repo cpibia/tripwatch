@@ -44,6 +44,12 @@ const (
 // and a file name on the operator's machine.
 var hostPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,62}$`)
 
+// releasePattern matches the version of a published release, whose sensor packages the
+// enrollment command can download; development builds offer the enrollment alone.
+var releasePattern = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)$`)
+
+const releaseDownloads = "https://github.com/cpibia/tripwatch/releases/download/"
+
 // version changes with the embedded assets, so browsers refetch them after an upgrade.
 var version = func() string {
 	h := sha256.New()
@@ -59,6 +65,9 @@ type Config struct {
 	Store     *store.Store
 	CA        *pki.CA
 	IngestURL string
+	// Release is the verifier's version: the enrollment command installs the sensor of the same
+	// release.
+	Release string
 	// Notify reports whether alerts are also sent by email.
 	Notify bool
 	// SecureCookies marks cookies HTTPS-only; on whenever the interface is reached over HTTPS.
@@ -864,14 +873,56 @@ type enrollData struct {
 	Error     string
 	Existing  bool
 	IngestURL string
-	// Token and Expires are set once a token was made: it is shown on this page only.
+	// System is "deb" or "rpm" when the command also installs the sensor package of Release,
+	// "installed" when it only enrolls.
+	System  string
+	Release string
+	// Token, Command and Expires are set once a token was made: it is shown on this page only.
 	Token   string
+	Command string
 	Expires time.Time
 }
 
+// release is the published release this verifier runs, or "" for a development build.
+func (s *server) release() string {
+	if m := releasePattern.FindStringSubmatch(s.Release); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// enrollSystem reads the chosen system, falling back to enrollment alone when there is no
+// release to install from.
+func enrollSystem(choice, release string) string {
+	switch {
+	case release == "":
+		return "installed"
+	case choice == "rpm" || choice == "installed":
+		return choice
+	}
+	return "deb"
+}
+
+// enrollCommand is the single command to run on the host. On deb and rpm systems it first
+// installs the sensor package of the release for the host's own architecture, and removes the
+// downloaded file.
+func enrollCommand(system, release, token string) string {
+	enroll := "echo '" + token + "' | sudo tripwatch-sensor enroll -token-file - && sudo systemctl enable --now tripwatch-sensor"
+	base := releaseDownloads + "v" + release + "/"
+	switch system {
+	case "deb":
+		return "cd /tmp && f=tripwatch-sensor_" + release + "_$(dpkg --print-architecture).deb && curl -fsSLO " + base + "$f" +
+			" && sudo apt-get install -y ./$f && rm -f $f && " + enroll
+	case "rpm":
+		return "sudo $(command -v dnf || command -v yum) install -y " + base + "tripwatch-sensor-" + release + "-1.$(uname -m).rpm && " + enroll
+	}
+	return enroll
+}
+
 func (s *server) enrollForm(w http.ResponseWriter, r *http.Request, se session) {
+	release := s.release()
 	s.render(w, r, http.StatusOK, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(),
-		Data: enrollData{IngestURL: s.IngestURL, Mode: "token"}})
+		Data: enrollData{IngestURL: s.IngestURL, Mode: "token", Release: release, System: enrollSystem("", release)}})
 }
 
 // enroll makes a one-time token for the host, or, in bundle mode, issues its certificate and
@@ -883,7 +934,8 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 	if r.PostFormValue("mode") == "bundle" {
 		mode = "bundle"
 	}
-	d := enrollData{Host: host, Mode: mode, IngestURL: s.IngestURL}
+	release := s.release()
+	d := enrollData{Host: host, Mode: mode, IngestURL: s.IngestURL, Release: release, System: enrollSystem(r.PostFormValue("system"), release)}
 	again := func(status int, msg string) {
 		d.Error = msg
 		s.render(w, r, status, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
@@ -911,6 +963,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 		}
 		s.Log.Info("enrollment token made", "host", host, "by", se.Email, "replaces", existing.ID != "")
 		d.Token = pki.EnrollToken{URL: s.IngestURL, Secret: secret, CA: s.CA.Fingerprint()}.String()
+		d.Command = enrollCommand(d.System, release, d.Token)
 		d.Expires = expires
 		s.render(w, r, http.StatusOK, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
 		return

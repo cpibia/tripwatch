@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -206,7 +207,7 @@ func TestEnrollTokenShownOnce(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
 	res, body := h.post("/enroll", url.Values{"host": {"web-07"}, "csrf": {csrf}})
-	m := regexp.MustCompile(`echo '(tw1\.[A-Za-z0-9_-]+)' \| sudo tripwatch-sensor enroll -token-file -`).FindStringSubmatch(body)
+	m := regexp.MustCompile(`echo '(tw1\.[A-Za-z0-9_-]+)' \| sudo tripwatch-sensor enroll -token-file -`).FindStringSubmatch(html.UnescapeString(body))
 	if res.StatusCode != http.StatusOK || m == nil {
 		t.Fatalf("token page: status %d", res.StatusCode)
 	}
@@ -667,5 +668,37 @@ func TestPolicyAlertShowsCompleteDiff(t *testing.T) {
 	_, body := h.get("/alerts/" + itoa(id))
 	if !strings.Contains(body, "Confronto completo") || !strings.Contains(body, "&#43; b ALL=(ALL) NOPASSWD: ALL") || strings.Contains(body, "<script>") {
 		t.Fatalf("complete diff not shown:\n%s", body)
+	}
+}
+
+func TestEnrollCommandInstallsTheSameRelease(t *testing.T) {
+	for _, tc := range []struct{ choice, release, want string }{
+		{"", "0.1.1", "deb"},
+		{"rpm", "0.1.1", "rpm"},
+		{"installed", "0.1.1", "installed"},
+		{"anything", "0.1.1", "deb"},
+		{"deb", "", "installed"},
+	} {
+		if got := enrollSystem(tc.choice, tc.release); got != tc.want {
+			t.Errorf("enrollSystem(%q, %q) = %q, want %q", tc.choice, tc.release, got, tc.want)
+		}
+	}
+	for v, want := range map[string]string{"0.1.1": "0.1.1", "v0.2.0": "0.2.0", "dev": "", "v0.1.0-3-g1a2b3c4": "", "0.0.1-dev": ""} {
+		if got := (&server{Config: Config{Release: v}}).release(); got != want {
+			t.Errorf("release of %q = %q, want %q", v, got, want)
+		}
+	}
+	enroll := "echo 'tw1.x' | sudo tripwatch-sensor enroll -token-file - && sudo systemctl enable --now tripwatch-sensor"
+	deb := enrollCommand("deb", "0.1.1", "tw1.x")
+	if !strings.Contains(deb, "/download/v0.1.1/$f") || !strings.Contains(deb, "f=tripwatch-sensor_0.1.1_$(dpkg --print-architecture).deb") ||
+		!strings.Contains(deb, "sudo apt-get install -y ./$f && rm -f $f && ") || !strings.HasSuffix(deb, enroll) {
+		t.Errorf("deb command = %s", deb)
+	}
+	rpm := enrollCommand("rpm", "0.1.1", "tw1.x")
+	if !strings.Contains(rpm, "/download/v0.1.1/tripwatch-sensor-0.1.1-1.$(uname -m).rpm && ") || !strings.HasSuffix(rpm, enroll) {
+		t.Errorf("rpm command = %s", rpm)
+	}
+	if got := enrollCommand("installed", "0.1.1", "tw1.x"); got != enroll {
+		t.Errorf("enrollment alone = %s", got)
 	}
 }

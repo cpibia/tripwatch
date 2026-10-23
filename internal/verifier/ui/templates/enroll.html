@@ -5,9 +5,9 @@
 {{if $d.Token}}
 <section class="issued" aria-labelledby="token-h">
   <div class="section-head"><h2 id="token-h">Token per <span class="mono">{{$d.Host}}</span></h2><p class="aside">vale una volta sola, fino alle {{clock $d.Expires}}</p></div>
-  <p class="note">Esegui sul server, come root, dopo aver installato il binario del sensore. Il token passa sullo standard input, dove gli altri utenti del server non lo vedono; le chiavi vengono generate lì e non lasciano il server; il token non compare più dopo questa pagina.</p>
-  <pre class="datum command" id="command">echo '{{$d.Token}}' | sudo tripwatch-sensor enroll -token-file - &amp;&amp; sudo systemctl enable --now tripwatch-sensor</pre>
-  <p class="actions"><button type="button" data-copy="command">Copia i comandi</button> <a href="/enroll">Registra un altro server</a></p>
+  <p class="note">{{if eq $d.System "installed"}}Esegui sul server, con un utente che può usare sudo, dopo aver installato il sensore.{{else}}Esegui sul server, con un utente che può usare sudo: il comando scarica il pacchetto del sensore {{$d.Release}} per l'architettura del server, lo installa, cancella il file scaricato, registra il server e avvia il sensore.{{end}} Il token passa sullo standard input, dove gli altri utenti del server non lo vedono; le chiavi vengono generate lì e non lasciano il server; il token non compare più dopo questa pagina.</p>
+  <pre class="datum command" id="command">{{$d.Command}}</pre>
+  <p class="actions"><button type="button" data-copy="command">Copia il comando</button> <a href="/enroll">Registra un altro server</a></p>
 </section>
 {{else}}
 <div class="split">
@@ -22,6 +22,14 @@
     <label class="check"><input type="radio" name="mode" value="token"{{if ne $d.Mode "bundle"}} checked{{end}}> Token monouso: il server genera le sue chiavi e si registra con un comando</label>
     <label class="check"><input type="radio" name="mode" value="bundle"{{if eq $d.Mode "bundle"}} checked{{end}}> Pacchetto da scaricare e copiare sul server, con le chiavi già dentro</label>
   </fieldset>
+  {{if $d.Release}}
+  <fieldset class="choice">
+    <legend>Sistema del server, per il comando con il token</legend>
+    <label class="check"><input type="radio" name="system" value="deb"{{if eq $d.System "deb"}} checked{{end}}> Debian o Ubuntu: il comando installa anche il sensore {{$d.Release}}</label>
+    <label class="check"><input type="radio" name="system" value="rpm"{{if eq $d.System "rpm"}} checked{{end}}> RHEL, AlmaLinux, Rocky, Fedora o Amazon Linux: il comando installa anche il sensore {{$d.Release}}</label>
+    <label class="check"><input type="radio" name="system" value="installed"{{if eq $d.System "installed"}} checked{{end}}> Sensore già installato: solo la registrazione</label>
+  </fieldset>
+  {{end}}
   {{if $d.Existing}}
   <label class="check"><input type="checkbox" name="replace" value="yes" required> Registralo di nuovo: le chiavi attuali smettono di valere e la catena riparte da zero.</label>
   {{end}}

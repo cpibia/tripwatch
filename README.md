@@ -139,8 +139,10 @@ gh attestation verify tripwatch-sensor_0.1.0_amd64.deb -R cpibia/tripwatch
 
 ### 3. Enrollment
 
-In the web interface open "Registra server", choose the server's name and run the command it
-shows on the server:
+In the web interface open "Registra server", choose the server's name and its system, and run
+the command it shows on the server. For Debian/Ubuntu or the RHEL family, that single command
+also installs the sensor package of the verifier's own release for the server's architecture and
+removes the downloaded file, so step 2 can be skipped. With the sensor already installed it is:
 
 ```sh
 echo 'tw1....' | sudo tripwatch-sensor enroll -token-file - && sudo systemctl enable --now tripwatch-sensor
