@@ -335,7 +335,9 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 		return e
 	}
 	e.Size = info.Size()
-	if info.Size() > maxEventHash || !f.spend(info.Size(), e.UID != nil && *e.UID == 0) {
+	// Root's budget is for root's files outside the uploads: there the web server's user can
+	// rename a file of root left behind in a loop and spend it.
+	if info.Size() > maxEventHash || !f.spend(info.Size(), class != ClassUpload && e.UID != nil && *e.UID == 0) {
 		return e
 	}
 	file, err := collector.DescribeNoFollow(f.src, collector.Rel(p))
