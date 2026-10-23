@@ -53,7 +53,7 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 // touches and an intruder always does; nor process starts or uploads, which no package explains.
 func lowered(e watch.Event) bool {
 	switch e.Class {
-	case watch.ClassService, watch.ClassSchedule:
+	case watch.ClassService, watch.ClassSchedule, watch.ClassScratch:
 		return true
 	case watch.ClassHook:
 		return path.Base(e.Path) != "ld.so.preload"
@@ -91,6 +91,22 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		}
 		return event("upload-script", e.Path, "high", what+" appeared in an upload directory",
 			fmt.Sprintf("%s: %s. Upload directories hold what visitors send; a script there is how a webshell lands, and a server configuration file there can make the server run what is uploaded next.", e.Path, describeFile(e))), true
+
+	case watch.ClassScratch:
+		dir := scratchRoot(e.Path)
+		if e.Op == watch.OpDelete {
+			if first, ok := appeared(e, history); ok {
+				return event("scratch-transient", e.Path+occurrence(first), "critical", "Executable dropped in "+dir+" and removed",
+					fmt.Sprintf("%s was written at %s and removed at %s: a program dropped, most likely run and deleted so that nothing stays on disk. %s",
+						e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))), true
+			}
+			return Finding{}, false
+		}
+		if !watch.Executable(e.Mode) {
+			return Finding{}, false
+		}
+		return event("scratch-exec", e.Path, "high", "Executable file in "+dir,
+			fmt.Sprintf("%s: %s. Programs are not installed in %s; an executable there was put there, by a build, an installer, or an intruder staging a tool.", e.Path, describeFile(e), dir)), true
 
 	case watch.ClassSSH:
 		if name == "sshd_config" || strings.Contains(e.Path, "/sshd_config.d/") {
@@ -233,7 +249,9 @@ func appeared(e watch.Event, history History) (watch.Event, bool) {
 		return watch.Event{}, false
 	}
 	for _, h := range history(e.Path, e.At.Add(-TransientWindow)) {
-		if (h.Op == watch.OpCreate || h.Op == watch.OpWrite) && !h.At.After(e.At) {
+		// A file made executable counts as appearing: in the scratch directories that is the
+		// first event reported of a dropper, written first and then given the execute bit.
+		if (h.Op == watch.OpCreate || h.Op == watch.OpWrite || (h.Op == watch.OpAttrib && watch.Executable(h.Mode))) && !h.At.After(e.At) {
 			return h, true
 		}
 	}
@@ -275,6 +293,16 @@ func restored(e watch.Event, history History) (watch.Event, bool) {
 
 // occurrence tells transient alerts apart: each appearance is an alert of its own, so one
 // acknowledged does not silence the next on the same path, even with the same content.
+// scratchRoot is the scratch directory a path lies in.
+func scratchRoot(p string) string {
+	for _, d := range []string{"/dev/shm", "/var/tmp", "/tmp"} {
+		if p == d || strings.HasPrefix(p, d+"/") {
+			return d
+		}
+	}
+	return path.Dir(p)
+}
+
 func occurrence(e watch.Event) string {
 	// The time keeps the same content reused days later apart from an alert already taken in
 	// charge; the hash keeps two contents of the same second apart.

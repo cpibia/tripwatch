@@ -27,7 +27,7 @@ type eventRow struct {
 
 var classLabels = map[string]string{
 	watch.ClassAccounts: "Accounts", watch.ClassSSH: "SSH", watch.ClassPrivilege: "Privilege", watch.ClassSchedule: "Schedule",
-	watch.ClassService: "Service", watch.ClassHook: "Start-up", watch.ClassUpload: "Upload", watch.ClassExec: "Process",
+	watch.ClassService: "Service", watch.ClassHook: "Start-up", watch.ClassUpload: "Upload", watch.ClassExec: "Process", watch.ClassScratch: "Temporary",
 }
 
 var opLabels = map[string]string{

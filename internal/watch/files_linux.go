@@ -44,6 +44,9 @@ type Files struct {
 	byWD   map[int]*watched
 	byDir  map[string]int
 	issues collector.Issues
+	// scratchSeen are the executables reported in the scratch directories, whose removal is
+	// reported too. Only the goroutine reading the kernel's queue touches it.
+	scratchSeen map[string]bool
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
 	known map[string]string
 	// gaps are the places left unwatched by the bounds since the sensor started, kept across
@@ -64,7 +67,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]bool{}}, nil
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -287,7 +290,7 @@ func (f *Files) event(wd int, mask uint32, name string) {
 			if op == OpCreate {
 				f.watchNew(full, spawned, 0)
 			}
-			f.send(f.describe(spawned.Class, op, full, isDir))
+			f.emit(f.describe(spawned.Class, op, full, isDir))
 			continue
 		}
 		if !t.wants(name) {
@@ -302,7 +305,7 @@ func (f *Files) event(wd int, mask uint32, name string) {
 				f.mu.Unlock()
 			}
 		}
-		f.send(f.describe(t.Class, op, full, isDir))
+		f.emit(f.describe(t.Class, op, full, isDir))
 	}
 }
 
@@ -330,7 +333,7 @@ func (f *Files) watchNew(dir string, t Target, depth int) {
 			continue
 		}
 		child := path.Join(dir, e.Name())
-		f.send(f.describe(t.Class, OpCreate, child, e.IsDir()))
+		f.emit(f.describe(t.Class, OpCreate, child, e.IsDir()))
 		// mkdir -p makes the whole chain before the first watch is placed.
 		if e.IsDir() && t.Recursive {
 			if depth >= MaxDepth {
@@ -357,7 +360,7 @@ const (
 // sensor read, or open, what it points to.
 func (f *Files) describe(class, op, p string, isDir bool) Event {
 	e := Event{At: f.now().UTC(), Class: class, Op: op, Path: p, Dir: isDir}
-	if op == OpDelete && class != ClassUpload {
+	if op == OpDelete && systemClass(class) {
 		f.mu.Lock()
 		e.PrevSHA256 = f.remember(p, "")
 		f.mu.Unlock()
@@ -375,9 +378,14 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 		return e
 	}
 	e.Size = info.Size()
-	// Root's budget is for root's files outside the uploads: there the web server's user can
-	// rename a file of root left behind in a loop and spend it.
-	if info.Size() > maxEventHash || !f.spend(info.Size(), class != ClassUpload && e.UID != nil && *e.UID == 0) {
+	// Most of what is written in /tmp is not executable and is dropped: no need to read it.
+	if class == ClassScratch && !Executable(e.Mode) {
+		return e
+	}
+	// Root's budget is for root's files on system paths: in the uploads and the scratch
+	// directories the web server's user can rename a file of root left behind in a loop and
+	// spend it.
+	if info.Size() > maxEventHash || !f.spend(info.Size(), systemClass(class) && e.UID != nil && *e.UID == 0) {
 		return e
 	}
 	file, err := collector.DescribeNoFollow(f.src, collector.Rel(p))
@@ -385,7 +393,7 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 		return e
 	}
 	e.Size, e.SHA256, e.UID, e.Mode = file.Size, file.SHA256, file.UID, file.Mode
-	if class != ClassUpload {
+	if systemClass(class) {
 		f.mu.Lock()
 		e.PrevSHA256 = f.remember(p, e.SHA256)
 		f.mu.Unlock()
@@ -408,6 +416,30 @@ func (f *Files) spend(n int64, root bool) bool {
 	}
 	f.hashed[i] += n
 	return true
+}
+
+// maxScratchSeen bounds the executables remembered in the scratch directories.
+const maxScratchSeen = 1024
+
+// emit sends an event, keeping of the scratch directories only executable files, and the
+// removal of those it reported: the rest of what happens in /tmp is noise.
+func (f *Files) emit(e Event) {
+	if e.Class == ClassScratch {
+		switch {
+		case e.Dir:
+			return
+		case e.Op == OpDelete:
+			if !f.scratchSeen[e.Path] {
+				return
+			}
+			delete(f.scratchSeen, e.Path)
+		case !Executable(e.Mode):
+			return
+		case len(f.scratchSeen) < maxScratchSeen:
+			f.scratchSeen[e.Path] = true
+		}
+	}
+	f.send(e)
 }
 
 func (f *Files) send(e Event) {

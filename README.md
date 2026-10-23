@@ -314,7 +314,9 @@ what changes there within two seconds, in signed event envelopes of the same cha
 - **Files**, with inotify: the account databases, sudoers, polkit and doas, the SSH server
   configuration and every account's `authorized_keys`, cron and `at`, systemd units and
   generators, `ld.so.preload`, `profile.d`, PAM, `rc.local` and the shell rc files of every
-  account, and the upload directories of the web applications found by the last snapshot. Each
+  account, the upload directories of the web applications found by the last snapshot, and the
+  scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`), where only executable files count: a
+  dropper written, run and deleted there lives too briefly for its process to be read. Each
   event carries the size, SHA-256, owner and mode of the file after the change, read without
   following links.
 - **Processes**, with the kernel's process connector: only the starts that mean something, not

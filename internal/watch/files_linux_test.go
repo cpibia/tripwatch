@@ -239,3 +239,49 @@ func TestFilesRememberPreviousContent(t *testing.T) {
 		t.Fatalf("writes = %+v", writes)
 	}
 }
+
+// In the scratch directories only executables are reported, and the removal of those.
+func TestFilesScratchReportsExecutablesOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	plain, dropper := filepath.Join(root, "tmp/sess_1"), filepath.Join(root, "tmp/.d")
+	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dropper, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dropper, 0o700); err != nil { //nolint:gosec // the test's dropper
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := os.Remove(plain); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dropper); err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, ch, 2)
+	for _, e := range got {
+		if e.Path == "/tmp/sess_1" {
+			t.Errorf("a plain file in /tmp was reported: %+v", e)
+		}
+	}
+	if !has(got, ClassScratch, OpAttrib, "/tmp/.d") || !has(got, ClassScratch, OpDelete, "/tmp/.d") {
+		t.Fatalf("events = %+v", got)
+	}
+}

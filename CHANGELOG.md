@@ -6,6 +6,17 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- The scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`) are watched for executable files: a
+  dropper written, run and deleted lives too briefly for its process to be read, but its file
+  is seen. Only executables, and the removal of those, are reported.
+
+### Verifier
+
+- An executable file in a scratch directory is high; one that appears and is removed within 15
+  minutes is critical. The benchmark's dropper run and deleted between two checks is caught.
+
 ## [0.1.12] - 2026-10-23
 
 Update the verifier, then the sensors (`tripwatch-sensor -update`). This release fixes how

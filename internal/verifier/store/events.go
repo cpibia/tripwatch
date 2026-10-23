@@ -34,9 +34,9 @@ type Event struct {
 
 // noisyClasses are the event classes the web server's user can produce; they have a budget of
 // their own.
-const noisyClasses = `'upload', 'exec'`
+const noisyClasses = `'upload', 'exec', 'scratch'`
 
-func noisy(class string) bool { return class == "upload" || class == "exec" }
+func noisy(class string) bool { return class == "upload" || class == "exec" || class == "scratch" }
 
 // AddEvents stores the events of one envelope and drops those of the host past their retention.
 // It returns which events it stored: not those over the host's daily quota for their kind.

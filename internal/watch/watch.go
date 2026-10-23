@@ -21,6 +21,10 @@ const (
 	ClassHook      = "hook"
 	ClassUpload    = "upload"
 	ClassExec      = "exec"
+	// ClassScratch is the world-writable scratch directories, where only executable files are
+	// reported: a dropper written there, run and deleted lives too briefly for its process to
+	// be read, but its file is seen.
+	ClassScratch = "scratch"
 )
 
 // Reasons a process start is reported. Only these are: a busy server starts thousands of
@@ -57,8 +61,7 @@ type Event struct {
 	Dir    bool      `json:"dir,omitempty"`
 	Size   int64     `json:"size,omitempty"`
 	SHA256 string    `json:"sha256,omitempty"`
-	// PrevSHA256 is the content the sensor last knew the file to have, for files outside the
-	// uploads: a key added and then removed by rewriting a file that existed long before shows
+	// PrevSHA256 is the content the sensor last knew the file to have, for system paths: a key added and then removed by rewriting a file that existed long before shows
 	// as a return to it.
 	PrevSHA256 string  `json:"prev_sha256,omitempty"`
 	UID        *uint32 `json:"uid,omitempty"`
@@ -135,6 +138,9 @@ func Targets(homes []Home, uploads []string) []Target {
 		{Dir: "/etc/pam.d", Class: ClassHook},
 		{Dir: "/etc/update-motd.d", Class: ClassHook},
 	}
+	for _, d := range []string{"/tmp", "/var/tmp", "/dev/shm"} {
+		t = append(t, Target{Dir: d, Class: ClassScratch, Recursive: true})
+	}
 	seen := map[string]bool{}
 	for _, h := range homes {
 		dir := path.Clean(h.Dir)
@@ -168,4 +174,13 @@ type Status struct {
 	Processes bool     `json:"processes"`
 	Watches   int      `json:"watches"`
 	Issues    []string `json:"issues,omitempty"`
+}
+
+// Executable reports whether a mode, as Go prints it, is a regular file anyone may execute.
+func Executable(mode string) bool {
+	if len(mode) < 10 || strings.ContainsAny(mode[:len(mode)-9], "dLDpSc") {
+		return false
+	}
+	perm := mode[len(mode)-9:]
+	return strings.ContainsAny(string([]byte{perm[2], perm[5], perm[8]}), "xs")
 }
