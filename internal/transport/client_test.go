@@ -70,8 +70,11 @@ func TestPendingEnvelopeIsResentFirst(t *testing.T) {
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	dir := t.TempDir()
 	c, _ := New(srv.URL, srv.Client(), dir, "web-01", key)
-	if err := c.Send(t.Context(), protocol.KindSnapshot, []byte("s"), time.Now()); err == nil {
-		t.Fatal("a refused delivery reported success")
+	if err := c.Send(t.Context(), protocol.KindSnapshot, []byte("s"), time.Now()); err == nil || errors.Is(err, ErrNotSealed) {
+		t.Fatalf("a refused delivery: %v, want the payload sealed and pending", err)
+	}
+	if err := c.Send(t.Context(), protocol.KindEvent, []byte("e"), time.Now()); !errors.Is(err, ErrNotSealed) {
+		t.Fatalf("behind a pending envelope: %v, want ErrNotSealed", err)
 	}
 	fail = false
 	restarted, _ := New(srv.URL, srv.Client(), dir, "web-01", key)

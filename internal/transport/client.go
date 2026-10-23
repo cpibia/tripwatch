@@ -28,6 +28,11 @@ const stateFile = "transport-state.json"
 // sending it again will not help, the host has to be enrolled again.
 var ErrRejected = errors.New("transport: envelope rejected by the verifier")
 
+// ErrNotSealed means the payload was not sealed because an earlier envelope is still
+// undelivered: the caller keeps it and sends it again later. Any other error from Send leaves
+// the payload sealed and pending, to go out before the next one.
+var ErrNotSealed = errors.New("transport: payload not sealed")
+
 // persisted is the chain position and the envelope not yet acknowledged.
 type persisted struct {
 	// Key is the public signing key the state belongs to: after a re-enrollment the old chain
@@ -79,7 +84,7 @@ func (c *Client) Send(ctx context.Context, kind protocol.Kind, payload []byte, n
 
 	if c.pending != nil {
 		if err := c.deliver(ctx, *c.pending); err != nil {
-			return fmt.Errorf("resending sequence %d: %w", c.pending.Sequence, err)
+			return fmt.Errorf("%w: resending sequence %d: %w", ErrNotSealed, c.pending.Sequence, err)
 		}
 		c.pending = nil
 		if err := c.save(); err != nil {

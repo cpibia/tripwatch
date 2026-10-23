@@ -6,6 +6,7 @@ package watch
 import (
 	"errors"
 	"path"
+	"slices"
 	"strings"
 	"time"
 )
@@ -132,7 +133,10 @@ func Targets(homes []Home, uploads []string) []Target {
 	seen := map[string]bool{}
 	for _, h := range homes {
 		dir := path.Clean(h.Dir)
-		if dir == "/" || dir == "." || !strings.HasPrefix(dir, "/") || seen[dir] || strings.HasPrefix(dir, "/nonexistent") {
+		// Service accounts often have /bin or /usr/sbin as home: watching those for shell start-up
+		// files would only bring every package upgrade's changes to be filtered out.
+		if dir == "/" || dir == "." || !strings.HasPrefix(dir, "/") || seen[dir] || strings.HasPrefix(dir, "/nonexistent") ||
+			slices.ContainsFunc(slices.Concat(systemBinDirs, []string{"/dev/", "/proc/", "/sys/"}), func(d string) bool { return strings.HasPrefix(dir+"/", d) }) {
 			continue
 		}
 		seen[dir] = true
@@ -150,4 +154,13 @@ func Targets(homes []Home, uploads []string) []Target {
 		t = append(t, Target{Dir: dir, Class: ClassUpload, Recursive: true})
 	}
 	return t
+}
+
+// Status says, in each snapshot, whether the real-time watchers run: without them the verifier
+// sees only what snapshots show.
+type Status struct {
+	Files     bool     `json:"files"`
+	Processes bool     `json:"processes"`
+	Watches   int      `json:"watches"`
+	Issues    []string `json:"issues,omitempty"`
 }

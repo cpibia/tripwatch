@@ -1,7 +1,8 @@
 // Command tripwatch-sensor collects the state of the machine it runs on and sends it to the
 // verifier. It only observes: every decision is taken by the verifier.
 //
-// With -bundle it runs as a daemon: a heartbeat every -heartbeat, a snapshot every -interval.
+// With -bundle it runs as a daemon: a heartbeat every -heartbeat, a snapshot every -interval,
+// and, on Linux, the changes to critical paths and the suspicious process starts as they happen.
 // Without, it prints one snapshot as JSON and exits.
 //
 //	echo tw1.... | tripwatch-sensor enroll -token-file -   (writes /etc/tripwatch/bundle.json)
@@ -40,17 +41,20 @@ import (
 	"github.com/cpibia/tripwatch/internal/selfupdate"
 	"github.com/cpibia/tripwatch/internal/transport"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
+	"github.com/cpibia/tripwatch/internal/watch"
 )
 
 type report struct {
 	Environment discovery.Environment `json:"environment"`
 	Snapshot    collector.Snapshot    `json:"snapshot"`
+	Realtime    *watch.Status         `json:"realtime,omitempty"`
 }
 
 type sensor struct {
 	root       string
 	collectors []collector.Collector
 	weblog     *logs.Collector
+	realtime   *realtime
 }
 
 func main() {
@@ -215,10 +219,15 @@ func (s sensor) snapshot(ctx context.Context) report {
 	env := discovery.DetectEnvironment(src.FS, os.Getenv)
 	system := discovery.DetectSystem(src.FS, buildinfo.Version, interfaceAddresses())
 	env.System = &system
-	return report{
+	r := report{
 		Environment: env,
 		Snapshot:    collector.Run(ctx, src, s.collectors, time.Now()),
 	}
+	if s.realtime != nil {
+		r.Realtime = s.realtime.status()
+		s.realtime.update(r.Snapshot)
+	}
+	return r
 }
 
 // interfaceAddresses lists the addresses of the sensor's network interfaces that identify the
@@ -288,6 +297,8 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 			}
 		}
 	}()
+
+	s.realtime = s.startRealtime(ctx, log, client)
 
 	// Heartbeats run on their own: a snapshot taking minutes must not look like silence.
 	go func() {
