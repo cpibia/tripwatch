@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -434,5 +435,30 @@ func TestManagerConfigFromRun(t *testing.T) {
 	res := collect[ServicesResult](t, Services{}, collector.Source{FS: fsys})
 	if !slices.Equal(res.Environment, []string{"LD_PRELOAD=/dev/shm/m.so (etc/environment.d/50-x.conf)", "DefaultEnvironment=LD_PRELOAD=/dev/shm/l.so", "ManagerEnvironment=A=1"}) {
 		t.Errorf("environment = %v", res.Environment)
+	}
+}
+
+// etc/gshadow gives each group its own members, administrators and password state, never the
+// hash.
+func TestGroupShadow(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/passwd":  text("www-data:x:33:33::/var/www:/usr/sbin/nologin\n"),
+		"etc/group":   text("docker:x:999:\nadm:x:4:syslog\n"),
+		"etc/gshadow": text("docker:$6$secret$hash:root:www-data\nadm:!::syslog\n"),
+	}
+	res := collect[AccountsResult](t, Accounts{}, collector.Source{FS: fsys})
+	groups := map[string]Group{}
+	for _, g := range res.Groups {
+		groups[g.Name] = g
+	}
+	d := groups["docker"]
+	if !slices.Equal(d.ShadowMembers, []string{"www-data"}) || !slices.Equal(d.Admins, []string{"root"}) || d.Password != PasswordSet {
+		t.Errorf("docker = %+v", d)
+	}
+	if groups["adm"].Password != PasswordLocked {
+		t.Errorf("adm = %+v", groups["adm"])
+	}
+	if out, _ := json.Marshal(res); strings.Contains(string(out), "secret") {
+		t.Error("the group password hash reached the snapshot")
 	}
 }

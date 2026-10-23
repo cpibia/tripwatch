@@ -32,6 +32,11 @@ type Group struct {
 	Name    string   `json:"name"`
 	GID     int      `json:"gid"`
 	Members []string `json:"members,omitempty"`
+	// From etc/gshadow, which newgrp and sg read instead of etc/group: its own member list,
+	// the group's administrators and the state of the group password (never its hash).
+	ShadowMembers []string `json:"shadow_members,omitempty"`
+	Admins        []string `json:"admins,omitempty"`
+	Password      string   `json:"password,omitempty"`
 }
 
 type AccountsResult struct {
@@ -72,6 +77,28 @@ func (Accounts) Collect(_ context.Context, src collector.Source) (any, error) {
 			g.Members = strings.Split(fields[3], ",")
 		}
 		res.Groups = append(res.Groups, g)
+	}
+	gshadow, err := collector.ReadLines(src.FS, "etc/gshadow")
+	if err == nil {
+		byName := map[string]int{}
+		for i, g := range res.Groups {
+			byName[g.Name] = i
+		}
+		states := shadowStates(gshadow)
+		for _, line := range gshadow {
+			fields := strings.Split(line, ":")
+			i, ok := byName[fields[0]]
+			if len(fields) < 4 || !ok {
+				continue
+			}
+			res.Groups[i].Password = states[fields[0]]
+			if fields[2] != "" {
+				res.Groups[i].Admins = strings.Split(fields[2], ",")
+			}
+			if fields[3] != "" {
+				res.Groups[i].ShadowMembers = strings.Split(fields[3], ",")
+			}
+		}
 	}
 
 	for _, name := range []string{"etc/passwd", "etc/shadow", "etc/group", "etc/gshadow"} {

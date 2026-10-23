@@ -241,8 +241,8 @@ func TestExistingAccountPromoted(t *testing.T) {
 		got[f.Fingerprint] = f
 	}
 	for _, fp := range []string{
-		"accounts-change:member:docker|www-data",
-		"accounts-change:primary-group:www-data|0",
+		"accounts-change:member:www-data|999",
+		"accounts-change:member:www-data|0",
 		"accounts-change:password:www-data|set",
 		"accounts-change:shell:www-data|/bin/bash",
 	} {
@@ -254,5 +254,50 @@ func TestExistingAccountPromoted(t *testing.T) {
 	renumbered.UID = 0
 	if _, ok := findingOwners(Evaluate(&prev, State{Accounts: accounts(renumbered)}))["accounts-change:uid:www-data|0"]; !ok {
 		t.Error("UID change not reported")
+	}
+}
+
+// Promotions that keep group names out of the fixed list: a group named in sudoers, a new name
+// for docker's GID, a GID changed under the same name, membership only in gshadow, a shell
+// copied under the name nologin.
+func TestPromotionsByGID(t *testing.T) {
+	www := system.Account{Name: "www-data", UID: 33, GID: 33, Shell: "/usr/sbin/nologin", Password: system.PasswordLocked}
+	base := func(groups ...system.Group) State {
+		return State{
+			Accounts: &system.AccountsResult{Accounts: []system.Account{www}, Groups: append([]system.Group{{Name: "docker", GID: 999}, {Name: "deploy", GID: 1001}}, groups...)},
+			Sudoers:  &system.SudoersResult{Files: []system.SudoersFile{{Rules: []string{"%deploy ALL=(ALL) NOPASSWD: ALL"}}}},
+		}
+	}
+	critical := func(name string, prev, cur State, fp string) {
+		t.Helper()
+		for _, f := range Evaluate(&prev, cur) {
+			if f.Fingerprint == fp && f.Severity == "critical" && f.Owner == "root" {
+				return
+			}
+		}
+		t.Errorf("%s: no critical %s", name, fp)
+	}
+	prev := base()
+	sudo := base()
+	sudo.Accounts.Groups[1].Members = []string{"www-data"}
+	critical("member of a group sudoers names", prev, sudo, "accounts-change:member:www-data|1001")
+
+	alias := base(system.Group{Name: "dockerx", GID: 999, Members: []string{"www-data"}})
+	critical("new name for docker's GID", prev, alias, "accounts-change:member:www-data|999")
+
+	inDeploy := base()
+	inDeploy.Accounts.Groups[1].Members = []string{"www-data"}
+	toRoot := base()
+	toRoot.Accounts.Groups[1] = system.Group{Name: "deploy", GID: 0, Members: []string{"www-data"}}
+	critical("group renumbered to 0", inDeploy, toRoot, "accounts-change:member:www-data|0")
+
+	shadow := base()
+	shadow.Accounts.Groups[0].ShadowMembers = []string{"www-data"}
+	critical("member in gshadow only", prev, shadow, "accounts-change:member:www-data|999")
+
+	copied := base()
+	copied.Accounts.Accounts[0].Shell = "/var/lib/syslog/nologin"
+	if _, ok := findingOwners(Evaluate(&prev, copied))["accounts-change:shell:www-data|/var/lib/syslog/nologin"]; !ok {
+		t.Error("a shell copied under the name nologin was not seen")
 	}
 }

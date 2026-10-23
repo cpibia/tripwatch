@@ -2,7 +2,8 @@
 
 tripwatch rileva le modifiche non autorizzate sui server, qualunque cosa ci giri sopra. Controlla
 ciò che un attaccante cambia per entrare e per restare: nuovi account privilegiati, account
-esistenti promossi (gruppi come sudo o docker, password o shell abilitate, UID cambiato), chiavi SSH,
+esistenti promossi (un gruppo privilegiato per GID o per regola sudoers, password o shell
+abilitate, UID cambiato), chiavi SSH,
 persistenze in cron, systemd e negli script di avvio, binari setuid e file immutabili, file di
 sistema che non corrispondono più al loro pacchetto, processi avviati da eseguibili cancellati o
 nascosti, connessioni in uscita inattese, codice applicativo modificato senza un deploy.
@@ -40,7 +41,7 @@ firmato prodotto dalla build (confrontato con il lockfile: `composer.lock`, `pac
 
 | Collector | Cosa riporta |
 |---|---|
-| `accounts` | utenti, UID, gruppi e stato della password (impostata, bloccata, vuota); l'hash della password non viene mai raccolto |
+| `accounts` | utenti, UID, gruppi (anche membri, amministratori e password di gruppo da `/etc/gshadow`) e stato delle password (impostata, bloccata, vuota); gli hash non vengono mai raccolti |
 | `ssh` | impostazioni di sshd lette come le legge sshd (`Include` seguiti dove compaiono, primo valore vincente), blocchi `Match` riportati per intero, tutte le chiavi autorizzate di tutti gli account con fingerprint, commento e opzioni come `command=` |
 | `sudoers` | regole di sudo, comprese le direttive `#include` e `#includedir` |
 | `scheduled` | crontab di sistema e degli utenti, script di `cron.daily` e simili, job di `at` in attesa |
