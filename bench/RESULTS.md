@@ -1,6 +1,6 @@
 # Detection benchmark
 
-Commit `78d624e`, 2026-10-22, container Debian GNU/Linux 12 (bookworm) on arm64. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+Commit `bf6e1d8`, 2026-10-23, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 6.17.0-1022-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
 with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
 ## Method
@@ -9,8 +9,11 @@ Every scenario starts from a clean container, the same for all: a Debian host wi
 which every tool has already taken its baseline. The scenario applies the attack, then every tool runs
 once. A tool **detects** the scenario when the lines of its output that mention the artifact of the
 attack (a path, the comment of a key, a port) differ from those of the baseline: something new appeared
-or something known changed. For tripwatch the JSON objects of the snapshot that contain the artifact are
-compared: the final judgement belongs to the verifier, here we measure whether the data arrives.
+or something known changed. For tripwatch the JSON objects that contain the artifact are compared: those
+of the snapshot, where the final judgement belongs to the verifier and we measure whether the data
+arrives, and the alerts the real-time rules of the verifier raise on what the watchers of the sensor reported while
+the scenario ran, the watchers being started after a first snapshot as in daemon mode. Process events
+need a kernel with the process connector: the run says which kernel it had.
 **Blocked** means the tool did not finish within 900 s.
 
 The control scenario, with no attack, produces no differences for any tool.
@@ -73,7 +76,7 @@ The control scenario, with no attack, produces no differences for any tool.
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
 | Dropper run and deleted between two checks | ❌ | ❌ | ❌ | ❌ |
-| SSH key added, used and removed between two checks | ❌ | ❌ | ❌ | ❌ |
+| SSH key added, used and removed between two checks | ✅ | ❌ | ❌ | ❌ |
 | FIFO in place of the web user's authorized_keys | ✅ | ✅ | ❌ | ❌ |
 
 ## Cost of a full check
@@ -82,7 +85,7 @@ Measured on the control scenario, in the same container.
 
 | Tool | Time | Peak memory |
 |---|--:|--:|
-| tripwatch | 1.1 s | 26 MB |
-| AIDE | 19.0 s | 34 MB |
-| rkhunter | 83.4 s | 11 MB |
-| debsums | 1.3 s | 12 MB |
+| tripwatch | 1.4 s | 38 MB |
+| AIDE | 49.3 s | 35 MB |
+| rkhunter | 129.1 s | 11 MB |
+| debsums | 1.0 s | 13 MB |

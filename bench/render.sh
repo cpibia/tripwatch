@@ -146,7 +146,8 @@ END {
   print "Detects means the data about the attack appears in the output of the tool; for tripwatch the" > summary
   print "judgement stays with the verifier: its real-time rules run on what the watchers of the sensor saw while the" > summary
   print "scenario ran. The scenarios in the \"Limits\" category (a dropper or an SSH key that appear and disappear" > summary
-  print "between two checks) are beyond any tool that only compares states; tripwatch sees them as they happen." > summary
+  print "between two checks) are beyond any tool that only compares states; for them tripwatch relies on its" > summary
+  print "real-time watchers, and the table says which ones they catch." > summary
   print "Method, results per scenario, versions and cost in [bench/RESULTS.md](bench/RESULTS.md)." > summary
 }
 ' "$joined"

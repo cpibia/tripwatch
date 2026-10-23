@@ -452,6 +452,27 @@ Positions advance only after the snapshot has been delivered.
 ## Detection compared
 
 <!-- bench:start -->
+Across 29 attack scenarios reproduced in a Debian container (commit `bf6e1d8`), how many each
+tool detects with its default configuration:
+
+![Scenarios detected out of 29: tripwatch 28, AIDE 24, rkhunter 4, debsums 1](bench/detection.svg)
+
+| Category | Scenarios | tripwatch | AIDE | rkhunter | debsums |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Persistence | 10 | 10 | 10 | 2 | 0 |
+| Privileges | 4 | 4 | 4 | 0 | 0 |
+| System integrity | 5 | 5 | 5 | 1 | 1 |
+| Processes and network | 3 | 3 | 0 | 1 | 0 |
+| Web applications | 4 | 4 | 4 | 0 | 0 |
+| Limits: attacks between two checks, and traps | 3 | 2 | 1 | 0 | 0 |
+| **Total** | **29** | **28** | **24** | **4** | **1** |
+
+Detects means the data about the attack appears in the output of the tool; for tripwatch the
+judgement stays with the verifier: its real-time rules run on what the watchers of the sensor saw while the
+scenario ran. The scenarios in the "Limits" category (a dropper or an SSH key that appear and disappear
+between two checks) are beyond any tool that only compares states; for them tripwatch relies on its
+real-time watchers, and the table says which ones they catch.
+Method, results per scenario, versions and cost in [bench/RESULTS.md](bench/RESULTS.md).
 <!-- bench:end -->
 
 Where AIDE and tripwatch both see a new file, AIDE only says the file appeared or changed;
