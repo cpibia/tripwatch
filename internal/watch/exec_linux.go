@@ -44,6 +44,7 @@ type Execs struct {
 	fd       int
 	mu       sync.Mutex
 	webUsers map[int]bool
+	homes    map[int]string
 	// Dropped counts events lost because the consumer did not keep up; Skipped, processes not
 	// inspected because more started than MaxInspections in a second.
 	Dropped atomic.Int64
@@ -105,6 +106,13 @@ func dropNetAdmin() error {
 
 // Close stops the subscription.
 func (x *Execs) Close() error { return unix.Close(x.fd) }
+
+// SetHomes replaces the home directories of the accounts, by UID.
+func (x *Execs) SetHomes(homes map[int]string) {
+	x.mu.Lock()
+	x.homes = homes
+	x.mu.Unlock()
+}
 
 // SetWebUsers replaces the UIDs taken for the web server's.
 func (x *Execs) SetWebUsers(uids []int) {
@@ -190,7 +198,7 @@ func (x *Execs) message(m []byte) bool {
 			return true
 		}
 		x.mu.Lock()
-		reason, script := classifyExec(p, x.webUsers)
+		reason, script := classifyExec(p, x.webUsers, x.homes)
 		x.mu.Unlock()
 		if reason != "" {
 			e := x.event(reason, p)

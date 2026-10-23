@@ -14,6 +14,9 @@ False positives seen on a real server, fixed.
   JITs map, a shared anonymous region showing as `/dev/zero (deleted)`.
 - A process whose deleted executable has been replaced by a new file at the same path is marked
   as such (`exe_replaced`): a package upgrade it was not restarted for.
+- A program or script run by an account from its own home is no longer reported as started from
+  an unusual place (a crontab calling a script in the deploy user's home); the same file run by
+  another account, by root or by the web server's user still is.
 - A web server's configuration counts as stale only if it changed after the server last read it:
   a reload starts new workers while the master keeps running.
 

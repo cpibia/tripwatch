@@ -150,6 +150,11 @@ func (r *realtime) update(snap collector.Snapshot) {
 	}
 	if execs != nil {
 		execs.SetWebUsers(watch.WebUsers(&accounts, &processes))
+		homes := make(map[int]string, len(accounts.Accounts))
+		for _, a := range accounts.Accounts {
+			homes[a.UID] = a.Home
+		}
+		execs.SetHomes(homes)
 	}
 }
 

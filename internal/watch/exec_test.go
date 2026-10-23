@@ -8,12 +8,16 @@ import (
 
 func TestClassifyExec(t *testing.T) {
 	web := map[int]bool{33: true}
+	homes := map[int]string{33: "/var/www", 1000: "/home/ubuntu"}
 	for _, c := range []struct {
 		p      system.Process
 		want   string
 		script string
 	}{
 		{system.Process{UID: 0, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /tmp/.dropper"}, ReasonUnusualPath, "/tmp/.dropper"},
+		{system.Process{UID: 1000, Exe: "/usr/bin/bash", Cmdline: "/bin/bash /home/ubuntu/applications/send_email.sh"}, "", "/home/ubuntu/applications/send_email.sh"},
+		{system.Process{UID: 1001, Exe: "/usr/bin/bash", Cmdline: "/bin/bash /home/ubuntu/applications/send_email.sh"}, ReasonUnusualPath, "/home/ubuntu/applications/send_email.sh"},
+		{system.Process{UID: 33, Exe: "/usr/bin/perl", Cmdline: "perl /var/www/shop/x.pl"}, ReasonWebShell, "/var/www/shop/x.pl"},
 		{system.Process{UID: 0, Exe: "/usr/bin/python3.11", Cmdline: "python3 -u /dev/shm/x.py arg"}, ReasonUnusualPath, "/dev/shm/x.py"},
 		{system.Process{UID: 0, Exe: "/usr/bin/bash", Cmdline: "bash -c /tmp/x"}, "", ""},
 		{system.Process{UID: 0, Exe: "/usr/bin/bash", Cmdline: "/bin/bash /usr/local/bin/backup.sh"}, "", "/usr/local/bin/backup.sh"},
@@ -27,7 +31,7 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 0, Exe: "/usr/bin/x", ExeDeleted: true}, ReasonDeleted, ""},
 		{system.Process{UID: 0, Exe: "/usr/sbin/cron"}, "", ""},
 	} {
-		if got, script := classifyExec(c.p, web); got != c.want || script != c.script {
+		if got, script := classifyExec(c.p, web, homes); got != c.want || script != c.script {
 			t.Errorf("%+v: %q %q, want %q %q", c.p, got, script, c.want, c.script)
 		}
 	}

@@ -65,8 +65,11 @@ func WebUsers(accounts *system.AccountsResult, processes *system.ProcessesResult
 }
 
 // classifyExec says why a process that just started matters, or "" when it does not, and the
-// script it runs when the executable is an interpreter.
-func classifyExec(p system.Process, webUsers map[int]bool) (reason, script string) {
+// script it runs when the executable is an interpreter. homes maps UIDs to their home
+// directories: an account running a program from its own home is its owner's business, such as
+// a crontab calling a script, unless the account is the web server's, whose home is often the
+// web root where uploads land.
+func classifyExec(p system.Process, webUsers map[int]bool, homes map[int]string) (reason, script string) {
 	exe := p.Exe
 	tool := toolName(exe, p.Comm)
 	if slices.Contains(interpreters, tool) || strings.HasPrefix(tool, "php") {
@@ -77,10 +80,20 @@ func classifyExec(p system.Process, webUsers map[int]bool) (reason, script strin
 		return ReasonDeleted, script
 	case webUsers[p.UID] && slices.Contains(webTools, tool):
 		return ReasonWebShell, script
-	case unusual(exe) || unusual(script):
+	case (unusual(exe) && !ownHome(p.UID, exe, webUsers, homes)) || (unusual(script) && !ownHome(p.UID, script, webUsers, homes)):
 		return ReasonUnusualPath, script
 	}
 	return "", script
+}
+
+// ownHome reports whether path lies in the home of the account uid, other than root's and the
+// web server's.
+func ownHome(uid int, p string, webUsers map[int]bool, homes map[int]string) bool {
+	home := homes[uid]
+	if uid == 0 || webUsers[uid] || home == "" || home == "/" {
+		return false
+	}
+	return strings.HasPrefix(p, strings.TrimSuffix(home, "/")+"/")
 }
 
 func unusual(p string) bool {
