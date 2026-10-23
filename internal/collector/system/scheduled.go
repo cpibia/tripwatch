@@ -91,12 +91,31 @@ type SudoersResult struct {
 
 func (Sudoers) Name() string { return "sudoers" }
 
-// Collect reads the sudoers policy. Files sudo would skip in sudoers.d (names with a dot or
-// ending in ~) are reported too: the verifier decides whether they matter.
+// privilegePolicies are the other files that grant root's power to users: polkit rules (which
+// systemd-run and pkexec obey) and their older .pkla form, and doas.
+var privilegePolicies = []string{
+	"etc/polkit-1/rules.d/*", "usr/share/polkit-1/rules.d/*", "usr/local/share/polkit-1/rules.d/*",
+	"etc/polkit-1/localauthority/*/*", "var/lib/polkit-1/localauthority/*/*",
+	"etc/doas.conf", "usr/local/etc/doas.conf",
+}
+
+// maxSudoersFiles bounds the files followed through includes.
+const maxSudoersFiles = 500
+
+// Collect reads the sudoers policy, following its include and includedir lines wherever they
+// point, and the other privilege policies. Files sudo would skip in sudoers.d (names with a dot
+// or ending in ~) are reported too: the verifier decides whether they matter.
 func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 	var res SudoersResult
-	names := append([]string{"etc/sudoers"}, collector.Glob(src.FS, "etc/sudoers.d/*")...)
-	for _, name := range names {
+	queue := append([]string{"etc/sudoers"}, collector.Glob(src.FS, "etc/sudoers.d/*")...)
+	seen := map[string]bool{}
+	for len(queue) > 0 && len(seen) < maxSudoersFiles {
+		name := queue[0]
+		queue = queue[1:]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
 		f, err := collector.Describe(src, name)
 		res.Issues.Add(err)
 		if f.Path == "" {
@@ -104,7 +123,30 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 		}
 		lines, err := collector.ReadLines(src.FS, name)
 		res.Issues.Add(err)
-		res.Files = append(res.Files, SudoersFile{File: f, Rules: sudoersRules(lines)})
+		rules := sudoersRules(lines)
+		res.Files = append(res.Files, SudoersFile{File: f, Rules: rules})
+		for _, r := range rules {
+			directive, target, _ := strings.Cut(r, " ")
+			target = strings.TrimPrefix(strings.TrimSpace(target), "/")
+			switch directive {
+			case "#include", "@include":
+				queue = append(queue, target)
+			case "#includedir", "@includedir":
+				queue = append(queue, collector.Glob(src.FS, path.Join(target, "*"))...)
+			}
+		}
+	}
+	for _, pattern := range privilegePolicies {
+		for _, name := range collector.Glob(src.FS, pattern) {
+			f, err := collector.Describe(src, name)
+			res.Issues.Add(err)
+			if f.Path == "" {
+				continue
+			}
+			lines, err := collector.ReadLines(src.FS, name)
+			res.Issues.Add(err)
+			res.Files = append(res.Files, SudoersFile{File: f, Rules: sudoersRules(lines)})
+		}
 	}
 	return res, nil
 }
@@ -118,7 +160,7 @@ func sudoersRules(lines []string) []string {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "#include") {
+		if strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "#include") || strings.HasPrefix(line, "//") {
 			continue
 		}
 		out = append(out, line)

@@ -55,6 +55,17 @@ func unitOwner(u unitT) string { return homeOwner(u.Path) }
 // named nologin elsewhere is a shell.
 var noLogin = map[string]bool{"/usr/sbin/nologin": true, "/sbin/nologin": true, "/bin/false": true, "/usr/bin/false": true, "": true}
 
+// policyName names the privilege policy a file belongs to.
+func policyName(p string) string {
+	switch {
+	case strings.Contains(p, "polkit"):
+		return "polkit"
+	case strings.Contains(p, "doas"):
+		return "doas"
+	}
+	return "sudo"
+}
+
 // realShell reports whether a login shell lets the account open a session.
 func realShell(sh string) bool { return !noLogin[sh] }
 
@@ -83,7 +94,10 @@ func memberships(r *system.AccountsResult) map[string]map[int]bool {
 }
 
 // sudoGroup matches the groups a sudoers rule grants to: %name or %#gid.
-var sudoGroup = regexp.MustCompile(`%(#?)([A-Za-z0-9_.-]+)`)
+var sudoGroup = regexp.MustCompile(`%:?(#?)([A-Za-z0-9_.-]+)`)
+
+// sudoEscape matches the \xHH escapes sudoers allows in names.
+var sudoEscape = regexp.MustCompile(`\\x([0-9A-Fa-f]{2})`)
 
 // privilegedGIDs are the GIDs that grant root's power or close to it: 0, those of the groups in
 // privilegedGroups under any of the names sharing the GID, and those sudoers rules grant to, in
@@ -105,6 +119,10 @@ func privilegedGIDs(snaps ...State) map[int]bool {
 		}
 		for _, f := range st.Sudoers.Files {
 			for _, rule := range f.Rules {
+				rule = sudoEscape.ReplaceAllStringFunc(rule, func(e string) string {
+					n, _ := strconv.ParseUint(e[2:], 16, 8)
+					return string(rune(n))
+				})
 				for _, m := range sudoGroup.FindAllStringSubmatch(rule, -1) {
 					if m[1] == "#" {
 						if gid, err := strconv.Atoi(m[2]); err == nil {
@@ -112,8 +130,10 @@ func privilegedGIDs(snaps ...State) map[int]bool {
 						}
 						continue
 					}
+					// Compared without case: wrongly calling a group privileged costs an alert,
+					// missing one costs a silent promotion.
 					for _, g := range groups {
-						if g.Name == m[2] {
+						if strings.EqualFold(g.Name, m[2]) {
 							out[g.GID] = true
 						}
 					}
@@ -176,19 +196,18 @@ var privilegedGroups = map[string]bool{
 // its name in the host's group database) that the file's owner is not in. A setgid file of a
 // group its owner already belongs to, as primary group or as member, grants nothing the owner
 // did not have: a web user in adm or docker can make those itself.
-func privilegedOwner(f fileT, cur State) string {
+func privilegedOwner(f fileT, cur State, privGIDs map[int]bool, groups map[string]map[int]bool) string {
 	// On a filesystem a user mounted, owner and mode are what that user chose: neither is root's.
 	if f.Mount != "" {
 		return "mount " + f.Mount
 	}
-	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil && privilegedGIDs(cur)[int(*f.GID)] {
+	if strings.Contains(strings.SplitN(f.Mode, "-", 2)[0], "g") && f.GID != nil && privGIDs[int(*f.GID)] {
 		gid := int(*f.GID)
 		// A member if any account with the file's UID is, through any group line with that
 		// GID: a process runs with the groups of the name it started as, and a web user's
 		// alias may come later in the passwd file.
 		member := false
 		if cur.Accounts != nil && f.UID != nil {
-			groups := memberships(cur.Accounts)
 			for _, a := range cur.Accounts.Accounts {
 				if a.UID == int(*f.UID) && groups[a.Name][gid] {
 					member = true
@@ -301,7 +320,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				state("accounts", "uid0:"+acc.Name, "critical", "Secondo account root: "+acc.Name,
 					fmt.Sprintf("L'account %s ha UID 0, cioè i privilegi di root. Home %s, shell %s.", acc.Name, acc.Home, acc.Shell))
 			}
-			if acc.Password == "empty" && acc.Shell != "" && !strings.HasSuffix(acc.Shell, "nologin") && !strings.HasSuffix(acc.Shell, "false") {
+			if acc.Password == "empty" && realShell(acc.Shell) {
 				state("accounts", "empty-password:"+acc.Name, "high", "Account senza password: "+acc.Name, "Shell "+acc.Shell+": chiunque può entrare con questo nome.")
 			}
 		}
@@ -354,7 +373,19 @@ func Evaluate(prev *State, cur State) []Finding {
 						fmt.Sprintf("%s appartiene ora al gruppo GID %d (%s)%s.", name, gid, groupNames(a.Groups, gid), map[bool]string{true: ", che dà accesso equivalente o vicino a quello di root", false: ""}[priv]))
 				}
 			}
+			admins := map[string]set{}
+			for _, g := range prev.Accounts.Groups {
+				admins[g.Name] = setOf(g.Admins, func(m string) string { return m })
+			}
 			for _, g := range a.Groups {
+				// A group administrator can add anyone, itself included, at any time: a dormant
+				// grant of the group.
+				for _, m := range g.Admins {
+					if privGIDs[g.GID] && !admins[g.Name].has(m) {
+						change("accounts-change", "group-admin:"+g.Name+"|"+m, "critical", "Amministratore del gruppo "+g.Name+": "+m,
+							fmt.Sprintf("%s può ora aggiungere chiunque, sé compreso, al gruppo %s (GID %d) con gpasswd.", m, g.Name, g.GID))
+					}
+				}
 				if g.Password == system.PasswordSet && privGIDs[g.GID] && !groupPasswordSet(prev.Accounts, g.Name) {
 					change("accounts-change", "group-password:"+g.Name, "critical", "Password impostata per il gruppo "+g.Name,
 						"Con la password del gruppo chiunque sul server può entrarci con newgrp o sg.")
@@ -404,7 +435,7 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, f := range s.Files {
 			for _, rule := range f.Rules {
 				if !known.has(rule) {
-					change("persistence-change", "sudo:"+f.Path+"|"+rule, "high", "Nuova regola sudo", rule+" in "+f.Path)
+					change("persistence-change", "sudo:"+f.Path+"|"+rule, "high", "Nuova regola "+policyName(f.Path), rule+" in "+f.Path)
 				}
 			}
 		}
@@ -534,6 +565,8 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if p := cur.Privileged; p != nil {
+		// Computed once per snapshot: per file they made a hostile snapshot quadratic.
+		privGIDs, groupsOf := privilegedGIDs(cur), memberships(cur.Accounts)
 		var known set
 		if prev != nil && prev.Privileged != nil {
 			known = setOf(prev.Privileged.Files, func(q fileT) string { return q.Path + "\x00" + q.SHA256 })
@@ -543,11 +576,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			case f.Immutable || f.AppendOnly:
 				state("privileged", "attr:"+f.Path, "high", "File protetto con chattr: "+f.Path, "Gli attributi immutable o append-only sono rari sui server e sono usati per rendere persistente un accesso.")
 			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
-				owner := privilegedOwner(f, cur)
+				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
 				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+", hash "+f.SHA256+".")
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
-				owner := privilegedOwner(f, cur)
+				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
 				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+".")
 			}
 		}

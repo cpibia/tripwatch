@@ -482,3 +482,37 @@ func TestPrivilegedMarksUserMounts(t *testing.T) {
 		t.Fatalf("mounts = %v", got)
 	}
 }
+
+// Polkit and doas policies are read like sudoers, and sudoers includes are followed wherever
+// they point.
+func TestPrivilegePolicies(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/sudoers":                                   text("root ALL=(ALL) ALL\n@include /opt/policy/extra\n#includedir /srv/sudo.d\n"),
+		"opt/policy/extra":                              text("%deploy ALL=(ALL) NOPASSWD: ALL\n"),
+		"srv/sudo.d/more":                               text("www-data ALL=(ALL) NOPASSWD: ALL\n"),
+		"etc/polkit-1/rules.d/49-web.rules":             text("// allow the web user\npolkit.addRule(function(action, subject) {\n  if (subject.user == \"www-data\") return polkit.Result.YES;\n});\n"),
+		"etc/polkit-1/localauthority/50-local.d/x.pkla": text("[x]\nIdentity=unix-user:www-data\nResultAny=yes\n"),
+		"etc/doas.conf":                                 text("permit nopass www-data as root\n"),
+	}
+	res := collect[SudoersResult](t, Sudoers{}, collector.Source{FS: fsys})
+	got := map[string][]string{}
+	for _, f := range res.Files {
+		got[f.Path] = f.Rules
+	}
+	for _, p := range []string{"/opt/policy/extra", "/srv/sudo.d/more", "/etc/polkit-1/rules.d/49-web.rules", "/etc/polkit-1/localauthority/50-local.d/x.pkla", "/etc/doas.conf"} {
+		if len(got[p]) == 0 {
+			t.Errorf("%s not read: %v", p, got)
+		}
+	}
+	if slices.Contains(got["/etc/polkit-1/rules.d/49-web.rules"], "// allow the web user") {
+		t.Error("polkit comment kept")
+	}
+}
+
+// A root mount nested in a user's FUSE is root's.
+func TestNestedRootMount(t *testing.T) {
+	m := mountTable{"/var/www/m": "fuse.sshfs uid 33", "/var/www/m/sys": ""}
+	if m.userMount("/var/www/m/x") == "" || m.userMount("/var/www/m/sys/y") != "" || m.userMount("/var/www/mx") != "" {
+		t.Fatal("mount lookup")
+	}
+}

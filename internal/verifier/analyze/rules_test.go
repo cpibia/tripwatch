@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -312,5 +313,50 @@ func TestSetuidOnUserMount(t *testing.T) {
 	owners := findingOwners(Evaluate(nil, cur))
 	if owners["privileged:setid:mount fuse.sshfs uid 33|/var/www/m/x"] != "mount fuse.sshfs uid 33" || owners["privileged:setid:root|/var/tmp/r"] != "root" {
 		t.Fatalf("owners %v", owners)
+	}
+}
+
+// A new administrator of a privileged group, a polkit rule and a sudoers group written with
+// escapes or another case are all root's alerts.
+func TestDormantGrantsAndPolicies(t *testing.T) {
+	groups := func(admins ...string) *system.AccountsResult {
+		return &system.AccountsResult{Accounts: []system.Account{{Name: "www-data", UID: 33, GID: 33}},
+			Groups: []system.Group{{Name: "docker", GID: 999, Admins: admins}, {Name: "deploy", GID: 1001}}}
+	}
+	prev := State{Accounts: groups(), Sudoers: &system.SudoersResult{}}
+	cur := State{Accounts: groups("www-data"), Sudoers: &system.SudoersResult{Files: []system.SudoersFile{
+		{File: collector.File{Path: "/etc/polkit-1/rules.d/49-web.rules"}, Rules: []string{"return polkit.Result.YES;"}},
+	}}}
+	got := map[string]Finding{}
+	for _, f := range Evaluate(&prev, cur) {
+		got[f.Fingerprint] = f
+	}
+	if f := got["accounts-change:group-admin:docker|www-data"]; f.Severity != "critical" || f.Owner != "root" {
+		t.Errorf("group admin: %+v", f)
+	}
+	if f := got["persistence-change:sudo:/etc/polkit-1/rules.d/49-web.rules|return polkit.Result.YES;"]; f.Title != "Nuova regola polkit" || f.Owner != "root" {
+		t.Errorf("polkit rule: %+v", f)
+	}
+	for _, rule := range []string{`%\x64eploy ALL=(ALL) ALL`, "%DEPLOY ALL=(ALL) ALL", "%:deploy ALL=(ALL) ALL"} {
+		st := State{Accounts: groups(), Sudoers: &system.SudoersResult{Files: []system.SudoersFile{{Rules: []string{rule}}}}}
+		if !privilegedGIDs(st)[1001] {
+			t.Errorf("%q does not make deploy privileged", rule)
+		}
+	}
+}
+
+// Owners of many setgid files with many groups are decided in linear time.
+func TestSetgidOwnersAreLinear(t *testing.T) {
+	acc := &system.AccountsResult{Accounts: []system.Account{{Name: "www-data", UID: 33, GID: 33}}}
+	var files []collector.File
+	for i := range 4000 {
+		acc.Groups = append(acc.Groups, system.Group{Name: fmt.Sprintf("g%d", i), GID: 2000 + i, Members: []string{"www-data"}})
+		uid, gid := uint32(33), uint32(2000+i)
+		files = append(files, collector.File{Path: fmt.Sprintf("/srv/f%d", i), Mode: "grwxr-xr-x", UID: &uid, GID: &gid})
+	}
+	start := time.Now()
+	Evaluate(nil, State{Accounts: acc, Privileged: &system.PrivilegedResult{Files: files}})
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("Evaluate took %v", took)
 	}
 }

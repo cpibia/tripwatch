@@ -40,7 +40,7 @@ func (Privileged) Name() string { return "privileged" }
 
 func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, error) {
 	var res PrivilegedResult
-	mounts := readUserMounts(src)
+	mounts := readMounts(src, &res.Issues)
 	skip := map[string]bool{}
 	for _, s := range p.Skip {
 		skip[s] = true
@@ -107,16 +107,18 @@ func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, err
 	return res, nil
 }
 
-// userMounts are the filesystems an unprivileged user mounted, by mount point.
-type userMounts map[string]string
+// mountTable maps every mount point to the user mount it is ("<fstype> uid <N>"), or "" for any
+// other mount: the deepest mount containing a file decides, so a root mount nested inside a
+// user's FUSE is root's.
+type mountTable map[string]string
 
-// readUserMounts reads the mount table of the host's init process (the observed root's, when the
-// sensor runs in a container with the host mounted) and keeps the FUSE mounts of a user other
-// than root. A missing table only means no file gets marked.
-func readUserMounts(src collector.Source) userMounts {
-	out := userMounts{}
+// readMounts reads the mount table of the host's init process (the observed root's, when the
+// sensor runs in a container with the host mounted).
+func readMounts(src collector.Source, issues *collector.Issues) mountTable {
+	out := mountTable{}
 	lines, err := collector.ReadLines(src.FS, "proc/1/mountinfo")
 	if err != nil {
+		issues.Add(fmt.Errorf("mount table not read, files on users' FUSE mounts are not marked: %w", err))
 		return out
 	}
 	for _, line := range lines {
@@ -125,19 +127,15 @@ func readUserMounts(src collector.Source) userMounts {
 		if !ok || len(fields) < 5 || len(tail) < 3 {
 			continue
 		}
-		fstype := tail[0]
-		if fstype != "fuseblk" && fstype != "fuse" && !strings.HasPrefix(fstype, "fuse.") {
-			continue
-		}
-		uid := ""
-		for _, opt := range strings.Split(tail[2], ",") {
-			if v, ok := strings.CutPrefix(opt, "user_id="); ok {
-				uid = v
+		point, fstype, kind := unescapeMount(fields[4]), tail[0], ""
+		if fstype == "fuseblk" || fstype == "fuse" || strings.HasPrefix(fstype, "fuse.") {
+			for _, opt := range strings.Split(tail[2], ",") {
+				if v, ok := strings.CutPrefix(opt, "user_id="); ok && v != "0" {
+					kind = fstype + " uid " + v
+				}
 			}
 		}
-		if uid != "" && uid != "0" {
-			out[unescapeMount(fields[4])] = fstype + " uid " + uid
-		}
+		out[point] = kind
 	}
 	return out
 }
@@ -158,8 +156,8 @@ func unescapeMount(s string) string {
 	return b.String()
 }
 
-// userMount returns the user mount a path lies on, the deepest one, or "".
-func (m userMounts) userMount(p string) string {
+// userMount returns the user mount a path lies on, by its deepest mount, or "".
+func (m mountTable) userMount(p string) string {
 	best, kind := "", ""
 	for point, k := range m {
 		if (p == point || strings.HasPrefix(p, strings.TrimSuffix(point, "/")+"/")) && len(point) > len(best) {
