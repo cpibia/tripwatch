@@ -895,6 +895,17 @@ func Evaluate(prev *State, cur State) []Finding {
 
 	out = append(out, kernelFindings(prev, cur)...)
 
+	if rt := cur.Realtime; rt != nil && len(rt.Unwatched) > 0 {
+		// Anyone able to create directories can push the watches past their bounds: places of
+		// the system, the homes and the uploads left without one are an alert, not a note.
+		list := rt.Unwatched
+		if len(list) > 10 {
+			list = list[:10]
+		}
+		state("sensor", "unwatched", "high", "Places left without real-time watch",
+			"The real-time watcher could not cover every watched place; changes there show only in snapshots. Someone filling a watched tree with directories causes this.\n"+strings.Join(list, "\n"))
+	}
+
 	if p := cur.Processes; p != nil {
 		byPID := map[int]system.Process{}
 		for _, pr := range p.Processes {

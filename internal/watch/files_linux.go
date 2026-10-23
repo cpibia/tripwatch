@@ -52,6 +52,10 @@ type Files struct {
 	// gaps are the places left unwatched by the bounds since the sensor started, kept across
 	// Set: a directory too deep or too full stays a gap until someone looks at it.
 	gaps []string
+	// unwatched are the gaps outside the scratch directories, which the verifier raises.
+	unwatched []string
+	// scratchWatches counts the watches serving only scratch directories.
+	scratchWatches int
 	// hashed counts the bytes hashed in the current second against hashBudget, apart for files
 	// of root and of other users: a user cannot create files of root, so cannot spend their
 	// budget and leave root's changes without a hash.
@@ -83,8 +87,18 @@ func (f *Files) Issues() collector.Issues {
 // maxGaps bounds the unwatched places remembered: past it, the count says enough.
 const maxGaps = 20
 
+// Unwatched returns the places of the system, the homes and the uploads left unwatched.
+func (f *Files) Unwatched() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.unwatched...)
+}
+
 // gap records a place the bounds leave unwatched. Callers hold f.mu.
-func (f *Files) gap(msg string) {
+func (f *Files) gap(class, msg string) {
+	if class != ClassScratch && !slices.Contains(f.unwatched, msg) && len(f.unwatched) < maxGaps {
+		f.unwatched = append(f.unwatched, msg)
+	}
 	if slices.Contains(f.gaps, msg) {
 		return
 	}
@@ -111,14 +125,14 @@ func (f *Files) Set(targets []Target) {
 	f.issues = nil
 	keep := map[string][]Target{}
 	depths := map[string]int{}
+	scratch := 0
 	for _, t := range targets {
-		f.expand(t, t.Dir, 0, keep, depths)
+		f.expand(t, t.Dir, 0, keep, depths, &scratch)
 	}
 	for dir, wd := range f.byDir {
 		if _, ok := keep[dir]; !ok {
 			_, _ = unix.InotifyRmWatch(f.fd, uint32(wd)) //nolint:gosec // watch descriptors the kernel returned are never negative
-			delete(f.byDir, dir)
-			delete(f.byWD, wd)
+			f.forget(wd)
 		}
 	}
 	for dir, ts := range keep {
@@ -160,14 +174,21 @@ func (f *Files) remember(p, sha string) string {
 }
 
 // expand collects dir for target t and, for a recursive target, its subdirectories.
-func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target, depths map[string]int) {
+func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target, depths map[string]int, scratch *int) {
 	if len(keep) >= MaxWatches {
-		f.gap(fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
+		f.gap(t.Class, fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
 		return
 	}
 	info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
 	if err != nil || !info.IsDir() {
 		return
+	}
+	if _, planned := keep[dir]; !planned && t.Class == ClassScratch {
+		if *scratch >= MaxScratchWatches {
+			f.gap(t.Class, fmt.Sprintf("watch: more than %d directories in the scratch directories: %s and others are not watched", MaxScratchWatches, dir))
+			return
+		}
+		*scratch++
 	}
 	keep[dir] = append(keep[dir], t)
 	depths[dir] = depth
@@ -182,18 +203,25 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 		if !e.IsDir() {
 			continue
 		}
-		if depth >= MaxDepth {
-			f.gap(fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, MaxDepth, t.Dir))
+		if depth >= t.depth() {
+			f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, t.depth(), t.Dir))
 			break
 		}
-		f.expand(t, path.Join(dir, e.Name()), depth+1, keep, depths)
+		f.expand(t, path.Join(dir, e.Name()), depth+1, keep, depths, scratch)
 	}
 }
 
 // add places or refreshes the watch on dir. Callers hold f.mu.
 func (f *Files) add(dir string, targets []Target, depth int) {
-	if _, ok := f.byDir[dir]; !ok && len(f.byWD) >= MaxWatches {
-		f.gap(fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
+	class := targets[0].Class
+	onlyScratch := !slices.ContainsFunc(targets, func(t Target) bool { return t.Class != ClassScratch })
+	_, existing := f.byDir[dir]
+	if !existing && len(f.byWD) >= MaxWatches {
+		f.gap(class, fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
+		return
+	}
+	if !existing && onlyScratch && f.scratchWatches >= MaxScratchWatches {
+		f.gap(class, fmt.Sprintf("watch: more than %d directories in the scratch directories: %s and others are not watched", MaxScratchWatches, dir))
 		return
 	}
 	wd, err := unix.InotifyAddWatch(f.fd, f.abs(dir), watchMask)
@@ -203,8 +231,32 @@ func (f *Files) add(dir string, targets []Target, depth int) {
 		}
 		return
 	}
+	if w := f.byWD[wd]; w != nil && w.scratchOnly() {
+		f.scratchWatches--
+	}
 	f.byDir[dir] = wd
 	f.byWD[wd] = &watched{dir: dir, targets: targets, depth: depth}
+	if onlyScratch {
+		f.scratchWatches++
+	}
+}
+
+// forget drops the record of a watch the kernel removed or Set no longer wants. Callers hold
+// f.mu.
+func (f *Files) forget(wd int) {
+	w := f.byWD[wd]
+	if w == nil {
+		return
+	}
+	if w.scratchOnly() {
+		f.scratchWatches--
+	}
+	delete(f.byWD, wd)
+	delete(f.byDir, w.dir)
+}
+
+func (w *watched) scratchOnly() bool {
+	return !slices.ContainsFunc(w.targets, func(t Target) bool { return t.Class != ClassScratch })
 }
 
 func (f *Files) abs(dir string) string {
@@ -263,8 +315,7 @@ func (f *Files) event(wd int, mask uint32, name string) {
 	f.mu.Lock()
 	w := f.byWD[wd]
 	if w != nil && mask&(unix.IN_DELETE_SELF|unix.IN_MOVE_SELF|unix.IN_IGNORED) != 0 && name == "" {
-		delete(f.byWD, wd)
-		delete(f.byDir, w.dir)
+		f.forget(wd)
 	}
 	f.mu.Unlock()
 	if w == nil || name == "" {
@@ -297,11 +348,11 @@ func (f *Files) event(wd int, mask uint32, name string) {
 			continue
 		}
 		if isDir && op == OpCreate && t.Recursive {
-			if w.depth < MaxDepth {
+			if w.depth < t.depth() {
 				f.watchNew(full, t, w.depth+1)
 			} else {
 				f.mu.Lock()
-				f.gap(fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", w.dir, MaxDepth, t.Dir))
+				f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", w.dir, t.depth(), t.Dir))
 				f.mu.Unlock()
 			}
 		}
@@ -325,7 +376,7 @@ func (f *Files) watchNew(dir string, t Target, depth int) {
 	for i, e := range entries {
 		if i == maxNewEntries {
 			f.mu.Lock()
-			f.gap(fmt.Sprintf("watch: %s held more than %d entries when it was created: the rest were not reported", dir, maxNewEntries))
+			f.gap(t.Class, fmt.Sprintf("watch: %s held more than %d entries when it was created: the rest were not reported", dir, maxNewEntries))
 			f.mu.Unlock()
 			break
 		}
@@ -336,9 +387,9 @@ func (f *Files) watchNew(dir string, t Target, depth int) {
 		f.emit(f.describe(t.Class, OpCreate, child, e.IsDir()))
 		// mkdir -p makes the whole chain before the first watch is placed.
 		if e.IsDir() && t.Recursive {
-			if depth >= MaxDepth {
+			if depth >= t.depth() {
 				f.mu.Lock()
-				f.gap(fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, MaxDepth, t.Dir))
+				f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, t.depth(), t.Dir))
 				f.mu.Unlock()
 				continue
 			}
@@ -459,6 +510,14 @@ func (f *Files) send(e Event) {
 	default:
 		f.Dropped.Add(1)
 	}
+}
+
+// depth is how deep a recursive target goes.
+func (t Target) depth() int {
+	if t.Depth > 0 {
+		return t.Depth
+	}
+	return MaxDepth
 }
 
 // wants reports whether a target keeps an entry name.

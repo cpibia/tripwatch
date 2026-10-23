@@ -20,6 +20,7 @@ func NewFiles(string, collector.Source, chan<- Event) (*Files, error) { return n
 func (*Files) Close() error                  { return nil }
 func (*Files) Issues() collector.Issues      { return nil }
 func (*Files) Watches() int                  { return 0 }
+func (*Files) Unwatched() []string           { return nil }
 func (*Files) Set([]Target)                  {}
 func (*Files) Run(ctx context.Context) error { <-ctx.Done(); return nil }
 

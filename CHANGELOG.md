@@ -14,7 +14,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   job run by cron, from the account's home, from a file the account owns, outside every upload
   directory, is exempted. Python and Ruby application servers (gunicorn, uwsgi, puma, unicorn,
   Passenger) count as the web server.
-- The scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`) are watched for executable files: a
+- The scratch directories come last and have a budget of their own (512 watches, two levels
+  deep): directories anyone creates there can no longer take the watches of the system, the
+  homes or the uploads. Places of those left unwatched by the bounds are listed in each snapshot.
+- The scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock`) are watched for executable files: a
   dropper written, run and deleted lives too briefly for its process to be read, but its file
   is seen. Only executables, and the removal of those, are reported.
 
@@ -29,6 +32,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   mappings of real files (memfd ones included) count again, only the anonymous region of OPcache
   and JITs is left out; new generators and set-user-ID programs are high again whatever packages
   did; removing an activation link (a unit disabled) is low.
+- Places of the system, the homes or the uploads left without a real-time watch are a high
+  alert.
 - An executable file in a scratch directory is high; one that appears and is removed within 15
   minutes is critical. The benchmark's dropper run and deleted between two checks is caught.
 

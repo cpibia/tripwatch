@@ -165,6 +165,7 @@ func (r *realtime) status() *watch.Status {
 	st := &watch.Status{Files: r.files != nil, Processes: r.execs != nil, Issues: append([]string(nil), r.issues...)}
 	if r.files != nil {
 		st.Watches = r.files.Watches()
+		st.Unwatched = r.files.Unwatched()
 		st.Issues = append(st.Issues, r.files.Issues()...)
 	}
 	return st

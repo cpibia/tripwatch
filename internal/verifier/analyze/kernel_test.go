@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cpibia/tripwatch/internal/collector/system"
+	"github.com/cpibia/tripwatch/internal/watch"
 )
 
 func TestKernelFindings(t *testing.T) {
@@ -145,5 +146,16 @@ func TestPackageDatabaseChanges(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestUnwatchedPlacesRaiseAlert(t *testing.T) {
+	cur := State{Realtime: &watch.Status{Files: true, Unwatched: []string{"watch: more than 8192 directories to watch: /srv/app/uploads/x and others are not watched"}}}
+	found := false
+	for _, f := range Evaluate(nil, cur) {
+		found = found || (f.Fingerprint == "sensor:unwatched" && f.Severity == "high")
+	}
+	if !found {
+		t.Fatal("places left unwatched raised nothing")
 	}
 }

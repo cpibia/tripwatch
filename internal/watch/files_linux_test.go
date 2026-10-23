@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -283,5 +284,40 @@ func TestFilesScratchReportsExecutablesOnly(t *testing.T) {
 	}
 	if !has(got, ClassScratch, OpAttrib, "/tmp/.d") || !has(got, ClassScratch, OpDelete, "/tmp/.d") {
 		t.Fatalf("events = %+v", got)
+	}
+}
+
+// Directories created in /tmp by anyone never take the watches of the system, the homes or the
+// uploads; places those lose to the bounds are listed for the verifier.
+func TestFilesScratchCannotStarveSystemWatches(t *testing.T) {
+	root := t.TempDir()
+	for i := range MaxScratchWatches + 100 {
+		if err := os.MkdirAll(filepath.Join(root, "tmp", "d"+strconv.Itoa(i)), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "root/.ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets([]Home{{User: "root", Dir: "/root"}}, nil))
+	if f.scratchWatches > MaxScratchWatches || len(f.Unwatched()) != 0 {
+		t.Fatalf("scratch watches %d, unwatched %v", f.scratchWatches, f.Unwatched())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(root, "root/.ssh/authorized_keys"), []byte("ssh-ed25519 AAAA x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, ch, 1); !has(got, ClassSSH, OpCreate, "/root/.ssh/authorized_keys") {
+		t.Fatalf("root's keys unwatched behind a flood of /tmp: %+v", got)
 	}
 }

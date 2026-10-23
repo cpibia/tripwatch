@@ -90,12 +90,17 @@ type Target struct {
 	Names     []string
 	Recursive bool
 	Spawn     map[string]Target
+	// Depth, when set, replaces MaxDepth for this target.
+	Depth int
 }
 
 // Bounds: watches cost kernel memory, and upload trees can be deep and wide.
 const (
 	MaxWatches = 8192
 	MaxDepth   = 4
+	// The scratch directories get at most MaxScratchWatches of the watches, ScratchDepth deep.
+	MaxScratchWatches = 512
+	ScratchDepth      = 2
 )
 
 // ErrUnsupported is returned where the kernel interfaces the watcher needs do not exist.
@@ -138,9 +143,6 @@ func Targets(homes []Home, uploads []string) []Target {
 		{Dir: "/etc/pam.d", Class: ClassHook},
 		{Dir: "/etc/update-motd.d", Class: ClassHook},
 	}
-	for _, d := range []string{"/tmp", "/var/tmp", "/dev/shm"} {
-		t = append(t, Target{Dir: d, Class: ClassScratch, Recursive: true})
-	}
 	seen := map[string]bool{}
 	for _, h := range homes {
 		dir := path.Clean(h.Dir)
@@ -164,15 +166,23 @@ func Targets(homes []Home, uploads []string) []Target {
 		seen[dir] = true
 		t = append(t, Target{Dir: dir, Class: ClassUpload, Recursive: true})
 	}
+	// Last, and with a small budget of their own: anyone can fill these with directories, which
+	// must never take the watches of the places above.
+	for _, d := range []string{"/tmp", "/var/tmp", "/dev/shm", "/run/lock"} {
+		t = append(t, Target{Dir: d, Class: ClassScratch, Recursive: true, Depth: ScratchDepth})
+	}
 	return t
 }
 
 // Status says, in each snapshot, whether the real-time watchers run: without them the verifier
 // sees only what snapshots show.
 type Status struct {
-	Files     bool     `json:"files"`
-	Processes bool     `json:"processes"`
-	Watches   int      `json:"watches"`
+	Files     bool `json:"files"`
+	Processes bool `json:"processes"`
+	Watches   int  `json:"watches"`
+	// Unwatched lists places of the system, the homes or the uploads the bounds left without a
+	// watch: the verifier raises them, since anyone able to create directories could cause it.
+	Unwatched []string `json:"unwatched,omitempty"`
 	Issues    []string `json:"issues,omitempty"`
 }
 
