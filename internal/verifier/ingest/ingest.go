@@ -118,8 +118,8 @@ func (s *Server) currentCertificate(ctx context.Context, w http.ResponseWriter, 
 		return true
 	}
 	if _, err := s.Store.Raise(ctx, store.Alert{HostID: host.ID, Fingerprint: "cert:stale:" + serial, Severity: "high", Kind: "chain",
-		Title:  "Certificato superato usato per questo server",
-		Detail: fmt.Sprintf("Una connessione ha presentato il certificato numero %s, che non vale più: il server è stato registrato di nuovo o il certificato è stato rinnovato. Qualcuno ne conserva una copia.", serial),
+		Title:  "Superseded certificate used for this server",
+		Detail: fmt.Sprintf("A connection presented certificate number %s, which is no longer valid: the server was enrolled again or the certificate was renewed. Someone keeps a copy of it.", serial),
 	}, now); err != nil {
 		s.Log.Error("raise stale certificate alert", "host", host.ID, "err", err)
 	}
@@ -334,8 +334,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		stored = true
 		if _, err := s.Store.Raise(ctx, store.Alert{HostID: identity, Fingerprint: "snapshot:quota", Severity: "high", Kind: "sensor",
-			Title:  "Snapshot non conservati: quota giornaliera superata",
-			Detail: fmt.Sprintf("Il server ha superato la quota di snapshot (%d MB in 24 ore, %d MB in tutto). Gli snapshot oltre la quota vengono verificati ma non conservati né analizzati: un sensore integro non ne produce così tanti.", DailySnapshotBytes>>20, TotalSnapshotBytes>>20),
+			Title:  "Snapshots not kept: daily quota exceeded",
+			Detail: fmt.Sprintf("The server exceeded its snapshot quota (%d MB in 24 hours, %d MB in all). Snapshots over the quota are verified but neither kept nor analysed: an intact sensor does not produce that many.", DailySnapshotBytes>>20, TotalSnapshotBytes>>20),
 		}, now); err != nil {
 			s.Log.Error("raise quota alert", "host", identity, "err", err)
 		}
@@ -354,8 +354,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// shows only here: as a gap between two heartbeats that were both accepted.
 	if e.Kind == protocol.KindHeartbeat && !host.LastHeartbeat.IsZero() && now.Sub(host.LastHeartbeat) > HeartbeatGap {
 		s.raise(ctx, store.Alert{HostID: identity, Fingerprint: "sensor:gap:" + strconv.FormatInt(now.Unix(), 10), Severity: "medium", Kind: "sensor-event",
-			Title: "Battiti mancati",
-			Detail: fmt.Sprintf("Nessun battito tra le %s e le %s (%s). Una pausa di rete, oppure il sensore è stato sospeso o fermato per poco: controlla cosa è successo in quell'intervallo.",
+			Title: "Missed heartbeats",
+			Detail: fmt.Sprintf("No heartbeat between %s and %s (%s). A network pause, or the sensor was suspended or stopped for a short while: check what happened in that interval.",
 				host.LastHeartbeat.Format("15:04:05"), now.Format("15:04:05"), now.Sub(host.LastHeartbeat).Round(time.Second)),
 		}, now)
 	}
@@ -374,8 +374,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) chainAlert(ctx context.Context, host string, e protocol.Envelope, err error, now time.Time) {
 	_, raiseErr := s.Store.Raise(ctx, store.Alert{
 		HostID: host, Fingerprint: "chain:" + err.Error(), Severity: "critical", Kind: "chain",
-		Title:  "Busta rifiutata: " + err.Error(),
-		Detail: fmt.Sprintf("Busta numero %d, tipo %s, inviata il %s. La catena di questo server non la accetta: la chiave di firma può essere usata da qualcun altro, oppure il sensore è stato reinstallato senza registrarlo di nuovo.", e.Sequence, e.Kind, e.SentAt.Format(time.RFC3339)),
+		Title:  "Envelope refused: " + err.Error(),
+		Detail: fmt.Sprintf("Envelope number %d, kind %s, sent at %s. This server's chain does not accept it: someone else may be using the signing key, or the sensor was reinstalled without enrolling it again.", e.Sequence, e.Kind, e.SentAt.Format(time.RFC3339)),
 	}, now)
 	if raiseErr != nil {
 		s.Log.Error("raise chain alert", "host", host, "err", raiseErr)
@@ -427,8 +427,8 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		// Whoever used the token first, someone else holds it too: one of the two is not the
 		// sensor the operator meant to enroll.
 		s.raise(r.Context(), store.Alert{HostID: host, Fingerprint: "enroll:token-reused:" + strconv.FormatInt(now.Unix(), 10), Severity: "critical", Kind: "chain",
-			Title:  "Token di registrazione usato due volte",
-			Detail: "Il token creato da " + by + " per questo server è stato presentato di nuovo dopo essere stato usato. Qualcuno lo ha copiato: il server registrato con il primo uso potrebbe non essere quello vero. Revoca il server e registralo di nuovo.",
+			Title:  "Enrollment token used twice",
+			Detail: "The token " + by + " made for this server was presented again after being used. Someone copied it: the server enrolled with the first use may not be the real one. Revoke the server and enroll it again.",
 		}, now)
 	}
 	if err != nil {
@@ -456,8 +456,8 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("host enrolled with a token", "host", host, "token_by", by)
 	s.raise(r.Context(), store.Alert{HostID: host, Fingerprint: "enroll:done:" + serial, Severity: "high", Kind: "sensor-event",
-		Title:  "Server registrato",
-		Detail: "Il server si è registrato con il token creato da " + by + ". Se non è stato appena installato da voi, qualcuno ha usato il token al suo posto.",
+		Title:  "Server enrolled",
+		Detail: "The server enrolled with the token made by " + by + ". If you did not just install it, someone else used the token.",
 	}, now)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(EnrollResponse{HostID: host, CA: string(s.CA.PEM), Cert: string(certPEM)})
@@ -513,8 +513,8 @@ func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 	}
 	// Visible, so that a renewal made with a stolen certificate does not pass unnoticed.
 	if _, err := s.Store.Raise(r.Context(), store.Alert{HostID: identity, Fingerprint: "cert:renewed:" + serial, Severity: "high", Kind: "sensor-event",
-		Title:  "Certificato client rinnovato",
-		Detail: fmt.Sprintf("Il sensore ha rinnovato il suo certificato client, che scadeva il %s. È normale una volta ogni due anni; un rinnovo inatteso significa che qualcuno usa il certificato di questo server.", presented.NotAfter.Format("2006-01-02")),
+		Title:  "Client certificate renewed",
+		Detail: fmt.Sprintf("The sensor renewed its client certificate, which expired on %s. That is normal once every two years; an unexpected renewal means someone uses this server's certificate.", presented.NotAfter.Format("2006-01-02")),
 	}, now); err != nil {
 		s.Log.Error("raise renewal alert", "host", identity, "err", err)
 	}
@@ -534,9 +534,9 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 	if json.Unmarshal(e.Payload, &ev) != nil || ev.Event != "sensor_started" {
 		return
 	}
-	detail := fmt.Sprintf("Il sensore si è avviato (versione %s, avvio del sistema %s). Se il server non è stato riavviato e il sensore non è stato aggiornato, qualcuno lo ha fermato e fatto ripartire: controlla cosa è successo mentre era fermo.", ev.Version, ev.BootID)
+	detail := fmt.Sprintf("The sensor started (version %s, system boot %s). If the server was not rebooted and the sensor was not updated, someone stopped and restarted it: check what happened while it was down.", ev.Version, ev.BootID)
 	if _, err := s.Store.Raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:started:" + strconv.FormatUint(e.Sequence, 10), Severity: "high", Kind: "sensor-event",
-		Title: "Sensore avviato", Detail: detail}, now); err != nil {
+		Title: "Sensor started", Detail: detail}, now); err != nil {
 		s.Log.Error("raise start alert", "host", host, "err", err)
 	}
 }

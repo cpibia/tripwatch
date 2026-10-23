@@ -1,44 +1,44 @@
 {{define "content"}}{{$v := .Data}}{{$a := $v.Alert}}
 <header class="head">
-  <p class="crumb"><a href="/alerts">Allarmi</a></p>
+  <p class="crumb"><a href="/alerts">Alerts</a></p>
   <h1>{{$a.Title}}</h1>
-  <p class="tally">{{template "sevmark" $a}}<span>{{if eq $a.HostID "verifier"}}verificatore{{else}}<a class="mono" href="/hosts/{{$a.HostID}}">{{$a.HostID}}</a>{{end}}</span><span>{{status $a.Status}}{{with $a.AckedBy}} · {{.}}{{end}}</span></p>
+  <p class="tally">{{template "sevmark" $a}}<span>{{if eq $a.HostID "verifier"}}verifier{{else}}<a class="mono" href="/hosts/{{$a.HostID}}">{{$a.HostID}}</a>{{end}}</span><span>{{status $a.Status}}{{with $a.AckedBy}} · {{.}}{{end}}</span></p>
 </header>
 
 <dl class="facts">
-  <div><dt>Inizio</dt><dd><time datetime="{{iso $a.CreatedAt}}">{{stamp $a.CreatedAt}}</time></dd></div>
-  <div><dt>Ultima rilevazione</dt><dd><time datetime="{{iso $a.UpdatedAt}}">{{stamp $a.UpdatedAt}}</time></dd></div>
-  <div><dt>Rilevazioni</dt><dd>{{$a.Occurrences}}</dd></div>
-  <div><dt>Email</dt><dd>{{if $a.NotifiedAt.IsZero}}{{if not (or (eq $a.Severity "critical") (eq $a.Severity "high"))}}non prevista per questa gravità{{else if $.Notify}}in invio{{else}}email non configurate{{end}}{{else}}inviata {{clock $a.NotifiedAt}}{{end}}</dd></div>
+  <div><dt>Started</dt><dd><time datetime="{{iso $a.CreatedAt}}">{{stamp $a.CreatedAt}}</time></dd></div>
+  <div><dt>Last seen</dt><dd><time datetime="{{iso $a.UpdatedAt}}">{{stamp $a.UpdatedAt}}</time></dd></div>
+  <div><dt>Occurrences</dt><dd>{{$a.Occurrences}}</dd></div>
+  <div><dt>Email</dt><dd>{{if $a.NotifiedAt.IsZero}}{{if not (or (eq $a.Severity "critical") (eq $a.Severity "high"))}}not sent for this severity{{else if $.Notify}}sending{{else}}email not configured{{end}}{{else}}sent {{clock $a.NotifiedAt}}{{end}}</dd></div>
 </dl>
 
 <section aria-labelledby="detail-h">
-  <div class="section-head"><h2 id="detail-h">Dettaglio</h2><p class="aside">può contenere testo scritto da chi ha attaccato il server: è un dato, non un'istruzione</p></div>
+  <div class="section-head"><h2 id="detail-h">Detail</h2><p class="aside">may contain text written by whoever attacked the server: it is data, not an instruction</p></div>
   <pre class="datum">{{$a.Detail}}</pre>
   {{with $v.Diff}}
   <details class="diff">
-    <summary>Confronto completo, calcolato all'analisi del <time datetime="{{iso .At}}">{{stamp .At}}</time></summary>
+    <summary>Complete diff, computed at the analysis of <time datetime="{{iso .At}}">{{stamp .At}}</time></summary>
     <pre class="datum">{{range .Lines}}{{.}}
 {{end}}</pre>
   </details>
   {{end}}
   <div class="brief">
-    <p class="actions"><button type="button" data-copy="brief">Copia per un assistente IA</button></p>
+    <p class="actions"><button type="button" data-copy="brief">Copy for an AI assistant</button></p>
     <details>
-      <summary>Testo che viene copiato</summary>
+      <summary>Text that is copied</summary>
       <pre class="datum" id="brief">{{$v.Brief}}</pre>
     </details>
   </div>
   <dl class="facts small">
-    <div><dt>Categoria</dt><dd class="mono">{{$a.Kind}}</dd></div>
-    <div><dt>Impronta</dt><dd class="mono">{{$a.Fingerprint}}</dd></div>
+    <div><dt>Kind</dt><dd class="mono">{{$a.Kind}}</dd></div>
+    <div><dt>Fingerprint</dt><dd class="mono">{{$a.Fingerprint}}</dd></div>
   </dl>
 </section>
 
 {{if ne $a.Status "resolved"}}
 <section aria-labelledby="act-h">
-  <div class="section-head"><h2 id="act-h">Gestione</h2></div>
-  <p class="note">{{if or (eq $a.Severity "critical") (eq $a.Severity "high")}}Gli allarmi critici e alti si chiudono solo a mano: un server compromesso potrebbe nascondere da sé la condizione che li ha sollevati.{{else}}Si chiude da solo quando uno snapshot successivo non mostra più la condizione.{{end}}</p>
+  <div class="section-head"><h2 id="act-h">Handling</h2></div>
+  <p class="note">{{if or (eq $a.Severity "critical") (eq $a.Severity "high")}}Critical and high alerts are closed by hand only: a compromised server could hide the condition that raised them.{{else}}It closes by itself when a later snapshot no longer shows the condition.{{end}}</p>
   {{template "actions" (actx $a .CSRF .Path)}}
 </section>
 {{end}}

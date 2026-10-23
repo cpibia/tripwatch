@@ -6,11 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
-Update the verifier.
+Update the verifier and the sensors.
 
 ### Verifier
 
-- Every alert page has **Copia per un assistente IA**: the alert in Markdown (what tripwatch is,
+- The interface, the alerts and the emails are in English. Alerts raised by earlier versions
+  keep their Italian text until the condition is raised again; conditions whose fingerprint
+  carried an Italian description of a file's owner and mode are raised once more under the
+  English one, and an acceptance of such an alert has to be given again.
+
+- Every alert page has **Copy for an AI assistant**: the alert in Markdown (what tripwatch is,
   the alert's facts, the collected detail fenced as data, and the question to answer), ready to
   paste into an AI chat.
 - A privilege policy file or directory writable by someone other than root is explained in plain

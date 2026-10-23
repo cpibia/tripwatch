@@ -1,31 +1,31 @@
 {{define "content"}}{{$d := .Data}}{{$h := $d.Row}}
 <header class="head">
-  <p class="crumb"><a href="/">Panoramica</a></p>
+  <p class="crumb"><a href="/">Overview</a></p>
   <h1 class="mono">{{$h.ID}}</h1>
-  <p class="tally st-{{$h.State}}{{if and $h.Worst (eq $h.Worst.Status "acknowledged")}} acked{{end}}"><span class="state-line">{{if eq $h.State "silent"}}{{shape "silent" ""}}{{else if $h.Worst}}{{shape $h.Worst.Severity $h.Worst.Status}}{{end}}{{$h.StateText}}{{if not $h.Since.IsZero}} da {{since $h.Since}}{{end}}</span>{{if $h.Open}}<span>{{$h.Open}} {{plural $h.Open "allarme da gestire" "allarmi da gestire"}}</span>{{end}}</p>
+  <p class="tally st-{{$h.State}}{{if and $h.Worst (eq $h.Worst.Status "acknowledged")}} acked{{end}}"><span class="state-line">{{if eq $h.State "silent"}}{{shape "silent" ""}}{{else if $h.Worst}}{{shape $h.Worst.Severity $h.Worst.Status}}{{end}}{{$h.StateText}}{{if not $h.Since.IsZero}} for {{since $h.Since}}{{end}}</span>{{if $h.Open}}<span>{{$h.Open}} {{plural $h.Open "alert to handle" "alerts to handle"}}</span>{{end}}</p>
 </header>
 
 <dl class="facts">
-  <div><dt>Ultimo battito</dt><dd><time datetime="{{iso $h.LastHeartbeat}}" title="{{stamp $h.LastHeartbeat}}">{{clock $h.LastHeartbeat}}</time></dd></div>
-  <div><dt>Ultimo snapshot</dt><dd><time datetime="{{iso $h.LastSnapshot}}" title="{{stamp $h.LastSnapshot}}">{{clock $h.LastSnapshot}}</time></dd></div>
-  <div><dt>Registrato</dt><dd><time datetime="{{iso $h.EnrolledAt}}" title="{{stamp $h.EnrolledAt}}">{{clock $h.EnrolledAt}}</time></dd></div>
-  <div><dt>Buste nella catena</dt><dd>{{$h.Chain.Sequence}}</dd></div>
+  <div><dt>Last heartbeat</dt><dd><time datetime="{{iso $h.LastHeartbeat}}" title="{{stamp $h.LastHeartbeat}}">{{clock $h.LastHeartbeat}}</time></dd></div>
+  <div><dt>Last snapshot</dt><dd><time datetime="{{iso $h.LastSnapshot}}" title="{{stamp $h.LastSnapshot}}">{{clock $h.LastSnapshot}}</time></dd></div>
+  <div><dt>Enrolled</dt><dd><time datetime="{{iso $h.EnrolledAt}}" title="{{stamp $h.EnrolledAt}}">{{clock $h.EnrolledAt}}</time></dd></div>
+  <div><dt>Envelopes in the chain</dt><dd>{{$h.Chain.Sequence}}</dd></div>
 </dl>
 
 <section aria-labelledby="alerts-h">
-  <div class="section-head"><h2 id="alerts-h">Allarmi</h2><p class="aside">tutti gli stati, i più gravi in alto</p></div>
+  <div class="section-head"><h2 id="alerts-h">Alerts</h2><p class="aside">every status, the most severe on top</p></div>
   {{if $d.Alerts}}{{template "alerttable" (hosttable $d.Alerts .CSRF .Path)}}
-  {{else}}<p class="empty">Nessun allarme per questo server.</p>{{end}}
+  {{else}}<p class="empty">No alerts for this server.</p>{{end}}
 </section>
 
 {{if $d.Accepted}}
 <section aria-labelledby="accepted-h">
-  <div class="section-head"><h2 id="accepted-h">Accettati come legittimi</h2><p class="aside">non vengono segnalati finché restano identici; se cambiano, tornano allarmi</p></div>
+  <div class="section-head"><h2 id="accepted-h">Accepted as legitimate</h2><p class="aside">not raised while they stay identical; if they change, they are alerts again</p></div>
   <table class="grid">
-    <thead><tr><th scope="col">Allarme</th><th scope="col">Da</th><th scope="col" class="num">Quando</th><th scope="col"><span class="sr">Azioni</span></th></tr></thead>
+    <thead><tr><th scope="col">Alert</th><th scope="col">By</th><th scope="col" class="num">When</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
     <tbody>{{range $d.Accepted}}
     <tr><td class="what">{{.Title}}</td><td class="state">{{.AcceptedBy}}</td><td class="num"><time datetime="{{iso .AcceptedAt}}" title="{{stamp .AcceptedAt}}">{{clock .AcceptedAt}}</time></td>
-      <td class="act"><form method="post" action="/hosts/{{$h.ID}}/withdraw"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="fingerprint" value="{{.Fingerprint}}"><button type="submit">Rimetti sotto controllo<span class="sr">: {{.Title}}</span></button></form></td></tr>
+      <td class="act"><form method="post" action="/hosts/{{$h.ID}}/withdraw"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="fingerprint" value="{{.Fingerprint}}"><button type="submit">Put back under watch<span class="sr">: {{.Title}}</span></button></form></td></tr>
     {{end}}</tbody>
   </table>
 </section>
@@ -33,40 +33,40 @@
 
 <div class="pair">
 <section aria-labelledby="silence-h">
-  <div class="section-head"><h2 id="silence-h">Silenzi</h2><p class="aside">ultimi 7 giorni, senza battiti per più di {{dur $d.SilenceAfter}}</p></div>
+  <div class="section-head"><h2 id="silence-h">Silences</h2><p class="aside">last 7 days, without heartbeats for more than {{dur $d.SilenceAfter}}</p></div>
   {{if $d.Silences}}
   <table class="grid">
-    <thead><tr><th scope="col">Dal</th><th scope="col">Al</th><th scope="col" class="num">Durata</th></tr></thead>
+    <thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col" class="num">Duration</th></tr></thead>
     <tbody>{{range $d.Silences}}
-    <tr{{if .Ongoing}} class="st-silent"{{end}}><td class="num-l"><time datetime="{{iso .From}}" title="{{stamp .From}}">{{clock .From}}</time></td><td class="num-l">{{if .Ongoing}}<span class="flag">in corso</span>{{else}}<time datetime="{{iso .To}}" title="{{stamp .To}}">{{clock .To}}</time>{{end}}</td><td class="num">{{dur .Duration}}</td></tr>
+    <tr{{if .Ongoing}} class="st-silent"{{end}}><td class="num-l"><time datetime="{{iso .From}}" title="{{stamp .From}}">{{clock .From}}</time></td><td class="num-l">{{if .Ongoing}}<span class="flag">ongoing</span>{{else}}<time datetime="{{iso .To}}" title="{{stamp .To}}">{{clock .To}}</time>{{end}}</td><td class="num">{{dur .Duration}}</td></tr>
     {{end}}</tbody>
   </table>
-  {{else}}<p class="empty">Nessun silenzio: il sensore ha risposto ogni minuto.</p>{{end}}
+  {{else}}<p class="empty">No silences: the sensor answered every minute.</p>{{end}}
 </section>
 
 <section aria-labelledby="snap-h">
-  <div class="section-head"><h2 id="snap-h">Snapshot ricevuti</h2><p class="aside">gli ultimi 30</p></div>
+  <div class="section-head"><h2 id="snap-h">Snapshots received</h2><p class="aside">the last 30</p></div>
   {{if $d.Snapshots}}
   <table class="grid">
-    <thead><tr><th scope="col" class="num">Busta</th><th scope="col" class="num">Ricevuto</th><th scope="col" class="num">Dimensione</th><th scope="col">Analisi</th></tr></thead>
+    <thead><tr><th scope="col" class="num">Envelope</th><th scope="col" class="num">Received</th><th scope="col" class="num">Size</th><th scope="col">Analysis</th></tr></thead>
     <tbody>{{range $d.Snapshots}}
-    <tr><td class="num">{{.Sequence}}</td><td class="num"><time datetime="{{iso .ReceivedAt}}" title="Inviato {{stamp .TakenAt}}, ricevuto {{stamp .ReceivedAt}}">{{clock .ReceivedAt}}</time></td><td class="num">{{size .Size}}</td><td>{{if .Analyzed}}fatta{{else}}in coda{{end}}</td></tr>
+    <tr><td class="num">{{.Sequence}}</td><td class="num"><time datetime="{{iso .ReceivedAt}}" title="Sent {{stamp .TakenAt}}, received {{stamp .ReceivedAt}}">{{clock .ReceivedAt}}</time></td><td class="num">{{size .Size}}</td><td>{{if .Analyzed}}done{{else}}queued{{end}}</td></tr>
     {{end}}</tbody>
   </table>
-  {{else if $h.LastSnapshot.IsZero}}<p class="empty">Nessuno snapshot ricevuto finora.</p>
-  {{else}}<p class="empty">Nessuno snapshot conservato: gli ultimi sono stati rimossi dalla conservazione.</p>{{end}}
+  {{else if $h.LastSnapshot.IsZero}}<p class="empty">No snapshot received yet.</p>
+  {{else}}<p class="empty">No snapshot kept: retention removed the last ones.</p>{{end}}
 </section>
 </div>
 
 {{if not $h.Revoked}}
 <section class="danger" aria-labelledby="revoke-h">
-  <div class="section-head"><h2 id="revoke-h">Revoca</h2></div>
-  <p>Il verificatore rifiuterà ogni busta di questo server. Per farlo tornare serve una nuova registrazione, con chiavi nuove.</p>
+  <div class="section-head"><h2 id="revoke-h">Revoke</h2></div>
+  <p>The verifier will refuse every envelope from this server. Bringing it back takes a new enrollment, with new keys.</p>
   <form method="post" action="/hosts/{{$h.ID}}/revoke" class="form inline">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label for="confirm">Scrivi <span class="mono">{{$h.ID}}</span> per confermare</label>
+    <label for="confirm">Type <span class="mono">{{$h.ID}}</span> to confirm</label>
     <input id="confirm" name="confirm" type="text" autocomplete="off" spellcheck="false" required>
-    <button class="danger" type="submit">Revoca il server</button>
+    <button class="danger" type="submit">Revoke the server</button>
   </form>
 </section>
 {{end}}

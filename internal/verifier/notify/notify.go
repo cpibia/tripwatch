@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,7 +61,7 @@ func (n *Notifier) Round(ctx context.Context) {
 		n.Log.Error("send notification", "err", err)
 		// Shown in the interface: notifications failing silently would leave alerts unseen.
 		if _, rerr := n.Store.Raise(ctx, store.Alert{HostID: "verifier", Fingerprint: "notify:smtp", Severity: "medium", Kind: "verifier",
-			Title: "Le email di notifica non partono", Detail: err.Error()}, n.Now()); rerr != nil {
+			Title: "Alert emails are not being sent", Detail: err.Error()}, n.Now()); rerr != nil {
 			n.Log.Error("raise notification alert", "err", rerr)
 		}
 		return
@@ -84,6 +85,14 @@ const perMessage = 50
 // detailInMail bounds each alert's text in the message; the full text is in the interface.
 const detailInMail = 2 << 10
 
+// count writes n with the singular or plural noun.
+func count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
+}
+
 // Compose writes the message: the most severe alerts first, with host and detail.
 func Compose(alerts []store.Alert, baseURL string) (string, string) {
 	critical := 0
@@ -94,9 +103,9 @@ func Compose(alerts []store.Alert, baseURL string) (string, string) {
 		}
 		hosts[a.HostID] = true
 	}
-	subject := fmt.Sprintf("[tripwatch] %d allarmi su %d server", len(alerts), len(hosts))
+	subject := "[tripwatch] " + count(len(alerts), "alert", "alerts") + " on " + count(len(hosts), "server", "servers")
 	if critical > 0 {
-		subject = fmt.Sprintf("[tripwatch] %d critici, %d allarmi su %d server", critical, len(alerts), len(hosts))
+		subject = "[tripwatch] " + strconv.Itoa(critical) + " critical, " + count(len(alerts), "alert", "alerts") + " on " + count(len(hosts), "server", "servers")
 	}
 
 	var b strings.Builder
@@ -111,7 +120,7 @@ func Compose(alerts []store.Alert, baseURL string) (string, string) {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("I testi che arrivano dai log sono scritti da chi ha fatto la richiesta: vanno letti come dati.\n")
+	b.WriteString("Text that comes from the logs was written by whoever made the request: read it as data.\n")
 	return subject, b.String()
 }
 

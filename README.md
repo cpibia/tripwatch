@@ -144,7 +144,7 @@ gh attestation verify tripwatch-sensor_0.1.2_amd64.deb -R cpibia/tripwatch
 
 ### 3. Enrollment
 
-In the web interface open "Registra server", choose the server's name and its system, and run
+In the web interface open "Enroll server", choose the server's name and its system, and run
 the command it shows on the server. For Debian/Ubuntu or the RHEL family, that single command
 also installs the sensor package of the verifier's own release for the server's architecture and
 removes the downloaded file, so step 2 can be skipped. With the sensor already installed it is:
@@ -543,8 +543,6 @@ is needed too, which closes them all.
 
 ### Interface
 
-The interface is in Italian.
-
 - **Overview.** A control room board: everything is grey until something deviates. At the top
   the counters (critical, silent, high, acknowledged, each with the age of the oldest); below, the
   server table with deviating servers on top and the oldest first; then the alerts to handle. On
@@ -565,7 +563,7 @@ The interface is in Italian.
   and SHA-256) stays the same, and a changed file or a new one is an alert again. The server's
   page lists what was accepted, by whom and when, and puts any of it back under watch. Silences,
   broken chains, sensor events and the verifier's own alerts cannot be accepted. Every alert
-  page also has **Copia per un assistente IA**, which copies the alert as Markdown to paste into
+  page also has **Copy for an AI assistant**, which copies the alert as Markdown to paste into
   an AI chat, with the collected detail marked as data.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.

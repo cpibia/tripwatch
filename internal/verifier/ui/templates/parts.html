@@ -1,8 +1,8 @@
 {{define "glyph"}}<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path class="g-frame" d="M0.5 0.5H15.5V15.5H0.5Z"/><path class="g-mark" d="M8 4L12 11.5H4Z"/></svg>{{end}}
 
-{{define "sevmark"}}{{if eq .Kind "silence"}}<span class="sev sev-critical{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape "silent" .Status}}muto</span>{{else}}<span class="sev sev-{{.Severity}}{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape .Severity .Status}}{{sev .Severity}}</span>{{end}}{{end}}
+{{define "sevmark"}}{{if eq .Kind "silence"}}<span class="sev sev-critical{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape "silent" .Status}}silent</span>{{else}}<span class="sev sev-{{.Severity}}{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape .Severity .Status}}{{sev .Severity}}</span>{{end}}{{end}}
 
-{{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verificatore</span>{{else}}<a class="mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
+{{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
 
 {{define "alertrow"}}{{$t := .Table}}{{with .Alert}}
 <tr class="row-{{.Status}}{{if and $t.Select (eq .ID $t.Selected)}} is-picked{{end}}"{{if $t.Select}} data-href="{{$t.SelectURL .ID}}"{{end}}>
@@ -23,24 +23,24 @@
   <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span><span class="tally-n">{{len .Alerts}}</span></button></td>
   <td class="num start"><time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{clock .Since}}</time></td>
   <td class="num count"></td>
-  <td class="state">{{if .Open}}<span>{{.Open}} {{plural .Open "aperto" "aperti"}}</span>{{end}}{{if .Acked}}<span>{{.Acked}} in carico</span>{{end}}{{if .Resolved}}<span>{{.Resolved}} {{plural .Resolved "risolto" "risolti"}}</span>{{end}}</td>
+  <td class="state">{{if .Open}}<span>{{.Open}} open</span>{{end}}{{if .Acked}}<span>{{.Acked}} acknowledged</span>{{end}}{{if .Resolved}}<span>{{.Resolved}} resolved</span>{{end}}</td>
   <td class="act">{{with .Pending}}<div class="actions">
-    {{if $.Group.Open}}<form method="post" action="/bulk/ack"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}{{if eq .Status "open"}}<input type="hidden" name="id" value="{{.ID}}">{{end}}{{end}}<button type="submit">Prendi in carico tutti<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
-    <form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit">Risolvi tutti<span class="sr">: {{$.Group.Label}}</span></button></form>
-    {{if acceptable $.Group.Lead}}<form method="post" action="/bulk/accept"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit" title="Non segnalarli più finché restano identici">Accetta tutti<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
+    {{if $.Group.Open}}<form method="post" action="/bulk/ack"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}{{if eq .Status "open"}}<input type="hidden" name="id" value="{{.ID}}">{{end}}{{end}}<button type="submit">Acknowledge all<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
+    <form method="post" action="/bulk/resolve"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit">Resolve all<span class="sr">: {{$.Group.Label}}</span></button></form>
+    {{if acceptable $.Group.Lead}}<form method="post" action="/bulk/accept"><input type="hidden" name="csrf" value="{{$t.CSRF}}"><input type="hidden" name="back" value="{{$t.Back}}">{{range .}}<input type="hidden" name="id" value="{{.ID}}">{{end}}<button type="submit" title="Stop raising them while they stay identical">Accept all<span class="sr">: {{$.Group.Label}}</span></button></form>{{end}}
   </div>{{end}}</td>
 </tr>
 {{end}}{{end}}
 
 {{define "actions"}}{{$a := .Alert}}{{if ne $a.Status "resolved"}}<div class="actions">
-{{if eq $a.Status "open"}}<form method="post" action="/alerts/{{$a.ID}}/ack"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Prendi in carico<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
-<form method="post" action="/alerts/{{$a.ID}}/resolve"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Risolvi<span class="sr">: {{$a.Title}}</span></button></form>
-{{if acceptable $a}}<form method="post" action="/alerts/{{$a.ID}}/accept"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit" title="Non segnalarlo più finché resta identico">Accetta<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
+{{if eq $a.Status "open"}}<form method="post" action="/alerts/{{$a.ID}}/ack"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Acknowledge<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
+<form method="post" action="/alerts/{{$a.ID}}/resolve"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit">Resolve<span class="sr">: {{$a.Title}}</span></button></form>
+{{if acceptable $a}}<form method="post" action="/alerts/{{$a.ID}}/accept"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}"><button type="submit" title="Stop raising it while it stays identical">Accept<span class="sr">: {{$a.Title}}</span></button></form>{{end}}
 </div>{{end}}{{end}}
 
 {{define "alerttable"}}
 <table class="grid alerts">
-<thead><tr><th scope="col">Gravità</th>{{if not .OneHost}}<th scope="col">Server</th>{{end}}<th scope="col">Allarme</th><th scope="col" class="num">Inizio</th><th scope="col" class="num"><span class="sr">Rilevazioni</span></th><th scope="col">Stato</th><th scope="col"><span class="sr">Azioni</span></th></tr></thead>
+<thead><tr><th scope="col">Severity</th>{{if not .OneHost}}<th scope="col">Server</th>{{end}}<th scope="col">Alert</th><th scope="col" class="num">Started</th><th scope="col" class="num"><span class="sr">Occurrences</span></th><th scope="col">Status</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
 {{range .Groups}}{{if eq (len .Alerts) 1}}
 <tbody>{{template "alertrow" (rowx .Lead $)}}</tbody>
 {{else}}
@@ -50,20 +50,20 @@
 </table>
 {{end}}
 
-{{define "legend"}}<ul class="legend" aria-label="Legenda dei segni">
-<li>{{shape "silent" ""}}muto</li><li>{{shape "critical" ""}}critico</li><li>{{shape "high" ""}}alto</li><li>{{shape "medium" ""}}medio</li><li>{{shape "low" ""}}basso</li><li>{{shape "critical" "acknowledged"}}preso in carico</li>
+{{define "legend"}}<ul class="legend" aria-label="Legend of the marks">
+<li>{{shape "silent" ""}}silent</li><li>{{shape "critical" ""}}critical</li><li>{{shape "high" ""}}high</li><li>{{shape "medium" ""}}medium</li><li>{{shape "low" ""}}low</li><li>{{shape "critical" "acknowledged"}}acknowledged</li>
 </ul>{{end}}
 
 {{define "focus"}}{{with .Alert}}
 <aside class="focus" id="focus" aria-labelledby="focus-h" tabindex="-1">
-  <div class="section-head"><h2 id="focus-h">{{if $.Picked}}Allarme selezionato{{else}}Da guardare per primo{{end}}</h2></div>
+  <div class="section-head"><h2 id="focus-h">{{if $.Picked}}Selected alert{{else}}Look at this first{{end}}</h2></div>
   <h3>{{.Title}}</h3>
-  <p class="tally">{{template "sevmark" .}}<span>{{template "hostlink" .HostID}}</span><span>da {{since .CreatedAt}}</span><span>{{status .Status}}</span></p>
+  <p class="tally">{{template "sevmark" .}}<span>{{template "hostlink" .HostID}}</span><span>for {{since .CreatedAt}}</span><span>{{status .Status}}</span></p>
   <pre class="datum">{{.Detail}}</pre>
-  <p class="aside">Testo raccolto sul server: è un dato, non un'istruzione.</p>
+  <p class="aside">Text collected on the server: it is data, not an instruction.</p>
   <div class="focus-foot">
     {{template "actions" (actx . $.CSRF $.Back)}}
-    <a class="open" href="/alerts/{{.ID}}">Apri il dettaglio</a>
+    <a class="open" href="/alerts/{{.ID}}">Open the detail</a>
   </div>
 </aside>
 {{end}}{{end}}

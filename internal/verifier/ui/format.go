@@ -7,24 +7,29 @@ import (
 	"time"
 )
 
-var months = [...]string{"gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"}
+var months = [...]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
 
-var severityLabels = map[string]string{"critical": "critico", "high": "alto", "medium": "medio", "low": "basso"}
+var severityLabels = map[string]string{"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
 
-var statusLabels = map[string]string{"open": "aperto", "acknowledged": "preso in carico", "resolved": "risolto"}
+var statusLabels = map[string]string{"open": "open", "acknowledged": "acknowledged", "resolved": "resolved"}
 
 func funcs(now func() time.Time) template.FuncMap {
 	return template.FuncMap{
 		"clock": func(t time.Time) string { return clock(t, now()) },
 		"stamp": func(t time.Time) string {
 			if t.IsZero() {
-				return "mai"
+				return "never"
 			}
 			return t.In(time.Local).Format("2006-01-02 15:04:05 MST")
 		},
-		"iso":   func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
-		"ago":   func(t time.Time) string { return ago(t, now()) },
-		"since": func(t time.Time) string { return strings.TrimSuffix(ago(t, now()), " fa") },
+		"iso": func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
+		"ago": func(t time.Time) string { return ago(t, now()) },
+		"since": func(t time.Time) string {
+			if s := ago(t, now()); s != "just now" {
+				return strings.TrimSuffix(s, " ago")
+			}
+			return "under a minute"
+		},
 		"sev": func(s string) string {
 			if l, ok := severityLabels[s]; ok {
 				return l
@@ -52,7 +57,7 @@ func funcs(now func() time.Time) template.FuncMap {
 // clock writes a time briefly: the hour alone today, the day and hour otherwise.
 func clock(t, now time.Time) string {
 	if t.IsZero() {
-		return "mai"
+		return "never"
 	}
 	l, n := t.In(time.Local), now.In(time.Local)
 	if l.Year() == n.Year() && l.YearDay() == n.YearDay() {
@@ -67,18 +72,18 @@ func clock(t, now time.Time) string {
 // ago writes the time elapsed since t in the largest unit that fits.
 func ago(t, now time.Time) string {
 	if t.IsZero() {
-		return "mai"
+		return "never"
 	}
 	d := now.Sub(t)
 	switch {
 	case d < time.Minute:
-		return "adesso"
+		return "just now"
 	case d < time.Hour:
-		return fmt.Sprintf("%d min fa", int(d/time.Minute))
+		return fmt.Sprintf("%d min ago", int(d/time.Minute))
 	case d < 48*time.Hour:
-		return fmt.Sprintf("%d h fa", int(d/time.Hour))
+		return fmt.Sprintf("%d h ago", int(d/time.Hour))
 	}
-	return fmt.Sprintf("%d g fa", int(d/(24*time.Hour)))
+	return fmt.Sprintf("%d d ago", int(d/(24*time.Hour)))
 }
 
 func size(n int) string {
@@ -103,7 +108,7 @@ func duration(d time.Duration) string {
 		}
 		return fmt.Sprintf("%d h %d min", m/60, m%60)
 	}
-	return fmt.Sprintf("%d g %d h", m/(24*60), m%(24*60)/60)
+	return fmt.Sprintf("%d d %d h", m/(24*60), m%(24*60)/60)
 }
 
 // shapes gives every state its own form, so that severity never rests on colour alone.

@@ -133,7 +133,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /enroll", s.authed(s.enrollForm))
 	mux.HandleFunc("POST /enroll", s.authed(s.enroll))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		s.fail(w, r, http.StatusNotFound, "Pagina inesistente", "L'indirizzo non corrisponde a nessuna pagina della console.")
+		s.fail(w, r, http.StatusNotFound, "Page not found", "The address does not match any page of the console.")
 	})
 	return headers(mux), nil
 }
@@ -183,7 +183,7 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 		safe := r.Method == http.MethodGet || r.Method == http.MethodHead
 		if err != nil {
 			if !safe {
-				s.fail(w, r, http.StatusForbidden, "Sessione scaduta", "Accedi di nuovo e ripeti l'operazione.")
+				s.fail(w, r, http.StatusForbidden, "Session expired", "Sign in again and repeat the operation.")
 				return
 			}
 			http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
@@ -191,7 +191,7 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 		}
 		if !safe {
 			if !sameOrigin(r) || subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(se.csrf())) != 1 {
-				s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo non viene da questa console, oppure è scaduto. Ricarica la pagina e riprova.")
+				s.fail(w, r, http.StatusForbidden, "Request refused", "The form does not come from this console, or it expired. Reload the page and try again.")
 				return
 			}
 		}
@@ -254,7 +254,7 @@ func (s *server) internal(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	s.Log.Error("ui request", "path", r.URL.Path, "err", err)
-	s.fail(w, r, http.StatusInternalServerError, "Errore interno", "La richiesta non è andata a buon fine. Il dettaglio è nel log del verificatore.")
+	s.fail(w, r, http.StatusInternalServerError, "Internal error", "The request failed. The details are in the verifier's log.")
 }
 
 func (s *server) cookie(w http.ResponseWriter, name, value string, maxAge time.Duration) {
@@ -287,7 +287,7 @@ type loginData struct {
 }
 
 func (s *server) loginForm(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, "login", page{Title: "Accesso", Data: loginData{Next: localPath(r.URL.Query().Get("next"), "/")}})
+	s.render(w, r, http.StatusOK, "login", page{Title: "Sign in", Data: loginData{Next: localPath(r.URL.Query().Get("next"), "/")}})
 }
 
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
@@ -295,7 +295,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(strings.ToLower(r.PostFormValue("email")))
 	data := loginData{Next: localPath(r.PostFormValue("next"), "/"), Email: email}
 	if !sameOrigin(r) {
-		s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo di accesso non viene da questa console.")
+		s.fail(w, r, http.StatusForbidden, "Request refused", "The sign-in form does not come from this console.")
 		return
 	}
 	lane, err := s.loginLane(r, email)
@@ -317,8 +317,8 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !ok {
-		data.Error = "Troppi tentativi in corso per questo indirizzo. Riprova tra poco."
-		s.render(w, r, http.StatusTooManyRequests, "login", page{Title: "Accesso", Data: data})
+		data.Error = "Too many attempts in progress for this address. Try again shortly."
+		s.render(w, r, http.StatusTooManyRequests, "login", page{Title: "Sign in", Data: data})
 		return
 	}
 	token, err := s.Store.Login(r.Context(), email, r.PostFormValue("password"), s.Now())
@@ -326,8 +326,8 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	done(err == nil)
 	if errors.Is(err, store.ErrBadCredentials) {
 		s.Log.Warn("failed login", "email", email)
-		data.Error = "Email o password non corretti."
-		s.render(w, r, http.StatusUnauthorized, "login", page{Title: "Accesso", Data: data})
+		data.Error = "Wrong email or password."
+		s.render(w, r, http.StatusUnauthorized, "login", page{Title: "Sign in", Data: data})
 		return
 	}
 	if err != nil {
@@ -393,7 +393,7 @@ func (s *server) loginLane(r *http.Request, email string) (string, error) {
 // loginLinkForm shows a button for a one-time link: opening the link must not use it, since
 // link previews in chat and mail scanners open links too.
 func (s *server) loginLinkForm(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, "link", page{Title: "Accesso con link", Data: r.URL.Query().Get("t")})
+	s.render(w, r, http.StatusOK, "link", page{Title: "Sign in with a link", Data: r.URL.Query().Get("t")})
 }
 
 // loginLink signs in with a one-time link made by `tripwatch-verifier login-link`, and makes the
@@ -401,12 +401,12 @@ func (s *server) loginLinkForm(w http.ResponseWriter, r *http.Request) {
 func (s *server) loginLink(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if !sameOrigin(r) {
-		s.fail(w, r, http.StatusForbidden, "Richiesta rifiutata", "Il modulo di accesso non viene da questa console.")
+		s.fail(w, r, http.StatusForbidden, "Request refused", "The sign-in form does not come from this console.")
 		return
 	}
 	email, token, err := s.Store.ConsumeLoginLink(r.Context(), r.PostFormValue("t"), s.Now())
 	if errors.Is(err, store.ErrNotFound) {
-		s.fail(w, r, http.StatusForbidden, "Link non valido", "Il link di accesso è già stato usato o è scaduto. Creane un altro dal verificatore.")
+		s.fail(w, r, http.StatusForbidden, "Invalid link", "The sign-in link was already used or has expired. Create another one from the verifier.")
 		return
 	}
 	if err != nil {
@@ -483,20 +483,20 @@ func (s *server) hostRow(h store.Host, sum store.HostSummary, has bool) hostRow 
 	last := h.LastHeartbeat
 	switch {
 	case h.Revoked:
-		row.State, row.StateText = "revoked", "revocato"
+		row.State, row.StateText = "revoked", "revoked"
 	case last.IsZero() && now.Sub(h.EnrolledAt) <= s.SilenceAfter:
-		row.State, row.StateText = "waiting", "in attesa del primo battito"
+		row.State, row.StateText = "waiting", "waiting for the first heartbeat"
 	case last.IsZero():
-		row.State, row.StateText, row.Since = "silent", "muto dalla registrazione", h.EnrolledAt
+		row.State, row.StateText, row.Since = "silent", "silent since enrollment", h.EnrolledAt
 	case now.Sub(last) > s.SilenceAfter:
-		row.State, row.StateText, row.Since = "silent", "muto", last
+		row.State, row.StateText, row.Since = "silent", "silent", last
 	case row.Worst != nil:
 		row.State, row.StateText, row.Since = row.Worst.Severity, severityLabels[row.Worst.Severity], row.Worst.CreatedAt
 		if row.Worst.Status == store.StatusAcked {
 			row.State += " acked"
 		}
 	default:
-		row.State, row.StateText = "ok", "regolare"
+		row.State, row.StateText = "ok", "healthy"
 	}
 	return row
 }
@@ -579,10 +579,10 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	critical := &counter{Key: "critical", Label: "critici", N: tallies["critical"].N, Oldest: tallies["critical"].Oldest}
-	silent := &counter{Key: "silent", Label: "muti"}
-	high := &counter{Key: "high", Label: "alti", N: tallies["high"].N, Oldest: tallies["high"].Oldest}
-	acked := &counter{Key: "acked", Label: "in carico", N: tallies["acknowledged"].N, Oldest: tallies["acknowledged"].Oldest}
+	critical := &counter{Key: "critical", Label: "critical", N: tallies["critical"].N, Oldest: tallies["critical"].Oldest}
+	silent := &counter{Key: "silent", Label: "silent"}
+	high := &counter{Key: "high", Label: "high", N: tallies["high"].N, Oldest: tallies["high"].Oldest}
+	acked := &counter{Key: "acked", Label: "acknowledged", N: tallies["acknowledged"].N, Oldest: tallies["acknowledged"].Oldest}
 	d := overviewData{Alerts: open, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r)}
 	for _, h := range hosts {
 		sum, has := summaries[h.ID]
@@ -604,7 +604,7 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	s.render(w, r, http.StatusOK, "overview", page{Title: "Panoramica", Nav: "overview", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
+	s.render(w, r, http.StatusOK, "overview", page{Title: "Overview", Nav: "overview", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
 }
 
 type hostData struct {
@@ -620,7 +620,7 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 	ctx := r.Context()
 	h, err := s.Store.Host(ctx, r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		s.fail(w, r, http.StatusNotFound, "Server sconosciuto", "Nessun server registrato con questo nome.")
+		s.fail(w, r, http.StatusNotFound, "Unknown server", "No server is enrolled with this name.")
 		return
 	}
 	if err != nil {
@@ -660,12 +660,12 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 func (s *server) revoke(w http.ResponseWriter, r *http.Request, se session) {
 	id := r.PathValue("id")
 	if r.PostFormValue("confirm") != id {
-		s.fail(w, r, http.StatusBadRequest, "Revoca non confermata", "Per revocare il server scrivi il suo nome esatto nel campo di conferma.")
+		s.fail(w, r, http.StatusBadRequest, "Revocation not confirmed", "To revoke the server, type its exact name in the confirmation field.")
 		return
 	}
 	if err := s.Store.Revoke(r.Context(), id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			s.fail(w, r, http.StatusNotFound, "Server sconosciuto", "Nessun server registrato con questo nome.")
+			s.fail(w, r, http.StatusNotFound, "Unknown server", "No server is enrolled with this name.")
 			return
 		}
 		s.internal(w, r, err)
@@ -904,7 +904,7 @@ func commonLabel(alerts []store.Alert) string {
 }
 
 var alertViews = []struct{ Key, Label string }{
-	{"open", "Da gestire"}, {"acknowledged", "Presi in carico"}, {"resolved", "Risolti"}, {"all", "Tutti"},
+	{"open", "To handle"}, {"acknowledged", "Acknowledged"}, {"resolved", "Resolved"}, {"all", "All"},
 }
 
 type alertsData struct {
@@ -940,7 +940,7 @@ func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	s.render(w, r, http.StatusOK, "alerts", page{Title: "Allarmi", Nav: "alerts", User: se.Email, CSRF: se.csrf(), Refresh: true,
+	s.render(w, r, http.StatusOK, "alerts", page{Title: "Alerts", Nav: "alerts", User: se.Email, CSRF: se.csrf(), Refresh: true,
 		Data: alertsData{View: view, Views: alertViews, Host: f.HostID, Alerts: list, Limit: f.Limit, Focus: panel, Base: pageWithoutPick(r)}})
 }
 
@@ -953,7 +953,7 @@ func (s *server) alertByPath(w http.ResponseWriter, r *http.Request) (store.Aler
 		}
 	}
 	if err == nil || errors.Is(err, store.ErrNotFound) || errors.Is(err, strconv.ErrSyntax) || errors.Is(err, strconv.ErrRange) {
-		s.fail(w, r, http.StatusNotFound, "Allarme inesistente", "Nessun allarme con questo numero.")
+		s.fail(w, r, http.StatusNotFound, "Alert not found", "No alert has this number.")
 		return store.Alert{}, false
 	}
 	s.internal(w, r, err)
@@ -1108,7 +1108,7 @@ func enrollCommand(system, release, token string) string {
 
 func (s *server) enrollForm(w http.ResponseWriter, r *http.Request, se session) {
 	release := s.release()
-	s.render(w, r, http.StatusOK, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(),
+	s.render(w, r, http.StatusOK, "enroll", page{Title: "Enroll a server", Nav: "enroll", User: se.Email, CSRF: se.csrf(),
 		Data: enrollData{IngestURL: s.IngestURL, Mode: "token", Release: release, System: enrollSystem("", release)}})
 }
 
@@ -1125,17 +1125,17 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 	d := enrollData{Host: host, Mode: mode, IngestURL: s.IngestURL, Release: release, System: enrollSystem(r.PostFormValue("system"), release)}
 	again := func(status int, msg string) {
 		d.Error = msg
-		s.render(w, r, status, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
+		s.render(w, r, status, "enroll", page{Title: "Enroll a server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
 	}
 	if !hostPattern.MatchString(host) || host == "verifier" {
-		again(http.StatusBadRequest, "Il nome può contenere lettere minuscole, cifre, punti e trattini, e deve iniziare con una lettera o una cifra.")
+		again(http.StatusBadRequest, "The name may contain lowercase letters, digits, dots and hyphens, and must start with a letter or a digit.")
 		return
 	}
 	existing, err := s.Store.Host(r.Context(), host)
 	switch {
 	case err == nil && r.PostFormValue("replace") != "yes":
 		d.Existing = true
-		again(http.StatusConflict, "Esiste già un server con questo nome, registrato il "+clock(existing.EnrolledAt, s.Now())+".")
+		again(http.StatusConflict, "A server with this name already exists, enrolled "+clock(existing.EnrolledAt, s.Now())+".")
 		return
 	case err != nil && !errors.Is(err, store.ErrNotFound):
 		s.internal(w, r, err)
@@ -1152,7 +1152,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 		d.Token = pki.EnrollToken{URL: s.IngestURL, Secret: secret, CA: s.CA.Fingerprint()}.String()
 		d.Command = enrollCommand(d.System, release, d.Token)
 		d.Expires = expires
-		s.render(w, r, http.StatusOK, "enroll", page{Title: "Registra un server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
+		s.render(w, r, http.StatusOK, "enroll", page{Title: "Enroll a server", Nav: "enroll", User: se.Email, CSRF: se.csrf(), Data: d})
 		return
 	}
 	bundle, pub, err := s.CA.Enroll(host, s.IngestURL, now)

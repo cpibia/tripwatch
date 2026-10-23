@@ -1,28 +1,28 @@
 {{define "content"}}{{$d := .Data}}
 <header class="head">
-  <h1>Panoramica</h1>
+  <h1>Overview</h1>
   <dl class="counters">
     {{range $d.Counters}}
     <div class="counter c-{{.Key}}{{if .N}} on{{end}}">
       <dt>{{if and .N (ne .Key "acked")}}{{shape .Key ""}}{{end}}{{.Label}}</dt>
-      <dd><span class="n">{{.N}}</span>{{if .N}}<span class="age">il più vecchio da {{since .Oldest}}</span>{{end}}</dd>
+      <dd><span class="n">{{.N}}</span>{{if .N}}<span class="age">oldest for {{since .Oldest}}</span>{{end}}</dd>
     </div>
     {{end}}
-    <div class="counter c-ok"><dt>regolari</dt><dd><span class="n">{{$d.Healthy}}</span><span class="age">su {{len $d.Hosts}} {{plural (len $d.Hosts) "server" "server"}}</span></dd></div>
+    <div class="counter c-ok"><dt>healthy</dt><dd><span class="n">{{$d.Healthy}}</span><span class="age">of {{len $d.Hosts}} {{plural (len $d.Hosts) "server" "servers"}}</span></dd></div>
   </dl>
 </header>
 
 <div class="board{{if $d.Focus.Alert}} with-focus{{end}}">
 <div class="board-main">
 <section aria-labelledby="hosts-h">
-  <div class="section-head"><h2 id="hosts-h">Server</h2><p class="aside">chi devia in alto, il più vecchio per primo</p></div>
+  <div class="section-head"><h2 id="hosts-h">Servers</h2><p class="aside">deviating ones on top, the oldest first</p></div>
   {{if $d.Hosts}}
   <table class="grid hosts">
-    <thead><tr><th scope="col"><span class="sr">Stato</span></th><th scope="col">Server</th><th scope="col" class="num">Ultimo battito</th><th scope="col" class="num">Ultimo snapshot</th><th scope="col">Allarme peggiore</th><th scope="col" class="num">Da</th></tr></thead>
+    <thead><tr><th scope="col"><span class="sr">State</span></th><th scope="col">Server</th><th scope="col" class="num">Last heartbeat</th><th scope="col" class="num">Last snapshot</th><th scope="col">Worst alert</th><th scope="col" class="num">For</th></tr></thead>
     <tbody>
     {{range $d.Hosts}}
     <tr class="st-{{.State}}">
-      <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}<span class="sr">muto</span>{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}<span class="sr">{{sev .Worst.Severity}}</span>{{end}}</td>
+      <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}<span class="sr">silent</span>{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}<span class="sr">{{sev .Worst.Severity}}</span>{{end}}</td>
       <td class="host"><a class="mono" href="/hosts/{{.ID}}" title="{{.ID}}">{{.ID}}</a></td>
       <td class="num"><time datetime="{{iso .LastHeartbeat}}" title="{{stamp .LastHeartbeat}}">{{clock .LastHeartbeat}}</time></td>
       <td class="num"><time datetime="{{iso .LastSnapshot}}" title="{{stamp .LastSnapshot}}">{{clock .LastSnapshot}}</time></td>
@@ -36,15 +36,15 @@
   </table>
   {{template "legend"}}
   {{else}}
-  <p class="empty">Nessun server registrato. <a href="/enroll">Registra il primo server</a>: comparirà qui al primo battito.</p>
+  <p class="empty">No server enrolled yet. <a href="/enroll">Enroll the first server</a>: it shows up here with its first heartbeat.</p>
   {{end}}
 </section>
 
 <section aria-labelledby="alerts-h">
-  <div class="section-head"><h2 id="alerts-h">Allarmi da gestire</h2><p class="aside"><a href="/alerts?view=all">tutti gli allarmi</a></p></div>
+  <div class="section-head"><h2 id="alerts-h">Alerts to handle</h2><p class="aside"><a href="/alerts?view=all">all alerts</a></p></div>
   {{if $d.Alerts}}{{template "alerttable" (picktable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
-  {{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Sono mostrati i primi {{$d.Limit}}, i più gravi e recenti: <a href="/alerts">tutti gli allarmi da gestire</a>.</p>{{end}}
-  {{else}}<p class="empty">Nessun allarme aperto o preso in carico.</p>{{end}}
+  {{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Showing the first {{$d.Limit}}, the most severe and recent: <a href="/alerts">all alerts to handle</a>.</p>{{end}}
+  {{else}}<p class="empty">No open or acknowledged alerts.</p>{{end}}
 </section>
 </div>
 

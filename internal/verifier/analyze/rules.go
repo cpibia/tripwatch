@@ -80,7 +80,7 @@ const maxDiffLines = 40
 func ruleDiff(old, cur []string) string {
 	lines := diffLines(old, cur)
 	if lines == nil {
-		return "Contenuto cambiato senza righe nuove o tolte (ordine o spazi)."
+		return "Content changed with no line added or removed (order or whitespace)."
 	}
 	if len(lines) > maxDiffLines {
 		hiddenAdded, hiddenRemoved := 0, 0
@@ -91,7 +91,7 @@ func ruleDiff(old, cur []string) string {
 				hiddenRemoved++
 			}
 		}
-		lines = append(lines[:maxDiffLines], fmt.Sprintf("(altre %d righe aggiunte e %d tolte non mostrate: il confronto completo è nella pagina dell'allarme)", hiddenAdded, hiddenRemoved))
+		lines = append(lines[:maxDiffLines], fmt.Sprintf("(%d more lines added and %d removed not shown: the full diff is on the alert's page)", hiddenAdded, hiddenRemoved))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -139,12 +139,12 @@ func fileAccess(f collector.File) string {
 		}
 		return strconv.FormatUint(uint64(*v), 10)
 	}
-	out := "proprietario " + id(f.UID) + ", gruppo " + id(f.GID) + ", modo " + f.Mode
+	out := "owner " + id(f.UID) + ", group " + id(f.GID) + ", mode " + f.Mode
 	if f.ACL != "" {
 		out += ", ACL " + f.ACL
 	}
 	if f.Mount != "" {
-		out += ", su " + f.Mount
+		out += ", on " + f.Mount
 	}
 	return out
 }
@@ -250,30 +250,30 @@ func foreignWritable(f collector.File, t policyTrust) bool {
 func policyWriteDetail(f collector.File, t policyTrust, accounts *system.AccountsResult) string {
 	var who []string
 	if f.Mount != "" {
-		who = append(who, "si trova su un filesystem montato da un utente ("+f.Mount+"), che ne decide proprietario e permessi")
+		who = append(who, "it is on a filesystem mounted by a user ("+f.Mount+"), who decides its owner and mode")
 	}
 	if f.ACLWrite {
-		who = append(who, "un'ACL concede la scrittura a un utente o a un gruppo ("+f.ACL+")")
+		who = append(who, "an ACL grants write access to a user or group ("+f.ACL+")")
 	}
 	if f.UID != nil && *f.UID != 0 {
-		who = append(who, "appartiene all'account "+accountName(accounts, int(*f.UID)))
+		who = append(who, "it belongs to the account "+accountName(accounts, int(*f.UID)))
 	}
 	if len(f.Mode) >= 9 {
 		perm := f.Mode[len(f.Mode)-9:]
 		if perm[7] == 'w' {
-			who = append(who, "qualunque utente del server può scriverci (permessi "+octal(perm)+")")
+			who = append(who, "every user on the server can write to it (mode "+octal(perm)+")")
 		}
 		if perm[4] == 'w' && f.GID != nil && t.groupWriters(int(*f.GID), strings.Contains(f.Path+"/", "/polkit-1/")) {
 			g := int(*f.GID)
-			text := "può scriverci il gruppo " + groupLabel(accounts, g)
+			text := "the group " + groupLabel(accounts, g) + " can write to it"
 			if m := groupMembers(accounts, g); len(m) > 0 {
-				text += ", di cui fanno parte " + strings.Join(m, ", ")
+				text += ", and its members are " + strings.Join(m, ", ")
 			}
 			who = append(who, text)
 		}
 	}
 	if len(who) == 0 {
-		who = append(who, "un account diverso da root può modificarla")
+		who = append(who, "an account other than root can change it")
 	}
 	var b strings.Builder
 	b.WriteString(strings.ToUpper(who[0][:1]) + who[0][1:])
@@ -283,24 +283,24 @@ func policyWriteDetail(f collector.File, t policyTrust, accounts *system.Account
 	b.WriteString(".\n\n")
 	name := policyName(f.Path)
 	if strings.HasPrefix(f.Mode, "d") {
-		fmt.Fprintf(&b, "È una cartella che contiene le regole di %s, cioè chi può diventare root. Chi può scriverci può rinominare o sostituire ciò che c'è dentro (per esempio %s) e darsi i privilegi di root, poi rimettere tutto com'era prima del controllo successivo.\n\n", name, policyExample(name))
-		fmt.Fprintf(&b, "Di solito si corregge con: chown root:root %s && chmod 755 %s", f.Path, f.Path)
+		fmt.Fprintf(&b, "This directory holds the %s rules, which decide who can become root. Whoever can write to it can rename or replace what is inside (for example %s), give themselves root, and put everything back before the next check.\n\n", name, policyExample(name))
+		fmt.Fprintf(&b, "The usual fix: chown root:root %s && chmod 755 %s", f.Path, f.Path)
 	} else {
-		fmt.Fprintf(&b, "È un file con le regole di %s, cioè chi può diventare root. Chi può modificarlo può darsi i privilegi di root e togliere la riga prima del controllo successivo.\n\n", name)
+		fmt.Fprintf(&b, "This file holds %s rules, which decide who can become root. Whoever can change it can give themselves root and remove the line before the next check.\n\n", name)
 		mode := "644"
 		if name == "sudo" {
 			mode = "440"
 		}
-		fmt.Fprintf(&b, "Di solito si corregge con: chown root:root %s && chmod %s %s", f.Path, mode, f.Path)
+		fmt.Fprintf(&b, "The usual fix: chown root:root %s && chmod %s %s", f.Path, mode, f.Path)
 	}
-	b.WriteString("\n\nDati raccolti: " + fileAccess(f) + ".")
+	b.WriteString("\n\nCollected data: " + fileAccess(f) + ".")
 	return b.String()
 }
 
 func policyExample(name string) string {
 	switch name {
 	case "polkit":
-		return "le regole in /etc/polkit-1"
+		return "the rules in /etc/polkit-1"
 	case "doas":
 		return "/etc/doas.conf"
 	}
@@ -326,12 +326,12 @@ func accountName(r *system.AccountsResult, uid int) string {
 			}
 		}
 	}
-	return fmt.Sprintf("con UID %d", uid)
+	return fmt.Sprintf("with UID %d", uid)
 }
 
 func groupLabel(r *system.AccountsResult, gid int) string {
 	if r == nil {
-		return fmt.Sprintf("con GID %d", gid)
+		return fmt.Sprintf("with GID %d", gid)
 	}
 	return fmt.Sprintf("%s (GID %d)", groupNames(r.Groups, gid), gid)
 }
@@ -636,20 +636,20 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	for name, msg := range cur.Errors {
-		state("sensor", "error:"+name, "medium", "Collector "+name+" non completato", msg)
+		state("sensor", "error:"+name, "medium", "Collector "+name+" did not complete", msg)
 	}
 	for _, w := range cur.Warnings {
-		state("sensor", "warning:"+w, "medium", "Garanzie del sensore ridotte", w)
+		state("sensor", "warning:"+w, "medium", "Sensor guarantees reduced", w)
 	}
 
 	if a := cur.Accounts; a != nil {
 		for _, acc := range a.Accounts {
 			if acc.UID == 0 && acc.Name != "root" {
-				state("accounts", "uid0:"+acc.Name, "critical", "Secondo account root: "+acc.Name,
-					fmt.Sprintf("L'account %s ha UID 0, cioè i privilegi di root. Home %s, shell %s.", acc.Name, acc.Home, acc.Shell))
+				state("accounts", "uid0:"+acc.Name, "critical", "Second root account: "+acc.Name,
+					fmt.Sprintf("The account %s has UID 0, that is root's privileges. Home %s, shell %s.", acc.Name, acc.Home, acc.Shell))
 			}
 			if acc.Password == "empty" && realShell(acc.Shell) {
-				state("accounts", "empty-password:"+acc.Name, "high", "Account senza password: "+acc.Name, "Shell "+acc.Shell+": chiunque può entrare con questo nome.")
+				state("accounts", "empty-password:"+acc.Name, "high", "Account without a password: "+acc.Name, "Shell "+acc.Shell+": anyone can log in with this name.")
 			}
 		}
 		if prev != nil && prev.Accounts != nil {
@@ -660,23 +660,23 @@ func Evaluate(prev *State, cur State) []Finding {
 			for _, acc := range a.Accounts {
 				old, ok := before[acc.Name]
 				if !ok {
-					change("accounts-change", "new:"+acc.Name, "high", "Nuovo account: "+acc.Name,
+					change("accounts-change", "new:"+acc.Name, "high", "New account: "+acc.Name,
 						fmt.Sprintf("UID %d, home %s, shell %s.", acc.UID, acc.Home, acc.Shell))
 					continue
 				}
 				// An existing account given root's power by a standard command: these files are
 				// root's, so the change is.
 				if old.UID != acc.UID {
-					change("accounts-change", "uid:"+acc.Name+"|"+fmt.Sprint(acc.UID), "high", "UID cambiato per "+acc.Name,
-						fmt.Sprintf("Da %d a %d.", old.UID, acc.UID))
+					change("accounts-change", "uid:"+acc.Name+"|"+fmt.Sprint(acc.UID), "high", "UID changed for "+acc.Name,
+						fmt.Sprintf("From %d to %d.", old.UID, acc.UID))
 				}
 				if old.Password != system.PasswordSet && acc.Password == system.PasswordSet {
-					change("accounts-change", "password:"+acc.Name+"|"+acc.Password, "high", "Password impostata per "+acc.Name,
-						"L'account prima non aveva una password utilizzabile; ora sì.")
+					change("accounts-change", "password:"+acc.Name+"|"+acc.Password, "high", "Password set for "+acc.Name,
+						"The account had no usable password before; now it has one.")
 				}
 				if !realShell(old.Shell) && realShell(acc.Shell) {
-					change("accounts-change", "shell:"+acc.Name+"|"+acc.Shell, "high", "Shell abilitata per "+acc.Name,
-						fmt.Sprintf("Da %s a %s: l'account ora può aprire una sessione.", old.Shell, acc.Shell))
+					change("accounts-change", "shell:"+acc.Name+"|"+acc.Shell, "high", "Shell enabled for "+acc.Name,
+						fmt.Sprintf("From %s to %s: the account can now open a session.", old.Shell, acc.Shell))
 				}
 			}
 			// Every group an account newly belongs to, by GID: a new name for a known GID, a
@@ -697,8 +697,8 @@ func Evaluate(prev *State, cur State) []Finding {
 					if priv {
 						sev = "critical"
 					}
-					change("accounts-change", "member:"+name+"|"+fmt.Sprint(gid), sev, fmt.Sprintf("%s ora nel gruppo %s", name, groupNames(a.Groups, gid)),
-						fmt.Sprintf("%s appartiene ora al gruppo GID %d (%s)%s.", name, gid, groupNames(a.Groups, gid), map[bool]string{true: ", che dà accesso equivalente o vicino a quello di root", false: ""}[priv]))
+					change("accounts-change", "member:"+name+"|"+fmt.Sprint(gid), sev, fmt.Sprintf("%s now in group %s", name, groupNames(a.Groups, gid)),
+						fmt.Sprintf("%s now belongs to group GID %d (%s)%s.", name, gid, groupNames(a.Groups, gid), map[bool]string{true: ", which gives access equal or close to root's", false: ""}[priv]))
 				}
 			}
 			admins := map[string]set{}
@@ -714,13 +714,13 @@ func Evaluate(prev *State, cur State) []Finding {
 						if privGIDs[g.GID] {
 							sev = "critical"
 						}
-						change("accounts-change", "group-admin:"+g.Name+"|"+m, sev, "Amministratore del gruppo "+g.Name+": "+m,
-							fmt.Sprintf("%s può ora aggiungere chiunque, sé compreso, al gruppo %s (GID %d) con gpasswd.", m, g.Name, g.GID))
+						change("accounts-change", "group-admin:"+g.Name+"|"+m, sev, "Administrator of group "+g.Name+": "+m,
+							fmt.Sprintf("%s can now add anyone, themselves included, to group %s (GID %d) with gpasswd.", m, g.Name, g.GID))
 					}
 				}
 				if g.Password == system.PasswordSet && privGIDs[g.GID] && !groupPasswordSet(prev.Accounts, g.Name) {
-					change("accounts-change", "group-password:"+g.Name, "critical", "Password impostata per il gruppo "+g.Name,
-						"Con la password del gruppo chiunque sul server può entrarci con newgrp o sg.")
+					change("accounts-change", "group-password:"+g.Name, "critical", "Password set for group "+g.Name,
+						"With the group password anyone on the server can join it with newgrp or sg.")
 				}
 			}
 		}
@@ -736,10 +736,10 @@ func Evaluate(prev *State, cur State) []Finding {
 
 	if s := cur.SSH; s != nil {
 		if s.Settings["permitrootlogin"] == "yes" {
-			state("ssh", "root-login", "medium", "SSH: login di root con password consentito", "PermitRootLogin yes.")
+			state("ssh", "root-login", "medium", "SSH: root login with a password allowed", "PermitRootLogin yes.")
 		}
 		if s.Settings["passwordauthentication"] == "yes" {
-			state("ssh", "password-auth", "medium", "SSH: autenticazione con password attiva", "PasswordAuthentication yes: le chiavi sono più difficili da indovinare.")
+			state("ssh", "password-auth", "medium", "SSH: password authentication enabled", "PasswordAuthentication yes: keys are much harder to guess.")
 		}
 		var known set
 		if prev != nil && prev.SSH != nil {
@@ -753,7 +753,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				if uid, ok := uids[k.User]; ok && uid == 0 {
 					owner = "root"
 				}
-				changeBy(owner, "ssh-change", "key:"+k.User+"|"+k.Fingerprint, "high", "Nuova chiave SSH per "+k.User,
+				changeBy(owner, "ssh-change", "key:"+k.User+"|"+k.Fingerprint, "high", "New SSH key for "+k.User,
 					fmt.Sprintf("%s %s (%s) in %s.", k.Type, k.Fingerprint, k.Comment, k.File))
 			}
 		}
@@ -773,9 +773,9 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			// The access is in the fingerprint: a known exception taken in charge does not
 			// absorb a later handover of the same file to another account.
-			title := "Politica dei privilegi modificabile da altri: " + f.Path
+			title := "Privilege policy writable by others: " + f.Path
 			if strings.HasPrefix(f.Mode, "d") {
-				title = "Cartella delle politiche dei privilegi modificabile da altri: " + f.Path
+				title = "Privilege policy directory writable by others: " + f.Path
 			}
 			stateBy("root", "persistence", "policy-writable:"+f.Path+"|"+fileAccess(f), "critical", title, policyWriteDetail(f, trusted, cur.Accounts))
 		}
@@ -794,31 +794,31 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, d := range s.Dirs {
 			if old, ok := dirs[d.Path]; ok && fileAccess(old) != fileAccess(d) {
-				change("persistence-change", "policy-access:"+d.Path+"|"+fileAccess(d), "high", "Permessi cambiati sulla cartella delle politiche "+d.Path,
-					"Da "+fileAccess(old)+" a "+fileAccess(d)+".")
+				change("persistence-change", "policy-access:"+d.Path+"|"+fileAccess(d), "high", "Permissions changed on policy directory "+d.Path,
+					"From "+fileAccess(old)+" to "+fileAccess(d)+".")
 			}
 		}
 		for _, f := range s.Files {
 			old, ok := before[f.Path]
 			delete(before, f.Path)
 			if ok && fileAccess(old.File) != fileAccess(f.File) {
-				change("persistence-change", "policy-access:"+f.Path+"|"+fileAccess(f.File), "high", "Permessi cambiati sulla politica "+f.Path,
-					"Da "+fileAccess(old.File)+" a "+fileAccess(f.File)+". Chi può scrivere il file può concedersi i privilegi di root.")
+				change("persistence-change", "policy-access:"+f.Path+"|"+fileAccess(f.File), "high", "Permissions changed on policy "+f.Path,
+					"From "+fileAccess(old.File)+" to "+fileAccess(f.File)+". Whoever can write the file can give themselves root.")
 			}
 			if ok && old.SHA256 == f.SHA256 && slices.Equal(old.Rules, f.Rules) {
 				continue
 			}
-			title := "Nuova politica " + policyName(f.Path) + ": " + f.Path
+			title := "New " + policyName(f.Path) + " policy: " + f.Path
 			if ok {
-				title = "Politica " + policyName(f.Path) + " cambiata: " + f.Path
+				title = policyName(f.Path) + " policy changed: " + f.Path
 			}
 			add(Finding{Kind: "persistence-change", Fingerprint: "persistence-change:policy:" + f.Path + "|" + f.SHA256, Severity: "high",
 				Title: title, Detail: ruleDiff(old.Rules, f.Rules), Owner: "root", Diff: append([]string{}, diffLines(old.Rules, f.Rules)...)})
 		}
 		for path, old := range before {
 			add(Finding{Kind: "persistence-change", Fingerprint: "persistence-change:policy-removed:" + path + "|" + old.SHA256, Severity: "high",
-				Title:  "Politica " + policyName(path) + " rimossa: " + path,
-				Detail: "Togliere un file può togliere un divieto.\n" + ruleDiff(old.Rules, nil), Owner: "root", Diff: append([]string{}, diffLines(old.Rules, nil)...)})
+				Title:  policyName(path) + " policy removed: " + path,
+				Detail: "Removing a file can remove a prohibition.\n" + ruleDiff(old.Rules, nil), Owner: "root", Diff: append([]string{}, diffLines(old.Rules, nil)...)})
 		}
 	}
 
@@ -834,7 +834,7 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, t := range s.Tables {
 			if t.Immutable {
-				state("persistence", "immutable-cron:"+t.Path, "critical", "Crontab protetto con chattr +i", t.Path+": il file non si può modificare né cancellare, nemmeno da root, finché non si toglie l'attributo.")
+				state("persistence", "immutable-cron:"+t.Path, "critical", "Crontab protected with chattr +i", t.Path+": the file cannot be changed or deleted, not even by root, until the attribute is removed.")
 			}
 			for _, e := range t.Entries {
 				// A line is new to its table: the same line in another user's crontab earlier
@@ -844,7 +844,7 @@ func Evaluate(prev *State, cur State) []Finding {
 					if uid, ok := uids[owner]; ok && uid == 0 {
 						owner = "root"
 					}
-					changeBy(owner, "persistence-change", "cron:"+t.Path+"|"+e, "high", "Nuova riga di cron", e+"\nin "+t.Path)
+					changeBy(owner, "persistence-change", "cron:"+t.Path+"|"+e, "high", "New cron line", e+"\nin "+t.Path)
 				}
 			}
 		}
@@ -864,32 +864,32 @@ func Evaluate(prev *State, cur State) []Finding {
 				if i := strings.LastIndex(env, " ("); i >= 0 && strings.HasSuffix(env, ")") {
 					owner = homeOwner(env[i+2 : len(env)-1])
 				}
-				stateBy(owner, "persistence", "default-env:"+owner+"|"+env, "critical", "Libreria iniettata in tutti i servizi", env)
+				stateBy(owner, "persistence", "default-env:"+owner+"|"+env, "critical", "Library injected into every service", env)
 			}
 		}
 		for _, u := range s.Units {
 			if u.Immutable {
-				state("persistence", "immutable-unit:"+u.Path, "critical", "Unit systemd protetta con chattr +i", u.Path)
+				state("persistence", "immutable-unit:"+u.Path, "critical", "systemd unit protected with chattr +i", u.Path)
 			}
 			for _, x := range u.Exec {
 				if _, cmd, ok := strings.Cut(x, "="); ok && len(strings.Fields(cmd)) > 0 && suspiciousPath(strings.TrimLeft(strings.Fields(cmd)[0], "-@+!:")) {
-					stateBy(unitOwner(u), "persistence", "unit-exec:"+unitOwner(u)+"|"+u.Path+":"+x, "high", "Servizio che esegue da una cartella insolita", x+"\nin "+u.Path)
+					stateBy(unitOwner(u), "persistence", "unit-exec:"+unitOwner(u)+"|"+u.Path+":"+x, "high", "Service running from an unusual directory", x+"\nin "+u.Path)
 				}
 			}
 			if knownUnits != nil && !knownUnits.has(u.Path) {
-				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, "medium", "Nuovo servizio systemd", u.Path+"\n"+strings.Join(u.Exec, "\n"))
+				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, "medium", "New systemd service", u.Path+"\n"+strings.Join(u.Exec, "\n"))
 			}
 		}
 		for _, g := range s.Generators {
 			if knownGenerators != nil && !knownGenerators.has(g.Path) {
-				change("persistence-change", "generator:"+g.Path, "high", "Nuovo generator systemd", g.Path+": viene eseguito da root a ogni avvio.")
+				change("persistence-change", "generator:"+g.Path, "high", "New systemd generator", g.Path+": root runs it at every boot.")
 			}
 		}
 	}
 
 	if h := cur.Hooks; h != nil {
 		for _, lib := range h.Preload {
-			state("persistence", "preload:"+lib, "critical", "Libreria caricata in ogni processo", lib+" è in /etc/ld.so.preload: è la tecnica dei rootkit in userspace.")
+			state("persistence", "preload:"+lib, "critical", "Library loaded into every process", lib+" is in /etc/ld.so.preload: the technique of userspace rootkits.")
 		}
 	}
 
@@ -897,12 +897,12 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, pr := range p.Processes {
 			switch {
 			case pr.ExeDeleted:
-				state("processes", "deleted:"+pr.Exe+":"+pr.ExeSHA256, "high", "Processo da un eseguibile cancellato", fmt.Sprintf("PID %d (%s) esegue %s, rimosso dal disco. Hash %s.", pr.PID, pr.Comm, pr.Exe, pr.ExeSHA256))
+				state("processes", "deleted:"+pr.Exe+":"+pr.ExeSHA256, "high", "Process from a deleted executable", fmt.Sprintf("PID %d (%s) runs %s, removed from disk. Hash %s.", pr.PID, pr.Comm, pr.Exe, pr.ExeSHA256))
 			case suspiciousPath(pr.Exe):
-				state("processes", "exe:"+pr.Exe+":"+pr.ExeSHA256, "high", "Processo da una cartella insolita", fmt.Sprintf("PID %d (%s) esegue %s come UID %d.", pr.PID, pr.Comm, pr.Exe, pr.UID))
+				state("processes", "exe:"+pr.Exe+":"+pr.ExeSHA256, "high", "Process from an unusual directory", fmt.Sprintf("PID %d (%s) runs %s as UID %d.", pr.PID, pr.Comm, pr.Exe, pr.UID))
 			}
 			if pr.Preload != "" {
-				state("processes", "ld-preload:"+pr.Comm+":"+pr.Preload, "high", "Processo con LD_PRELOAD", fmt.Sprintf("PID %d (%s) carica %s.", pr.PID, pr.Comm, pr.Preload))
+				state("processes", "ld-preload:"+pr.Comm+":"+pr.Preload, "high", "Process with LD_PRELOAD", fmt.Sprintf("PID %d (%s) loads %s.", pr.PID, pr.Comm, pr.Preload))
 			}
 		}
 	}
@@ -916,7 +916,7 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 		for _, so := range s.Sockets {
 			if so.State == "listen" && !known.has(so.Proto+"\x00"+so.Local) {
-				change("network-change", "listen:"+so.Proto+":"+so.Local, "medium", "Nuova porta in ascolto: "+so.Local, fmt.Sprintf("%s %s, processo %s (PID %d).", so.Proto, so.Local, so.Process, so.PID))
+				change("network-change", "listen:"+so.Proto+":"+so.Local, "medium", "New listening port: "+so.Local, fmt.Sprintf("%s %s, process %s (PID %d).", so.Proto, so.Local, so.Process, so.PID))
 			}
 		}
 	}
@@ -924,23 +924,23 @@ func Evaluate(prev *State, cur State) []Finding {
 	if p := cur.Packages; p != nil {
 		for _, m := range p.Modified {
 			if !m.Config {
-				state("packages", "modified:"+m.Path, "high", "File di sistema modificato: "+m.Path, "Non corrisponde al pacchetto "+m.Package+".")
+				state("packages", "modified:"+m.Path, "high", "System file modified: "+m.Path, "It no longer matches package "+m.Package+".")
 			}
 		}
 		for _, h := range p.Hidden {
-			state("packages", "hidden:"+h, "high", "Elemento nascosto in /usr: "+h, "Nessun pacchetto installa file con il nome che comincia per punto sotto /usr.")
+			state("packages", "hidden:"+h, "high", "Hidden entry in /usr: "+h, "No package installed this dot-named entry under /usr.")
 		}
 		if prev != nil && prev.Packages != nil {
 			known := set{}
 			known.add(prev.Packages.Unowned...)
 			for _, u := range p.Unowned {
 				if !known.has(u) {
-					change("packages-change", "unowned:"+u, "medium", "Nuovo eseguibile fuori dai pacchetti: "+u, "")
+					change("packages-change", "unowned:"+u, "medium", "New executable outside the packages: "+u, "")
 				}
 			}
 			if p.DatabaseSHA256 != prev.Packages.DatabaseSHA256 && p.Packages == prev.Packages.Packages {
-				change("packages-change", "database:"+p.DatabaseSHA256, "medium", "Database dei pacchetti cambiato senza installazioni",
-					"Il numero di pacchetti è lo stesso ma il database è diverso: un aggiornamento normale, oppure checksum riscritti per coprire un file sostituito.")
+				change("packages-change", "database:"+p.DatabaseSHA256, "medium", "Package database changed without installations",
+					"The number of packages is the same but the database differs: a normal update, or checksums rewritten to cover a replaced file.")
 			}
 		}
 	}
@@ -955,14 +955,14 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, f := range p.Files {
 			switch {
 			case f.Immutable || f.AppendOnly:
-				state("privileged", "attr:"+f.Path, "high", "File protetto con chattr: "+f.Path, "Gli attributi immutable o append-only sono rari sui server e sono usati per rendere persistente un accesso.")
+				state("privileged", "attr:"+f.Path, "high", "File protected with chattr: "+f.Path, "The immutable and append-only attributes are rare on servers and are used to make access persistent.")
 			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
 				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
-				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "Binario setuid/setgid in una cartella insolita: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+", hash "+f.SHA256+".")
+				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "setuid/setgid binary in an unusual directory: "+f.Path, "Mode "+f.Mode+", owner "+owner+", hash "+f.SHA256+".")
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
 				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
-				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "Nuovo file privilegiato: "+f.Path, "Modo "+f.Mode+", proprietario "+owner+".")
+				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "New privileged file: "+f.Path, "Mode "+f.Mode+", owner "+owner+".")
 			}
 		}
 	}
@@ -984,26 +984,26 @@ func Evaluate(prev *State, cur State) []Finding {
 				// Size and hash tell one file from another at the same path, for the operator
 				// and for the evidence kept of each content.
 				if f.SHA256 != "" {
-					detail += fmt.Sprintf("\n%d byte, SHA-256 %s", f.Size, f.SHA256)
+					detail += fmt.Sprintf("\n%d bytes, SHA-256 %s", f.Size, f.SHA256)
 				}
 				if len(f.Signatures) > 0 {
-					detail += "\nFirme: " + strings.Join(f.Signatures, ", ")
+					detail += "\nSignatures: " + strings.Join(f.Signatures, ", ")
 				}
 				if f.Reachable {
-					detail += "\nRaggiungibile dal web secondo la configurazione."
+					detail += "\nReachable from the web according to the configuration."
 				}
 				state("web", f.Kind+":"+f.Path, sev, title, detail)
 			}
 			if pa, ok := prevApps[app.Path]; ok {
 				for dir, sum := range app.DirHashes {
 					if old, ok := pa.DirHashes[dir]; ok && old != sum {
-						change("web-change", "code:"+dir+":"+sum, "medium", "Codice cambiato in "+dir, "Se non c'è stato un deploy, qualcuno ha modificato il codice dell'applicazione "+app.Path+".")
+						change("web-change", "code:"+dir+":"+sum, "medium", "Code changed in "+dir, "Without a deploy, someone changed the code of the application "+app.Path+".")
 					}
 				}
 			}
 		}
 		for _, cfg := range w.Inventory.StaleConfig {
-			state("web", "stale-config:"+cfg, "medium", "Configurazione del web server cambiata dopo l'avvio", cfg)
+			state("web", "stale-config:"+cfg, "medium", "Web server configuration changed after it started", cfg)
 		}
 	}
 
@@ -1017,23 +1017,23 @@ func Evaluate(prev *State, cur State) []Finding {
 			// The script the request reached names the alert's group: noise sent to other
 			// scripts does not crowd out the one that matters.
 			script := weblog.ScriptPath(path.Clean("/" + strings.SplitN(e.Evidence.Request, "?", 2)[0]))
-			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d richieste da %d indirizzi (primo %s), log %s.\nTesto della richiesta, scritto da chi l'ha inviata: %s",
+			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.\nRequest text, written by whoever sent it: %s",
 				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, e.Evidence.Request)})
 		}
 		// A flood that pushed serious events out of the bounded list is itself an alert: it may
 		// have been sent to hide one.
 		if n := l.Stats.DroppedEvents["critical"] + l.Stats.DroppedEvents["high"]; n > 0 {
 			var b strings.Builder
-			fmt.Fprintf(&b, "%d eventi critici o alti non sono entrati nell'elenco dei log, saturato da altri. Un'ondata di richieste rumorose può servire a nascondere quella che conta.", n)
+			fmt.Fprintf(&b, "%d critical or high events did not fit in the log list, filled by others. A wave of noisy requests can serve to hide the one that matters.", n)
 			if len(l.Stats.DroppedSamples) > 0 {
-				b.WriteString("\nAlcuni degli eventi scartati (testo scritto da chi ha fatto la richiesta):")
+				b.WriteString("\nSome of the dropped events (text written by whoever made the request):")
 				for _, d := range l.Stats.DroppedSamples {
-					fmt.Fprintf(&b, "\n  %s %s da %s: %s", d.Severity, strings.ReplaceAll(d.Rule, "_", " "), d.IP, d.Path)
+					fmt.Fprintf(&b, "\n  %s %s from %s: %s", d.Severity, strings.ReplaceAll(d.Rule, "_", " "), d.IP, d.Path)
 				}
 			}
 			// Like the events, each run's drops are new: one alert per snapshot that had them.
 			add(Finding{Kind: "weblog", Fingerprint: "weblog:dropped:" + strconv.FormatInt(cur.TakenAt.Unix(), 10), Severity: "high",
-				Title: "Log: eventi gravi scartati per saturazione", Detail: b.String()})
+				Title: "Log: serious events dropped by saturation", Detail: b.String()})
 		}
 	}
 
@@ -1041,12 +1041,12 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, app := range a.Apps {
 			for _, inj := range app.Injected {
 				for _, d := range inj.Domains {
-					state("apps", "script:"+app.Path+":"+inj.Where+":"+d, "high", "Script esterno salvato nel database: "+d,
-						fmt.Sprintf("%s in %s (%s). Verificare che sia un servizio voluto: è il modo in cui si iniettano gli skimmer.", d, inj.Where, app.Path))
+					state("apps", "script:"+app.Path+":"+inj.Where+":"+d, "high", "External script stored in the database: "+d,
+						fmt.Sprintf("%s in %s (%s). Check that it is a wanted service: this is how skimmers are injected.", d, inj.Where, app.Path))
 				}
 			}
 			for _, w := range app.Warnings {
-				state("apps", "warning:"+app.Path+":"+w, "low", "Impostazione da sviluppo in "+app.Path, w)
+				state("apps", "warning:"+app.Path+":"+w, "low", "Development setting in "+app.Path, w)
 			}
 			if prev == nil || prev.Apps == nil {
 				continue
@@ -1057,8 +1057,8 @@ func Evaluate(prev *State, cur State) []Finding {
 				}
 				for _, ad := range app.Admins {
 					if !slices.ContainsFunc(pa.Admins, func(p adminT) bool { return p.ID == ad.ID }) {
-						change("apps-change", "admin:"+app.Path+":"+ad.ID, "critical", "Nuovo amministratore in "+app.Path+": "+ad.Name,
-							fmt.Sprintf("Email %s, creato %s.", ad.Email, ad.Created))
+						change("apps-change", "admin:"+app.Path+":"+ad.ID, "critical", "New administrator in "+app.Path+": "+ad.Name,
+							fmt.Sprintf("Email %s, created %s.", ad.Email, ad.Created))
 					}
 				}
 			}
@@ -1072,24 +1072,24 @@ func webFinding(f web.Finding) (string, string) {
 	switch f.Kind {
 	case web.KindSignature, web.KindScriptInUploads, web.KindCodeInUploads, web.KindPolyglotImage:
 		return "critical", map[string]string{
-			web.KindSignature:       "Firma di webshell",
-			web.KindScriptInUploads: "Script nelle cartelle di upload",
-			web.KindCodeInUploads:   "Codice dentro un file caricato",
-			web.KindPolyglotImage:   "Immagine con codice nascosto",
+			web.KindSignature:       "Webshell signature",
+			web.KindScriptInUploads: "Script in upload directories",
+			web.KindCodeInUploads:   "Code inside an uploaded file",
+			web.KindPolyglotImage:   "Image with hidden code",
 		}[f.Kind]
 	case web.KindHiddenScript, web.KindSuspiciousSymlink, web.KindAppInData:
 		return "high", map[string]string{
-			web.KindHiddenScript:      "Script nascosto",
-			web.KindSuspiciousSymlink: "Collegamento sospetto",
-			web.KindAppInData:         "Applicazione dentro una cartella di upload",
+			web.KindHiddenScript:      "Hidden script",
+			web.KindSuspiciousSymlink: "Suspicious link",
+			web.KindAppInData:         "Application inside an upload directory",
 		}[f.Kind]
 	case web.KindOverrideInData:
 		if slices.Contains(f.Signatures, "handler_directive") {
-			return "critical", "Configurazione che rende eseguibili gli upload"
+			return "critical", "Configuration that makes uploads executable"
 		}
 		return "", ""
 	case web.KindHiddenInData:
-		return "medium", "File nascosto nelle cartelle di dati"
+		return "medium", "Hidden file in data directories"
 	}
 	return "", ""
 }

@@ -314,7 +314,7 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	state, err := Decode(cur.Payload)
 	if err != nil {
 		a.raise(ctx, store.Alert{HostID: host, Fingerprint: "snapshot:undecodable", Severity: "high", Kind: "sensor",
-			Title: "Snapshot rifiutato", Detail: err.Error() + ". Un sensore integro non produce snapshot così: il server può essere compromesso."})
+			Title: "Snapshot refused", Detail: err.Error() + ". A sound sensor does not produce snapshots like this: the server may be compromised."})
 		return
 	}
 	prev, lost := a.base(ctx, state, prevSnap)
@@ -322,13 +322,13 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	findings := Evaluate(prev, state)
 	for _, name := range lost {
 		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:baseline-lost:" + name, Severity: "high",
-			Title:  "Collector " + name + " senza termine di confronto",
-			Detail: fmt.Sprintf("Nessuno dei %d snapshot precedenti contiene il risultato di %s: i cambiamenti fatti mentre non rispondeva non sono segnalati. Va controllato sul server.", maxBaseWalk, name)})
+			Title:  "Collector " + name + " has nothing to compare with",
+			Detail: fmt.Sprintf("None of the %d previous snapshots holds the result of %s: changes made while it did not answer are not reported. Check the server directly.", maxBaseWalk, name)})
 	}
 	for name, msg := range a.persistentErrors(ctx, state, prevSnap) {
 		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:error-persistent:" + name, Severity: "high", State: true,
-			Title:  fmt.Sprintf("Collector %s non completato per %d snapshot di fila", name, failingSnapshots),
-			Detail: msg + "\nFinché non risponde, le modifiche a ciò che legge non sono confrontate. L'allarme resta aperto anche quando riprende."})
+			Title:  fmt.Sprintf("Collector %s did not complete for %d snapshots in a row", name, failingSnapshots),
+			Detail: msg + "\nUntil it answers, changes to what it reads are not compared. The alert stays open after it recovers."})
 	}
 	current := map[string][]string{}
 	for _, f := range findings {
@@ -342,8 +342,8 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 		slices.SortStableFunc(findings, func(x, y Finding) int { return severityRank(x.Severity) - severityRank(y.Severity) })
 		dropped := len(findings) - maxFindings
 		findings = append(findings[:maxFindings], Finding{Kind: "sensor", Fingerprint: "snapshot:too-many-findings", Severity: "high",
-			Title:  "Troppe anomalie in un solo snapshot",
-			Detail: fmt.Sprintf("Lo snapshot ne contiene %d: registrate le %d più gravi, le altre %d no. Un cambiamento così esteso va esaminato sul server.", maxFindings+dropped, maxFindings, dropped)})
+			Title:  "Too many findings in one snapshot",
+			Detail: fmt.Sprintf("The snapshot holds %d: the %d most severe were recorded, the other %d were not. A change this wide must be examined on the server.", maxFindings+dropped, maxFindings, dropped)})
 	}
 	var evidenceOf []Finding
 	for _, f := range findings {
@@ -423,7 +423,7 @@ func (a *Analyzer) keepDiff(ctx context.Context, host string, f Finding) {
 	var b strings.Builder
 	for i, l := range f.Diff {
 		if b.Len()+len(l) > maxStoredDiff {
-			fmt.Fprintf(&b, "(altre %d righe oltre %d KB non conservate)\n", len(f.Diff)-i, maxStoredDiff>>10)
+			fmt.Fprintf(&b, "(%d more lines beyond %d KB not kept)\n", len(f.Diff)-i, maxStoredDiff>>10)
 			break
 		}
 		b.WriteString(l + "\n")
@@ -464,8 +464,8 @@ func (a *Analyzer) Silent(ctx context.Context, limit, snapshotLimit time.Duratio
 			fp := "sensor:silent"
 			current = append(current, fp)
 			a.raise(ctx, store.Alert{HostID: h.ID, Fingerprint: fp, Severity: "critical", Kind: "silence",
-				Title:  "Il sensore non risponde",
-				Detail: fmt.Sprintf("Nessun battito da %s (ultimo: %s). Il sensore è fermo, il server è irraggiungibile, oppure qualcuno lo ha spento.", span(now.Sub(last)), formatTime(last))})
+				Title:  "The sensor is silent",
+				Detail: fmt.Sprintf("No heartbeat for %s (last: %s). The sensor is stopped, the server is unreachable, or someone turned it off.", span(now.Sub(last)), formatTime(last))})
 		}
 		lastSnap := h.LastSnapshot
 		if lastSnap.IsZero() {
@@ -475,8 +475,8 @@ func (a *Analyzer) Silent(ctx context.Context, limit, snapshotLimit time.Duratio
 			fp := "sensor:no-snapshots"
 			current = append(current, fp)
 			a.raise(ctx, store.Alert{HostID: h.ID, Fingerprint: fp, Severity: "high", Kind: "silence",
-				Title:  "Il sensore risponde ma non invia snapshot",
-				Detail: fmt.Sprintf("Battiti regolari, ma nessuno snapshot da %s (ultimo: %s). La raccolta è bloccata, oppure il sensore è stato manomesso per mandare solo segnali di vita.", span(now.Sub(lastSnap)), formatTime(lastSnap))})
+				Title:  "The sensor answers but sends no snapshots",
+				Detail: fmt.Sprintf("Regular heartbeats, but no snapshot for %s (last: %s). Collection is stuck, or the sensor was tampered with to send only signs of life.", span(now.Sub(lastSnap)), formatTime(lastSnap))})
 		}
 		if err := a.Store.ResolveGone(ctx, h.ID, "silence", current, now); err != nil {
 			a.Log.Error("resolve silence", "host", h.ID, "err", err)
@@ -492,12 +492,12 @@ func span(d time.Duration) string {
 	case d < 48*time.Hour:
 		return fmt.Sprintf("%d h %d min", int(d/time.Hour), int(d%time.Hour/time.Minute))
 	}
-	return fmt.Sprintf("%d giorni", int(d/(24*time.Hour)))
+	return fmt.Sprintf("%d days", int(d/(24*time.Hour)))
 }
 
 func formatTime(t time.Time) string {
 	if t.IsZero() {
-		return "mai"
+		return "never"
 	}
 	return t.Format("2006-01-02 15:04 MST")
 }

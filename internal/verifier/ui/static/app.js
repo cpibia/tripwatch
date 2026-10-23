@@ -37,7 +37,7 @@
     if (!source) return;
     navigator.clipboard.writeText(source.textContent.trim()).then(function () {
       var label = button.textContent;
-      button.textContent = "Copiati";
+      button.textContent = "Copied";
       setTimeout(function () { button.textContent = label; }, 2000);
     });
   });

@@ -335,7 +335,7 @@ func TestDormantGrantsAndPolicies(t *testing.T) {
 	if f := got["accounts-change:group-admin:docker|www-data"]; f.Severity != "critical" || f.Owner != "root" {
 		t.Errorf("group admin: %+v", f)
 	}
-	if f := got["persistence-change:policy:/etc/polkit-1/rules.d/49-web.rules|"]; f.Title != "Nuova politica polkit: /etc/polkit-1/rules.d/49-web.rules" || f.Owner != "root" {
+	if f := got["persistence-change:policy:/etc/polkit-1/rules.d/49-web.rules|"]; f.Title != "New polkit policy: /etc/polkit-1/rules.d/49-web.rules" || f.Owner != "root" {
 		t.Errorf("polkit rule: %+v", f)
 	}
 	for _, rule := range []string{`%\x64eploy ALL=(ALL) ALL`, "%DEPLOY ALL=(ALL) ALL", "%:deploy ALL=(ALL) ALL"} {
@@ -374,7 +374,7 @@ func TestPolicyFileChanges(t *testing.T) {
 	if len(fs) != 1 || !strings.Contains(fs[0].Detail, `- if (subject.user == "x")`) || fs[0].Owner != "root" {
 		t.Fatalf("condition removed: %+v", fs)
 	}
-	if fs := Evaluate(&prev, State{Sudoers: &system.SudoersResult{}}); len(fs) != 1 || !strings.Contains(fs[0].Title, "rimossa") {
+	if fs := Evaluate(&prev, State{Sudoers: &system.SudoersResult{}}); len(fs) != 1 || !strings.Contains(fs[0].Title, "removed") {
 		t.Fatalf("file removed: %+v", fs)
 	}
 	groups := &system.AccountsResult{Groups: []system.Group{{Name: "ops", GID: 1500}, {Name: "web", GID: 1600}, {Name: "doers", GID: 1700}}}
@@ -418,7 +418,7 @@ func TestRuleDiffShowsGrantsFirst(t *testing.T) {
 	if lines[0] != "+ www-data ALL=(ALL) NOPASSWD: ALL" || lines[1] != "- deny www-data" {
 		t.Fatalf("grants not first:\n%s", got)
 	}
-	if len(lines) != maxDiffLines+1 || lines[maxDiffLines] != "(altre 3 righe aggiunte e 0 tolte non mostrate: il confronto completo è nella pagina dell'allarme)" {
+	if len(lines) != maxDiffLines+1 || lines[maxDiffLines] != "(3 more lines added and 0 removed not shown: the full diff is on the alert's page)" {
 		t.Fatalf("cut not stated:\n%s", got)
 	}
 }
@@ -438,10 +438,10 @@ func TestPolicyFileAccess(t *testing.T) {
 	for _, f := range Evaluate(&prev, State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{file(33, "-rw-r--r--")}, Dirs: []collector.File{dir}}}) {
 		got[f.Fingerprint] = f
 	}
-	if f := got["persistence:policy-writable:/etc/polkit-1/rules.d/50.rules|proprietario 33, gruppo 0, modo -rw-r--r--"]; f.Severity != "critical" || f.Owner != "root" {
+	if f := got["persistence:policy-writable:/etc/polkit-1/rules.d/50.rules|owner 33, group 0, mode -rw-r--r--"]; f.Severity != "critical" || f.Owner != "root" {
 		t.Fatalf("writable policy: %+v", got)
 	}
-	if f := got["persistence-change:policy-access:/etc/polkit-1/rules.d/50.rules|proprietario 33, gruppo 0, modo -rw-r--r--"]; f.Severity != "high" || f.Owner != "root" {
+	if f := got["persistence-change:policy-access:/etc/polkit-1/rules.d/50.rules|owner 33, group 0, mode -rw-r--r--"]; f.Severity != "high" || f.Owner != "root" {
 		t.Fatalf("owner change: %+v", got)
 	}
 	wide := dir
@@ -516,13 +516,13 @@ func TestPolicyWriteDetailIsPlain(t *testing.T) {
 	}
 	trusted := policyAccounts(acc)
 	root := policyWriteDetail(collector.File{Path: "/", UID: &u0, GID: &u0, Mode: "drwxrwxrwx"}, trusted, acc)
-	for _, want := range []string{"Qualunque utente del server può scriverci (permessi 777)", "rinominare o sostituire", "/etc/sudoers", "chmod 755 /", "Dati raccolti: proprietario 0, gruppo 0, modo drwxrwxrwx."} {
+	for _, want := range []string{"Every user on the server can write to it (mode 777)", "rename or replace", "/etc/sudoers", "chmod 755 /", "Collected data: owner 0, group 0, mode drwxrwxrwx."} {
 		if !strings.Contains(root, want) {
 			t.Errorf("detail of / lacks %q:\n%s", want, root)
 		}
 	}
 	group := policyWriteDetail(collector.File{Path: "/etc/sudoers.d/ops", UID: &u0, GID: &u1000, Mode: "-rw-rw-r--"}, trusted, acc)
-	for _, want := range []string{"Può scriverci il gruppo deploy (GID 1000), di cui fanno parte deploy", "chmod 440 /etc/sudoers.d/ops"} {
+	for _, want := range []string{"The group deploy (GID 1000) can write to it, and its members are deploy", "chmod 440 /etc/sudoers.d/ops"} {
 		if !strings.Contains(group, want) {
 			t.Errorf("detail of a group-writable file lacks %q:\n%s", want, group)
 		}

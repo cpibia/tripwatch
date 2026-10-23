@@ -1,17 +1,17 @@
 {{define "content"}}{{$d := .Data}}
 <header class="head">
-  <h1>Allarmi</h1>
-  {{with $d.Host}}<p class="tally"><span>solo <a class="mono" href="/hosts/{{.}}">{{.}}</a></span><span><a href="/alerts?view={{$d.View}}">tutti i server</a></span></p>{{end}}
+  <h1>Alerts</h1>
+  {{with $d.Host}}<p class="tally"><span>only <a class="mono" href="/hosts/{{.}}">{{.}}</a></span><span><a href="/alerts?view={{$d.View}}">all servers</a></span></p>{{end}}
 </header>
-<nav class="tabs" aria-label="Stato degli allarmi">
+<nav class="tabs" aria-label="Alert status">
   {{range $d.Views}}<a href="/alerts?view={{.Key}}{{with $d.Host}}&amp;host={{.}}{{end}}"{{if eq .Key $d.View}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
 </nav>
 <div class="board{{if $d.Focus.Alert}} with-focus{{end}}">
 <div class="board-main">
 {{if $d.Alerts}}
 {{template "alerttable" (picktable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
-{{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Sono mostrati i primi {{$d.Limit}}, i più gravi e recenti.</p>{{end}}
-{{else}}<p class="empty">Nessun allarme in questa vista.</p>{{end}}
+{{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Showing the first {{$d.Limit}}, the most severe and recent.</p>{{end}}
+{{else}}<p class="empty">No alerts in this view.</p>{{end}}
 </div>
 {{template "focus" $d.Focus}}
 </div>

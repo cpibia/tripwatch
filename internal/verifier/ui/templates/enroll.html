@@ -1,45 +1,45 @@
 {{define "content"}}{{$d := .Data}}
 <header class="head">
-  <h1>Registra un server</h1>
+  <h1>Enroll a server</h1>
 </header>
 {{if $d.Token}}
 <section class="issued" aria-labelledby="token-h">
-  <div class="section-head"><h2 id="token-h">Token per <span class="mono">{{$d.Host}}</span></h2><p class="aside">vale una volta sola, fino alle {{clock $d.Expires}}</p></div>
-  <p class="note">{{if eq $d.System "installed"}}Esegui sul server, con un utente che può usare sudo, dopo aver installato il sensore.{{else}}Esegui sul server, con un utente che può usare sudo: il comando scarica il pacchetto del sensore {{$d.Release}} per l'architettura del server, lo installa, cancella il file scaricato, registra il server e avvia il sensore.{{end}} Il token passa sullo standard input, dove gli altri utenti del server non lo vedono; le chiavi vengono generate lì e non lasciano il server; il token non compare più dopo questa pagina.</p>
+  <div class="section-head"><h2 id="token-h">Token for <span class="mono">{{$d.Host}}</span></h2><p class="aside">works once, until {{clock $d.Expires}}</p></div>
+  <p class="note">{{if eq $d.System "installed"}}Run it on the server, as a user who can use sudo, after installing the sensor.{{else}}Run it on the server, as a user who can use sudo: the command downloads the sensor {{$d.Release}} package for the server's architecture, installs it, removes the download, enrolls the server and starts the sensor.{{end}} The token goes through standard input, where other users of the server cannot see it; the keys are generated there and never leave the server; the token is not shown again after this page.</p>
   <pre class="datum command" id="command">{{$d.Command}}</pre>
-  <p class="actions"><button type="button" data-copy="command">Copia il comando</button> <a href="/enroll">Registra un altro server</a></p>
+  <p class="actions"><button type="button" data-copy="command">Copy the command</button> <a href="/enroll">Enroll another server</a></p>
 </section>
 {{else}}
 <div class="split">
 <form method="post" action="/enroll" class="form">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   {{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
-  <label for="host">Nome del server</label>
+  <label for="host">Server name</label>
   <input id="host" name="host" type="text" required pattern="[a-z0-9][a-z0-9.\-]{0,62}" maxlength="63" autocomplete="off" spellcheck="false" autocapitalize="none" value="{{$d.Host}}" aria-describedby="host-help" autofocus>
-  <p class="help" id="host-help">Minuscole, cifre, punti e trattini. Diventa il nome del certificato e compare in ogni allarme.</p>
+  <p class="help" id="host-help">Lowercase letters, digits, dots and hyphens. It becomes the certificate's name and appears in every alert.</p>
   <fieldset class="choice">
-    <legend>Come consegnare le chiavi</legend>
-    <label class="check"><input type="radio" name="mode" value="token"{{if ne $d.Mode "bundle"}} checked{{end}}> Token monouso: il server genera le sue chiavi e si registra con un comando</label>
-    <label class="check"><input type="radio" name="mode" value="bundle"{{if eq $d.Mode "bundle"}} checked{{end}}> Pacchetto da scaricare e copiare sul server, con le chiavi già dentro</label>
+    <legend>How to deliver the keys</legend>
+    <label class="check"><input type="radio" name="mode" value="token"{{if ne $d.Mode "bundle"}} checked{{end}}> One-time token: the server generates its own keys and enrolls with one command</label>
+    <label class="check"><input type="radio" name="mode" value="bundle"{{if eq $d.Mode "bundle"}} checked{{end}}> Bundle to download and copy to the server, with the keys already inside</label>
   </fieldset>
   {{if $d.Release}}
   <fieldset class="choice">
-    <legend>Sistema del server, per il comando con il token</legend>
-    <label class="check"><input type="radio" name="system" value="deb"{{if eq $d.System "deb"}} checked{{end}}> Debian o Ubuntu: il comando installa anche il sensore {{$d.Release}}</label>
-    <label class="check"><input type="radio" name="system" value="rpm"{{if eq $d.System "rpm"}} checked{{end}}> RHEL, AlmaLinux, Rocky, Fedora o Amazon Linux: il comando installa anche il sensore {{$d.Release}}</label>
-    <label class="check"><input type="radio" name="system" value="installed"{{if eq $d.System "installed"}} checked{{end}}> Sensore già installato: solo la registrazione</label>
+    <legend>Server system, for the token command</legend>
+    <label class="check"><input type="radio" name="system" value="deb"{{if eq $d.System "deb"}} checked{{end}}> Debian or Ubuntu: the command also installs the sensor {{$d.Release}}</label>
+    <label class="check"><input type="radio" name="system" value="rpm"{{if eq $d.System "rpm"}} checked{{end}}> RHEL, AlmaLinux, Rocky, Fedora or Amazon Linux: the command also installs the sensor {{$d.Release}}</label>
+    <label class="check"><input type="radio" name="system" value="installed"{{if eq $d.System "installed"}} checked{{end}}> Sensor already installed: enrollment only</label>
   </fieldset>
   {{end}}
   {{if $d.Existing}}
-  <label class="check"><input type="checkbox" name="replace" value="yes" required> Registralo di nuovo: le chiavi attuali smettono di valere e la catena riparte da zero.</label>
+  <label class="check"><input type="checkbox" name="replace" value="yes" required> Enroll it again: the current keys stop working and the chain starts over.</label>
   {{end}}
-  <button class="primary" type="submit">Continua</button>
+  <button class="primary" type="submit">Continue</button>
 </form>
 <ol class="steps">
-  <li>Con il token, sul server basta un comando: il sensore genera chiave TLS e chiave di firma, verifica che il verificatore sia quello giusto con l'impronta della CA contenuta nel token, e scrive <span class="mono">/etc/tripwatch/bundle.json</span>. Il token vale un'ora e una volta sola.</li>
-  <li>Il pacchetto da scaricare contiene invece le chiavi private: si scarica una sola volta, va copiato in <span class="mono">/etc/tripwatch/bundle.json</span> con proprietario root e permessi <span class="mono">600</span>, e va trattato come una password.</li>
-  <li>Poi si avvia il sensore con <span class="mono">sudo systemctl enable --now tripwatch-sensor</span>: il primo battito arriva entro un minuto e il server compare nella panoramica.</li>
-  <li>Il sensore si collega a <span class="mono">{{$d.IngestURL}}</span>.</li>
+  <li>With the token, one command on the server is enough: the sensor generates a TLS key and a signing key, checks that the verifier is the right one with the CA fingerprint in the token, and writes <span class="mono">/etc/tripwatch/bundle.json</span>. The token is valid for one hour and once only.</li>
+  <li>The bundle instead contains the private keys: it downloads once, goes to <span class="mono">/etc/tripwatch/bundle.json</span> owned by root with mode <span class="mono">600</span>, and must be treated like a password.</li>
+  <li>Then start the sensor with <span class="mono">sudo systemctl enable --now tripwatch-sensor</span>: the first heartbeat arrives within a minute and the server shows up in the overview.</li>
+  <li>The sensor connects to <span class="mono">{{$d.IngestURL}}</span>.</li>
 </ol>
 </div>
 {{end}}

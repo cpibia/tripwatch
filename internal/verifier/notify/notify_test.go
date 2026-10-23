@@ -18,7 +18,7 @@ func TestCompose(t *testing.T) {
 		{ID: 7, HostID: "web-01", Severity: "critical", Title: "Secondo account root: svcadmin", Detail: "UID 0\nHome /var/lib/x"},
 		{ID: 8, HostID: "web-02", Severity: "high", Title: "Nuova chiave SSH"},
 	}, "https://tripwatch.example.com/")
-	if subject != "[tripwatch] 1 critici, 2 allarmi su 2 server" {
+	if subject != "[tripwatch] 1 critical, 2 alerts on 2 servers" {
 		t.Errorf("subject = %q", subject)
 	}
 	for _, want := range []string{"CRITICAL · web-01 · Secondo account root", "  UID 0\n  Home /var/lib/x", "https://tripwatch.example.com/alerts/7"} {
@@ -69,7 +69,7 @@ func TestRoundSendsOnceAndReportsFailures(t *testing.T) {
 	failing = false
 	n.Round(ctx)
 	n.Round(ctx)
-	if len(sent) != 1 || sent[0] != "[tripwatch] 1 critici, 1 allarmi su 1 server" {
+	if len(sent) != 1 || sent[0] != "[tripwatch] 1 critical, 1 alert on 1 server" {
 		t.Fatalf("sent = %v, want one message with the critical alert only", sent)
 	}
 	if open, _ := st.Alerts(ctx, store.AlertFilter{HostID: "verifier", Statuses: []string{store.StatusOpen}}); len(open) != 0 {

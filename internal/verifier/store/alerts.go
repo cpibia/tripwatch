@@ -131,8 +131,8 @@ func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error)
 			if inGroup >= MaxOpenPerGroup {
 				flood := floodPrefix + a.Severity + ":" + g
 				fresh, err := s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: flood, Severity: a.Severity, Kind: a.Kind,
-					Title:  clip("Molti allarmi della stessa regola: "+a.Title, MaxTitle),
-					Detail: "Il server ha già " + strconv.Itoa(inGroup) + " allarmi aperti di questa regola e gravità: i successivi sono raccolti qui. Ultimo arrivato:\n" + a.Detail,
+					Title:  clip("Many alerts of the same rule: "+a.Title, MaxTitle),
+					Detail: "The server already has " + strconv.Itoa(inGroup) + " open alerts of this rule and severity: the next ones are gathered here. Latest:\n" + a.Detail,
 				}, now)
 				// A serious aggregate that keeps growing is mailed again, at most once an hour,
 				// so what arrives after the first email is not silent.
@@ -149,8 +149,8 @@ func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error)
 				}
 				if open >= MaxOpenPerHost {
 					return s.Raise(ctx, Alert{HostID: a.HostID, Fingerprint: FloodFingerprint, Severity: "high", Kind: "verifier",
-						Title:  "Troppi allarmi aperti su questo server",
-						Detail: "Il server ha già " + strconv.Itoa(open) + " allarmi aperti: i nuovi di gravità media e bassa non vengono registrati finché non se ne chiudono (quelli alti e critici sì). Un server che produce così tante anomalie va esaminato direttamente. Ultimo scartato: " + a.Title,
+						Title:  "Too many alerts open on this server",
+						Detail: "The server already has " + strconv.Itoa(open) + " open alerts: new medium and low ones are not recorded until some are closed (high and critical ones are). A server producing this many anomalies needs a direct look. Latest dropped: " + a.Title,
 					}, now)
 				}
 			}

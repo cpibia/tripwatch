@@ -280,7 +280,7 @@ func TestEnrollWithToken(t *testing.T) {
 	for _, al := range alerts {
 		titles[al.Title] = al.Severity
 	}
-	if titles["Server registrato"] != "high" || titles["Token di registrazione usato due volte"] != "critical" {
+	if titles["Server enrolled"] != "high" || titles["Enrollment token used twice"] != "critical" {
 		t.Fatalf("alerts = %v", titles)
 	}
 
@@ -425,7 +425,7 @@ func TestSensorStartRaisesAnAlert(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := h.alerts()
-	if len(a) != 1 || a[0].Title != "Sensore avviato" || a[0].Severity != "high" || !strings.Contains(a[0].Detail, "1.2.0") {
+	if len(a) != 1 || a[0].Title != "Sensor started" || a[0].Severity != "high" || !strings.Contains(a[0].Detail, "1.2.0") {
 		t.Fatalf("alerts = %+v", a)
 	}
 }
@@ -574,7 +574,7 @@ func TestHeartbeatGapRaisesAnAlert(t *testing.T) {
 	if err := c.Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
 		t.Fatal(err)
 	}
-	if a := h.alerts(); len(a) != 1 || a[0].Title != "Battiti mancati" {
+	if a := h.alerts(); len(a) != 1 || a[0].Title != "Missed heartbeats" {
 		t.Fatalf("alerts = %+v", a)
 	}
 }
