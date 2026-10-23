@@ -6,7 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
-False positives seen on a real server, fixed.
+## [0.1.11] - 2026-10-23
+
+False positives seen on a real server, fixed. Update the verifier, then the sensors
+(`tripwatch-sensor -update`): some fixes need both. Alerts already open from the earlier rules
+stay open until closed by hand.
 
 ### Sensor
 
@@ -332,7 +336,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/cpibia/tripwatch/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/cpibia/tripwatch/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/cpibia/tripwatch/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/cpibia/tripwatch/compare/v0.1.7...v0.1.8
