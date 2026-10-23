@@ -559,18 +559,21 @@ is needed too, which closes them all.
 
 ### Interface
 
-- **Overview.** A control room board: everything is grey until something deviates. At the top
-  the counters (critical, silent, high, acknowledged, each with the age of the oldest); below, the
-  server table with deviating servers on top and the oldest first; then the alerts to handle,
-  without buttons in the rows. At the side (above the tables on smaller screens) the alert to look
-  at first, chosen by severity and then by kind (a silent sensor, then code planted in a web
-  application, then the rest), with its actions; clicking another alert (also from the Alerts
-  page) shows that one in the panel, with a link to its detail. Every severity has a shape as well as a color (diamond for silent, triangle critical,
+- **Overview.** An operations dashboard. At the top, a figure for each severity of open alerts
+  and for silent sensors, with what arrived in the last 24 hours, the age of the oldest and the
+  last 7 days' trend. Then the alerts raised over the last 24 hours or 7 days, stacked by
+  severity; the servers as cells with their worst alert, last heartbeat and snapshot; the open
+  alerts grouped by rule across servers, without buttons in the rows; the rules that raised most
+  alerts in the last 7 days, the unresolved alerts by server, and the sources and targets of the
+  attacks seen in the web server logs. Every figure comes from what the verifier holds. Every severity has a shape as well as a color (diamond for silent, triangle critical,
   square high, circle medium, hollow circle low), and a silent server is a present mark with a
   dashed row, not a dimmed row.
 - **Server.** State, every alert, the silences of the last 7 days with their duration, the last
   snapshots received, revocation.
-- **Alerts.** To handle, acknowledged, resolved. Every alert can be acknowledged and resolved;
+- **Alerts.** To handle, acknowledged, resolved. At the side (above the list on smaller screens)
+  the alert to look at first, chosen by severity and then by kind (a silent sensor, then code
+  planted in a web application, then the rest), with its actions; clicking another alert shows
+  that one in the panel, with a link to its detail. Every alert can be acknowledged and resolved;
   the detail shows the text collected from the server as data, without interpreting it. Alerts
   of the same rule, server and severity (one per file, request or process) are one row that opens
   onto them, each row showing the file or item that tells it apart, with actions that
@@ -587,7 +590,7 @@ is needed too, which closes them all.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 
-Light and dark theme (follows the system, or chosen from the menu), refreshes by itself every
+Dark theme by default, light or following the system from the menu; refreshes by itself every
 minute and works on a phone too. The mark in the menu, a tripwire cut in the middle, and the
 browser tab icon turn red while a critical alert is open; a verifier without email shows it as a
 warning in the menu. Fonts (IBM Plex) are embedded in the binary and served by the verifier. Pages run no inline scripts or styles (strict Content Security

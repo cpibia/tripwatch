@@ -25,6 +25,22 @@ verifier, so it is clear which of the two needs updating. Versions follow
   is the usual layout of release-based deploys, and its content is still scanned. A link leading
   anywhere else, or named like a script, is still reported.
 
+### Verifier
+
+- The overview is an operations dashboard, dark slate by default (light and system themes stay
+  in the menu):
+  - a strip of figures for open critical, high, medium and low alerts and silent sensors, each
+    with what arrived in the last 24 hours, the age of the oldest and the last 7 days' trend;
+  - alerts raised over the last 24 hours or 7 days, in columns stacked by severity;
+  - the servers as cells with their worst alert, heartbeat and snapshot, silent ones hatched;
+  - open alerts grouped by rule across servers, the first 10 groups with a link to the rest;
+  - top rules of the last 7 days, unresolved alerts by server, and the sources and targets of
+    the attacks seen in the web server logs.
+
+  Every figure comes from the alerts and hosts the verifier holds; charts are SVG drawn by the
+  server, with no script. The side panel stays on the Alerts page.
+- Closed groups of alerts stayed open on narrow screens; they now stay closed.
+
 ## [0.1.4] - 2026-10-23
 
 Update the verifier and the sensors.
