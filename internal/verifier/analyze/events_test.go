@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +38,8 @@ func TestEvaluateEvents(t *testing.T) {
 		{"web shell", watch.Event{Class: watch.ClassExec, Reason: watch.ReasonWebShell, Exe: "/usr/bin/bash", User: &uid}, true, "webshell critical"},
 		{"exec from tmp", watch.Event{Class: watch.ClassExec, Reason: watch.ReasonUnusualPath, Exe: "/tmp/x"}, false, "unusual-exec high"},
 		{"sudoers", watch.Event{Class: watch.ClassPrivilege, Op: watch.OpCreate, Path: "/etc/sudoers.d/backdoor"}, false, "privilege-config critical"},
-		{"sudoers while upgrading", watch.Event{Class: watch.ClassPrivilege, Op: watch.OpWrite, Path: "/etc/sudoers"}, true, "privilege-config high"},
+		{"sudoers while upgrading", watch.Event{Class: watch.ClassPrivilege, Op: watch.OpWrite, Path: "/etc/sudoers"}, true, "privilege-config critical"},
+		{"unit while upgrading", watch.Event{Class: watch.ClassService, Op: watch.OpCreate, Path: "/etc/systemd/system/x.service"}, true, "service medium"},
 		{"preload", watch.Event{Class: watch.ClassHook, Op: watch.OpWrite, Path: "/etc/ld.so.preload"}, false, "preload critical"},
 		{"home rc", watch.Event{Class: watch.ClassHook, Op: watch.OpWrite, Path: "/home/alice/.bashrc"}, false, "hook medium"},
 		{"chmod sudoers group writable", watch.Event{Class: watch.ClassPrivilege, Op: watch.OpAttrib, Path: "/etc/sudoers", Mode: "-rw-rw-r--"}, false, "privilege-config critical"},
@@ -55,7 +57,8 @@ func TestEvaluateEvents(t *testing.T) {
 			got := ""
 			if fs := EvaluateEvents([]watch.Event{tc.event}, tc.packageManager, history); len(fs) == 1 {
 				f := fs[0]
-				rule := f.Fingerprint[len(EventKind)+1:]
+				fp, _, _ := strings.Cut(f.Fingerprint, " sha256:")
+				rule := fp[len(EventKind)+1:]
 				rule = rule[:len(rule)-len(tc.event.Path)-len(tc.event.Exe)-1]
 				got = rule + " " + f.Severity
 				if f.Kind != EventKind || f.Title == "" || f.Detail == "" {

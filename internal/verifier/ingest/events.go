@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/protocol"
@@ -47,11 +48,19 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 		events = append(events, ev)
 		rows = append(rows, store.Event{HostID: host, Seq: e.Sequence, At: ev.At, Class: ev.Class, Op: ev.Op, Path: subject, PackageManager: b.PackageManager, Data: raw})
 	}
-	stored, err := s.Store.AddEvents(ctx, rows, now)
+	kept, err := s.Store.AddEvents(ctx, rows, now)
 	if err != nil {
 		s.Log.Error("store events", "host", host, "err", err)
 	}
-	if stored < len(rows) && err == nil {
+	// Events of this batch not stored still count for the rules: a script dropped and removed in
+	// the same batch is judged even past the quota.
+	unstored := map[string][]watch.Event{}
+	for i, ev := range events {
+		if err != nil || !kept[i] {
+			unstored[rows[i].Path] = append(unstored[rows[i].Path], ev)
+		}
+	}
+	if err == nil && len(unstored) > 0 {
 		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:quota", Severity: "high", Kind: "sensor",
 			Title:  "Real-time events not kept: daily quota exceeded",
 			Detail: fmt.Sprintf("The server reported more than %d events in 24 hours. The ones over the quota still raise alerts but are not kept for the timeline: an intact sensor on a normal server does not report that many.", store.MaxEventsPerDay),
@@ -59,10 +68,7 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 	}
 
 	history := func(path string, since time.Time) []watch.Event {
-		past, err := s.Store.PathEvents(ctx, host, path, since)
-		if err != nil {
-			return nil
-		}
+		past, _ := s.Store.PathEvents(ctx, host, path, since)
 		out := make([]watch.Event, 0, len(past))
 		for _, p := range past {
 			var ev watch.Event
@@ -71,6 +77,12 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 				out = append(out, ev)
 			}
 		}
+		for _, ev := range unstored[path] {
+			if !ev.At.Before(since) {
+				out = append(out, ev)
+			}
+		}
+		slices.SortStableFunc(out, func(a, b watch.Event) int { return a.At.Compare(b.At) })
 		return out
 	}
 	findings := analyze.EvaluateEvents(events, b.PackageManager, history)
@@ -85,6 +97,12 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost", Severity: "high", Kind: "sensor",
 			Title:  "Real-time events lost",
 			Detail: fmt.Sprintf("The sensor lost %d events: they came faster than it could read or send them. Flooding the watched directories is a way to hide one change among many; the next snapshot still shows the state they left.", b.Dropped),
+		}, now)
+	}
+	if b.DroppedSystem > 0 {
+		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost-system", Severity: "high", Kind: "sensor",
+			Title:  "Real-time events on system paths lost",
+			Detail: fmt.Sprintf("Among the lost events, %d were changes to accounts, SSH, privileges, services, scheduled tasks or start-up scripts: the sensor's queue was full of them. Check those places on the server; the next snapshot shows their state.", b.DroppedSystem),
 		}, now)
 	}
 	if b.Skipped > 0 {

@@ -309,5 +309,14 @@ func attrsIn(dir, name string) (Attrs, error) {
 		return Attrs{}, err
 	}
 	defer func() { _ = f.Close() }()
+	// Only regular files and directories are reopened: a device reached through a link is never
+	// opened, whatever the path showed a moment before.
+	var st syscall.Stat_t
+	if err := syscall.Fstat(int(f.Fd()), &st); err != nil { //nolint:gosec // a descriptor fits in int
+		return Attrs{}, err
+	}
+	if m := st.Mode & syscall.S_IFMT; m != syscall.S_IFREG && m != syscall.S_IFDIR {
+		return Attrs{}, nil
+	}
 	return ReadAttrs("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
 }

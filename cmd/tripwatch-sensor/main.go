@@ -349,6 +349,7 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 		}
 		select {
 		case <-ctx.Done():
+			s.realtime.drained()
 			stopping(log, client, stateDir)
 			return nil
 		case <-time.After(interval):

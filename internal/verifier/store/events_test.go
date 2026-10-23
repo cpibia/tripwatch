@@ -6,7 +6,18 @@ import (
 	"time"
 )
 
+func stored(kept []bool) int {
+	n := 0
+	for _, k := range kept {
+		if k {
+			n++
+		}
+	}
+	return n
+}
+
 // Past the daily quota events are not stored, so the first ones stay; past the retention they go.
+// Noise in the uploads has a budget of its own and leaves root's changes theirs.
 func TestEventsQuotaAndRetention(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
@@ -17,14 +28,18 @@ func TestEventsQuotaAndRetention(t *testing.T) {
 		}
 		return out
 	}
-	if n, err := s.AddEvents(ctx, batch(MaxEventsPerDay-1, t0), t0); err != nil || n != MaxEventsPerDay-1 {
-		t.Fatalf("stored %d, %v", n, err)
+	if k, err := s.AddEvents(ctx, batch(MaxEventsPerDay-1, t0), t0); err != nil || stored(k) != MaxEventsPerDay-1 {
+		t.Fatalf("stored %d, %v", stored(k), err)
 	}
-	if n, err := s.AddEvents(ctx, batch(5, t0), t0.Add(time.Hour)); err != nil || n != 1 {
-		t.Fatalf("over the quota: stored %d, %v", n, err)
+	if k, err := s.AddEvents(ctx, batch(5, t0), t0.Add(time.Hour)); err != nil || stored(k) != 1 {
+		t.Fatalf("over the quota: stored %d, %v", stored(k), err)
 	}
-	if n, _ := s.AddEvents(ctx, batch(2, t0.Add(25*time.Hour)), t0.Add(25*time.Hour)); n != 2 {
-		t.Fatalf("a day later: stored %d", n)
+	root := []Event{{HostID: "web-01", Seq: 2, At: t0, Class: "ssh", Op: "create", Path: "/root/.ssh/authorized_keys", Data: []byte(`{}`)}}
+	if k, _ := s.AddEvents(ctx, root, t0.Add(time.Hour)); !k[0] {
+		t.Fatal("upload noise used up the budget of root's changes")
+	}
+	if k, _ := s.AddEvents(ctx, batch(2, t0.Add(25*time.Hour)), t0.Add(25*time.Hour)); stored(k) != 2 {
+		t.Fatalf("a day later: stored %d", stored(k))
 	}
 	if _, err := s.AddEvents(ctx, batch(1, t0.Add(EventRetention+2*time.Hour)), t0.Add(EventRetention+2*time.Hour)); err != nil {
 		t.Fatal(err)

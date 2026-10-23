@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,5 +141,37 @@ func TestFilesDoNotFollowLinks(t *testing.T) {
 	got := collect(t, ch, 1)
 	if len(got) == 0 || got[0].SHA256 != "" || got[0].Mode == "" {
 		t.Fatalf("link event = %+v", got)
+	}
+}
+
+// What the bounds leave unwatched is said, not silently skipped; a terminal reached through a
+// link in the uploads is never opened.
+func TestFilesReportGapsAndSkipDevices(t *testing.T) {
+	root := t.TempDir()
+	deep := filepath.Join(root, "srv/u/a/b/c/d/e/f")
+	if err := os.MkdirAll(deep, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set([]Target{{Dir: "/srv/u", Class: ClassUpload, Recursive: true}})
+	found := false
+	for _, issue := range f.Issues() {
+		found = found || strings.Contains(issue, "deeper than")
+	}
+	if !found {
+		t.Fatalf("depth gap not reported: %v", f.Issues())
+	}
+	if err := os.Symlink("/dev/tty", filepath.Join(root, "srv/u/x.php")); err != nil {
+		t.Fatal(err)
+	}
+	e := f.describe(ClassUpload, OpCreate, "/srv/u/x.php", false)
+	if e.SHA256 != "" || !strings.HasPrefix(e.Mode, "L") {
+		t.Fatalf("a link was followed: %+v", e)
 	}
 }

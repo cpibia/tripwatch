@@ -5,8 +5,10 @@ package watch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +44,12 @@ type Files struct {
 	byWD   map[int]*watched
 	byDir  map[string]int
 	issues collector.Issues
+	// gaps are the places left unwatched by the bounds since the sensor started, kept across
+	// Set: a directory too deep or too full stays a gap until someone looks at it.
+	gaps []string
+	// hashed counts the bytes hashed in the current second, against hashBudget.
+	hashed   int64
+	hashedAt time.Time
 	// Dropped counts events lost because the consumer did not keep up.
 	Dropped atomic.Int64
 }
@@ -62,7 +70,22 @@ func (f *Files) Close() error { return unix.Close(f.fd) }
 func (f *Files) Issues() collector.Issues {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append(collector.Issues(nil), f.issues...)
+	return append(append(collector.Issues(nil), f.issues...), f.gaps...)
+}
+
+// maxGaps bounds the unwatched places remembered: past it, the count says enough.
+const maxGaps = 20
+
+// gap records a place the bounds leave unwatched. Callers hold f.mu.
+func (f *Files) gap(msg string) {
+	if slices.Contains(f.gaps, msg) {
+		return
+	}
+	if len(f.gaps) == maxGaps {
+		f.gaps[maxGaps-1] = "watch: more places are not watched, past the bounds"
+		return
+	}
+	f.gaps = append(f.gaps, msg)
 }
 
 // Watches is how many directories are under watch.
@@ -99,6 +122,7 @@ func (f *Files) Set(targets []Target) {
 // expand collects dir for target t and, for a recursive target, its subdirectories.
 func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target, depths map[string]int) {
 	if len(keep) >= MaxWatches {
+		f.gap(fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
 		return
 	}
 	info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
@@ -107,7 +131,7 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 	}
 	keep[dir] = append(keep[dir], t)
 	depths[dir] = depth
-	if !t.Recursive || depth >= MaxDepth {
+	if !t.Recursive {
 		return
 	}
 	entries, err := fs.ReadDir(f.src.FS, collector.Rel(dir))
@@ -115,15 +139,21 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 		return
 	}
 	for _, e := range entries {
-		if e.IsDir() {
-			f.expand(t, path.Join(dir, e.Name()), depth+1, keep, depths)
+		if !e.IsDir() {
+			continue
 		}
+		if depth >= MaxDepth {
+			f.gap(fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, MaxDepth, t.Dir))
+			break
+		}
+		f.expand(t, path.Join(dir, e.Name()), depth+1, keep, depths)
 	}
 }
 
 // add places or refreshes the watch on dir. Callers hold f.mu.
 func (f *Files) add(dir string, targets []Target, depth int) {
 	if _, ok := f.byDir[dir]; !ok && len(f.byWD) >= MaxWatches {
+		f.gap(fmt.Sprintf("watch: more than %d directories to watch: %s and others are not watched", MaxWatches, dir))
 		return
 	}
 	wd, err := unix.InotifyAddWatch(f.fd, f.abs(dir), watchMask)
@@ -233,6 +263,9 @@ func (f *Files) event(wd int, mask uint32, name string) {
 	}
 }
 
+// maxNewEntries bounds what is reported of a directory found already filled when it is created.
+const maxNewEntries = 64
+
 // watchNew watches a directory created under a recursive target, then reports what is already
 // in it: a file can land there before the watch exists.
 func (f *Files) watchNew(dir string, t Target, depth int) {
@@ -244,7 +277,10 @@ func (f *Files) watchNew(dir string, t Target, depth int) {
 		return
 	}
 	for i, e := range entries {
-		if i == 64 {
+		if i == maxNewEntries {
+			f.mu.Lock()
+			f.gap(fmt.Sprintf("watch: %s held more than %d entries when it was created: the rest were not reported", dir, maxNewEntries))
+			f.mu.Unlock()
 			break
 		}
 		if !t.wants(e.Name()) {
@@ -253,32 +289,66 @@ func (f *Files) watchNew(dir string, t Target, depth int) {
 		child := path.Join(dir, e.Name())
 		f.send(f.describe(t.Class, OpCreate, child, e.IsDir()))
 		// mkdir -p makes the whole chain before the first watch is placed.
-		if e.IsDir() && t.Recursive && depth < MaxDepth {
+		if e.IsDir() && t.Recursive {
+			if depth >= MaxDepth {
+				f.mu.Lock()
+				f.gap(fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, MaxDepth, t.Dir))
+				f.mu.Unlock()
+				continue
+			}
 			f.watchNew(child, t, depth+1)
 		}
 	}
 }
 
-// describe builds the event, with what a regular file holds after the change.
+// Hashing bounds: events are described on the goroutine that reads the kernel's queue, so a
+// large file touched in a loop must not stall it. Larger files, and any once the second's budget
+// is spent, are reported with their metadata only.
+const (
+	maxEventHash = 1 << 20
+	hashBudget   = 16 << 20
+)
+
+// describe builds the event, with what a regular file holds after the change. A link is
+// reported as a link and never followed: one planted in an upload directory must not make the
+// sensor read, or open, what it points to.
 func (f *Files) describe(class, op, p string, isDir bool) Event {
 	e := Event{At: f.now().UTC(), Class: class, Op: op, Path: p, Dir: isDir}
 	if op == OpDelete || isDir {
 		return e
 	}
-	// A link is reported as a link and never followed: one planted in an upload directory must
-	// not make the sensor read the file it points to.
-	if info, err := fs.Lstat(f.src.FS, collector.Rel(p)); err != nil || info.Mode()&fs.ModeSymlink != 0 {
-		if err == nil {
-			e.Mode = info.Mode().String()
-		}
+	info, err := fs.Lstat(f.src.FS, collector.Rel(p))
+	if err != nil {
 		return e
 	}
-	file, err := collector.Describe(f.src, collector.Rel(p))
+	meta := collector.Metadata(collector.Rel(p), info)
+	e.Mode, e.UID = meta.Mode, meta.UID
+	if !info.Mode().IsRegular() {
+		return e
+	}
+	e.Size = info.Size()
+	if info.Size() > maxEventHash || !f.spend(info.Size()) {
+		return e
+	}
+	file, err := collector.DescribeNoFollow(f.src, collector.Rel(p))
 	if err != nil {
 		return e
 	}
 	e.Size, e.SHA256, e.UID, e.Mode = file.Size, file.SHA256, file.UID, file.Mode
 	return e
+}
+
+// spend takes n bytes from this second's hashing budget.
+func (f *Files) spend(n int64) bool {
+	now := f.now()
+	if now.Sub(f.hashedAt) >= time.Second {
+		f.hashed, f.hashedAt = 0, now
+	}
+	if f.hashed+n > hashBudget {
+		return false
+	}
+	f.hashed += n
+	return true
 }
 
 func (f *Files) send(e Event) {

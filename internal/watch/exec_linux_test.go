@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -30,6 +32,20 @@ func TestExecsReportStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = x.Close() }()
+	// The capability is given up once subscribed (the sensor is built without cgo, which
+	// AllThreadsSyscall needs; CI runs this test the same way).
+	if x.CapDropErr != nil && !errors.Is(x.CapDropErr, syscall.ENOTSUP) {
+		t.Fatalf("CAP_NET_ADMIN not dropped: %v", x.CapDropErr)
+	}
+	if status, err := os.ReadFile("/proc/self/status"); err == nil && x.CapDropErr == nil {
+		for _, line := range strings.Split(string(status), "\n") {
+			if v, ok := strings.CutPrefix(line, "CapEff:"); ok {
+				if eff, err := strconv.ParseUint(strings.TrimSpace(v), 16, 64); err == nil && eff&(1<<unix.CAP_NET_ADMIN) != 0 {
+					t.Fatal("CAP_NET_ADMIN still effective after subscribing")
+				}
+			}
+		}
+	}
 	x.SetWebUsers([]int{33})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

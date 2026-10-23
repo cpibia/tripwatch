@@ -329,12 +329,21 @@ root gained through an unknown set-user-ID program, a change to who may become r
 preloading are critical. A script or an `.htaccess` landing in an upload directory, new SSH keys,
 services, scheduled tasks and start-up scripts are high. What a snapshot an hour later could not
 show is critical too: a script that appears in the uploads and is gone within 15 minutes, an SSH
-key file written and removed, or changed and put back. While a package manager runs, changes to
-system configuration are one severity lower; process starts and uploads never are. The server's
-page lists its latest events and says whether the watchers run.
+key file written and removed, or changed and put back. While a package manager runs (a process
+of root holds the lock of dpkg, rpm or apk: a process merely named `dpkg` does not count),
+changes to services, scheduled tasks and start-up scripts are one severity lower; changes to who
+may become root, to accounts, to SSH keys and to library preloading never are, nor are process
+starts and uploads. The server's page lists its latest events and says whether the watchers run.
+
+The watchers are bounded against the users they guard against: files are hashed only up to 1 MB
+and 16 MB a second, larger ones are reported with their metadata; when the queue is full, noise
+in the uploads is dropped before any change to a system path, and losing one of those is an
+alert of its own; directories left unwatched by the depth or count limits are listed in the
+snapshot; and what is queued when the sensor stops is sent before its stop event.
 
 The watchers need Linux and, for process events, `CAP_NET_ADMIN` in the host's network namespace,
-which the systemd unit grants. Where either is missing the sensor goes on with snapshots, and each
+which the systemd unit grants. The sensor needs it only to subscribe: it gives it up right after,
+on every thread, and a snapshot says so if it could not. Where either is missing the sensor goes on with snapshots, and each
 snapshot tells the verifier which watchers are off and why. To see what they report on a machine,
 without a verifier:
 

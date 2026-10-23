@@ -7,8 +7,10 @@ import (
 )
 
 // Events reported in real time are kept for EventRetention, and at most MaxEventsPerDay of one
-// host in 24 hours: beyond that they are counted, not stored, so a host flooding events cannot
-// fill the disk, and what it stored first, the start of an intrusion, is never pushed out.
+// host in 24 hours in each of two budgets: one for what the web server's user can produce at
+// will (uploads and process starts), one for system paths only root can change. Beyond that they
+// are counted, not stored, so a host flooding events cannot fill the disk, what it stored first
+// is never pushed out, and noise in the uploads never uses up the budget of root's changes.
 const (
 	EventRetention  = 7 * 24 * time.Hour
 	MaxEventsPerDay = 20000
@@ -30,29 +32,40 @@ type Event struct {
 	Data           json.RawMessage
 }
 
+// noisyClasses are the event classes the web server's user can produce; they have a budget of
+// their own.
+const noisyClasses = `'upload', 'exec'`
+
+func noisy(class string) bool { return class == "upload" || class == "exec" }
+
 // AddEvents stores the events of one envelope and drops those of the host past their retention.
-// It returns how many it stored: fewer than given once the host is over its daily quota.
-func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) (int, error) {
+// It returns which events it stored: not those over the host's daily quota for their kind.
+func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) ([]bool, error) {
+	kept := make([]bool, len(events))
 	if len(events) == 0 {
-		return 0, nil
+		return kept, nil
 	}
 	host := events[0].HostID
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE host_id = ? AND received_at < ?`, host, now.Add(-EventRetention).Unix()); err != nil {
-		return 0, err
+		return nil, err
 	}
-	var today int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE host_id = ? AND received_at >= ?`, host, now.Add(-24*time.Hour).Unix()).Scan(&today); err != nil {
-		return 0, err
+	var noise, system int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(class IN (`+noisyClasses+`)), 0), COALESCE(SUM(class NOT IN (`+noisyClasses+`)), 0)
+		FROM events WHERE host_id = ? AND received_at >= ?`, host, now.Add(-24*time.Hour).Unix()).Scan(&noise, &system); err != nil {
+		return nil, err
 	}
-	stored := 0
-	for _, e := range events {
-		if today+stored >= MaxEventsPerDay {
-			break
+	for i, e := range events {
+		count := &system
+		if noisy(e.Class) {
+			count = &noise
+		}
+		if *count >= MaxEventsPerDay {
+			continue
 		}
 		data := e.Data
 		if len(data) > maxEventData {
@@ -60,11 +73,12 @@ func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) (i
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO events (host_id, seq, at, received_at, class, op, path, package_manager, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			host, e.Seq, e.At.Unix(), now.Unix(), clip(e.Class, 32), clip(e.Op, 32), clip(e.Path, 4096), e.PackageManager, string(data)); err != nil {
-			return 0, err
+			return nil, err
 		}
-		stored++
+		*count++
+		kept[i] = true
 	}
-	return stored, tx.Commit()
+	return kept, tx.Commit()
 }
 
 // PathEvents returns the events of a host on path since a time, oldest first.

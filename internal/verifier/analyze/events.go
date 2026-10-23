@@ -24,8 +24,7 @@ const TransientWindow = 15 * time.Minute
 type History func(path string, since time.Time) []watch.Event
 
 // EvaluateEvents judges one batch of events. A package manager running when the batch was sent
-// lowers the severity of changes to system configuration, which packages make all the time;
-// never that of process starts or uploads, which no package explains.
+// lowers the severity of the changes packages make all the time (see lowered).
 func EvaluateEvents(events []watch.Event, packageManager bool, history History) []Finding {
 	var out []Finding
 	for _, e := range events {
@@ -33,13 +32,32 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 		if !ok {
 			continue
 		}
-		if packageManager && e.Class != watch.ClassExec && e.Class != watch.ClassUpload {
+		// The content is part of the fingerprint: an alert acknowledged for one content must
+		// not absorb a different change to the same file later.
+		if e.SHA256 != "" && !strings.Contains(f.Fingerprint, "-transient:") {
+			f.Fingerprint += " sha256:" + e.SHA256[:min(16, len(e.SHA256))]
+		}
+		if packageManager && lowered(e) {
 			f.Severity = lower(f.Severity)
 			f.Detail += " A package manager was running at the time: an installation or an upgrade may have made this change."
 		}
 		out = append(out, f)
 	}
 	return out
+}
+
+// lowered says whether a package manager running explains an event well enough to lower its
+// severity: packages install services, scheduled tasks and start-up scripts all the time. Never
+// who may become root, the accounts, SSH keys or library preloading, which a package rarely
+// touches and an intruder always does; nor process starts or uploads, which no package explains.
+func lowered(e watch.Event) bool {
+	switch e.Class {
+	case watch.ClassService, watch.ClassSchedule:
+		return true
+	case watch.ClassHook:
+		return path.Base(e.Path) != "ld.so.preload"
+	}
+	return false
 }
 
 func judgeEvent(e watch.Event, history History) (Finding, bool) {

@@ -91,6 +91,16 @@ func Describe(src Source, name string) (File, error) {
 	return describeInfo(src, name, info)
 }
 
+// DescribeNoFollow is Describe without following a final symlink: a link is described as a link
+// and what it points to is never opened.
+func DescribeNoFollow(src Source, name string) (File, error) {
+	info, err := fs.Lstat(src.FS, name)
+	if err != nil {
+		return File{}, err
+	}
+	return describeInfo(src, name, info)
+}
+
 // DescribeEntry is Describe for an entry found while walking, without following symlinks.
 func DescribeEntry(src Source, name string, d fs.DirEntry) (File, error) {
 	info, err := d.Info()
@@ -98,6 +108,13 @@ func DescribeEntry(src Source, name string, d fs.DirEntry) (File, error) {
 		return File{}, err
 	}
 	return describeInfo(src, name, info)
+}
+
+// Metadata describes a file from its FileInfo alone, without opening it.
+func Metadata(name string, info fs.FileInfo) File {
+	f := File{Path: "/" + name, Mode: info.Mode().String(), Size: info.Size(), ModTime: info.ModTime().UTC()}
+	f.UID, f.GID = owner(info)
+	return f
 }
 
 func describeInfo(src Source, name string, info fs.FileInfo) (File, error) {
@@ -109,7 +126,7 @@ func describeInfo(src Source, name string, info fs.FileInfo) (File, error) {
 	}
 	f.UID, f.GID = owner(info)
 
-	if src.Attrs != nil {
+	if src.Attrs != nil && (info.Mode().IsRegular() || info.IsDir()) {
 		if attrs, err := src.Attrs(name); err == nil {
 			f.Attrs = attrs
 		}

@@ -23,6 +23,8 @@ type realtime struct {
 	execs  *watch.Execs
 	mu     sync.Mutex
 	issues []string
+	// sent is closed once the batcher has sent what was queued at the stop.
+	sent chan struct{}
 }
 
 // startRealtime starts the watchers; send gets each batch and returns an error only when the
@@ -43,6 +45,9 @@ func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(c
 		r.fail("processes", err)
 		log.Warn("process starts are seen only in snapshots", "err", err)
 	} else {
+		if r.execs.CapDropErr != nil {
+			r.fail("processes", errors.New("CAP_NET_ADMIN could not be given up after subscribing: "+r.execs.CapDropErr.Error()))
+		}
 		go r.run(ctx, log, "processes", r.execs.Run)
 	}
 	if r.files == nil && r.execs == nil {
@@ -53,9 +58,23 @@ func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(c
 		Send:           send,
 		Lost:           r.lost,
 		PackageManager: func() bool { return watch.PackageManagerRunning(src.FS) },
+		Done:           make(chan struct{}),
 	}
+	r.sent = b.Done
 	go b.Run(ctx)
 	return r
+}
+
+// drained waits, within a bound, for the last events to go out: the stop event has to follow
+// them in the chain.
+func (r *realtime) drained() {
+	if r == nil || r.sent == nil {
+		return
+	}
+	select {
+	case <-r.sent:
+	case <-time.After(10 * time.Second):
+	}
 }
 
 // sendEvents delivers a batch as an event envelope. A batch sealed but not delivered goes out

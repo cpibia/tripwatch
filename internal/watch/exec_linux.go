@@ -10,7 +10,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 
@@ -46,6 +48,8 @@ type Execs struct {
 	// inspected because more started than MaxInspections in a second.
 	Dropped atomic.Int64
 	Skipped atomic.Int64
+	// CapDropErr says why CAP_NET_ADMIN could not be given up after subscribing, if it could not.
+	CapDropErr error
 }
 
 // NewExecs subscribes to process events. It needs CAP_NET_ADMIN and the initial network
@@ -71,7 +75,32 @@ func NewExecs(src collector.Source, out chan<- Event) (*Execs, error) {
 		_ = unix.Close(fd)
 		return nil, err
 	}
-	return &Execs{src: src, out: out, now: time.Now, fd: fd, webUsers: map[int]bool{}}, nil
+	x := &Execs{src: src, out: out, now: time.Now, fd: fd, webUsers: map[int]bool{}}
+	x.CapDropErr = dropNetAdmin()
+	return x, nil
+}
+
+// dropNetAdmin gives up CAP_NET_ADMIN once the subscription exists: receiving needs no
+// capability, and a sensor reading hostile input should not keep the power to reconfigure the
+// network. Capabilities are per thread, so the change is applied to every thread of the process.
+func dropNetAdmin() error {
+	hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	var data [2]unix.CapUserData
+	if err := unix.Capget(&hdr, &data[0]); err != nil {
+		return err
+	}
+	const bit = uint32(1) << unix.CAP_NET_ADMIN
+	if data[0].Effective&bit == 0 && data[0].Permitted&bit == 0 {
+		return nil
+	}
+	data[0].Effective &^= bit
+	data[0].Permitted &^= bit
+	data[0].Inheritable &^= bit
+	//nolint:gosec // capset takes pointers to the header and the two data words
+	if _, _, errno := syscall.AllThreadsSyscall(unix.SYS_CAPSET, uintptr(unsafe.Pointer(&hdr)), uintptr(unsafe.Pointer(&data[0])), 0); errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 // Close stops the subscription.

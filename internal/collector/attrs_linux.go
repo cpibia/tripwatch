@@ -29,8 +29,9 @@ func ReadAttrs(path string) (Attrs, error) {
 
 	attrs.ACL, attrs.ACLWrite = readACL(path)
 
-	// O_NONBLOCK keeps a FIFO or device from blocking the open.
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	// O_NONBLOCK keeps a FIFO or device from blocking the open; O_NOCTTY keeps a terminal from
+	// becoming the sensor's controlling terminal, whose owner could then signal it to death.
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return attrs, err
 	}

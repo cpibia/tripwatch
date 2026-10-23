@@ -25,8 +25,9 @@ func (*Files) Run(ctx context.Context) error { <-ctx.Done(); return nil }
 
 // Execs is a stand-in outside Linux, where the process connector does not exist.
 type Execs struct {
-	Dropped atomic.Int64
-	Skipped atomic.Int64
+	Dropped    atomic.Int64
+	Skipped    atomic.Int64
+	CapDropErr error
 }
 
 func NewExecs(collector.Source, chan<- Event) (*Execs, error) { return nil, ErrUnsupported }

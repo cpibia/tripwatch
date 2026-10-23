@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -100,17 +101,69 @@ func TestBatcherBoundsBatchesAndQueue(t *testing.T) {
 	}
 }
 
+// A package manager counts only when a process of root holds its lock: a process merely named
+// dpkg does not.
 func TestPackageManagerRunning(t *testing.T) {
+	saved := lockIdentity
+	defer func() { lockIdentity = saved }()
+	lockIdentity = func(fs.FileInfo) (uint32, string, bool) { return 0, "1312", true }
 	fsys := fstest.MapFS{
-		"proc/1/comm":    {Data: []byte("systemd\n")},
-		"proc/812/comm":  {Data: []byte("nginx\n")},
-		"proc/self/comm": {Data: []byte("dpkg\n")},
+		"var/lib/dpkg/lock-frontend": {Mode: 0o640},
+		"proc/4242/comm":             {Data: []byte("dpkg\n")},
+		"proc/4242/status":           {Data: []byte("Name:\tdpkg\nUid:\t33\t33\t33\t33\n")},
+		"proc/locks":                 {Data: []byte("1: POSIX  ADVISORY  WRITE 4242 08:01:1312 0 EOF\n")},
 	}
 	if PackageManagerRunning(fsys) {
-		t.Fatal("no package manager runs")
+		t.Fatal("a lock held by the web user's process counted")
 	}
-	fsys["proc/4242/comm"] = &fstest.MapFile{Data: []byte("dpkg\n")}
+	fsys["proc/4242/status"] = &fstest.MapFile{Data: []byte("Name:\tdpkg\nUid:\t0\t0\t0\t0\n")}
 	if !PackageManagerRunning(fsys) {
-		t.Fatal("dpkg runs")
+		t.Fatal("root holding dpkg's lock did not count")
+	}
+	fsys["var/lib/dpkg/lock-frontend"] = &fstest.MapFile{Mode: 0o666}
+	if PackageManagerRunning(fsys) {
+		t.Fatal("a lock file anyone can write counted")
+	}
+}
+
+// A full queue lets upload noise go before a change to a system path, and says when a system
+// event had to go anyway.
+func TestBatcherKeepsSystemEventsOverNoise(t *testing.T) {
+	b := &Batcher{}
+	b.add(Event{Class: ClassSSH, Op: OpWrite, Path: "/root/.ssh/authorized_keys"})
+	for i := 0; i < MaxQueued+5; i++ {
+		b.add(Event{Class: ClassUpload, Op: OpCreate, Path: "/srv/u/cat.jpg"})
+	}
+	batch, _ := b.next()
+	if !strings.Contains(string(batch.Events[0]), "authorized_keys") || batch.Dropped != 6 || batch.DroppedSystem != 0 {
+		t.Fatalf("the system event was pushed out: dropped %d, system %d", batch.Dropped, batch.DroppedSystem)
+	}
+	b = &Batcher{}
+	for i := 0; i < MaxQueued+2; i++ {
+		b.add(Event{Class: ClassService, Op: OpCreate, Path: "/etc/systemd/system/x.service"})
+	}
+	if batch, _ := b.next(); batch.DroppedSystem != 2 {
+		t.Fatalf("system events lost silently: %+v", batch.DroppedSystem)
+	}
+}
+
+// What is queued when the sensor stops is still sent, with a deadline of its own.
+func TestBatcherFlushesOnStop(t *testing.T) {
+	in := make(chan Event, 4)
+	var sent [][]byte
+	b := &Batcher{In: in, Done: make(chan struct{}), Send: func(ctx context.Context, p []byte) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		sent = append(sent, p)
+		return nil
+	}}
+	in <- Event{Class: ClassPrivilege, Op: OpCreate, Path: "/etc/sudoers.d/x"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b.Run(ctx)
+	<-b.Done
+	if len(sent) != 1 || !strings.Contains(string(sent[0]), "sudoers.d") {
+		t.Fatalf("sent %d batches at stop", len(sent))
 	}
 }

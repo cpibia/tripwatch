@@ -24,6 +24,15 @@ the packages install the new unit; a unit copied by hand has to be replaced.
   of what was lost and whether a package manager was running; they wait in a bounded queue while
   the verifier is unreachable. Each snapshot says whether the watchers run, and why not.
 - `tripwatch-sensor -watch-only` prints what the watchers report, without a verifier.
+- Hardening of the watchers after a security review: a link in a watched directory is never
+  followed, and no device is ever opened while reading file attributes (`O_NOCTTY` everywhere,
+  attributes read only from regular files and directories), so a terminal planted by the web
+  server's user can no longer become the sensor's controlling terminal; hashing is bounded to
+  files up to 1 MB and 16 MB a second; a package manager is recognised by a lock only root can
+  hold, not by a process name; upload noise is dropped before system events when the queue is
+  full; what is queued at a stop is sent before the stop event; directories left unwatched by
+  the bounds are reported; `CAP_NET_ADMIN` is given up right after subscribing to process
+  events.
 - A new `kernel` collector: modules from both of the kernel's lists with their place in the
   module tree, taint and lockdown, processes hidden from `/proc`'s listing (every PID the kernel
   may have handed out is probed, within ten seconds), eBPF programs held by processes, pinned
@@ -38,15 +47,19 @@ the packages install the new unit; a unit copied by hand has to be replaced.
 
 ### Verifier
 
-- Events are kept for seven days, at most 20,000 a server in 24 hours, and judged at once.
+- Events are kept for seven days, at most 20,000 a server in 24 hours for what the web server's
+  user can produce and as many again for system paths, and judged at once (events over the
+  quota still count for the rules within their batch).
   Critical: the web server's user starting a shell or a network tool, root gained through an
   unknown set-user-ID program, changes to sudo or polkit rules and to `ld.so.preload`, and what
   no hourly snapshot would show: a script appearing in the uploads and gone within 15 minutes,
   an SSH key file written and removed or changed and put back. High: scripts and `.htaccess`
   files in upload directories, SSH keys and server settings, services, scheduled tasks,
-  start-up scripts, programs run from unusual places or deleted after start. Changes to system
-  configuration made while a package manager runs are one severity lower. Lost events are an
-  alert of their own.
+  start-up scripts, programs run from unusual places or deleted after start. Changes to
+  services, scheduled tasks and start-up scripts made while a package manager runs are one
+  severity lower. Lost events are an alert of their own, high when system events were among
+  them. A file's content is part of an alert's fingerprint, so an acknowledged alert does not
+  absorb a later, different change to the same file.
 - Each server's page lists its latest events, and its System block says whether files and
   processes are watched.
 - Kernel rules: a module hidden from either list, a process hidden from `/proc` and an eBPF
