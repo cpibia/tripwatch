@@ -271,33 +271,25 @@ func rootWith(name, home string) string {
 	return `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0},{"name":"` + name + `","uid":0,"home":"` + home + `"}]}}}}`
 }
 
-func noPassword(name string, extra string) string {
-	return `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0}` + extra + `,{"name":"` + name + `","uid":1500,"shell":"/bin/bash","password":"empty"}]}}}}`
-}
-
-// However many different alerts of one kind a host raises in a day, it keeps at most
-// maxEvidencePerDay snapshots as their evidence; a critical alert afterwards is still kept.
-func TestEvidencePerKindAndDayIsBounded(t *testing.T) {
+// Noise anyone can raise uses up only its own kind's daily bound: an alert only root can cause,
+// arriving after it, is still kept as evidence.
+func TestRootAlertKeptAfterTheNoise(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
 	h.analyse()
 	for i := range 40 {
 		h.clock = h.clock.Add(10 * time.Minute)
-		h.deliver(protocol.KindSnapshot, gz(t, noPassword(fmt.Sprintf("u%d", i), "")))
+		h.deliver(protocol.KindSnapshot, gz(t, fmt.Sprintf(`{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0}]},"weblog":{"events":[{"rule":"command_in_parameters","severity":"critical","log":"/l","attacker_controlled":{"request":"/x%d.php?cmd=id"}}]}}}}`, i)))
 		h.analyse()
 	}
 	day := now.Truncate(24 * time.Hour)
-	kept, _ := h.store.EvidenceSnapshotsSince(ctx, "web-01", day)
-	if kept["accounts"] == 0 || kept["accounts"] > maxEvidencePerDay+1 {
-		t.Fatalf("%d snapshots kept as evidence of one kind in a day", kept["accounts"])
-	}
 	h.clock = h.clock.Add(10 * time.Minute)
-	h.deliver(protocol.KindSnapshot, gz(t, noPassword("u0", `,{"name":"backup","uid":0}`)))
+	h.deliver(protocol.KindSnapshot, gz(t, secondRoot))
 	h.analyse()
 	id, _ := h.store.AlertID(ctx, "web-01", "accounts:uid0:backup")
 	if ok, _ := h.store.HasEvidenceSince(ctx, id, criticalDigest(t, h, id), day); !ok {
-		t.Fatal("a critical alert after the noise was not kept as evidence")
+		t.Fatal("a root alert after the noise was not kept as evidence")
 	}
 }
 
@@ -341,5 +333,21 @@ func TestDecoyDoesNotTakeTheDaysProof(t *testing.T) {
 	snaps, _ := h.store.SnapshotHeads(ctx, "web-01", 100)
 	if !slices.ContainsFunc(snaps, func(s store.SnapshotHead) bool { return s.ID == genuine[0].ID }) {
 		t.Fatal("the snapshot with the real content went with the thinning")
+	}
+}
+
+// A critical log alert, which anyone can raise with one request, is bounded like any other
+// kind: a new script each snapshot does not keep every snapshot.
+func TestAnonymousCriticalAlertsAreBounded(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for i := range 40 {
+		h.clock = h.clock.Add(10 * time.Minute)
+		h.deliver(protocol.KindSnapshot, gz(t, fmt.Sprintf(`{"snapshot":{"results":{"weblog":{"events":[{"rule":"command_in_parameters","severity":"critical","log":"/var/log/nginx/access.log","attacker_controlled":{"request":"/x%d.php?cmd=id"}}]}}}}`, i)))
+		h.analyse()
+	}
+	kept, _ := h.store.EvidenceSnapshotsSince(ctx, "web-01", now.Truncate(24*time.Hour))
+	if kept["weblog"] == 0 || kept["weblog"] > maxEvidencePerDay+1 {
+		t.Fatalf("%d snapshots kept as evidence of anonymous critical alerts", kept["weblog"])
 	}
 }

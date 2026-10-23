@@ -39,6 +39,15 @@ const (
 // alert: one an hour on average, while the daily thinning keeps the last of each day anyway.
 const maxEvidencePerDay = 24
 
+// rootKinds are the alert kinds only root on the host can cause: their evidence is always kept.
+// Processes, listening ports and the sensor's own alerts are left out: the web server's user
+// can start a program from /tmp, bind a port, or flood the findings of a snapshot.
+var rootKinds = map[string]bool{
+	"accounts": true, "accounts-change": true, "ssh": true, "ssh-change": true,
+	"persistence": true, "persistence-change": true, "privileged": true, "privileged-change": true,
+	"packages": true, "packages-change": true,
+}
+
 // maxFindings bounds the alerts one snapshot can raise.
 const maxFindings = 200
 
@@ -252,8 +261,9 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	}
 	for _, f := range evidenceOf {
 		// The daily bound is per kind of alert, so noise of one kind (files in the uploads)
-		// cannot use up another's; critical alerts are always kept.
-		if f.Severity != "critical" && kept[f.Kind] >= maxEvidencePerDay {
+		// cannot use up another's. Kinds only root can produce are always kept; web and log
+		// alerts, critical ones included, can be produced by anyone and stay bounded.
+		if !rootKinds[f.Kind] && kept[f.Kind] >= maxEvidencePerDay {
 			continue
 		}
 		alertID, err := a.Store.AlertID(ctx, host, f.Fingerprint)
