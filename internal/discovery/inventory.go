@@ -44,16 +44,20 @@ func Inspect(fsys fs.FS) Inventory {
 	servers := []struct {
 		parse     func(fs.FS) ([]Site, []string, collector.Issues)
 		processes []string
+		// reloadsWorkers: a reload starts new workers and nothing else does, so the newest
+		// process tells when the configuration was read. Apache's children come and go all the
+		// time and Caddy reloads in place: for them only the oldest process counts.
+		reloadsWorkers bool
 	}{
-		{NginxSites, []string{"nginx"}},
-		{ApacheSites, []string{"apache2", "httpd"}},
-		{CaddySites, []string{"caddy"}},
+		{NginxSites, []string{"nginx"}, true},
+		{ApacheSites, []string{"apache2", "httpd"}, false},
+		{CaddySites, []string{"caddy"}, false},
 	}
 	for _, srv := range servers {
 		sites, files, issues := srv.parse(fsys)
 		inv.Sites = append(inv.Sites, sites...)
 		inv.Issues = append(inv.Issues, issues...)
-		started, running := configLoaded(fsys, srv.processes)
+		started, running := configLoaded(fsys, srv.processes, srv.reloadsWorkers)
 		for _, name := range files {
 			f, err := collector.Describe(collector.Source{FS: fsys}, name)
 			inv.Issues.Add(err)
@@ -111,10 +115,10 @@ func runtimeName(comm string) (string, bool) {
 const userHZ = 100
 
 // configLoaded returns when the web server last read its configuration: the start of its most
-// recent process, since a reload starts new workers while the master keeps running. It comes
-// from the start time in /proc/<pid>/stat (ticks since boot) and the boot time in /proc/stat.
-// The timestamps of /proc entries themselves are not usable: procfs sets them at first lookup.
-func configLoaded(fsys fs.FS, names []string) (time.Time, bool) {
+// recent process where a reload starts new workers, of its oldest elsewhere. It comes from the
+// start time in /proc/<pid>/stat (ticks since boot) and the boot time in /proc/stat. The
+// timestamps of /proc entries themselves are not usable: procfs sets them at first lookup.
+func configLoaded(fsys fs.FS, names []string, newest bool) (time.Time, bool) {
 	boot, ok := bootTime(fsys)
 	if !ok {
 		return time.Time{}, false
@@ -123,7 +127,7 @@ func configLoaded(fsys fs.FS, names []string) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	var latest time.Time
+	var picked time.Time
 	for _, e := range entries {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
@@ -149,11 +153,11 @@ func configLoaded(fsys fs.FS, names []string) (time.Time, bool) {
 			continue
 		}
 		start := boot.Add(time.Duration(ticks) * time.Second / userHZ)
-		if start.After(latest) {
-			latest = start
+		if picked.IsZero() || (newest && start.After(picked)) || (!newest && start.Before(picked)) {
+			picked = start
 		}
 	}
-	return latest, !latest.IsZero()
+	return picked, !picked.IsZero()
 }
 
 func bootTime(fsys fs.FS) (time.Time, bool) {

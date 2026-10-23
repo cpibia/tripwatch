@@ -14,6 +14,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- Review of the 0.1.11 false-positive fixes, so that none opens a way around detection: a POST
+  to a script in the uploads answered with a redirect stays high; nginx's configuration counts
+  as read at its newest workers, Apache's and Caddy's at their oldest process; shared executable
+  mappings of real files (memfd ones included) count again, only the anonymous region of OPcache
+  and JITs is left out; new generators and set-user-ID programs are high again whatever packages
+  did; removing an activation link (a unit disabled) is low.
 - An executable file in a scratch directory is high; one that appears and is removed within 15
   minutes is critical. The benchmark's dropper run and deleted between two checks is caught.
 

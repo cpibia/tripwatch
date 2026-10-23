@@ -146,11 +146,14 @@ func mappedCode(fsys fs.FS, pid int, exe string) []string {
 	}
 	var out []string
 	for _, line := range strings.Split(string(data), "\n") {
-		// address perms offset dev inode path. Only private executable mappings count: shared
-		// ones are what JITs and caches such as OPcache map, a shared anonymous region showing
-		// as "/dev/zero (deleted)"; a library loaded into a process is mapped private.
+		// address perms offset dev inode path. A shared anonymous region, what OPcache's JIT and
+		// other caches map executable, shows as "/dev/zero (deleted)": that exact name, shared,
+		// is no file at all. Shared mappings of real files, memfd ones included, still count.
 		f := strings.SplitN(line, " ", 6)
-		if len(f) < 6 || len(f[1]) < 4 || f[1][2] != 'x' || f[1][3] != 'p' {
+		if len(f) < 6 || len(f[1]) < 4 || f[1][2] != 'x' {
+			continue
+		}
+		if f[1][3] == 's' && strings.TrimSpace(f[5]) == "/dev/zero (deleted)" {
 			continue
 		}
 		file := strings.TrimSpace(f[5])

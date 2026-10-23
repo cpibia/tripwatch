@@ -139,7 +139,7 @@ func TestProcesses(t *testing.T) {
 	case shell.Preload != "/usr/lib/libprocesshider.so" || shell.Cwd != "/var/www/shop":
 		t.Errorf("preload = %q cwd = %q", shell.Preload, shell.Cwd)
 	}
-	if !slices.Equal(shell.Mapped, []string{"/var/www/.config/x/helper (deleted)", "/memfd:stage2 (deleted)", "/dev/shm/.inject.so"}) {
+	if !slices.Equal(shell.Mapped, []string{"/var/www/.config/x/helper (deleted)", "/memfd:stage2 (deleted)", "/dev/shm/.inject.so", "/memfd:doublemapper (deleted)"}) {
 		t.Errorf("mapped = %q", shell.Mapped)
 	}
 }

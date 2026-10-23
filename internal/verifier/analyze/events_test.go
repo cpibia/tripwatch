@@ -49,6 +49,7 @@ func TestEvaluateEvents(t *testing.T) {
 		{"chmod sudoers group writable", watch.Event{Class: watch.ClassPrivilege, Op: watch.OpAttrib, Path: "/etc/sudoers", Mode: "-rw-rw-r--"}, false, "privilege-config critical"},
 		{"touch sudoers", watch.Event{Class: watch.ClassPrivilege, Op: watch.OpAttrib, Path: "/etc/sudoers", Mode: "-r--r-----"}, false, ""},
 		{"unit removed", watch.Event{Class: watch.ClassService, Op: watch.OpDelete, Path: "/etc/systemd/system/x.service"}, false, ""},
+		{"unit disabled", watch.Event{Class: watch.ClassService, Op: watch.OpDelete, Path: "/etc/systemd/system/multi-user.target.wants/auditd.service"}, false, "removed low"},
 		{"sudoers.d file removed", watch.Event{Class: watch.ClassPrivilege, Op: watch.OpDelete, Path: "/etc/sudoers.d/ops"}, false, "removed medium"},
 		{"atomic write temp", watch.Event{Class: watch.ClassService, Op: watch.OpCreate, Path: "/run/systemd/system/netplan-ovs-cleanup.service.MA2FX3"}, false, ""},
 		{"drop-in", watch.Event{Class: watch.ClassService, Op: watch.OpCreate, Path: "/etc/systemd/system/nginx.service.d/override.conf"}, false, "service high"},

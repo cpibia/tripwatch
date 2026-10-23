@@ -198,6 +198,11 @@ func systemChange(e watch.Event, rule, severity, title, why string) (Finding, bo
 		// Removing a service or a scheduled task stops something from running: cleanup, which
 		// tools and package scripts do all the time, not a foothold.
 		if e.Class == watch.ClassService || e.Class == watch.ClassSchedule {
+			// Except an activation link: removing one disables a unit, a security service or
+			// a firewall among them.
+			if dir := path.Dir(e.Path); strings.HasSuffix(dir, ".wants") || strings.HasSuffix(dir, ".requires") {
+				return event("removed", e.Path, "low", "Service disabled", fmt.Sprintf("%s was removed: the unit no longer starts with what it was attached to. %s", e.Path, why)), true
+			}
 			return Finding{}, false
 		}
 		return event("removed", e.Path, "medium", "Configuration file removed",
