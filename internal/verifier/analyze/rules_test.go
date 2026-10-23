@@ -405,3 +405,53 @@ func TestPrivilegedGIDsAreLinear(t *testing.T) {
 		t.Fatalf("privilegedGIDs took %v", took)
 	}
 }
+
+// A grant added after many harmless lines is shown first, and the cut is stated.
+func TestRuleDiffShowsGrantsFirst(t *testing.T) {
+	var cur []string
+	for i := range 41 {
+		cur = append(cur, fmt.Sprintf("Cmnd_Alias C%d = /bin/true", i))
+	}
+	cur = append(cur, "www-data ALL=(ALL) NOPASSWD: ALL")
+	got := ruleDiff([]string{"deny www-data"}, cur)
+	lines := strings.Split(got, "\n")
+	if lines[0] != "+ www-data ALL=(ALL) NOPASSWD: ALL" || lines[1] != "- deny www-data" {
+		t.Fatalf("grants not first:\n%s", got)
+	}
+	if len(lines) != maxDiffLines+1 || lines[maxDiffLines] != "(altre 3 righe aggiunte e 0 tolte non mostrate)" {
+		t.Fatalf("cut not stated:\n%s", got)
+	}
+}
+
+// A policy file another account can write is critical; a change of owner or mode is root's alert.
+func TestPolicyFileAccess(t *testing.T) {
+	uid := func(v uint32) *uint32 { return &v }
+	file := func(owner uint32, mode string) system.SudoersFile {
+		return system.SudoersFile{File: collector.File{Path: "/etc/polkit-1/rules.d/50.rules", SHA256: "a", UID: uid(owner), GID: uid(0), Mode: mode}}
+	}
+	dir := collector.File{Path: "/etc/polkit-1/rules.d", UID: uid(0), GID: uid(0), Mode: "drwx------"}
+	prev := State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{file(0, "-rw-r--r--")}, Dirs: []collector.File{dir}}}
+	if fs := Evaluate(&prev, prev); len(fs) != 0 {
+		t.Fatalf("root's policy raised: %+v", fs)
+	}
+	got := map[string]Finding{}
+	for _, f := range Evaluate(&prev, State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{file(33, "-rw-r--r--")}, Dirs: []collector.File{dir}}}) {
+		got[f.Fingerprint] = f
+	}
+	if f := got["persistence:policy-writable:/etc/polkit-1/rules.d/50.rules"]; f.Severity != "critical" || f.Owner != "root" {
+		t.Fatalf("writable policy: %+v", got)
+	}
+	if f := got["persistence-change:policy-access:/etc/polkit-1/rules.d/50.rules|proprietario 33, gruppo 0, modo -rw-r--r--"]; f.Severity != "high" || f.Owner != "root" {
+		t.Fatalf("owner change: %+v", got)
+	}
+	wide := dir
+	wide.Mode = "dtrwxrwxrwx"
+	for _, f := range []collector.File{wide, {Mode: "-rw-rw-r--", UID: uid(0), GID: uid(100)}, {Mode: "-rw-r--r--", UID: uid(0), Mount: "fuse uid 1000"}} {
+		if !foreignWritable(f) {
+			t.Errorf("not writable by others: %+v", f)
+		}
+	}
+	if foreignWritable(collector.File{Mode: "-rw-rw-r--", UID: uid(0), GID: uid(0)}) {
+		t.Error("root group counted as foreign")
+	}
+}

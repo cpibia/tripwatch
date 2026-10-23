@@ -502,6 +502,11 @@ func (s *Store) SnapshotPair(ctx context.Context, id int64) (Snapshot, *Snapshot
 	return cur, &prev, nil
 }
 
+// SnapshotBefore returns the snapshot of a host that precedes id.
+func (s *Store) SnapshotBefore(ctx context.Context, host string, id int64) (Snapshot, error) {
+	return s.snapshot(ctx, `WHERE host_id = ? AND id < ? ORDER BY id DESC LIMIT 1`, host, id)
+}
+
 func (s *Store) snapshot(ctx context.Context, where string, args ...any) (Snapshot, error) {
 	var sn Snapshot
 	var taken, received int64

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cpibia/tripwatch/internal/collector"
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/weblog"
@@ -55,29 +56,95 @@ func unitOwner(u unitT) string { return homeOwner(u.Path) }
 // named nologin elsewhere is a shell.
 var noLogin = map[string]bool{"/usr/sbin/nologin": true, "/sbin/nologin": true, "/bin/false": true, "/usr/bin/false": true, "": true}
 
+// grantWords mark policy lines that name who gets a power or take it away: sudo user specs,
+// polkit results and identities, doas permit and deny. Plain substrings: a regexp over a large
+// policy took seconds.
+var grantWords = []string{"NOPASSWD", "ALL", "Result.YES", "Result.AUTH", "permit", "deny", "unix-user", "unix-group", "isInGroup", "subject.user", "Identity", "ResultAny"}
+
+func grantLine(l string) bool {
+	if strings.HasPrefix(l, "%") || len(l) > 1 && l[0] == '#' && l[1] >= '0' && l[1] <= '9' {
+		return true
+	}
+	return slices.ContainsFunc(grantWords, func(w string) bool { return strings.Contains(l, w) })
+}
+
+// maxDiffLines bounds a policy diff in an alert.
+const maxDiffLines = 40
+
 // ruleDiff lists the lines added (+) and removed (-) between two versions of a policy file.
+// Lines that grant or deny come first and the cut is always stated: a grant hidden behind
+// harmless lines would otherwise never reach the alert.
 func ruleDiff(old, cur []string) string {
 	was, now := set{}, set{}
 	was.add(old...)
 	now.add(cur...)
-	var b strings.Builder
-	n := 0
+	var added, removed []string
 	for _, l := range cur {
-		if !was.has(l) && n < 40 {
-			b.WriteString("+ " + l + "\n")
-			n++
+		if !was.has(l) {
+			added = append(added, "+ "+l)
 		}
 	}
 	for _, l := range old {
-		if !now.has(l) && n < 40 {
-			b.WriteString("- " + l + "\n")
-			n++
+		if !now.has(l) {
+			removed = append(removed, "- "+l)
 		}
 	}
-	if n == 0 {
+	if len(added)+len(removed) == 0 {
 		return "Contenuto cambiato senza righe nuove o tolte (ordine o spazi)."
 	}
-	return strings.TrimSuffix(b.String(), "\n")
+	// Grants added, grants removed, then the other removed lines (a removed condition can widen
+	// a rule) and the other added ones.
+	var lines []string
+	for _, pass := range []struct {
+		grants bool
+		group  []string
+	}{{true, added}, {true, removed}, {false, removed}, {false, added}} {
+		for _, l := range pass.group {
+			if grantLine(l[2:]) == pass.grants {
+				lines = append(lines, l)
+			}
+		}
+	}
+	if len(lines) > maxDiffLines {
+		hiddenAdded, hiddenRemoved := 0, 0
+		for _, l := range lines[maxDiffLines:] {
+			if l[0] == '+' {
+				hiddenAdded++
+			} else {
+				hiddenRemoved++
+			}
+		}
+		lines = append(lines[:maxDiffLines], fmt.Sprintf("(altre %d righe aggiunte e %d tolte non mostrate)", hiddenAdded, hiddenRemoved))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// fileAccess describes who can change a file: owner, group, mode and the FUSE mount it is on.
+func fileAccess(f collector.File) string {
+	id := func(v *uint32) string {
+		if v == nil {
+			return "?"
+		}
+		return strconv.FormatUint(uint64(*v), 10)
+	}
+	out := "proprietario " + id(f.UID) + ", gruppo " + id(f.GID) + ", modo " + f.Mode
+	if f.Mount != "" {
+		out += ", su " + f.Mount
+	}
+	return out
+}
+
+// foreignWritable reports whether an account other than root can change a file: it owns it,
+// it is on a user's FUSE mount, or the mode lets others (or a group other than root's) write.
+func foreignWritable(f collector.File) bool {
+	if f.Mount != "" || f.UID != nil && *f.UID != 0 {
+		return true
+	}
+	if len(f.Mode) < 9 {
+		return false
+	}
+	perm := f.Mode[len(f.Mode)-9:]
+	return perm[7] == 'w' || perm[4] == 'w' && f.GID != nil && *f.GID != 0
 }
 
 // policyName names the privilege policy a file belongs to.
@@ -465,6 +532,22 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 	}
 
+	if s := cur.Sudoers; s != nil {
+		// polkit reads any rule it finds, whoever owns it: a policy file or directory another
+		// account can write is a grant that can be written and removed between two snapshots.
+		files := make([]collector.File, 0, len(s.Files)+len(s.Dirs))
+		for _, f := range s.Files {
+			files = append(files, f.File)
+		}
+		for _, f := range append(files, s.Dirs...) {
+			if !foreignWritable(f) {
+				continue
+			}
+			stateBy("root", "persistence", "policy-writable:"+f.Path, "critical", "Politica dei privilegi modificabile da altri: "+f.Path,
+				fileAccess(f)+". Chi può scriverla può concedersi i privilegi di root e toglierla prima del controllo dopo.")
+		}
+	}
+
 	if s := cur.Sudoers; s != nil && prev != nil && prev.Sudoers != nil {
 		// Compared file by file and by content: polkit rules are code, so a rule made of lines
 		// found elsewhere, or a condition removed, changes the file but adds no new line.
@@ -472,9 +555,23 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, p := range prev.Sudoers.Files {
 			before[p.Path] = p
 		}
+		dirs := map[string]collector.File{}
+		for _, d := range prev.Sudoers.Dirs {
+			dirs[d.Path] = d
+		}
+		for _, d := range s.Dirs {
+			if old, ok := dirs[d.Path]; ok && fileAccess(old) != fileAccess(d) {
+				change("persistence-change", "policy-access:"+d.Path+"|"+fileAccess(d), "high", "Permessi cambiati sulla cartella delle politiche "+d.Path,
+					"Da "+fileAccess(old)+" a "+fileAccess(d)+".")
+			}
+		}
 		for _, f := range s.Files {
 			old, ok := before[f.Path]
 			delete(before, f.Path)
+			if ok && fileAccess(old.File) != fileAccess(f.File) {
+				change("persistence-change", "policy-access:"+f.Path+"|"+fileAccess(f.File), "high", "Permessi cambiati sulla politica "+f.Path,
+					"Da "+fileAccess(old.File)+" a "+fileAccess(f.File)+". Chi può scrivere il file può concedersi i privilegi di root.")
+			}
 			if ok && old.SHA256 == f.SHA256 && slices.Equal(old.Rules, f.Rules) {
 				continue
 			}

@@ -411,3 +411,20 @@ func TestCriticalHasItsOwnBudget(t *testing.T) {
 		t.Fatal("the critical web alert lost its evidence to medium noise")
 	}
 }
+
+// A collector that failed in the previous snapshot does not make the next one the reference:
+// the change is compared with the last snapshot where that collector answered.
+func TestChangeAfterFailedCollectorIsCompared(t *testing.T) {
+	h := newHarness(t)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.analyse()
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, gz(t, `{"snapshot":{"results":{},"errors":{"accounts":"timeout"}}}`))
+	h.analyse()
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, gz(t, `{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0},{"name":"alice","uid":1000}]}}}}`))
+	h.analyse()
+	if _, ok := h.open()["accounts-change:new:alice"]; !ok {
+		t.Fatalf("change after a failed collector not raised: %v", h.open())
+	}
+}

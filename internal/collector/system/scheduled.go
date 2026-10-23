@@ -2,8 +2,11 @@ package system
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -86,7 +89,10 @@ type SudoersFile struct {
 }
 
 type SudoersResult struct {
-	Files  []SudoersFile    `json:"files"`
+	Files []SudoersFile `json:"files"`
+	// Dirs are the directories holding the policy files: whoever can write one can add a
+	// policy, and polkit, unlike sudo, does not check who owns its rules.
+	Dirs   []collector.File `json:"dirs,omitempty"`
 	Issues collector.Issues `json:"issues,omitempty"`
 }
 
@@ -100,8 +106,18 @@ var privilegePolicies = []string{
 	"etc/doas.conf", "usr/local/etc/doas.conf",
 }
 
-// maxSudoersFiles bounds the files followed through includes.
-const maxSudoersFiles = 500
+// policyDirs are described even when empty: a writable empty rules.d is a grant waiting.
+var policyDirs = []string{
+	"etc/sudoers.d", "etc/polkit-1/rules.d", "run/polkit-1/rules.d", "usr/share/polkit-1/rules.d", "usr/local/share/polkit-1/rules.d",
+	"etc/polkit-1/localauthority", "var/lib/polkit-1/localauthority",
+}
+
+// maxSudoersFiles bounds the files followed through includes, and maxPolicyFiles the other
+// policy files, so a directory filled on purpose cannot hold the collector past its deadline.
+const (
+	maxSudoersFiles = 500
+	maxPolicyFiles  = 500
+)
 
 // Collect reads the sudoers policy, following its include and includedir lines wherever they
 // point, and the other privilege policies. Files sudo would skip in sudoers.d (names with a dot
@@ -110,6 +126,7 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 	var res SudoersResult
 	queue := append([]string{"etc/sudoers"}, collector.Glob(src.FS, "etc/sudoers.d/*")...)
 	seen := map[string]bool{}
+	var dirs []string
 	for len(queue) > 0 {
 		if len(seen) >= maxSudoersFiles {
 			res.Issues = append(res.Issues, fmt.Sprintf("sudoers: more than %d files through includes, the rest not read", maxSudoersFiles))
@@ -123,9 +140,15 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 		seen[name] = true
 		f, err := collector.Describe(src, name)
 		res.Issues.Add(err)
+		if errors.Is(err, fs.ErrNotExist) && name != "etc/sudoers" {
+			// sudo stops on an include it cannot find; a rule written there later would
+			// otherwise appear with no alert.
+			res.Issues = append(res.Issues, "sudoers: included file not found: /"+name)
+		}
 		if f.Path == "" {
 			continue
 		}
+		dirs = append(dirs, path.Dir(name))
 		lines, err := collector.ReadLines(src.FS, name)
 		res.Issues.Add(err)
 		rules := sudoersRules(lines)
@@ -146,25 +169,47 @@ func (Sudoers) Collect(_ context.Context, src collector.Source) (any, error) {
 			}
 		}
 	}
+	read := 0
 	for _, pattern := range privilegePolicies {
 		for _, name := range collector.Glob(src.FS, pattern) {
+			if read == maxPolicyFiles {
+				res.Issues = append(res.Issues, fmt.Sprintf("privilege policies: more than %d files, the rest not read", maxPolicyFiles))
+				break
+			}
+			read++
 			f, err := collector.Describe(src, name)
 			res.Issues.Add(err)
 			if f.Path == "" {
 				continue
 			}
+			dirs = append(dirs, path.Dir(name))
 			lines, err := collector.ReadLines(src.FS, name)
 			res.Issues.Add(err)
 			res.Files = append(res.Files, SudoersFile{File: f, Rules: sudoersRules(lines)})
 		}
 	}
+	dirs = append(dirs, policyDirs...)
+	dirs = append(dirs, collector.Glob(src.FS, "etc/polkit-1/localauthority/*")...)
+	dirs = append(dirs, collector.Glob(src.FS, "var/lib/polkit-1/localauthority/*")...)
+	slices.Sort(dirs)
+	for _, name := range slices.Compact(dirs) {
+		f, err := collector.Describe(src, name)
+		res.Issues.Add(err)
+		if f.Path != "" && f.Mode != "" && f.Mode[0] == 'd' {
+			res.Dirs = append(res.Dirs, f)
+		}
+	}
 	return res, nil
 }
 
-// includeTarget resolves an include line's path as sudo does: quotes removed, and relative to
-// the directory of the file that includes it.
+// sudoEscape undoes the backslash escapes sudo allows in an include path.
+var sudoEscape = strings.NewReplacer(`\ `, " ", `\\`, `\`, `\"`, `"`, `\,`, ",", `\:`, ":", `\=`, "=")
+
+// includeTarget resolves an include line's path as sudo does: quotes and escapes removed, and
+// relative to the directory of the file that includes it.
 func includeTarget(from, target string) string {
 	target = strings.Trim(strings.TrimSpace(target), `"`)
+	target = sudoEscape.Replace(target)
 	if !strings.HasPrefix(target, "/") {
 		target = path.Join("/", path.Dir(from), target)
 	}

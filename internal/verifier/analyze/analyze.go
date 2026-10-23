@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"slices"
 	"time"
 
@@ -190,6 +191,67 @@ func (a *Analyzer) Worker(ctx context.Context, wake <-chan struct{}) {
 	}
 }
 
+// maxBaseWalk bounds how many earlier snapshots are read to find a collector's last result.
+const maxBaseWalk = 50
+
+// base is what a snapshot is compared with: for each collector, its result in the last
+// snapshot where it succeeded. A collector made to fail once would otherwise let a change made
+// in that window become the reference with no alert.
+func (a *Analyzer) base(ctx context.Context, cur State, prevSnap *store.Snapshot) *State {
+	var out *State
+	for walked := 0; prevSnap != nil && walked < maxBaseWalk; walked++ {
+		if p, err := Decode(prevSnap.Payload); err == nil {
+			if out == nil {
+				out = &p
+			} else {
+				fillMissing(out, p)
+			}
+		}
+		if out != nil && !missing(*out, cur) {
+			break
+		}
+		older, err := a.Store.SnapshotBefore(ctx, prevSnap.HostID, prevSnap.ID)
+		if err != nil {
+			break
+		}
+		prevSnap = &older
+	}
+	return out
+}
+
+// collectorResults are the State fields holding a collector's result.
+func collectorResults(s *State) []reflect.Value {
+	v := reflect.ValueOf(s).Elem()
+	var out []reflect.Value
+	for i := range v.NumField() {
+		if v.Field(i).Kind() == reflect.Pointer {
+			out = append(out, v.Field(i))
+		}
+	}
+	return out
+}
+
+// missing reports whether base lacks a result that cur has.
+func missing(base, cur State) bool {
+	b, c := collectorResults(&base), collectorResults(&cur)
+	for i := range b {
+		if b[i].IsNil() && !c[i].IsNil() {
+			return true
+		}
+	}
+	return false
+}
+
+// fillMissing copies into base the results it lacks from an older snapshot.
+func fillMissing(base *State, older State) {
+	b, o := collectorResults(base), collectorResults(&older)
+	for i := range b {
+		if b[i].IsNil() {
+			b[i].Set(o[i])
+		}
+	}
+}
+
 // RunSnapshot raises the alerts of one snapshot against the one before it. Each snapshot is
 // analysed on its own, so a hostile one only costs its own host.
 func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
@@ -205,12 +267,7 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			Title: "Snapshot rifiutato", Detail: err.Error() + ". Un sensore integro non produce snapshot così: il server può essere compromesso."})
 		return
 	}
-	var prev *State
-	if prevSnap != nil {
-		if p, err := Decode(prevSnap.Payload); err == nil {
-			prev = &p
-		}
-	}
+	prev := a.base(ctx, state, prevSnap)
 
 	findings := Evaluate(prev, state)
 	current := map[string][]string{}

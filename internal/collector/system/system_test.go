@@ -523,16 +523,28 @@ func TestSudoersUIDLinesAndIncludes(t *testing.T) {
 		t.Fatalf("rules = %v", got)
 	}
 	fsys := fstest.MapFS{
-		"etc/sudoers":    text("@include \"local\"\n@include /etc/host.%h\n"),
-		"etc/local":      text("a ALL=(ALL) ALL\n"),
-		"etc/host.web01": text("b ALL=(ALL) ALL\n"),
+		"etc/sudoers":                  text("@include \"local\"\n@include /etc/host.%h\n@include /etc/sudo\\ x\n@include /etc/later\n"),
+		"etc/local":                    text("a ALL=(ALL) ALL\n"),
+		"etc/host.web01":               text("b ALL=(ALL) ALL\n"),
+		"etc/sudo x":                   text("c ALL=(ALL) ALL\n"),
+		"etc/polkit-1/rules.d/a.rules": text("polkit.addRule(function () {});\n"),
 	}
 	res := collect[SudoersResult](t, Sudoers{}, collector.Source{FS: fsys})
 	got := map[string]bool{}
 	for _, f := range res.Files {
 		got[f.Path] = true
 	}
-	if !got["/etc/local"] || !got["/etc/host.web01"] {
+	if !got["/etc/local"] || !got["/etc/host.web01"] || !got["/etc/sudo x"] {
 		t.Fatalf("includes not followed: %v", got)
+	}
+	if !slices.Contains(res.Issues, "sudoers: included file not found: /etc/later") {
+		t.Errorf("missing include not reported: %v", res.Issues)
+	}
+	var dirs []string
+	for _, d := range res.Dirs {
+		dirs = append(dirs, d.Path)
+	}
+	if !slices.Equal(dirs, []string{"/etc", "/etc/polkit-1/rules.d"}) {
+		t.Errorf("policy dirs = %v", dirs)
 	}
 }

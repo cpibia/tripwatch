@@ -56,8 +56,9 @@ firma non cambia.
   Ogni minuto in cui arriva un battito o uno
   snapshot viene annotato per 7 giorni: da qui l'interfaccia ricava i silenzi di ogni server.
 - **Analisi** (`internal/verifier/analyze`): una coda nel database, analizzata in ordine. Ogni
-  snapshot è decompresso con limiti di dimensione, numero di valori e profondità, poi confrontato
-  con il precedente. Le regole producono condizioni (stato pericoloso in sé, chiuse quando
+  snapshot è decompresso con limiti di dimensione, numero di valori e profondità, poi confrontato,
+  collector per collector, con l'ultimo snapshot in cui quel collector ha risposto: un collector
+  fatto fallire una volta non trasforma in base la modifica fatta nel frattempo. Le regole producono condizioni (stato pericoloso in sé, chiuse quando
   spariscono, tranne critiche e alte) e cambiamenti. Ogni minuto un controllo solleva l'allarme
   per i server muti e per quelli che mandano battiti ma non più snapshot.
 - **Allarmi**: un'impronta per condizione e server; la stessa condizione aggiorna l'allarme
