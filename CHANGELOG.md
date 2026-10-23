@@ -6,6 +6,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-23
+
 Update the verifier and the sensors.
 
 ### Sensor
@@ -118,7 +120,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/cpibia/tripwatch/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/cpibia/tripwatch/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/cpibia/tripwatch/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/cpibia/tripwatch/compare/v0.1.0...v0.1.1
