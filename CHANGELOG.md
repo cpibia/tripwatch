@@ -11,6 +11,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Revoked servers no longer count in the overview: they are left out of the figures, the charts,
   the server cells, the healthy count and the alarm mark, and named apart under Servers. Their
   pages keep their alerts as a record.
+- Every row of Top rules and Web attacks opens the latest alert it comes from. Web attacks count
+  the requests each alert reports rather than how often the alert was seen, and read the source
+  address of alerts raised before 0.1.3, whose detail is in Italian.
 
 ## [0.1.5] - 2026-10-23
 

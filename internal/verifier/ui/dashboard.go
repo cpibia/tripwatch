@@ -200,12 +200,14 @@ func buildTimeline(raised []store.Raised, rng string, now time.Time) timeline {
 }
 
 // buildRules ranks the rules that raised most alerts in the period: a rule that suddenly raises
-// many is often a legitimate activity to accept or a rule to tune.
+// many is often a legitimate activity to accept or a rule to tune. Each row opens the rule's
+// latest alert.
 func buildRules(raised []store.Raised, limit int) []rankRow {
 	type agg struct {
 		titles []store.Alert
 		n      int
 		worst  string
+		latest store.Raised
 	}
 	by := map[string]*agg{}
 	var order []string
@@ -221,6 +223,9 @@ func buildRules(raised []store.Raised, limit int) []rankRow {
 			order = append(order, k)
 		}
 		a.n++
+		if r.CreatedAt.After(a.latest.CreatedAt) {
+			a.latest = r
+		}
 		if len(a.titles) < 50 {
 			a.titles = append(a.titles, store.Alert{Title: r.Title})
 		}
@@ -235,7 +240,7 @@ func buildRules(raised []store.Raised, limit int) []rankRow {
 	var rows []rankRow
 	for _, k := range order {
 		a := by[k]
-		rows = append(rows, rankRow{Label: commonLabel(a.titles), Sub: k, N: a.n, Severity: a.worst})
+		rows = append(rows, rankRow{Label: commonLabel(a.titles), Sub: k, N: a.n, Severity: a.worst, Href: alertHref(a.latest.ID)})
 	}
 	return scaleRows(rows, nil)
 }
@@ -264,31 +269,63 @@ func buildHosts(open map[string]map[string]int, limit int) []rankRow {
 	return scaleRows(rows, parts)
 }
 
-// firstAddress takes the first source address out of a web log alert's detail.
-var firstAddress = regexp.MustCompile(`\(first ([0-9a-fA-F:.]+)\)`)
+// firstAddress and requestCount read a web log alert's detail. Alerts raised before the
+// interface was in English carry the same figures in Italian ("primo", "richieste").
+var (
+	firstAddress = regexp.MustCompile(`\((?:first|primo) ([0-9a-fA-F:.]+)\)`)
+	requestCount = regexp.MustCompile(`(\d+) (?:requests|richieste) `)
+)
 
 // buildWeb ranks the sources and the targeted scripts of the attacks seen in the web logs, by
-// requests.
+// requests; each row opens the latest alert it comes from.
 func buildWeb(raised []store.Raised, limit int) webAttacks {
 	sources, targets := map[string]int{}, map[string]int{}
+	latest := map[string]store.Raised{}
+	keep := func(k string, r store.Raised) {
+		if r.CreatedAt.After(latest[k].CreatedAt) {
+			latest[k] = r
+		}
+	}
 	var w webAttacks
 	for _, r := range raised {
 		if r.Kind != "weblog" {
 			continue
 		}
 		n := max(r.Occurrences, 1)
+		if m := requestCount.FindStringSubmatch(r.Detail); m != nil {
+			if v, err := strconv.Atoi(m[1]); err == nil && v > 0 {
+				n = v
+			}
+		}
 		w.Total += n
 		if m := firstAddress.FindStringSubmatch(r.Detail); m != nil {
 			sources[m[1]] += n
+			keep("s"+m[1], r)
 		}
 		fp, _, _ := strings.Cut(r.Fingerprint, "|")
 		if parts := strings.SplitN(fp, ":", 3); len(parts) == 3 && parts[2] != "" {
 			targets[parts[2]] += n
+			keep("t"+parts[2], r)
 		}
 	}
-	w.Sources = scaleRows(topRows(sources, limit), nil)
-	w.Targets = scaleRows(topRows(targets, limit), nil)
+	w.Sources = scaleRows(linked(topRows(sources, limit), latest, "s"), nil)
+	w.Targets = scaleRows(linked(topRows(targets, limit), latest, "t"), nil)
 	return w
+}
+
+// linked points each row at the latest alert recorded for it.
+func linked(rows []rankRow, latest map[string]store.Raised, prefix string) []rankRow {
+	for i := range rows {
+		rows[i].Href = alertHref(latest[prefix+rows[i].Label].ID)
+	}
+	return rows
+}
+
+func alertHref(id int64) string {
+	if id == 0 {
+		return ""
+	}
+	return "/alerts/" + strconv.FormatInt(id, 10)
 }
 
 func topRows(counts map[string]int, limit int) []rankRow {

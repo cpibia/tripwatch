@@ -90,7 +90,7 @@
 {{define "ranking"}}<ol class="ranking">
   {{range .}}
   <li>
-    <span class="r-label">{{if .Href}}<a class="mono" href="{{.Href}}">{{.Label}}</a>{{else}}<span{{if not .Severity}} class="mono"{{end}}>{{.Label}}</span>{{end}}{{with .Sub}}<span class="r-sub mono">{{.}}</span>{{end}}</span>
+    <span class="r-label">{{if .Href}}<a{{if not .Sub}} class="mono"{{end}} href="{{.Href}}">{{.Label}}</a>{{else}}<span class="mono">{{.Label}}</span>{{end}}{{with .Sub}}<span class="r-sub mono">{{.}}</span>{{end}}</span>
     <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">{{range .Segments}}<rect class="s-{{if .Severity}}{{.Severity}}{{else}}neutral{{end}}" x="{{num .X}}" y="0" width="{{num .W}}" height="10"><title>{{.N}}</title></rect>{{end}}</svg>
     <span class="r-n">{{.N}}</span>
   </li>

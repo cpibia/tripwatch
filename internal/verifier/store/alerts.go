@@ -479,6 +479,7 @@ func (s *Store) Alarming(ctx context.Context) (bool, error) {
 // Raised is an alert as the overview's charts need it: when it was raised, how severe, by which
 // rule, on which host, and how often it was seen.
 type Raised struct {
+	ID          int64
 	HostID      string
 	Fingerprint string
 	Severity    string
@@ -493,7 +494,7 @@ type Raised struct {
 // RaisedSince lists the alerts raised since a time, whatever their status. Resolved medium and
 // low alerts are pruned after MinorResolvedRetention, so periods longer than that undercount them.
 func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT host_id, fingerprint, severity, kind, title,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title,
 		CASE WHEN kind = 'weblog' THEN detail ELSE '' END, status, created_at, occurrences
 		FROM alerts WHERE created_at >= ? AND `+currentHosts+` ORDER BY created_at`, since.Unix())
 	if err != nil {
@@ -504,7 +505,7 @@ func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, err
 	for rows.Next() {
 		var r Raised
 		var created int64
-		if err := rows.Scan(&r.HostID, &r.Fingerprint, &r.Severity, &r.Kind, &r.Title, &r.Detail, &r.Status, &created, &r.Occurrences); err != nil {
+		if err := rows.Scan(&r.ID, &r.HostID, &r.Fingerprint, &r.Severity, &r.Kind, &r.Title, &r.Detail, &r.Status, &created, &r.Occurrences); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = unix(created)
