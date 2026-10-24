@@ -456,15 +456,9 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	// The host's lock keeps envelopes of the old enrollment from interleaving with the new one.
-	unlock, ok := s.lock(r.Context(), host)
-	if !ok {
-		http.Error(w, "busy", http.StatusServiceUnavailable)
-		return
-	}
-	err = s.Store.EnrollWithCertificate(r.Context(), host, ed25519.PublicKey(req.SigningKey), serial, now)
-	unlock()
-	if err != nil {
+	// One statement, without the host's lock: an envelope of the old enrollment in flight cannot
+	// move the new chain (accept checks the chain's digest), and a slow one cannot delay this.
+	if err := s.Store.EnrollWithCertificate(r.Context(), host, ed25519.PublicKey(req.SigningKey), serial, now); err != nil {
 		s.fail(w, err)
 		return
 	}

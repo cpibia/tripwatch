@@ -282,6 +282,14 @@ func (s *Store) Enroll(ctx context.Context, id string, pub ed25519.PublicKey, no
 	return err
 }
 
+// digestOrNil stores an empty digest as NULL, as a fresh chain has it.
+func digestOrNil(d []byte) any {
+	if len(d) == 0 {
+		return nil
+	}
+	return d
+}
+
 // EnrollWithCertificate is Enroll and the recording of the host's first client certificate in
 // one statement: between the two, no other certificate of the host can be taken for its own.
 func (s *Store) EnrollWithCertificate(ctx context.Context, id string, pub ed25519.PublicKey, serial string, now time.Time) error {
@@ -406,7 +414,9 @@ func (s *Store) accept(ctx context.Context, e protocol.Envelope, prev, state pro
 		set += ", " + field + " = ?"
 		args = append(args, now.Unix())
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE hosts SET `+set+` WHERE id = ? AND last_seq = ?`, append(args, e.HostID, prev.Sequence)...)
+	// The digest as well as the sequence: a re-enrollment resets both, so an envelope verified
+	// against the chain it replaced can never move the new one.
+	res, err := tx.ExecContext(ctx, `UPDATE hosts SET `+set+` WHERE id = ? AND last_seq = ? AND last_digest IS ?`, append(args, e.HostID, prev.Sequence, digestOrNil(prev.LastDigest))...)
 	if err != nil {
 		return err
 	}
