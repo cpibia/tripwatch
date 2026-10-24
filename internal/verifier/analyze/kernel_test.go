@@ -164,3 +164,35 @@ func TestUnwatchedPlacesRaiseAlert(t *testing.T) {
 		t.Fatalf("unwatched alerts %v", got)
 	}
 }
+
+// A program named like a kernel thread hides in ps; real kernel threads and programs whose titles
+// merely use brackets or share a word with one are not reported.
+func TestKernelThreadDisguise(t *testing.T) {
+	for _, c := range []struct {
+		pr   system.Process
+		want bool
+	}{
+		{system.Process{PID: 900, PPID: 1, Comm: "raid5wq", Cmdline: "[raid5wq]", Exe: "/usr/lib/systemd/sd-helper"}, true},
+		{system.Process{PID: 901, PPID: 1, Comm: "kswapd0", Cmdline: "", Exe: "/var/tmp/.x"}, true},
+		{system.Process{PID: 902, PPID: 1, Comm: "kworker/0:2", Cmdline: "kworker/0:2", Exe: "/usr/bin/kw"}, true},
+		{system.Process{PID: 903, PPID: 811, Comm: "[kthreadd]", Exe: "/opt/a/b"}, true},
+		{system.Process{PID: 2, PPID: 0, Comm: "kthreadd"}, false},
+		{system.Process{PID: 40, PPID: 2, Comm: "kworker/0:1H", Cmdline: ""}, false},
+		{system.Process{PID: 700, PPID: 1, Comm: "watchdog", Cmdline: "/usr/sbin/watchdog", Exe: "/usr/sbin/watchdog"}, false},
+		{system.Process{PID: 701, PPID: 1, Comm: "celery", Cmdline: "[celeryd: celery@web-01:MainProcess] -active- (worker)", Exe: "/usr/bin/python3.11"}, false},
+		{system.Process{PID: 702, PPID: 1, Comm: "celery", Cmdline: "[celeryd: celery@web-01:ForkPoolWorker-1]", Exe: "/usr/bin/python3.11"}, false},
+		{system.Process{PID: 703, PPID: 1, Comm: "gunicorn", Cmdline: "gunicorn: master [shop]", Exe: "/usr/bin/python3.11"}, false},
+		{system.Process{PID: 704, PPID: 1, Comm: "mdadm", Cmdline: "/sbin/mdadm --monitor --scan", Exe: "/usr/sbin/mdadm"}, false},
+	} {
+		if got := kernelThreadDisguise(c.pr); got != c.want {
+			t.Errorf("%+v: %v, want %v", c.pr, got, c.want)
+		}
+	}
+	cur := State{Processes: &system.ProcessesResult{Processes: []system.Process{{PID: 900, PPID: 1, Comm: "raid5wq", Cmdline: "[raid5wq]", Exe: "/usr/lib/systemd/sd-helper", ExeSHA256: "ab"}}}}
+	for _, f := range Evaluate(nil, cur) {
+		if f.Fingerprint == "processes:kthread-name:/usr/lib/systemd/sd-helper:ab" && f.Severity == "critical" {
+			return
+		}
+	}
+	t.Error("no critical finding for a process disguised as a kernel thread")
+}

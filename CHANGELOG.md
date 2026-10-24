@@ -54,6 +54,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- A process of user space named like a kernel thread (`[raid5wq]`, `kswapd0`, `kworker/0:2`)
+  with an executable raises a critical alert: real kernel threads are never listed, and titles
+  that only use brackets, such as celery's, are not matched.
 - Security fix: an enrollment records the host's new certificate in the same statement as its
   key, and a host with no certificate recorded accepts none. Before, the first certificate
   presented after a re-enrollment became the host's, so a copy of the old bundle could win
