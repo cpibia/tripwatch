@@ -379,6 +379,11 @@ For each application the `web` collector produces:
 - **scripts in upload directories** (`.php`, `.phtml`, `.phar`, `.jsp`, `.aspx`, double
   extensions such as `shell.php.png`) and **code inside files that are not scripts**, such as the
   serialized sessions used by deserialization exploits;
+- **code in data files**: PHP the application was made to save in a session, a log, an error
+  report or a cache file, waiting for an include of that file to run it. It takes a real open
+  tag (`<?php` followed by a space or a line break, or `<?=`) and a webshell signature or a
+  dangerous call after it, so logs of blocked requests and ordinary sessions are not reported;
+  large files are read at their edges;
 - **polyglot images**: GIF, JPEG or PNG with code after the header or at the end;
 - **webshell signatures**: `eval` of decoded payloads, commands run with request input, droppers
   that write code through library classes and more, matched after stripping comments from the

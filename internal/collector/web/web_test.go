@@ -722,3 +722,58 @@ func TestSparseSmallFile(t *testing.T) {
 		t.Errorf("findings = %v", got)
 	}
 }
+
+// PHP saved by the application in its own data files waits for an include to run; sessions,
+// logs and reports with ordinary content, logged attack attempts among them, are not code.
+func TestCodeInDataFiles(t *testing.T) {
+	fsys := compromisedShop()
+	clean := map[string]string{
+		"var/session/sess_3b1f": `_session_validator_data|a:4:{s:11:"remote_addr";s:9:"10.0.0.7";s:8:"http_via";s:0:"";` +
+			`s:20:"http_x_forwarded_for";s:0:"";s:15:"http_user_agent";s:40:"Mozilla/5.0 (X11; Linux x86_64) Firefox";}` +
+			`default|a:2:{s:9:"_form_key";s:16:"Xk3aP0qLm2Zt9wBv";s:12:"visitor_data";a:1:{s:10:"visitor_id";s:4:"1182";}}`,
+		"var/log/exception.log": "[2026-10-24T08:13:02.112Z] main.CRITICAL: Warning: Undefined array key \"price\" in " +
+			"/var/www/commerce/vendor/magento/module-catalog/Model/Product.php on line 512 {\"exception\":\"[object] (Exception(code: 0): " +
+			"#0 /var/www/commerce/vendor/magento/framework/App/ErrorHandler.php(62): include()\\n#1 {main}\"} []\n",
+		"var/log/support_report.log": "[2026-10-24T08:14:10Z] main.WARNING: Blocked search q=%3C%3Fphp%20system(%24_GET%5Bc%5D)%3B%3F%3E [] []\n" +
+			"[2026-10-24T08:14:11Z] main.WARNING: Blocked search q=<?php+system($_GET[c]); [] []\n",
+		"var/report/7731024": `{"0":"Notice: Undefined index: sku","1":"#0 \/var\/www\/commerce\/vendor\/magento\/framework\/App\/Bootstrap.php(263): ` +
+			`Magento\\Framework\\App\\Http->launch()\n#1 {main}","url":"\/checkout\/","script_name":"\/index.php"}`,
+		"var/export/cms_blocks.csv": `block_id,content` + "\n" + `12,"<div><?php echo $block->escapeHtml($block->getTitle()) ?></div>"`,
+	}
+	evil := map[string]string{
+		"var/report/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08": `{"0":"<?php system($_GET['c']); ?>","url":"\/"}`,
+		"var/session/sess_9a02": "default|a:1:{s:4:\"note\";s:17:\"<?=`$_GET[c]`?>\";}",
+		"var/log/debug.log":     "[2026-10-24T08:20:00Z] main.DEBUG: <?php\n@include($_COOKIE['f']); ?> [] []\n",
+		"var/log/system.log": strings.Repeat("[2026-10-24T08:13:02Z] main.INFO: Broken reference: the 'header.panel' element cannot be added as child [] []\n", 8000) +
+			"[2026-10-24T09:00:00Z] main.ERROR: <?php eval(base64_decode($_POST['p'])); ?> [] []\n",
+	}
+	for name, content := range clean {
+		fsys["var/www/commerce/"+name] = text(content)
+	}
+	for name, content := range evil {
+		fsys["var/www/commerce/"+name] = text(content)
+	}
+	got := map[string]string{}
+	for _, f := range commerceReport(t, run(t, fsys)).Findings {
+		if f.Kind == KindCodeInData {
+			got[strings.TrimPrefix(f.Path, "/var/www/commerce/")] = strings.Join(f.Signatures, ",")
+		}
+	}
+	want := map[string]string{
+		"var/report/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08": "exec_request_input",
+		"var/session/sess_9a02": "backtick_request_input",
+		"var/log/debug.log":     "dangerous_call",
+		"var/log/system.log":    "eval_decoded_payload,eval_request_input",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("code in data files:\n got  %v\n want %v", got, want)
+	}
+}
+
+func BenchmarkCodeInData(b *testing.B) {
+	log := []byte(strings.Repeat("[2026-10-24T08:13:02Z] main.WARNING: Blocked search q=<?php+system($_GET[c]); <?= 1 ?> [] []\n", 40000))
+	b.SetBytes(int64(len(log)))
+	for b.Loop() {
+		codeInData(log)
+	}
+}

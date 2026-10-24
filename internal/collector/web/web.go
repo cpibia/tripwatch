@@ -46,6 +46,9 @@ const (
 	// A per-directory server configuration (.htaccess, .user.ini) where uploads live: it can
 	// turn an uploaded image into an executable script.
 	KindOverrideInData = "override_in_data_dir"
+	// PHP code in a file the application writes and may read back (a session, a log, an error
+	// report): an injection waiting for an include of that file to run.
+	KindCodeInData = "code_in_data_file"
 )
 
 const (
@@ -638,6 +641,10 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 		s.add(KindScriptInUploads, name, e, matchSignatures(content, php))
 	case inUploads && !script && containsCode(content):
 		s.add(KindCodeInUploads, name, e, matchSignatures(content, false))
+	case inData && !script && !image:
+		if sigs := codeInData(content); len(sigs) > 0 {
+			s.add(KindCodeInData, name, e, sigs)
+		}
 	case script:
 		switch sigs := matchSignatures(content, php); {
 		case slices.Equal(sigs, []string{"encoded_blob"}):

@@ -201,7 +201,11 @@ directories.
 Before any content is read, a pass lists only the names in the upload directories and reports the
 scripts: it costs only the listing, so files that are slow to read (sparse files, millions of
 images) cannot push a webshell past the deadline. The content pass then enriches the same
-findings with signatures, or withdraws them if the file is an empty placeholder. Data directories
+findings with signatures, or withdraws them if the file is an empty placeholder. Files in data
+directories that are not scripts are searched for PHP that would run if they were included
+(`code_in_data_file`, critical): after each real open tag, `<?php` and a space or a line break,
+or `<?=`, at most 16 KB up to `?>` are matched against the signatures and a list of dangerous
+calls, segment after segment without overlap, so the cost stays linear. Data directories
 are read as a stream and not hashed; a code directory with more entries than the limit is
 inspected the same way. Inside uploads, symlinks are reported and never followed; the only link
 followed is an upload directory that is itself a link, and only towards the application or the

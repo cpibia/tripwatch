@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"regexp"
+	"slices"
 )
 
 // signature is a pattern of code that legitimate applications do not contain. literals are
@@ -163,4 +164,56 @@ func isPlaceholder(content []byte) bool {
 	rest = bytes.TrimSpace(bytes.TrimPrefix(rest, []byte("<?php")))
 	rest = bytes.TrimSpace(bytes.TrimSuffix(rest, []byte("?>")))
 	return len(rest) == 0
+}
+
+// maxCodeSegment bounds the code examined after each PHP open tag in a data file.
+const maxCodeSegment = 16 << 10
+
+// dangerousCall is what PHP code planted in a data file does: run commands, evaluate or include
+// something, write files, read the request. A data file holds no code at all, so any of these
+// after a real open tag is enough.
+var dangerousCall = regexp.MustCompile("(?i)\\b(?:eval|assert|system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|" +
+	"file_put_contents|fwrite|move_uploaded_file|fsockopen|base64_decode|gzinflate|gzuncompress|str_rot13|" +
+	"create_function|call_user_func|call_user_func_array|include|include_once|require|require_once)\\s*\\(" +
+	"|\\b(?:include|require)(?:_once)?\\s*['\"$]|\\$_(?:GET|POST|REQUEST|COOKIE|SERVER|FILES)\\b")
+
+// codeInData returns what makes a data file's content PHP that would run if the file were
+// included: a real open tag followed by a signature or a dangerous call. A real tag is "<?php"
+// followed by a space or a line break, or "<?=": a request logged with its spaces encoded
+// ("<?php+system", "<?php%20") is text, not code. Segments are examined one after the other,
+// never overlapping, so the cost stays linear in the size of the file.
+func codeInData(content []byte) []string {
+	var out []string
+	for pos := 0; pos < len(content); {
+		i := bytes.Index(content[pos:], []byte("<?"))
+		if i < 0 {
+			break
+		}
+		pos += i + 2
+		tag := content[pos:]
+		from := 0
+		switch {
+		case len(tag) > 3 && bytes.EqualFold(tag[:3], []byte("php")) && (tag[3] == ' ' || tag[3] == '\t' || tag[3] == '\n' || tag[3] == '\r'):
+			from = pos + 4
+		case len(tag) > 1 && tag[0] == '=':
+			from = pos + 1
+		default:
+			continue
+		}
+		end := min(len(content), from+maxCodeSegment)
+		code := content[from:end]
+		if j := bytes.Index(code, []byte("?>")); j >= 0 {
+			code, end = code[:j], from+j+2
+		}
+		pos = end
+		for _, sig := range matchSignatures(code, true) {
+			if sig != "encoded_blob" && !slices.Contains(out, sig) {
+				out = append(out, sig)
+			}
+		}
+		if len(out) == 0 && dangerousCall.Match(stripPHPComments(code)) {
+			out = append(out, "dangerous_call")
+		}
+	}
+	return out
 }

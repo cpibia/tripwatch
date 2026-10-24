@@ -1175,11 +1175,12 @@ func webFinding(f web.Finding) (string, string) {
 			return "critical", "Script in upload directories"
 		}
 		return "high", "Script in upload directories"
-	case web.KindSignature, web.KindCodeInUploads, web.KindPolyglotImage:
+	case web.KindSignature, web.KindCodeInUploads, web.KindPolyglotImage, web.KindCodeInData:
 		return "critical", map[string]string{
 			web.KindSignature:     "Webshell signature",
 			web.KindCodeInUploads: "Code inside an uploaded file",
 			web.KindPolyglotImage: "Image with hidden code",
+			web.KindCodeInData:    "Code inside a data file",
 		}[f.Kind]
 	case web.KindHiddenScript, web.KindSuspiciousSymlink, web.KindAppInData:
 		return "high", map[string]string{
