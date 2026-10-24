@@ -55,6 +55,7 @@ type sensor struct {
 	root       string
 	collectors []collector.Collector
 	weblog     *logs.Collector
+	web        *web.Collector
 	realtime   *realtime
 }
 
@@ -93,8 +94,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	s := sensor{root: *rootDir, weblog: &logs.Collector{StateDir: *stateDir}}
-	s.collectors = append(system.All(), web.Collector{}, s.weblog)
+	s := sensor{root: *rootDir, weblog: &logs.Collector{StateDir: *stateDir}, web: &web.Collector{StateDir: *stateDir}}
+	s.collectors = append(system.All(), s.web, s.weblog)
 	if *appDB {
 		s.collectors = append(s.collectors, apps.Collector{AllowedHosts: splitList(*appDBHosts)})
 	}
@@ -265,8 +266,8 @@ func (s sensor) printOnce(ctx context.Context) error {
 	if err := enc.Encode(s.snapshot(ctx)); err != nil {
 		return err
 	}
-	// Log positions advance only once the snapshot carrying their events is out.
-	return s.weblog.Commit()
+	// Log positions and code manifests advance only once the snapshot carrying them is out.
+	return s.commit()
 }
 
 // watchOnly prints what the watchers report, pointed at what one snapshot finds, until ctx ends.
@@ -439,8 +440,10 @@ func (s sensor) sendSnapshot(ctx context.Context, client *transport.Client) erro
 		case <-time.After(snapshotRetry):
 		}
 	}
-	return s.weblog.Commit()
+	return s.commit()
 }
+
+func (s sensor) commit() error { return errors.Join(s.weblog.Commit(), s.web.Commit()) }
 
 func splitList(s string) []string {
 	var out []string

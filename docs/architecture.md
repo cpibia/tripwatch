@@ -205,7 +205,17 @@ findings with signatures, or withdraws them if the file is an empty placeholder.
 directories that are not scripts are searched for PHP that would run if they were included
 (`code_in_data_file`, critical): after each real open tag, `<?php` and a space or a line break,
 or `<?=`, at most 16 KB up to `?>` are matched against the signatures and a list of dangerous
-calls, segment after segment without overlap, so the cost stays linear. Data directories
+calls, segment after segment without overlap, so the cost stays linear. Obfuscated function
+names are found by one hand-written pass over each script, without regular expressions: chains
+of quoted literals and `chr()` calls joined by `.` or `^` are decoded as PHP would and compared
+with the names a webshell calls (decoders only next to an `eval`).
+
+With `-state-dir`, the web collector writes a manifest of each application's code files
+(`web-manifests/`, one quoted path and hash per line, in the walk's order) while it walks, and
+compares it with the manifest in use as two sorted streams, so memory does not grow with the
+application. The changes (`changes`, at most 200, `change_count`) go in the snapshot; the new
+manifest replaces the old one only once that snapshot is delivered, like the log positions, so
+a snapshot that is lost is compared again. A scan cut short keeps the old manifest. Data directories
 are read as a stream and not hashed; a code directory with more entries than the limit is
 inspected the same way. Inside uploads, symlinks are reported and never followed; the only link
 followed is an upload directory that is itself a link, and only towards the application or the

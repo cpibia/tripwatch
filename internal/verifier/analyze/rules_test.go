@@ -13,6 +13,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector/logs"
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
+	"github.com/cpibia/tripwatch/internal/discovery"
 )
 
 func fingerprints(fs []Finding) []string {
@@ -533,5 +534,56 @@ func TestPolicyWriteDetailIsPlain(t *testing.T) {
 	}
 	if octal("rwxr-x---") != "750" || octal("rwsr-xr-x") != "755" {
 		t.Error("octal")
+	}
+}
+
+// Scripts added or changed are named; a deploy of many files gives one alert, and files that are
+// not scripts only show in the directory's change.
+func TestScriptChanges(t *testing.T) {
+	app := func(changes ...web.FileChange) *web.Result {
+		return &web.Result{Apps: []web.AppReport{{
+			Application: discovery.Application{Path: "/var/www/shop"},
+			DirHashes:   map[string]string{"/var/www/shop/vendor": "b"},
+			Changes:     changes, ChangeCount: len(changes),
+		}}}
+	}
+	prev := &State{Web: &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/var/www/shop"}, DirHashes: map[string]string{"/var/www/shop/vendor": "a"}}}}}
+	got := map[string]Finding{}
+	for _, f := range Evaluate(prev, State{Web: app(
+		web.FileChange{Path: "/var/www/shop/pub/sysapi.php", Change: web.ChangeAdded, SHA256: "aa"},
+		web.FileChange{Path: "/var/www/shop/vendor/acme/App/View.php", Change: web.ChangeModified, SHA256: "bb"},
+		web.FileChange{Path: "/var/www/shop/vendor/acme/App/Old.php", Change: web.ChangeRemoved},
+		web.FileChange{Path: "/var/www/shop/vendor/acme/etc/di.xml", Change: web.ChangeModified},
+	)}) {
+		got[f.Fingerprint] = f
+	}
+	if f := got["web-change:file:/var/www/shop/pub/sysapi.php:aa"]; f.Severity != "high" || f.Title != "Script added: /var/www/shop/pub/sysapi.php" {
+		t.Errorf("new script: %+v", f)
+	}
+	if f := got["web-change:file:/var/www/shop/vendor/acme/App/View.php:bb"]; f.Severity != "high" {
+		t.Errorf("changed core file: %+v", f)
+	}
+	if f := got["web-change:code:/var/www/shop/vendor:b"]; !strings.Contains(f.Detail, "modified /var/www/shop/vendor/acme/etc/di.xml") || !strings.Contains(f.Detail, "removed /var/www/shop/vendor/acme/App/Old.php") {
+		t.Errorf("directory change does not name its files: %q", f.Detail)
+	}
+	if len(got) != 3 {
+		t.Errorf("findings: %v", got)
+	}
+
+	var deploy []web.FileChange
+	for i := 0; i < 300; i++ {
+		deploy = append(deploy, web.FileChange{Path: fmt.Sprintf("/var/www/shop/vendor/acme/F%d.php", i), Change: web.ChangeModified, SHA256: "cc"})
+	}
+	n := 0
+	for _, f := range Evaluate(prev, State{Web: app(deploy...)}) {
+		if strings.HasPrefix(f.Fingerprint, "web-change:scripts:") {
+			n++
+		}
+		if strings.HasPrefix(f.Fingerprint, "web-change:file:") {
+			t.Fatalf("a deploy raised one alert per file: %s", f.Fingerprint)
+		}
+	}
+	if n != 1 {
+		t.Errorf("deploy alerts: %d", n)
 	}
 }

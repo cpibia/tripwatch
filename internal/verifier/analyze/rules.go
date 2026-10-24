@@ -1,6 +1,8 @@
 package analyze
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"regexp"
@@ -1097,8 +1099,15 @@ func Evaluate(prev *State, cur State) []Finding {
 			if pa, ok := prevApps[app.Path]; ok {
 				for dir, sum := range app.DirHashes {
 					if old, ok := pa.DirHashes[dir]; ok && old != sum {
-						change("web-change", "code:"+dir+":"+sum, "medium", "Code changed in "+dir, "Without a deploy, someone changed the code of the application "+app.Path+".")
+						detail := "Without a deploy, someone changed the code of the application " + app.Path + "."
+						if files := changedIn(app.Changes, dir); files != "" {
+							detail += "\nChanged files:\n" + files
+						}
+						change("web-change", "code:"+dir+":"+sum, "medium", "Code changed in "+dir, detail)
 					}
+				}
+				for _, f := range scriptChanges(app) {
+					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
 			}
 		}
@@ -1165,6 +1174,63 @@ func Evaluate(prev *State, cur State) []Finding {
 		}
 	}
 	return out
+}
+
+// maxNamedScripts is how many changed scripts of one application get an alert each; past it, a
+// deploy is the likely cause and one alert lists them.
+const maxNamedScripts = 20
+
+// scriptChanges raises the scripts added or changed in an application since the previous
+// snapshot, by name: a new script in the web root or a changed core file is how a backdoor lands,
+// and the directory's hash alone does not say which file it is.
+func scriptChanges(app web.AppReport) []Finding {
+	var scripts []web.FileChange
+	for _, c := range app.Changes {
+		if c.Change != web.ChangeRemoved && web.IsScript(c.Path) {
+			scripts = append(scripts, c)
+		}
+	}
+	if len(scripts) == 0 {
+		return nil
+	}
+	if len(scripts) > maxNamedScripts {
+		var list []string
+		for _, c := range scripts[:maxNamedScripts] {
+			list = append(list, c.Change+" "+c.Path)
+		}
+		sum := sha256.Sum256([]byte(strings.Join(list, "\n")))
+		return []Finding{{Fingerprint: "scripts:" + app.Path + ":" + hex.EncodeToString(sum[:8]), Severity: "high",
+			Title:  fmt.Sprintf("%d scripts added or changed in %s", len(scripts), app.Path),
+			Detail: fmt.Sprintf("%d code files changed in all since the previous snapshot, a deploy if one was made. The first scripts:\n%s", app.ChangeCount, strings.Join(list, "\n"))}}
+	}
+	out := make([]Finding, 0, len(scripts))
+	for _, c := range scripts {
+		title := "Script changed: " + c.Path
+		if c.Change == web.ChangeAdded {
+			title = "Script added: " + c.Path
+		}
+		detail := fmt.Sprintf("%s was %s in %s since the previous snapshot, without a deploy if none was made.", c.Path, c.Change, app.Path)
+		if c.SHA256 != "" {
+			detail += "\nSHA-256 " + c.SHA256
+		}
+		out = append(out, Finding{Fingerprint: "file:" + c.Path + ":" + c.SHA256, Severity: "high", Title: title, Detail: detail})
+	}
+	return out
+}
+
+// changedIn lists the changes under a directory, at most maxNamedScripts of them.
+func changedIn(changes []web.FileChange, dir string) string {
+	var list []string
+	for _, c := range changes {
+		if strings.HasPrefix(c.Path, dir+"/") {
+			if len(list) == maxNamedScripts {
+				list = append(list, "...")
+				break
+			}
+			list = append(list, c.Change+" "+c.Path)
+		}
+	}
+	return strings.Join(list, "\n")
 }
 
 // webFinding maps a web finding kind to a severity and a title.

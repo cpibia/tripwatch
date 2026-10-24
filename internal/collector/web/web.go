@@ -119,6 +119,11 @@ type AppReport struct {
 	// UploadDirs are the upload directories found in the application, for the sensor to watch
 	// between snapshots.
 	UploadDirs []string `json:"upload_dirs,omitempty"`
+	// Changes names the code files added, changed or removed since the previous run whose
+	// snapshot was delivered, at most maxChanges of them; ChangeCount counts them all. Both are
+	// absent on a first run and when the sensor keeps no state.
+	Changes     []FileChange `json:"changes,omitempty"`
+	ChangeCount int          `json:"change_count,omitempty"`
 }
 
 // maxUploadDirs bounds the upload directories listed for one application.
@@ -130,14 +135,24 @@ type Result struct {
 	Issues    collector.Issues    `json:"issues,omitempty"`
 }
 
-// Collector inventories the web stack and scans every application found.
-type Collector struct{}
+// Collector inventories the web stack and scans every application found. With a StateDir it
+// keeps a manifest of each application's code files there, to name the files that changed.
+// Manifests advance in two steps, like log positions: Collect writes them, Commit puts them in
+// use once the snapshot naming the changes has been delivered.
+type Collector struct {
+	StateDir string
+	pending  pendingManifests
+}
 
-func (Collector) Name() string { return "web" }
+func (*Collector) Name() string { return "web" }
+
+// Commit puts in use the manifests of the last Collect. Call it only after its snapshot has been
+// delivered.
+func (c *Collector) Commit() error { return c.pending.commit() }
 
 // Collect scans every application. When the context expires the scan stops where it is and the
 // partial result is returned, marked as truncated, rather than lost.
-func (Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
+func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.Inspect(src.FS)}
 	budget := &hashBudget{left: MaxHashBytesPerRun}
 	scanners := make([]*scanner, 0, len(res.Inventory.Applications))
@@ -150,16 +165,27 @@ func (Collector) Collect(ctx context.Context, src collector.Source) (any, error)
 	for _, s := range scanners {
 		s.namesPass(ctx)
 	}
+	var manifests []string
 	for _, s := range scanners {
 		if ctx.Err() != nil {
 			s.issues = append(s.issues, fmt.Sprintf("%s: content not scanned: %v", s.report.Path, ctx.Err()))
 			s.report.Truncated = true
 		} else {
+			if c.StateDir != "" {
+				var err error
+				if s.manifest, err = newManifestWriter(c.StateDir, s.report.Path); err != nil {
+					s.issues.Add(err)
+				}
+			}
 			s.scan(ctx)
+			if next := s.finishManifest(c.StateDir); next != "" {
+				manifests = append(manifests, next)
+			}
 		}
 		res.Apps = append(res.Apps, s.report)
 		res.Issues = append(res.Issues, s.issues...)
 	}
+	c.pending.set(manifests)
 	return res, nil
 }
 
@@ -195,6 +221,7 @@ type scanner struct {
 	followed map[string]bool
 	stopped  bool
 	findings map[string]int
+	manifest *manifestWriter
 }
 
 func newScanner(src collector.Source, app discovery.Application, sites []discovery.Site, apps []discovery.Application) *scanner {
@@ -385,6 +412,7 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 			target, _ := fs.ReadLink(s.src.FS, name)
 			childHash = "link:" + target
 			s.inspectSymlink(name, e, target, false)
+			s.manifest.add(name, childHash)
 		case e.IsDir():
 			if e.Name() == ".git" {
 				continue
@@ -392,6 +420,7 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 			childHash = s.walk(ctx, name, depth+1, false, childThirdParty)
 		case e.Type().IsRegular():
 			childHash = s.inspectFile(name, e, false, false, true)
+			s.manifest.add(name, childHash)
 		default:
 			continue
 		}

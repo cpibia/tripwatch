@@ -8,6 +8,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- New webshell signatures: includes of request input, of a URL or of `php://input`, `eval` of
+  fetched content, calls through `$GLOBALS`, and dangerous function names written so that they
+  do not appear in the source (pieces, escapes, `chr()`, XOR). The `preg_replace` `/e` signature
+  now checks that the delimiters match, which removes false positives on ordinary patterns.
+- With `-state-dir`, the web collector keeps a manifest of each application's code files and
+  names the files added, changed or removed since the previous delivered snapshot; the verifier
+  raises each script added or changed (high) and lists the files of a directory that changed.
 - The web collector reports PHP saved in an application's data files (sessions, logs, error
   reports, caches) to be included later (`code_in_data_file`, critical): a real open tag
   followed by a webshell signature or a dangerous call. A request logged with its spaces

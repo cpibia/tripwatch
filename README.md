@@ -386,8 +386,16 @@ For each application the `web` collector produces:
   large files are read at their edges;
 - **polyglot images**: GIF, JPEG or PNG with code after the header or at the end;
 - **webshell signatures**: `eval` of decoded payloads, commands run with request input, droppers
-  that write code through library classes and more, matched after stripping comments from the
-  source; very long encoded blobs are reported separately as a weak indicator;
+  that write code through library classes, includes of request input, of a URL or of
+  `php://input`, `eval` of fetched content, calls through `$GLOBALS`, and function names such as
+  `system` or `assert` written so that they do not appear in the source (split into pieces,
+  escaped, built with `chr()` or XOR), matched after stripping comments from the source and
+  checked on a corpus of clean applications; very long encoded blobs are reported separately as
+  a weak indicator;
+- **changed code files by name**: with a state directory the sensor keeps a manifest of each
+  application's code files and reports the files added, changed or removed since the previous
+  delivered snapshot; each script added or changed is a high alert of its own (one alert for
+  more than 20, as a deploy makes), and the change of a directory's hash lists its files;
 - **hidden files** among scripts and in data directories, except the tool configurations and
   test fixtures that libraries ship on purpose (signatures are still searched in those);
 - per-directory configuration files (`.htaccess`, `.user.ini`, `web.config`) with their hash,
