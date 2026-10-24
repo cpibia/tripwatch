@@ -203,9 +203,13 @@ scripts: it costs only the listing, so files that are slow to read (sparse files
 images) cannot push a webshell past the deadline. The content pass then enriches the same
 findings with signatures, or withdraws them if the file is an empty placeholder. Files in data
 directories that are not scripts are searched for PHP that would run if they were included
-(`code_in_data_file`, critical): after each real open tag, `<?php` and a space or a line break,
-or `<?=`, at most 16 KB up to `?>` are matched against the signatures and a list of dangerous
-calls, segment after segment without overlap, so the cost stays linear. Obfuscated function
+(`code_in_data_file`, critical): after each real open tag (`<?php` or `<?` followed by a space
+or a line break, or `<?=`), the block up to the `?>` that closes it as PHP's lexer reads it (not
+one inside a string or a block comment), or to the end, is matched against the signatures, a
+list of dangerous calls and commands in backticks, block after block without overlap, so the cost
+stays linear. Data files over 4 MB are read through in 1 MB windows that overlap by 256 KB, within
+4 GB a run; the code matched is bounded to 64 MB a run, since hostile code is matched at a few
+megabytes a second. Past either budget an issue names the file. Obfuscated function
 names are found by one hand-written pass over each script, without regular expressions: chains
 of quoted literals and `chr()` calls joined by `.` or `^` are decoded as PHP would and compared
 with the names a webshell calls (decoders only next to an `eval`).

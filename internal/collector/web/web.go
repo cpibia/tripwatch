@@ -25,6 +25,14 @@ import (
 // files are fingerprinted by size, ctime and inode. Sparse files cost nothing to create.
 var MaxHashBytesPerRun int64 = 8 << 30
 
+// MaxDataScanBytesPerRun bounds the bytes of large data files (logs, reports) read through for
+// code by one run across all applications; beyond it they are read at their edges only.
+var MaxDataScanBytesPerRun int64 = 4 << 30
+
+// MaxDataCodeBytesPerRun bounds the PHP found in data files and matched against the signatures
+// by one run: clean data holds none, and hostile code is matched at a few megabytes a second.
+var MaxDataCodeBytesPerRun int64 = 64 << 20
+
 // Finding kinds.
 const (
 	KindScriptInUploads = "script_in_upload_dir"
@@ -154,7 +162,7 @@ func (c *Collector) Commit() error { return c.pending.commit() }
 // partial result is returned, marked as truncated, rather than lost.
 func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.Inspect(src.FS)}
-	budget := &hashBudget{left: MaxHashBytesPerRun}
+	budget := &hashBudget{left: MaxHashBytesPerRun, dataLeft: MaxDataScanBytesPerRun, codeLeft: MaxDataCodeBytesPerRun}
 	scanners := make([]*scanner, 0, len(res.Inventory.Applications))
 	for _, app := range res.Inventory.Applications {
 		s := newScanner(src, app, res.Inventory.Sites, res.Inventory.Applications)
@@ -193,6 +201,8 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 type hashBudget struct {
 	left      int64
 	exhausted bool
+	dataLeft  int64
+	codeLeft  int64
 }
 
 func (b *hashBudget) take(n int64) bool {
@@ -230,7 +240,7 @@ func newScanner(src collector.Source, app discovery.Application, sites []discove
 		root:     strings.TrimPrefix(app.Path, "/"),
 		profile:  app.Profile,
 		report:   AppReport{Application: app, DirHashes: map[string]string{}},
-		budget:   &hashBudget{left: MaxHashBytesPerRun},
+		budget:   &hashBudget{left: MaxHashBytesPerRun, dataLeft: MaxDataScanBytesPerRun, codeLeft: MaxDataCodeBytesPerRun},
 		followed: map[string]bool{},
 		findings: map[string]int{},
 	}
@@ -625,6 +635,12 @@ func (s *scanner) inspectFile(name string, e fs.DirEntry, inUploads, inData, has
 	if allocated, ok := collector.Allocated(info); ok && info.Size() > edgeScanSize && allocated < info.Size()/2 {
 		sparse = true
 	}
+	if inData && !script && !image && !sparse && info.Size() > maxInMemory {
+		// A log grows until the code planted in it sits far from both edges: read it through.
+		if sigs := s.streamCodeInData(name, info); len(sigs) > 0 {
+			s.add(KindCodeInData, name, e, sigs)
+		}
+	}
 	if !needContent || info.Size() > maxInMemory || sparse {
 		if !hash {
 			s.classify(name, e, s.edges(name, info), false, inUploads, inData)
@@ -671,7 +687,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	case inUploads && !script && containsCode(content):
 		s.add(KindCodeInUploads, name, e, matchSignatures(content, false))
 	case inData && !script && !image:
-		if sigs := codeInData(content); len(sigs) > 0 {
+		if sigs := s.codeInData(name, content); len(sigs) > 0 {
 			s.add(KindCodeInData, name, e, sigs)
 		}
 	case script:
@@ -729,6 +745,56 @@ func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inDa
 	if s.isPHP(strings.ToLower(e.Name())) {
 		s.markReachable(name)
 	}
+}
+
+// Windows of a large data file read for code: each one overlaps the next by dataScanOverlap, so
+// code within that distance of its open tag is always in the same window as the tag.
+const (
+	dataScanWindow  = 1 << 20
+	dataScanOverlap = 256 << 10
+)
+
+// streamCodeInData reads a data file too large to load in overlapping windows and searches each
+// for code, within the run's budget; past it, an issue says the file was read at its edges.
+func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
+	if s.budget.dataLeft < info.Size() {
+		s.issues = append(s.issues, fmt.Sprintf("/%s: %d bytes, read for code at its edges only: budget of %d bytes a run spent", name, info.Size(), MaxDataScanBytesPerRun))
+		return nil
+	}
+	s.budget.dataLeft -= info.Size()
+	f, err := s.src.FS.Open(name)
+	if err != nil {
+		s.issues.Add(err)
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	ra, ok := f.(io.ReaderAt)
+	if !ok {
+		return nil
+	}
+	var out []string
+	buf := make([]byte, dataScanWindow+dataScanOverlap)
+	for off := int64(0); off < info.Size(); off += dataScanWindow {
+		n, err := ra.ReadAt(buf, off)
+		for _, sig := range s.codeInData(name, buf[:n]) {
+			if !slices.Contains(out, sig) {
+				out = append(out, sig)
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return out
+}
+
+// codeInData searches data for code within the run's budget, and says when it ran out.
+func (s *scanner) codeInData(name string, content []byte) []string {
+	sigs, exhausted := codeInData(content, &s.budget.codeLeft)
+	if exhausted {
+		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
+	}
+	return sigs
 }
 
 // hashLarge hashes a file too big to load, keeping its first and last bytes for the content

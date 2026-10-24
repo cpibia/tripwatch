@@ -383,7 +383,7 @@ For each application the `web` collector produces:
   report or a cache file, waiting for an include of that file to run it. It takes a real open
   tag (`<?php` followed by a space or a line break, or `<?=`) and a webshell signature or a
   dangerous call after it, so logs of blocked requests and ordinary sessions are not reported;
-  large files are read at their edges;
+  large logs are read through, within a budget per run;
 - **polyglot images**: GIF, JPEG or PNG with code after the header or at the end;
 - **webshell signatures**: `eval` of decoded payloads, commands run with request input, droppers
   that write code through library classes, includes of request input, of a URL or of

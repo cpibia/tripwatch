@@ -776,7 +776,7 @@ func TestCodeInDataFiles(t *testing.T) {
 	}
 	want := map[string]string{
 		"var/report/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08": "exec_request_input",
-		"var/session/sess_9a02": "backtick_request_input",
+		"var/session/sess_9a02": "backtick_request_input,backtick_exec",
 		"var/log/debug.log":     "include_request_input",
 		"var/log/system.log":    "eval_decoded_payload,eval_request_input",
 	}
@@ -789,7 +789,7 @@ func BenchmarkCodeInData(b *testing.B) {
 	log := []byte(strings.Repeat("[2026-10-24T08:13:02Z] main.WARNING: Blocked search q=<?php+system($_GET[c]); <?= 1 ?> [] []\n", 40000))
 	b.SetBytes(int64(len(log)))
 	for b.Loop() {
-		codeInData(log)
+		codeInData(log, nil)
 	}
 }
 
@@ -825,5 +825,66 @@ func BenchmarkSignatures(b *testing.B) {
 	b.SetBytes(int64(len(src)))
 	for b.Loop() {
 		matchSignatures(src, true)
+	}
+}
+
+// The ways around the search for code in data files: a "?>" PHP does not see, padding before
+// the code, a command in backticks, the short open tag, code deep inside a large log.
+func TestCodeInDataBypasses(t *testing.T) {
+	for in, want := range map[string]string{
+		"<?php /* ?> */ eval($_POST[x]);":                                            "eval_request_input",
+		"<?php $s = '?>'; system($_GET['c']);":                                       "exec_request_input",
+		"<?php" + strings.Repeat(" ", 17<<10) + "system($_GET[c]);":                  "exec_request_input",
+		"<?php /*" + strings.Repeat("x", 17<<10) + "*/ passthru($_REQUEST['c']);":    "exec_request_input",
+		"<?php echo `{$h['X-Cmd']}`; $h = getallheaders();":                          "backtick_exec",
+		"<? $f = getallheaders(); $f['k'];":                                          "dangerous_call",
+		"<?\n@system($_COOKIE['c']);":                                                "exec_request_input",
+		"<?php // note ?> plain text, then system(1)":                                "",
+		"<?xml version=\"1.0\"?><order><note>system($_GET)</note></order>":           "",
+		"[2026-10-24] main.INFO: q=<?php+system($_GET[c]); [] []":                    "",
+		"[2026-10-24] main.INFO: template <?php echo $block->getTitle() ?> rendered": "",
+	} {
+		if got := strings.Join(first(codeInData([]byte(in), nil)), ","); !strings.Contains(got, want) || (want == "" && got != "") {
+			t.Errorf("%.60q: %q, want %q", in, got, want)
+		}
+	}
+
+	line := "[2026-10-24T08:13:02Z] main.INFO: Broken reference: the 'header.panel' element cannot be added as child [] []\n"
+	big := strings.Repeat(line, 3<<20/len(line)) + "main.ERROR: <?php\n" + strings.Repeat(" ", 100<<10) + "system($_GET['c']); ?>\n" + strings.Repeat(line, 3<<20/len(line))
+	fsys := compromisedShop()
+	fsys["var/www/commerce/var/log/system.log"] = text(big)
+	found := false
+	for _, f := range commerceReport(t, run(t, fsys)).Findings {
+		found = found || (f.Kind == KindCodeInData && f.Path == "/var/www/commerce/var/log/system.log")
+	}
+	if !found {
+		t.Error("code in the middle of a 6 MB log is not found")
+	}
+}
+
+func BenchmarkCodeInDataHostile(b *testing.B) {
+	for name, src := range map[string][]byte{
+		"tags":     []byte(strings.Repeat("<?php ?>", 1<<17)),
+		"strings":  []byte("<?php " + strings.Repeat(`'a\'b' "c\"d" `, 1<<16)),
+		"comments": []byte(strings.Repeat("<?php /* x */ // y\n", 1<<15)),
+		"calls":    []byte("<?php " + strings.Repeat("$_GET[a]; eval(1); ", 1<<15)),
+	} {
+		b.Run(name, func(b *testing.B) {
+			b.SetBytes(int64(len(src)))
+			for b.Loop() {
+				codeInData(src, nil)
+			}
+		})
+	}
+}
+
+func first[T, U any](t T, _ U) T { return t }
+
+// Hostile code in data files is matched within a budget; past it the run says so.
+func TestCodeInDataBudget(t *testing.T) {
+	left := int64(1000)
+	in := []byte(strings.Repeat("<?php $a = 1; ?>", 10) + "<?php " + strings.Repeat("$x; ", 1000) + "system($_GET[c]);")
+	if _, exhausted := codeInData(in, &left); !exhausted || left < 0 {
+		t.Fatalf("budget not enforced: left %d", left)
 	}
 }

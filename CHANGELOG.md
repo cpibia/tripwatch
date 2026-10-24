@@ -19,6 +19,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   reports, caches) to be included later (`code_in_data_file`, critical): a real open tag
   followed by a webshell signature or a dangerous call. A request logged with its spaces
   encoded, or a template snippet without such a call, is not reported.
+  Each block runs to the `?>` PHP itself sees, the short `<?` tag, commands in backticks and
+  `getallheaders()` count, and data files over 4 MB are read through in overlapping windows,
+  within a budget of bytes a run.
 - A snapshot that cannot be sealed because an earlier envelope is still pending is sent again
   every 10 seconds for five minutes, without collecting it again, instead of an hour later.
   Event batches go out at most one every two seconds, the pace the verifier accepts.
