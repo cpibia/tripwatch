@@ -73,6 +73,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- Security fix: the page asked for before signing in is followed only when it is a path on the
+  console. A tab or a control byte in it (`/%09/evil.example/`), which browsers drop, could send
+  the operator to another host after the login.
 - A process of user space named like a kernel thread (`[raid5wq]`, `kswapd0`, `kworker/0:2`)
   with an executable raises a critical alert: real kernel threads are never listed, and titles
   that only use brackets, such as celery's, are not matched.

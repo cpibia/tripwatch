@@ -286,9 +286,15 @@ func themeOf(r *http.Request) string {
 	return "dark"
 }
 
-// localPath accepts only paths on this site as redirect targets.
+// localPath accepts only paths on this site as redirect targets. Browsers drop tabs and line
+// breaks from a Location and read a backslash as a slash, so "/\t/evil.example" would leave the
+// site: control bytes and backslashes are refused, and what remains must parse as a bare path.
 func localPath(p, fallback string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsAny(p, "\\\r\n") {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '\\' }) {
+		return fallback
+	}
+	u, err := url.Parse(p)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
 		return fallback
 	}
 	return p

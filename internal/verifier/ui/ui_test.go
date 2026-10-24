@@ -1000,3 +1000,25 @@ func TestServersPage(t *testing.T) {
 		t.Error("outdated compares versions wrongly")
 	}
 }
+
+// Only paths on this site are followed after the login; what a browser would read as another
+// host is not.
+func TestLocalPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/hosts/web-01":         "/hosts/web-01",
+		"/alerts?state=open#x":  "/alerts?state=open#x",
+		"//evil.example/":       "/",
+		"/\t/evil.example/":     "/",
+		"/%09/evil.example/":    "/%09/evil.example/",
+		"/\\evil.example":       "/",
+		"/\r\nLocation: x":      "/",
+		"/\x7f":                 "/",
+		"https://evil.example/": "/",
+		"evil.example":          "/",
+		"":                      "/",
+	} {
+		if got := localPath(in, "/"); got != want {
+			t.Errorf("localPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
