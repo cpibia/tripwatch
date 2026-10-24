@@ -698,6 +698,11 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 			s.add(KindSignature, name, e, sigs)
 		}
 	}
+	if inUploads && !script && isSVG(base, content) {
+		if sigs := svgSignals(content); sigs != nil {
+			s.add(KindActiveSVG, name, e, sigs)
+		}
+	}
 	hidden := isSuspiciousHidden(e.Name())
 	// Signatures above still apply to these: only the hidden name stops being a finding.
 	if script && hidden && !inDependencyTests(name) {

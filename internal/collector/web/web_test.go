@@ -793,11 +793,11 @@ func BenchmarkCodeInData(b *testing.B) {
 	}
 }
 
-// Signatures run over a corpus of clean applications (PHP_CORPUS, a directory) report nothing.
+// Signatures run over a corpus of clean applications (WEB_CORPUS, a directory) report nothing.
 func TestSignaturesOnCleanCorpus(t *testing.T) {
-	dir := os.Getenv("PHP_CORPUS")
+	dir := os.Getenv("WEB_CORPUS")
 	if dir == "" {
-		t.Skip("PHP_CORPUS not set")
+		t.Skip("WEB_CORPUS not set")
 	}
 	files := 0
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error { //nolint:gosec // a test corpus chosen by whoever runs it

@@ -221,7 +221,14 @@ With `-state-dir`, the web collector writes a manifest of each application's cod
 compares it with the manifest in use as two sorted streams, so memory does not grow with the
 application. The changes (`changes`, at most 200, `change_count`) go in the snapshot; the new
 manifest replaces the old one only once that snapshot is delivered, like the log positions, so
-a snapshot that is lost is compared again. A scan cut short keeps the old manifest. Data directories
+a snapshot that is lost is compared again. A scan cut short keeps the old manifest. The scripts,
+templates and SVG images among the changes, when no more than 50 files changed (a deploy rebuilds
+bundles that hold payment code and every library's `eval` at once), are read for a card
+skimmer (`payment_skimmer`, critical): payment fields together with an exit to another host or
+with obfuscation, or a live secret payment key. A harvest of every form field is reported with
+them but is not enough alone: editor and file manager bundles hold it with exits and `eval`. The
+families are checked on a corpus of clean JavaScript with no match. SVG images in upload
+directories that run script are `active_svg_in_upload_dir`, critical when the script is hidden. Data directories
 are read as a stream and not hashed; a code directory with more entries than the limit is
 inspected the same way. Inside uploads, symlinks are reported and never followed; the only link
 followed is an upload directory that is itself a link, and only towards the application or the

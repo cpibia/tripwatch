@@ -24,6 +24,8 @@ const (
 	// maxChanges bounds the changes listed for one application in a snapshot; ChangeCount has
 	// them all.
 	maxChanges = 200
+	// maxSkimmerChanges is how many files may change at once for each to be read for skimmers.
+	maxSkimmerChanges = 50
 	// maxManifestLine bounds one line read back: a quoted path of the longest length and a hash.
 	maxManifestLine = 64 << 10
 )
@@ -247,6 +249,11 @@ func (s *scanner) finishManifest(stateDir string) string {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
 			s.report.Changes, s.report.ChangeCount = changes, count
+			// A deploy rebuilds bundles that hold payment code and every library's eval at once:
+			// only the few files changed outside one are judged.
+			if count <= maxSkimmerChanges {
+				s.inspectChanged(changes)
+			}
 		}
 	}
 	return m.next

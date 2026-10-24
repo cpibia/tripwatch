@@ -20,7 +20,8 @@ run_tool() {
   local tool=$1 out=$2
   case $tool in
     tripwatch)
-      tripwatch-sensor -app-db=false -state-dir= >"$out" 2>/dev/null
+      # The state kept from the baseline, as on a server: log positions and code manifests.
+      tripwatch-sensor -app-db=false -state-dir=/bench/state >"$out" 2>/dev/null
       if [ -f "$EVENTS" ]; then judge <"$EVENTS" >>"$out"; fi
       ;;
     aide) aide --config=/etc/aide/aide.conf --check >"$out" 2>/dev/null ;;

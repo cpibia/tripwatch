@@ -1265,6 +1265,13 @@ func webFinding(f web.Finding) (string, string) {
 		return "", ""
 	case web.KindHiddenInData:
 		return "medium", "Hidden file in data directories"
+	case web.KindSkimmer:
+		return "critical", "Payment skimmer in changed code"
+	case web.KindActiveSVG:
+		if slices.Contains(f.Signatures, "obfuscation") {
+			return "critical", "SVG with hidden script in upload directories"
+		}
+		return "high", "SVG that runs script in upload directories"
 	}
 	return "", ""
 }

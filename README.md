@@ -392,6 +392,11 @@ For each application the `web` collector produces:
   escaped, built with `chr()` or XOR), matched after stripping comments from the source and
   checked on a corpus of clean applications; very long encoded blobs are reported separately as
   a weak indicator;
+- **payment skimmers**: scripts, templates and SVG images among the files changed since the
+  previous snapshot (outside deploys of more than 50 files) are read for payment fields with an
+  exit to another host (`new Image`, `sendBeacon`, `WebSocket`, a request to an absolute URL) or
+  with obfuscation (`atob`, `fromCharCode`, `new Function`, `eval`), and for live secret payment
+  keys; an SVG in an upload directory that runs script is reported as it lands;
 - **changed code files by name**: with a state directory the sensor keeps a manifest of each
   application's code files and reports the files added, changed or removed since the previous
   delivered snapshot; each script added or changed is a high alert of its own (one alert for

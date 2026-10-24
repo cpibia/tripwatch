@@ -8,6 +8,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- Card skimmers: scripts, templates and SVG images changed since the previous snapshot are read
+  for payment fields sent to another host or hidden behind obfuscation, and for live secret
+  payment keys (`payment_skimmer`, critical); SVG images that run script in upload directories
+  are reported (`active_svg_in_upload_dir`). The detection benchmark keeps the sensor's state
+  from the baseline, as on a server.
 - New webshell signatures: includes of request input, of a URL or of `php://input`, `eval` of
   fetched content, calls through `$GLOBALS`, and dangerous function names written so that they
   do not appear in the source (pieces, escapes, `chr()`, XOR). The `preg_replace` `/e` signature
