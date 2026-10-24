@@ -326,8 +326,9 @@ what changes there within two seconds, in signed event envelopes of the same cha
   outside the system's binary directories.
 
 The verifier keeps the events for seven days (at most 20,000 a server in 24 hours for uploads
-and process starts and as many for system paths, so a flood cannot push out the first ones, nor
-noise in the uploads root's changes) and judges them at once. The web server's user starting a shell,
+and process starts, as many for the homes and crontabs of accounts other than root, 2,000 of
+them for each account, and as many for root's system paths, so a flood cannot push out the first
+ones, nor noise in the uploads or in a user's home root's changes) and judges them at once. The web server's user starting a shell,
 root gained through an unknown set-user-ID program, a change to who may become root or to library
 preloading are critical. A script or an `.htaccess` landing in an upload directory, new SSH keys,
 services, scheduled tasks and start-up scripts are high. What a snapshot an hour later could not

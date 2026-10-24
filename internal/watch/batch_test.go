@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -217,5 +219,94 @@ func TestBatcherCountsWhatIsLeftAtStop(t *testing.T) {
 	}
 	if events+int(dropped) != queued || system != dropped || dropped == 0 {
 		t.Fatalf("%d sent, %d counted lost (%d system) of %d", events, dropped, system, queued)
+	}
+}
+
+// An account flooding its own home ranks below root's paths, and past its quota below a webshell:
+// neither waits behind it, nor is evicted for it.
+func TestBatcherRanksAnAccountsHomeBelowRoot(t *testing.T) {
+	var sent [][]byte
+	b := &Batcher{Now: time.Now, Send: func(_ context.Context, p []byte) error {
+		sent = append(sent, p)
+		return nil
+	}}
+	b.SetHomes([]Home{{User: "root", Dir: "/root"}, {User: "alice", Dir: "/home/alice", UID: 1000}, {User: "etc", Dir: "/etc", UID: 2}})
+	for i := 0; i < MaxQueued; i++ {
+		b.add(Event{Class: ClassSSH, Op: OpCreate, Path: "/home/alice/.ssh/" + strings.Repeat("k", 900) + strconv.Itoa(i)})
+	}
+	b.add(Event{Class: ClassUpload, Op: OpCreate, Path: "/srv/u/shell.php"})
+	for i := 0; i < 2*MaxQueued; i++ {
+		b.add(Event{Class: ClassSSH, Op: OpCreate, Path: "/home/alice/.ssh/" + strings.Repeat("k", 900) + strconv.Itoa(i)})
+	}
+	b.add(Event{Class: ClassSSH, Op: OpWrite, Path: "/root/.ssh/authorized_keys"})
+	b.add(Event{Class: ClassHook, Op: OpWrite, Path: "/etc/profile"})
+	b.Flush(context.Background())
+	got := decodeBatch(t, sent[0])
+	var first []Event
+	for _, raw := range got.Events {
+		var e Event
+		if err := json.Unmarshal(raw, &e); err != nil {
+			t.Fatal(err)
+		}
+		first = append(first, e)
+	}
+	if first[0].Path != "/root/.ssh/authorized_keys" || first[1].Path != "/etc/profile" || first[1].Owner != "" {
+		t.Fatalf("root's paths are not first: %+v %+v", first[0], first[1])
+	}
+	if first[2].Owner != "alice" {
+		t.Fatalf("an account's home is not its own: %+v", first[2])
+	}
+	if !slices.ContainsFunc(first, func(e Event) bool { return e.Path == "/srv/u/shell.php" }) {
+		t.Fatal("the webshell waits behind an account's flood or was evicted for it")
+	}
+	if got.DroppedSystem != 0 || got.Dropped == 0 {
+		t.Fatalf("dropped %d, %d of root's", got.Dropped, got.DroppedSystem)
+	}
+}
+
+// An event passed over by higher ranks goes first once it has waited MaxWait.
+func TestBatcherSendsWhatWaitedTooLong(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	var sent [][]byte
+	b := &Batcher{Now: func() time.Time { return now }, Send: func(_ context.Context, p []byte) error {
+		sent = append(sent, p)
+		return nil
+	}}
+	homes := []Home{}
+	for u := 0; u < 8; u++ {
+		homes = append(homes, Home{User: "u" + strconv.Itoa(u), Dir: "/home/u" + strconv.Itoa(u), UID: 1000 + u})
+	}
+	b.SetHomes(homes)
+	b.add(Event{Class: ClassUpload, Op: OpCreate, Path: "/srv/u/shell.php"})
+	now = now.Add(MaxWait + time.Second)
+	for u := 0; u < 8; u++ {
+		for i := 0; i < MaxQueuedPerOwner; i++ {
+			b.add(Event{Class: ClassHook, Op: OpWrite, Path: "/home/u" + strconv.Itoa(u) + "/.bashrc", SHA256: strings.Repeat("a", 64) + strings.Repeat("p", 400)})
+		}
+	}
+	b.Flush(context.Background())
+	if !strings.Contains(string(decodeBatch(t, sent[0]).Events[0]), "shell.php") {
+		t.Fatal("an event that waited MaxWait is still passed over")
+	}
+}
+
+func TestBatcherOwnerOfSchedules(t *testing.T) {
+	b := &Batcher{}
+	uid := uint32(1001)
+	root := uint32(0)
+	for _, c := range []struct {
+		e    Event
+		want string
+	}{
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/crontabs/alice"}, "alice"},
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/root"}, ""},
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/atjobs/a0001", UID: &uid}, "uid 1001"},
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/atjobs/a0002", UID: &root}, ""},
+		{Event{Class: ClassSchedule, Path: "/etc/cron.d/alice", UID: &uid}, ""},
+		{Event{Class: ClassSSH, Path: "/home/alice/.ssh/authorized_keys"}, ""},
+	} {
+		if got := b.owner(c.e); got != c.want {
+			t.Errorf("owner of %s = %q, want %q", c.e.Path, got, c.want)
+		}
 	}
 }

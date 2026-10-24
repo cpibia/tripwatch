@@ -7,14 +7,17 @@ import (
 )
 
 // Events reported in real time are kept for EventRetention, and at most MaxEventsPerDay of one
-// host in 24 hours in each of two budgets: one for what the web server's user can produce at
-// will (uploads and process starts), one for system paths only root can change. Beyond that they
-// are counted, not stored, so a host flooding events cannot fill the disk, what it stored first
-// is never pushed out, and noise in the uploads never uses up the budget of root's changes.
+// host in 24 hours in each of three budgets: one for what the web server's user can produce at
+// will (uploads and process starts), one for the homes and crontabs of accounts other than root,
+// MaxOwnerEventsPerDay of them for each account, and one for system paths only root can change.
+// Beyond that they are counted, not stored, so a host flooding events cannot fill the disk, what
+// it stored first is never pushed out, and no account but root can use up the budget of root's
+// changes.
 const (
-	EventRetention  = 7 * 24 * time.Hour
-	MaxEventsPerDay = 20000
-	maxEventData    = 4 << 10
+	EventRetention       = 7 * 24 * time.Hour
+	MaxEventsPerDay      = 20000
+	MaxOwnerEventsPerDay = 2000
+	maxEventData         = 4 << 10
 )
 
 // Event is one change a sensor reported as it happened. Data is the event as the sensor sent it,
@@ -29,7 +32,10 @@ type Event struct {
 	Op             string
 	Path           string
 	PackageManager bool
-	Data           json.RawMessage
+	// Owner is the account other than root whose home or crontab the path is in, as the sensor
+	// says.
+	Owner string
+	Data  json.RawMessage
 }
 
 // noisyClasses are the event classes the web server's user can produce; they have a budget of
@@ -54,15 +60,34 @@ func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) ([
 	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE host_id = ? AND received_at < ?`, host, now.Add(-EventRetention).Unix()); err != nil {
 		return nil, err
 	}
-	var noise, system int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(class IN (`+noisyClasses+`)), 0), COALESCE(SUM(class NOT IN (`+noisyClasses+`)), 0)
-		FROM events WHERE host_id = ? AND received_at >= ?`, host, now.Add(-24*time.Hour).Unix()).Scan(&noise, &system); err != nil {
+	since := now.Add(-24 * time.Hour).Unix()
+	var noise, users, system int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(class IN (`+noisyClasses+`)), 0),
+		COALESCE(SUM(class NOT IN (`+noisyClasses+`) AND owner != ''), 0), COALESCE(SUM(class NOT IN (`+noisyClasses+`) AND owner = ''), 0)
+		FROM events WHERE host_id = ? AND received_at >= ?`, host, since).Scan(&noise, &users, &system); err != nil {
 		return nil, err
 	}
+	owners := map[string]int{}
 	for i, e := range events {
+		e.Owner = clip(e.Owner, 64)
 		count := &system
-		if noisy(e.Class) {
+		switch {
+		case noisy(e.Class):
 			count = &noise
+		case e.Owner != "":
+			count = &users
+			n, ok := owners[e.Owner]
+			if !ok {
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE host_id = ? AND owner = ? AND received_at >= ? AND class NOT IN (`+noisyClasses+`)`,
+					host, e.Owner, since).Scan(&n); err != nil {
+					return nil, err
+				}
+			}
+			if n >= MaxOwnerEventsPerDay {
+				owners[e.Owner] = n
+				continue
+			}
+			owners[e.Owner] = n + 1
 		}
 		if *count >= MaxEventsPerDay {
 			continue
@@ -71,8 +96,8 @@ func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) ([
 		if len(data) > maxEventData {
 			data = json.RawMessage(`{"truncated":true}`)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO events (host_id, seq, at, received_at, class, op, path, package_manager, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			host, e.Seq, e.At.Unix(), now.Unix(), clip(e.Class, 32), clip(e.Op, 32), clip(e.Path, 4096), e.PackageManager, string(data)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO events (host_id, seq, at, received_at, class, op, path, package_manager, owner, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			host, e.Seq, e.At.Unix(), now.Unix(), clip(e.Class, 32), clip(e.Op, 32), clip(e.Path, 4096), e.PackageManager, e.Owner, string(data)); err != nil {
 			return nil, err
 		}
 		*count++

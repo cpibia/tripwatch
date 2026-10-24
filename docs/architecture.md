@@ -127,15 +127,20 @@ the interpreter as the executable.
 
 Events go through a bounded channel to a batcher that sends at most every two seconds, in batches
 under 192 KB, with the counts of what was lost (kernel queue overflow, full channel, full queue,
-and among them the events on system paths) and whether a package manager was running, which is
+and among them the events on root's system paths) and whether a package manager was running, which is
 known from a lock of dpkg, rpm or apk held by a process of root in `/proc/locks`, never from a
 process name. If the transport cannot seal a batch because an earlier envelope is still pending,
-the batcher keeps it in a queue of 4,096 events, letting upload noise go first when it is full,
-and retries with a backoff up to a minute. When the sensor stops, what is queued is sent before
+the batcher keeps it in a queue of 4,096 events and retries with a backoff up to a minute. The
+queue ranks events: root's system paths first; then the start-up files, SSH keys and crontab
+of each account other than root, marked with the account (`owner`), 64 queued at most for each
+account, past which they count as noise; then everything else; then the upload noise no rule
+raises an alert on. Batches take the ranks in that order, except that an event other than noise
+that has waited 15 seconds goes right after root's; a full queue lets the lowest rank go first. When the sensor stops, what is queued is sent before
 the stop event. Each snapshot carries the watchers' status.
 
 The verifier stores the events (`events` table, seven days, at most 20,000 a host in 24 hours
-for uploads and process starts and as many for system paths, past which they are counted, not
+for uploads and process starts, as many for the events marked with an account other than root
+(2,000 for each account) and as many for root's system paths, past which they are counted, not
 stored, but still judged within their batch) and judges each batch at once with the rules in
 `internal/verifier/analyze/events.go`, looking up the same path's earlier events for what
 appeared and disappeared within 15 minutes. Their alerts have kind `realtime` and, as changes,

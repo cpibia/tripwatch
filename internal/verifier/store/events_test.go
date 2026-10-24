@@ -49,3 +49,34 @@ func TestEventsQuotaAndRetention(t *testing.T) {
 		t.Fatalf("after the retention: %d events, %v", len(left), err)
 	}
 }
+
+// An account flooding its own home uses up its own budget, never root's nor another account's.
+func TestEventsBudgetPerOwner(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	home := func(owner string, n int) []Event {
+		out := make([]Event, n)
+		for i := range out {
+			out[i] = Event{HostID: "web-01", Seq: 1, At: t0, Class: "ssh", Op: "create", Path: "/home/" + owner + "/.ssh/k", Owner: owner, Data: []byte(`{}`)}
+		}
+		return out
+	}
+	if k, err := s.AddEvents(ctx, home("alice", MaxOwnerEventsPerDay+50), t0); err != nil || stored(k) != MaxOwnerEventsPerDay {
+		t.Fatalf("stored %d of one account's flood, %v", stored(k), err)
+	}
+	if k, _ := s.AddEvents(ctx, home("alice", 1), t0.Add(time.Minute)); stored(k) != 0 {
+		t.Fatal("the account's budget is not kept across batches")
+	}
+	if k, _ := s.AddEvents(ctx, home("bob", 1), t0.Add(time.Minute)); stored(k) != 1 {
+		t.Fatal("one account used up another's budget")
+	}
+	root := []Event{{HostID: "web-01", Seq: 2, At: t0, Class: "ssh", Op: "create", Path: "/root/.ssh/authorized_keys", Data: []byte(`{}`)}}
+	for i := 0; i < MaxEventsPerDay/MaxOwnerEventsPerDay; i++ {
+		if _, err := s.AddEvents(ctx, home("user"+string(rune('a'+i)), MaxOwnerEventsPerDay), t0.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if k, _ := s.AddEvents(ctx, root, t0.Add(time.Minute)); !k[0] {
+		t.Fatal("the accounts' events used up the budget of root's changes")
+	}
+}

@@ -5,7 +5,7 @@ import "testing"
 // Homes that are system directories are not watched; real ones are, with their .ssh.
 func TestTargetsHomes(t *testing.T) {
 	dirs := map[string]bool{}
-	for _, tg := range Targets([]Home{{"bin", "/bin"}, {"daemon", "/usr/sbin"}, {"nobody", "/nonexistent"}, {"alice", "/home/alice"}, {"www-data", "/var/www"}}, []string{"/var/www/site/uploads", "relative"}) {
+	for _, tg := range Targets([]Home{{User: "bin", Dir: "/bin"}, {User: "daemon", Dir: "/usr/sbin"}, {User: "nobody", Dir: "/nonexistent"}, {User: "alice", Dir: "/home/alice"}, {User: "www-data", Dir: "/var/www"}}, []string{"/var/www/site/uploads", "relative"}) {
 		dirs[tg.Dir] = true
 	}
 	for _, d := range []string{"/bin", "/usr/sbin", "/nonexistent", "relative"} {

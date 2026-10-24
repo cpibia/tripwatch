@@ -68,9 +68,12 @@ type Event struct {
 	// in it is seen.
 	Root bool `json:"root,omitempty"`
 	// WebUser marks a file in a scratch directory owned by the web server's user.
-	WebUser bool    `json:"web_user,omitempty"`
-	UID     *uint32 `json:"uid,omitempty"`
-	Mode    string  `json:"mode,omitempty"`
+	WebUser bool `json:"web_user,omitempty"`
+	// Owner names the account other than root whose home or crontab the path is in: that
+	// account can change it at will, so its events are not root's evidence.
+	Owner string  `json:"owner,omitempty"`
+	UID   *uint32 `json:"uid,omitempty"`
+	Mode  string  `json:"mode,omitempty"`
 	// Process events: why the process was reported, and what it is.
 	Reason  string `json:"reason,omitempty"`
 	PID     int    `json:"pid,omitempty"`
@@ -117,6 +120,7 @@ var ErrUnsupported = errors.New("watch: real-time events need Linux")
 type Home struct {
 	User string
 	Dir  string
+	UID  int
 }
 
 // rcFiles are the shell start-up files of a home: code put there runs at each login.

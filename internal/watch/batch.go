@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -27,9 +29,9 @@ type Batch struct {
 	// the processes not inspected because too many started at once.
 	Dropped int64 `json:"dropped,omitempty"`
 	Skipped int64 `json:"skipped,omitempty"`
-	// DroppedSystem counts, among the dropped, the events on system paths (accounts, SSH,
-	// privilege, services, scheduled tasks, start-up scripts) the queue had to let go: noise in
-	// the uploads goes first, so these are lost only when the queue holds nothing else.
+	// DroppedSystem counts, among the dropped, the events on root's system paths (accounts, SSH,
+	// privilege, services, scheduled tasks, start-up scripts) the queue had to let go: everything
+	// else goes first, so these are lost only when root itself floods the queue.
 	DroppedSystem int64 `json:"dropped_system,omitempty"`
 	// PackageManager is set when a package manager was running as the batch was sent: what it
 	// installs touches the same places an intruder does.
@@ -43,6 +45,12 @@ const (
 	MaxQueued     = 4096
 	Window        = 2 * time.Second
 	maxBackoff    = time.Minute
+	// MaxQueuedPerOwner bounds the events of one account's home or crontab that rank above the
+	// uploads; past it, that account's events are noise until the queue drains.
+	MaxQueuedPerOwner = 64
+	// MaxWait is how long an event other than noise can be passed over by later ones of a higher
+	// rank before it goes first.
+	MaxWait = 15 * time.Second
 )
 
 // Batcher gathers events and sends them in batches at most Window apart.
@@ -66,14 +74,28 @@ type Batcher struct {
 	seenD, seenS     int64
 	failures         int
 	retryAt          time.Time
+	homes            atomic.Pointer[map[string]string]
+	perOwner         map[string]int
 }
 
-// queued is an event waiting to be sent, with its priority when the queue is full.
+// queued is an event waiting to be sent, with its rank and when it came.
 type queued struct {
-	raw    json.RawMessage
-	low    bool
-	system bool
+	raw   json.RawMessage
+	rank  int
+	owner string
+	since time.Time
 }
+
+// Ranks of queued events, first sent and last evicted first: root's system paths, which only
+// root can change; the homes and crontabs of the other accounts, within a quota each; the rest;
+// the noise no rule raises an alert on.
+const (
+	rankRoot = iota
+	rankUser
+	rankOther
+	rankLow
+	ranks
+)
 
 // finalFlush bounds the last attempt to send what is queued when the sensor stops.
 const finalFlush = 5 * time.Second
@@ -125,11 +147,11 @@ drain:
 	}
 	for _, q := range b.queue {
 		b.dropped++
-		if q.system {
+		if q.rank == rankRoot {
 			b.droppedSystem++
 		}
 	}
-	b.queue = nil
+	b.queue, b.perOwner = nil, nil
 	if b.dropped > 0 || b.skipped > 0 {
 		b.retryAt = time.Time{}
 		b.Flush(final)
@@ -140,26 +162,122 @@ drain:
 const maxFinalBatches = 40
 
 func (b *Batcher) add(e Event) {
+	e.Owner = b.owner(e)
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return
 	}
+	if b.perOwner == nil {
+		b.perOwner = map[string]int{}
+	}
 	if len(b.queue) >= MaxQueued {
-		// Low-priority noise goes first, then anything but system paths, then the oldest.
-		i := slices.IndexFunc(b.queue, func(q queued) bool { return q.low })
-		if i < 0 {
-			i = slices.IndexFunc(b.queue, func(q queued) bool { return !q.system })
+		// The oldest of the lowest rank goes.
+		i := 0
+		for j, q := range b.queue {
+			if q.rank > b.queue[i].rank {
+				i = j
+			}
 		}
-		if i < 0 {
-			i = 0
-		}
-		if b.queue[i].system {
+		if b.queue[i].rank == rankRoot {
 			b.droppedSystem++
 		}
+		b.release(b.queue[i])
 		b.queue = slices.Delete(b.queue, i, i+1)
 		b.dropped++
 	}
-	b.queue = append(b.queue, queued{raw: raw, low: lowPriority(e), system: systemClass(e.Class)})
+	q := queued{raw: raw, owner: e.Owner, since: b.now()}
+	switch {
+	case e.Owner != "" && b.perOwner[e.Owner] < MaxQueuedPerOwner:
+		q.rank = rankUser
+		b.perOwner[e.Owner]++
+	case e.Owner != "" || lowPriority(e):
+		q.rank = rankLow
+	case systemClass(e.Class):
+		q.rank = rankRoot
+	default:
+		q.rank = rankOther
+	}
+	b.queue = append(b.queue, q)
+}
+
+func (b *Batcher) now() time.Time {
+	if b.Now == nil {
+		return time.Now()
+	}
+	return b.Now()
+}
+
+// release forgets a queued event in its owner's quota.
+func (b *Batcher) release(q queued) {
+	if q.rank != rankUser {
+		return
+	}
+	if b.perOwner[q.owner]--; b.perOwner[q.owner] <= 0 {
+		delete(b.perOwner, q.owner)
+	}
+}
+
+// SetHomes tells the batcher which accounts other than root own which homes; it may be called
+// while Run runs.
+func (b *Batcher) SetHomes(homes []Home) {
+	m := make(map[string]string, len(homes))
+	rootHomes := map[string]bool{}
+	for _, h := range homes {
+		dir := path.Clean(h.Dir)
+		if dir == "/" || !strings.HasPrefix(dir, "/") {
+			continue
+		}
+		if h.UID == 0 {
+			rootHomes[dir] = true
+		} else if _, ok := m[dir]; !ok {
+			m[dir] = h.User
+		}
+	}
+	// A home shared with an account of UID 0 is root's.
+	for dir := range rootHomes {
+		delete(m, dir)
+	}
+	b.homes.Store(&m)
+}
+
+// crontabDirs hold one crontab per account, named after it.
+var crontabDirs = []string{"/var/spool/cron", "/var/spool/cron/crontabs", "/var/spool/cron/tabs"}
+
+// owner returns the account other than root that can change the path of a system event at will:
+// its home's start-up files and SSH keys, its crontab, its jobs queued with at.
+func (b *Batcher) owner(e Event) string {
+	if e.Root || e.Path == "" {
+		return ""
+	}
+	dir, name := path.Split(e.Path)
+	dir = path.Clean(dir)
+	switch e.Class {
+	case ClassSSH, ClassHook:
+		homes := b.homes.Load()
+		if homes == nil {
+			return ""
+		}
+		// Only the names watched in a home: an account whose home is /etc must not take
+		// /etc/profile from root.
+		switch {
+		case e.Class == ClassSSH && path.Base(dir) == ".ssh":
+			return (*homes)[path.Dir(dir)]
+		case e.Class == ClassHook && (name == ".ssh" || slices.Contains(rcFiles, name)):
+			return (*homes)[dir]
+		}
+	case ClassSchedule:
+		if slices.Contains(crontabDirs, dir) {
+			if name == "root" || name == "" {
+				return ""
+			}
+			return name
+		}
+		// Jobs queued with at: their files belong to whoever queued them.
+		if strings.HasPrefix(dir+"/", "/var/spool/") && e.UID != nil && *e.UID != 0 {
+			return "uid " + strconv.FormatUint(uint64(*e.UID), 10)
+		}
+	}
+	return ""
 }
 
 // lowPriority are the events a web user can produce at will that no rule raises an alert on:
@@ -208,6 +326,12 @@ func (b *Batcher) Flush(ctx context.Context) {
 		}
 		b.failures, b.retryAt = 0, time.Time{}
 		b.queue = b.pending
+		clear(b.perOwner)
+		for _, q := range b.queue {
+			if q.rank == rankUser {
+				b.perOwner[q.owner]++
+			}
+		}
 		b.dropped, b.skipped, b.droppedSystem = 0, 0, 0
 	}
 	if len(b.queue) == 0 {
@@ -219,13 +343,17 @@ func (b *Batcher) Flush(ctx context.Context) {
 // until the batch is sent.
 func (b *Batcher) next() Batch {
 	batch := Batch{Event: BatchEvent, Events: []json.RawMessage{}, Dropped: b.dropped, Skipped: b.skipped, DroppedSystem: b.droppedSystem}
-	// System events first, then the others, then the noise, each in the order it came: a
-	// change to root's keys must not wait behind a flood in the uploads.
+	// Root's system events first, then whatever has waited MaxWait, then each rank in turn, each
+	// in the order it came: a change to root's keys must not wait behind a flood in the uploads
+	// or in a user's home, and a webshell must not wait behind a flood forever.
 	size, n := 0, 0
 	taken := make([]bool, len(b.queue))
-	for pass := 0; pass < 3; pass++ {
+	stale := b.now().Add(-MaxWait)
+	for pass := -1; pass < ranks; pass++ {
 		for i, q := range b.queue {
-			if taken[i] || (pass == 0 && !q.system) || (pass == 1 && (q.system || q.low)) || (pass == 2 && !q.low) {
+			first := pass == -1 && q.rank == rankRoot
+			aged := pass == rankRoot && q.rank != rankLow && q.since.Before(stale)
+			if taken[i] || (pass == -1 && !first) || (pass == rankRoot && !aged) || (pass > rankRoot && q.rank != pass) {
 				continue
 			}
 			if n > 0 && size+len(q.raw) > MaxBatchBytes {

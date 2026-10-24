@@ -24,7 +24,8 @@ type realtime struct {
 	mu     sync.Mutex
 	issues []string
 	// sent is closed once the batcher has sent what was queued at the stop.
-	sent chan struct{}
+	sent    chan struct{}
+	batcher *watch.Batcher
 }
 
 // startRealtime starts the watchers; send gets each batch and returns an error only when the
@@ -61,6 +62,9 @@ func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(c
 		Done:           make(chan struct{}),
 	}
 	r.sent = b.Done
+	r.mu.Lock()
+	r.batcher = b
+	r.mu.Unlock()
 	go b.Run(ctx)
 	return r
 }
@@ -136,15 +140,18 @@ func (r *realtime) update(snap collector.Snapshot) {
 	_ = json.Unmarshal(snap.Results["web"], &site)
 	homes := make([]watch.Home, 0, len(accounts.Accounts))
 	for _, a := range accounts.Accounts {
-		homes = append(homes, watch.Home{User: a.Name, Dir: a.Home})
+		homes = append(homes, watch.Home{User: a.Name, Dir: a.Home, UID: a.UID})
 	}
 	var uploads []string
 	for _, app := range site.Apps {
 		uploads = append(uploads, app.UploadDirs...)
 	}
 	r.mu.Lock()
-	files, execs := r.files, r.execs
+	files, execs, batcher := r.files, r.execs, r.batcher
 	r.mu.Unlock()
+	if batcher != nil {
+		batcher.SetHomes(homes)
+	}
 	if files != nil {
 		files.Set(watch.Targets(homes, uploads))
 		files.SetWebUsers(watch.WebUsers(&accounts, &processes))

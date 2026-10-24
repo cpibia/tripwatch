@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS events (
 	op              TEXT NOT NULL,
 	path            TEXT NOT NULL,
 	package_manager INTEGER NOT NULL DEFAULT 0,
+	owner           TEXT NOT NULL DEFAULT '',
 	data            TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_host ON events(host_id, received_at);
@@ -243,6 +244,15 @@ func migrate(db *sql.DB) error {
 			if _, err := db.ExecContext(context.Background(), `ALTER TABLE sensor_runs ADD COLUMN `+col+` `+def); err != nil { //nolint:gosec // names and definitions from the map above
 				return err
 			}
+		}
+	}
+	var owner int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('events') WHERE name = 'owner'`).Scan(&owner); err != nil {
+		return err
+	}
+	if owner == 0 {
+		if _, err := db.ExecContext(context.Background(), `ALTER TABLE events ADD COLUMN owner TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
 		}
 	}
 	var n int

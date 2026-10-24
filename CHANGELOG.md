@@ -14,6 +14,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Each event batch takes the system events first, then the others, then the noise of the
   uploads, so a change to root's keys is not held behind a flood; at a stop, what the final
   burst cannot send is counted as lost in a last batch.
+- Events in the homes and crontabs of accounts other than root are marked with the account and
+  rank below root's system paths, with at most 64 queued for each account before they count as
+  noise; an event that has waited 15 seconds goes before later ones of a higher rank. An account
+  flooding its own `~/.ssh` can no longer delay or evict root's keys, nor a webshell.
 - The root of a watched place moved away or removed is reported at once and watched again within
   seconds when it is back, retried for a minute; after the kernel's event queue overflows, the
   watches are planned again from scratch.
@@ -49,6 +53,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   presented after a re-enrollment became the host's, so a copy of the old bundle could win
   against the new sensor. Hosts enrolled before certificates were recorded must be enrolled
   again.
+- Events marked with an account other than root have a daily budget of their own (20,000 a
+  host, 2,000 for each account): a user flooding their home no longer uses up the budget of
+  root's changes, which kept a key written and removed in two batches from being raised.
 - Heartbeats and event batches are rate limited per host (a burst of 60, then one a second),
   refused before the body is read; each path's event history is read once per batch.
 - The ingest endpoint speaks HTTP/1.1 only, as the sensors do, with write and idle timeouts
