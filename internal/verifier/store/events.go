@@ -18,6 +18,7 @@ const (
 	MaxEventsPerDay      = 20000
 	MaxOwnerEventsPerDay = 2000
 	maxEventData         = 4 << 10
+	maxBatchOwners       = 64
 )
 
 // Event is one change a sensor reported as it happened. Data is the event as the sensor sent it,
@@ -60,16 +61,50 @@ func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) ([
 	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE host_id = ? AND received_at < ?`, host, now.Add(-EventRetention).Unix()); err != nil {
 		return nil, err
 	}
-	since := now.Add(-24 * time.Hour).Unix()
-	var noise, users, system int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(class IN (`+noisyClasses+`)), 0),
-		COALESCE(SUM(class NOT IN (`+noisyClasses+`) AND owner != ''), 0), COALESCE(SUM(class NOT IN (`+noisyClasses+`) AND owner = ''), 0)
-		FROM events WHERE host_id = ? AND received_at >= ?`, host, since).Scan(&noise, &users, &system); err != nil {
+	// One pass over the host's day, whatever the number of accounts in the batch: a count per
+	// account would let a sensor naming a thousand of them hold the database for seconds.
+	inBatch := map[string]bool{}
+	for i := range events {
+		events[i].Owner = clip(events[i].Owner, 64)
+		if !noisy(events[i].Class) && events[i].Owner != "" {
+			inBatch[events[i].Owner] = true
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT class IN (`+noisyClasses+`), owner, COUNT(*) FROM events
+		WHERE host_id = ? AND received_at >= ? GROUP BY 1, 2`, host, now.Add(-24*time.Hour).Unix())
+	if err != nil {
 		return nil, err
 	}
+	var noise, users, system int
 	owners := map[string]int{}
+	for rows.Next() {
+		var isNoise bool
+		var owner string
+		var n int
+		if err := rows.Scan(&isNoise, &owner, &n); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		switch {
+		case isNoise:
+			noise += n
+		case owner == "":
+			system += n
+		default:
+			users += n
+			if inBatch[owner] {
+				owners[owner] = n
+			}
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	fresh := 0
 	for i, e := range events {
-		e.Owner = clip(e.Owner, 64)
 		count := &system
 		switch {
 		case noisy(e.Class):
@@ -78,10 +113,12 @@ func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) ([
 			count = &users
 			n, ok := owners[e.Owner]
 			if !ok {
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE host_id = ? AND owner = ? AND received_at >= ? AND class NOT IN (`+noisyClasses+`)`,
-					host, e.Owner, since).Scan(&n); err != nil {
-					return nil, err
+				// A sensor sends the few accounts of its host; one naming more in a batch is not
+				// an intact sensor, and its extra accounts are not kept.
+				if fresh >= maxBatchOwners {
+					continue
 				}
+				fresh++
 			}
 			if n >= MaxOwnerEventsPerDay {
 				owners[e.Owner] = n

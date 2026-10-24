@@ -57,7 +57,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   again.
 - Events marked with an account other than root have a daily budget of their own (20,000 a
   host, 2,000 for each account): a user flooding their home no longer uses up the budget of
-  root's changes, which kept a key written and removed in two batches from being raised.
+  root's changes, which kept a key written and removed in two batches from being raised. The
+  budgets are counted in one query per batch, and a batch naming more than 64 new accounts keeps
+  the events of the first 64 only.
 - Heartbeats and event batches are rate limited per host (a burst of 60, then one a second),
   refused before the body is read; each path's event history is read once per batch.
 - The ingest endpoint speaks HTTP/1.1 only, as the sensors do, with write and idle timeouts

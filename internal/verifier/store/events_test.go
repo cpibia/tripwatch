@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -78,5 +79,23 @@ func TestEventsBudgetPerOwner(t *testing.T) {
 	}
 	if k, _ := s.AddEvents(ctx, root, t0.Add(time.Minute)); !k[0] {
 		t.Fatal("the accounts' events used up the budget of root's changes")
+	}
+}
+
+// A batch naming more accounts than a host has keeps the events of the first few only.
+func TestEventsOwnersPerBatch(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	events := make([]Event, 1000)
+	for i := range events {
+		owner := "uid " + strconv.Itoa(i)
+		events[i] = Event{HostID: "web-01", Seq: 1, At: t0, Class: "schedule", Op: "create", Path: "/var/spool/cron/crontabs/x", Owner: owner, Data: []byte(`{}`)}
+	}
+	k, err := s.AddEvents(ctx, events, t0)
+	if err != nil || stored(k) != maxBatchOwners {
+		t.Fatalf("stored %d of 1000 accounts, %v", stored(k), err)
+	}
+	if k, _ := s.AddEvents(ctx, events[:1], t0.Add(time.Minute)); stored(k) != 1 {
+		t.Fatal("an account seen earlier in the day is refused")
 	}
 }
