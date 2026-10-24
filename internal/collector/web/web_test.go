@@ -888,3 +888,17 @@ func TestCodeInDataBudget(t *testing.T) {
 		t.Fatalf("budget not enforced: left %d", left)
 	}
 }
+
+// In a large data file the code sits far from its tag, behind a comment of 700 KB.
+func TestCodeInDataFarFromItsTag(t *testing.T) {
+	line := "[2026-10-24T08:13:02Z] main.INFO: Broken reference [] []\n"
+	big := strings.Repeat(line, 3<<20/len(line)) + "<?php /*" + strings.Repeat("x", 700<<10) + "*/ system($_GET['c']);\n" + strings.Repeat(line, 2<<20/len(line))
+	fsys := compromisedShop()
+	fsys["var/www/commerce/var/log/system.log"] = text(big)
+	for _, f := range commerceReport(t, run(t, fsys)).Findings {
+		if f.Kind == KindCodeInData && f.Path == "/var/www/commerce/var/log/system.log" {
+			return
+		}
+	}
+	t.Error("code 700 KB from its tag in a large log is not found")
+}

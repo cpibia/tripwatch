@@ -207,10 +207,12 @@ findings with signatures, or withdraws them if the file is an empty placeholder.
 directories that are not scripts are searched for PHP that would run if they were included
 (`code_in_data_file`, critical): after each real open tag (`<?php` or `<?` followed by a space
 or a line break, or `<?=`), the block up to the `?>` that closes it as PHP's lexer reads it (not
-one inside a string or a block comment), or to the end, is matched against the signatures, a
-list of dangerous calls and commands in backticks, block after block without overlap, so the cost
-stays linear. Data files over 4 MB are read through in 1 MB windows that overlap by 256 KB, within
-4 GB a run; the code matched is bounded to 64 MB a run, since hostile code is matched at a few
+one inside a string, a heredoc or nowdoc, or a block comment), or to the end, is matched against
+the signatures, a list of dangerous calls and commands in backticks, without its comments and
+with runs of blanks folded, block after block without overlap, so the cost stays linear. The
+lexer (`phplex.go`) keeps its state from one piece of a file to the next: data files over 4 MB
+are read through 1 MB at a time, within 4 GB a run, and code is judged with its block however far
+from its tag; the code matched is bounded to 64 MB a run, since hostile code is matched at a few
 megabytes a second. Past either budget an issue names the file. Obfuscated function
 names are found by one hand-written pass over each script, without regular expressions: chains
 of quoted literals and `chr()` calls joined by `.` or `^` are decoded as PHP would and compared

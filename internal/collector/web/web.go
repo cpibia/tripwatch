@@ -752,15 +752,12 @@ func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inDa
 	}
 }
 
-// Windows of a large data file read for code: each one overlaps the next by dataScanOverlap, so
-// code within that distance of its open tag is always in the same window as the tag.
-const (
-	dataScanWindow  = 1 << 20
-	dataScanOverlap = 256 << 10
-)
+// dataScanChunk is how much of a large data file is read at a time; the lexer keeps its state
+// from one piece to the next, so code is judged with its block however far from its tag.
+const dataScanChunk = 1 << 20
 
-// streamCodeInData reads a data file too large to load in overlapping windows and searches each
-// for code, within the run's budget; past it, an issue says the file was read at its edges.
+// streamCodeInData reads a data file too large to load, piece after piece, and searches it for
+// code within the run's budget; past it, an issue says the file was read at its edges.
 func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	if s.budget.dataLeft < info.Size() {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: %d bytes, read for code at its edges only: budget of %d bytes a run spent", name, info.Size(), MaxDataScanBytesPerRun))
@@ -773,24 +770,22 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 		return nil
 	}
 	defer func() { _ = f.Close() }()
-	ra, ok := f.(io.ReaderAt)
-	if !ok {
-		return nil
-	}
-	var out []string
-	buf := make([]byte, dataScanWindow+dataScanOverlap)
-	for off := int64(0); off < info.Size(); off += dataScanWindow {
-		n, err := ra.ReadAt(buf, off)
-		for _, sig := range s.codeInData(name, buf[:n]) {
-			if !slices.Contains(out, sig) {
-				out = append(out, sig)
-			}
-		}
-		if err != nil {
+	// What the file had when listed: a log written meanwhile does not keep the scan going.
+	r := io.LimitReader(f, info.Size())
+	c := &codeSearch{codeLeft: &s.budget.codeLeft}
+	buf := make([]byte, dataScanChunk)
+	for !c.exhausted {
+		n, err := io.ReadFull(r, buf)
+		last := err != nil
+		c.feed(buf[:n], last)
+		if last {
 			break
 		}
 	}
-	return out
+	if c.exhausted {
+		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
+	}
+	return c.sigs
 }
 
 // codeInData searches data for code within the run's budget, and says when it ran out.
