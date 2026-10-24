@@ -78,8 +78,14 @@ type Files struct {
 	// budget and leave root's changes without a hash.
 	hashed   [2]int64
 	hashedAt time.Time
-	// Dropped counts events lost because the consumer did not keep up.
-	Dropped atomic.Int64
+	// Dropped counts events lost because the consumer did not keep up; DroppedSystem those of
+	// them that were root's.
+	Dropped       atomic.Int64
+	DroppedSystem atomic.Int64
+	// Urgent, when set before Run, takes the events IsRootEvent says are root's, so that a flood
+	// another account makes in its home or the uploads never fills their way.
+	Urgent      chan<- Event
+	IsRootEvent func(Event) bool
 }
 
 // NewFiles opens an inotify instance for the filesystem at root, read through src.
@@ -298,12 +304,7 @@ func (f *Files) rootGone(w *watched) {
 		f.gap(t.Class, fmt.Sprintf("watch: %s was moved away or removed", w.dir))
 		f.missing[w.dir] = replanRetries
 		f.replanAt = f.now().Add(replanDelay)
-		e := Event{At: f.now().UTC(), Class: t.Class, Op: OpDelete, Path: w.dir, Dir: true, Root: true}
-		select {
-		case f.out <- e:
-		default:
-			f.Dropped.Add(1)
-		}
+		f.send(Event{At: f.now().UTC(), Class: t.Class, Op: OpDelete, Path: w.dir, Dir: true, Root: true})
 		return
 	}
 }
@@ -770,6 +771,15 @@ func (f *Files) emit(e Event) {
 }
 
 func (f *Files) send(e Event) {
+	if f.Urgent != nil && f.IsRootEvent != nil && f.IsRootEvent(e) {
+		select {
+		case f.Urgent <- e:
+		default:
+			f.Dropped.Add(1)
+			f.DroppedSystem.Add(1)
+		}
+		return
+	}
 	select {
 	case f.out <- e:
 	default:

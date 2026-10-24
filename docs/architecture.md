@@ -125,7 +125,9 @@ only those matching a reason are reported (`web_user_tool`, `unusual_path`, `del
 `privilege_gain`). For an interpreter the script it runs is reported as well, since `/proc` shows
 the interpreter as the executable.
 
-Events go through a bounded channel to a batcher that sends at most every two seconds, in batches
+Events go through bounded channels to a batcher: root's system paths have a channel of their own,
+which the batcher reads first and no other account can fill (a loss there counts as root's), the
+rest share one. The batcher sends at most every two seconds, in batches
 under 192 KB, with the counts of what was lost (kernel queue overflow, full channel, full queue,
 and among them the events on root's system paths) and whether a package manager was running, which is
 known from a lock of dpkg, rpm or apk held by a process of root in `/proc/locks`, never from a

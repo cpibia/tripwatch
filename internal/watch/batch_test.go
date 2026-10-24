@@ -320,3 +320,40 @@ func TestBatcherOwners(t *testing.T) {
 		}
 	}
 }
+
+func TestBatcherRootEvent(t *testing.T) {
+	b := &Batcher{}
+	b.SetHomes([]Home{{User: "root", Dir: "/root"}, {User: "alice", Dir: "/home/alice", UID: 1000}})
+	alice, root := uint32(1000), uint32(0)
+	for _, c := range []struct {
+		e    Event
+		want bool
+	}{
+		{Event{Class: ClassSSH, Path: "/root/.ssh/authorized_keys"}, true},
+		{Event{Class: ClassSSH, Path: "/home/alice/.ssh"}, false},
+		{Event{Class: ClassHook, Path: "/home/alice/.bashrc"}, false},
+		{Event{Class: ClassHook, Path: "/etc/ld.so.preload"}, true},
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/crontabs/tmp.Xk3a", UID: &alice}, false},
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/crontabs/tmp.Xk3a"}, false},
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/crontabs/root"}, true},
+		{Event{Class: ClassSchedule, Path: "/var/spool/cron/crontabs/root", UID: &root}, true},
+		{Event{Class: ClassSchedule, Path: "/etc/cron.d/job"}, true},
+		{Event{Class: ClassUpload, Path: "/srv/u/x.php"}, false},
+	} {
+		if got := b.RootEvent(c.e); got != c.want {
+			t.Errorf("%s: %v, want %v", c.e.Path, got, c.want)
+		}
+	}
+}
+
+// With a full queue an event costs the same to add whatever the queue holds.
+func BenchmarkBatcherAddFull(b *testing.B) {
+	bt := &Batcher{Now: time.Now}
+	for i := 0; i < MaxQueued; i++ {
+		bt.add(Event{Class: ClassService, Op: OpCreate, Path: "/etc/systemd/system/x.service"})
+	}
+	e := Event{Class: ClassUpload, Op: OpCreate, Path: "/srv/u/a.jpg"}
+	for b.Loop() {
+		bt.add(e)
+	}
+}

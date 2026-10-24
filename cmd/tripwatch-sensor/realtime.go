@@ -33,12 +33,24 @@ type realtime struct {
 func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(context.Context, []byte) error) *realtime {
 	src := collector.NewSource(s.root)
 	events := make(chan watch.Event, 2048)
+	// Root's events have a lane of their own, which no other account can fill.
+	urgent := make(chan watch.Event, 1024)
 	r := &realtime{}
+	b := &watch.Batcher{
+		In:             events,
+		Urgent:         urgent,
+		Send:           send,
+		Lost:           r.lost,
+		LostSystem:     r.lostSystem,
+		PackageManager: func() bool { return watch.PackageManagerRunning(src.FS) },
+		Done:           make(chan struct{}),
+	}
 	var err error
 	if r.files, err = watch.NewFiles(s.root, src, events); err != nil {
 		r.fail("files", err)
 		log.Warn("file changes are seen only in snapshots", "err", err)
 	} else {
+		r.files.Urgent, r.files.IsRootEvent = urgent, b.RootEvent
 		r.files.Set(watch.Targets(nil, nil))
 		go r.run(ctx, log, "files", r.files.Run)
 	}
@@ -53,13 +65,6 @@ func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(c
 	}
 	if r.files == nil && r.execs == nil {
 		return r
-	}
-	b := &watch.Batcher{
-		In:             events,
-		Send:           send,
-		Lost:           r.lost,
-		PackageManager: func() bool { return watch.PackageManagerRunning(src.FS) },
-		Done:           make(chan struct{}),
 	}
 	r.sent = b.Done
 	r.mu.Lock()
@@ -127,6 +132,16 @@ func (r *realtime) lost() (dropped, skipped int64) {
 		skipped = r.execs.Skipped.Load()
 	}
 	return dropped, skipped
+}
+
+// lostSystem returns how many of root's events the file watcher has lost so far.
+func (r *realtime) lostSystem() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.files == nil {
+		return 0
+	}
+	return r.files.DroppedSystem.Load()
 }
 
 // update points the watchers at what the latest snapshot found: the accounts' homes, the web

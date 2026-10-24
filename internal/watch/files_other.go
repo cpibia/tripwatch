@@ -12,7 +12,10 @@ import (
 // Files is a stand-in outside Linux, where inotify does not exist: the sensor runs there only
 // for development.
 type Files struct {
-	Dropped atomic.Int64
+	Dropped       atomic.Int64
+	DroppedSystem atomic.Int64
+	Urgent        chan<- Event
+	IsRootEvent   func(Event) bool
 }
 
 func NewFiles(string, collector.Source, chan<- Event) (*Files, error) { return nil, ErrUnsupported }

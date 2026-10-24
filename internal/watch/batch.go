@@ -56,22 +56,33 @@ const (
 // Batcher gathers events and sends them in batches at most Window apart.
 type Batcher struct {
 	In <-chan Event
+	// Urgent carries the events of root's system paths, apart from the rest: a flood the users
+	// can make fills In, never this, and Run reads it first.
+	Urgent <-chan Event
 	// Send seals and delivers a payload. It returns an error only when the payload was not
 	// sealed, so it has to be sent again.
 	Send func(ctx context.Context, payload []byte) error
 	// Lost returns how many events and process inspections the sources have lost so far, in all.
 	Lost func() (dropped, skipped int64)
+	// LostSystem returns how many of root's system events the sources have lost so far.
+	LostSystem func() int64
 	// PackageManager reports whether a package manager is running.
 	PackageManager func() bool
 	Now            func() time.Time
 	// Done, when set, is closed once Run has sent what was left at the end.
 	Done chan struct{}
 
+	// queue holds the events in arrival order; an evicted one stays as a hole (rank -1) until the
+	// next batch, so that eviction costs the same whatever the queue holds. order lists the
+	// positions of each rank, oldest first; live counts the events that are not holes.
 	queue            []queued
+	order            [ranks][]int
+	live             int
 	pending          []queued // the queue without the batch being sent
 	dropped, skipped int64
 	droppedSystem    int64
 	seenD, seenS     int64
+	seenSystem       int64
 	failures         int
 	retryAt          time.Time
 	homes            atomic.Pointer[map[string]string]
@@ -110,10 +121,19 @@ func (b *Batcher) Run(ctx context.Context) {
 	tick := time.NewTicker(Window)
 	defer tick.Stop()
 	for {
+		// Root's events first, whatever else is ready.
+		select {
+		case e := <-b.Urgent:
+			b.add(e)
+			continue
+		default:
+		}
 		select {
 		case <-ctx.Done():
 			b.finish(ctx)
 			return
+		case e := <-b.Urgent:
+			b.add(e)
 		case e := <-b.In:
 			b.add(e)
 		case <-tick.C:
@@ -129,6 +149,8 @@ func (b *Batcher) finish(ctx context.Context) {
 drain:
 	for {
 		select {
+		case e := <-b.Urgent:
+			b.add(e)
 		case e := <-b.In:
 			b.add(e)
 		default:
@@ -142,17 +164,21 @@ drain:
 	for i := 0; i < maxFinalBatches && final.Err() == nil; i++ {
 		b.retryAt = time.Time{}
 		b.Flush(final)
-		if len(b.queue) == 0 {
+		if b.live == 0 {
 			break
 		}
 	}
 	for _, q := range b.queue {
+		if q.rank < 0 {
+			continue
+		}
 		b.dropped++
 		if q.rank == rankRoot {
 			b.droppedSystem++
 		}
 	}
-	b.queue, b.perOwner = nil, nil
+	b.reset(nil)
+	b.perOwner = nil
 	if b.dropped > 0 || b.skipped > 0 {
 		b.retryAt = time.Time{}
 		b.Flush(final)
@@ -171,20 +197,25 @@ func (b *Batcher) add(e Event) {
 	if b.perOwner == nil {
 		b.perOwner = map[string]int{}
 	}
-	if len(b.queue) >= MaxQueued {
+	if b.live >= MaxQueued {
 		// The oldest of the lowest rank goes.
-		i := 0
-		for j, q := range b.queue {
-			if q.rank > b.queue[i].rank {
-				i = j
-			}
+		r := ranks - 1
+		for len(b.order[r]) == 0 {
+			r--
 		}
-		if b.queue[i].rank == rankRoot {
+		i := b.order[r][0]
+		b.order[r] = b.order[r][1:]
+		if r == rankRoot {
 			b.droppedSystem++
 		}
 		b.release(b.queue[i])
-		b.queue = slices.Delete(b.queue, i, i+1)
+		b.queue[i] = queued{rank: -1}
+		b.live--
 		b.dropped++
+	}
+	// Holes are dropped once they outnumber the events, if no batch has gone for a while.
+	if len(b.queue) >= 2*MaxQueued {
+		b.reset(slices.DeleteFunc(b.queue, func(q queued) bool { return q.rank < 0 }))
 	}
 	q := queued{raw: raw, owner: e.Owner, since: b.now()}
 	switch {
@@ -198,7 +229,20 @@ func (b *Batcher) add(e Event) {
 	default:
 		q.rank = rankOther
 	}
+	b.order[q.rank] = append(b.order[q.rank], len(b.queue))
 	b.queue = append(b.queue, q)
+	b.live++
+}
+
+// reset makes q, which holds no holes, the queue.
+func (b *Batcher) reset(q []queued) {
+	b.queue, b.live = q, len(q)
+	for r := range b.order {
+		b.order[r] = b.order[r][:0]
+	}
+	for i, e := range q {
+		b.order[e.rank] = append(b.order[e.rank], i)
+	}
 }
 
 func (b *Batcher) now() time.Time {
@@ -251,27 +295,53 @@ func (b *Batcher) owner(e Event) string {
 	dir = path.Clean(dir)
 	switch e.Class {
 	case ClassSSH, ClassHook:
-		homes := b.homes.Load()
-		if homes == nil {
-			return ""
-		}
-		// Only the names watched in a home: an account whose home is /etc must not take
-		// /etc/profile from root. The .ssh directory itself, created, removed or moved away, is
-		// its home's: an account can do that in a loop.
-		switch {
-		case name == ".ssh":
-			return (*homes)[dir]
-		case e.Class == ClassSSH && path.Base(dir) == ".ssh":
-			return (*homes)[path.Dir(dir)]
-		case e.Class == ClassHook && slices.Contains(rcFiles, name):
-			return (*homes)[dir]
-		}
+		return b.homeOwner(e.Class, dir, name)
 	case ClassSchedule:
 		if !e.Root && strings.HasPrefix(e.Path, "/var/spool/") {
 			return b.spoolOwner(e, name)
 		}
 	}
 	return ""
+}
+
+// homeOwner returns the account other than root whose home holds a start-up file or SSH key.
+// Only the names watched in a home count: an account whose home is /etc must not take
+// /etc/profile from root. The .ssh directory itself, created, removed or moved away, is its
+// home's: an account can do that in a loop.
+func (b *Batcher) homeOwner(class, dir, name string) string {
+	homes := b.homes.Load()
+	if homes == nil {
+		return ""
+	}
+	switch {
+	case name == ".ssh":
+		return (*homes)[dir]
+	case class == ClassSSH && path.Base(dir) == ".ssh":
+		return (*homes)[path.Dir(dir)]
+	case class == ClassHook && slices.Contains(rcFiles, name):
+		return (*homes)[dir]
+	}
+	return ""
+}
+
+// RootEvent reports, for the watchers, whether an event is one of root's system paths, for the
+// lane no other account can fill. It may be called from any goroutine. In the spools only files
+// of UID 0, and root's crontab, are root's: a removal there is not, unless it is that crontab.
+func (b *Batcher) RootEvent(e Event) bool {
+	if !systemClass(e.Class) || e.Path == "" {
+		return false
+	}
+	dir, name := path.Split(e.Path)
+	dir = path.Clean(dir)
+	switch e.Class {
+	case ClassSSH, ClassHook:
+		return b.homeOwner(e.Class, dir, name) == ""
+	case ClassSchedule:
+		if !e.Root && strings.HasPrefix(e.Path, "/var/spool/") {
+			return (e.UID != nil && *e.UID == 0) || (e.UID == nil && name == "root")
+		}
+	}
+	return true
 }
 
 // maxSpoolOwners bounds the owners of spool files remembered for their removal.
@@ -333,13 +403,18 @@ func (b *Batcher) Flush(ctx context.Context) {
 		b.skipped += s - b.seenS
 		b.seenD, b.seenS = d, s
 	}
+	if b.LostSystem != nil {
+		d := b.LostSystem()
+		b.droppedSystem += d - b.seenSystem
+		b.seenSystem = d
+	}
 	now := b.Now()
 	if now.Before(b.retryAt) {
 		return
 	}
 	// One batch per call, so at most one every Window: the verifier refuses envelopes that come
 	// faster, and a refused one would hold up the snapshot behind it.
-	if len(b.queue) > 0 || b.dropped > 0 || b.skipped > 0 {
+	if b.live > 0 || b.dropped > 0 || b.skipped > 0 {
 		batch := b.next()
 		payload, err := json.Marshal(batch)
 		if err != nil {
@@ -352,7 +427,7 @@ func (b *Batcher) Flush(ctx context.Context) {
 			return
 		}
 		b.failures, b.retryAt = 0, time.Time{}
-		b.queue = b.pending
+		b.reset(b.pending)
 		clear(b.perOwner)
 		for _, q := range b.queue {
 			if q.rank == rankUser {
@@ -361,8 +436,8 @@ func (b *Batcher) Flush(ctx context.Context) {
 		}
 		b.dropped, b.skipped, b.droppedSystem = 0, 0, 0
 	}
-	if len(b.queue) == 0 {
-		b.queue = nil
+	if b.live == 0 {
+		b.reset(nil)
 	}
 }
 
@@ -379,8 +454,8 @@ func (b *Batcher) next() Batch {
 	for pass := -1; pass < ranks; pass++ {
 		for i, q := range b.queue {
 			first := pass == -1 && q.rank == rankRoot
-			aged := pass == rankRoot && q.rank != rankLow && q.since.Before(stale)
-			if taken[i] || (pass == -1 && !first) || (pass == rankRoot && !aged) || (pass > rankRoot && q.rank != pass) {
+			aged := pass == rankRoot && q.rank > rankRoot && q.rank != rankLow && q.since.Before(stale)
+			if q.rank < 0 || taken[i] || (pass == -1 && !first) || (pass == rankRoot && !aged) || (pass > rankRoot && q.rank != pass) {
 				continue
 			}
 			if n > 0 && size+len(q.raw) > MaxBatchBytes {
@@ -394,7 +469,7 @@ func (b *Batcher) next() Batch {
 	}
 	rest := b.queue[:0:0]
 	for i, q := range b.queue {
-		if !taken[i] {
+		if !taken[i] && q.rank >= 0 {
 			rest = append(rest, q)
 		}
 	}

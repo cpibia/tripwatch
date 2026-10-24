@@ -34,6 +34,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   flooding its own `~/.ssh` can no longer delay or evict root's keys, nor a webshell. The
   `.ssh` directory itself belongs to its home, and a file in the cron and at spools belongs to
   the account of its UID, never to its name.
+- Root's events reach the batcher through a channel of their own, read first, so another
+  account flooding the shared one can no longer have them dropped; a loss there counts in
+  `dropped_system`. Adding an event to a full queue costs the same whatever the queue holds.
 - The root of a watched place moved away or removed is reported at once and watched again within
   seconds when it is back, retried for a minute; after the kernel's event queue overflows, the
   watches are planned again from scratch.
