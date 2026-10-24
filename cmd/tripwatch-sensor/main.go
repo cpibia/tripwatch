@@ -407,6 +407,13 @@ func stopping(log *slog.Logger, client *transport.Client, stateDir string) {
 	}
 }
 
+// Retries of a snapshot that could not be sealed because an earlier envelope is still pending:
+// soon, and for a few minutes, without collecting it again.
+const (
+	snapshotRetry   = 10 * time.Second
+	snapshotRetries = 30
+)
+
 func (s sensor) sendSnapshot(ctx context.Context, client *transport.Client) error {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
@@ -416,8 +423,21 @@ func (s sensor) sendSnapshot(ctx context.Context, client *transport.Client) erro
 	if err := zw.Close(); err != nil {
 		return err
 	}
-	if err := client.Send(ctx, protocol.KindSnapshot, buf.Bytes(), time.Now()); err != nil {
-		return err
+	for try := 0; ; try++ {
+		err := client.Send(ctx, protocol.KindSnapshot, buf.Bytes(), time.Now())
+		if err == nil {
+			break
+		}
+		// Not sealed: the pending envelope, an event batch the verifier asked to send later,
+		// goes first. Waiting the next interval would leave an hour without a snapshot.
+		if !errors.Is(err, transport.ErrNotSealed) || errors.Is(err, transport.ErrRejected) || try == snapshotRetries {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(snapshotRetry):
+		}
 	}
 	return s.weblog.Commit()
 }

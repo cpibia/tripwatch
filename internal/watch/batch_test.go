@@ -83,7 +83,14 @@ func TestBatcherBoundsBatchesAndQueue(t *testing.T) {
 	for i := 0; i < MaxQueued+10; i++ {
 		b.add(Event{Class: ClassUpload, Op: OpCreate, Path: "/var/www/site/uploads/" + strings.Repeat("x", 200)})
 	}
+	// One batch a call, as the verifier accepts them.
 	b.Flush(context.Background())
+	if len(sent) != 1 {
+		t.Fatalf("%d batches in one flush", len(sent))
+	}
+	for len(b.queue) > 0 {
+		b.Flush(context.Background())
+	}
 	if len(sent) < 2 {
 		t.Fatalf("%d batches for a flood", len(sent))
 	}

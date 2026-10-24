@@ -113,8 +113,17 @@ drain:
 	}
 	final, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalFlush)
 	defer cancel()
-	b.retryAt = time.Time{}
-	b.Flush(final)
+	for final.Err() == nil {
+		b.retryAt = time.Time{}
+		b.Flush(final)
+		if len(b.queue) == 0 && b.dropped == 0 && b.skipped == 0 {
+			return
+		}
+		select {
+		case <-final.Done():
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func (b *Batcher) add(e Event) {
@@ -170,7 +179,9 @@ func (b *Batcher) Flush(ctx context.Context) {
 	if now.Before(b.retryAt) {
 		return
 	}
-	for len(b.queue) > 0 || b.dropped > 0 || b.skipped > 0 {
+	// One batch per call, so at most one every Window: the verifier refuses envelopes that come
+	// faster, and a refused one would hold up the snapshot behind it.
+	if len(b.queue) > 0 || b.dropped > 0 || b.skipped > 0 {
 		batch, n := b.next()
 		payload, err := json.Marshal(batch)
 		if err != nil {

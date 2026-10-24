@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A snapshot that cannot be sealed because an earlier envelope is still pending is sent again
+  every 10 seconds for five minutes, without collecting it again, instead of an hour later.
+  Event batches go out at most one every two seconds, the pace the verifier accepts.
 - The root of a watched place moved away or removed is reported at once and watched again within
   seconds when it is back, retried for a minute; after the kernel's event queue overflows, the
   watches are planned again from scratch.
