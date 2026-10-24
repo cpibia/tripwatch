@@ -76,6 +76,7 @@ type Batcher struct {
 	retryAt          time.Time
 	homes            atomic.Pointer[map[string]string]
 	perOwner         map[string]int
+	spoolUIDs        map[string]uint32
 }
 
 // queued is an event waiting to be sent, with its rank and when it came.
@@ -240,13 +241,10 @@ func (b *Batcher) SetHomes(homes []Home) {
 	b.homes.Store(&m)
 }
 
-// crontabDirs hold one crontab per account, named after it.
-var crontabDirs = []string{"/var/spool/cron", "/var/spool/cron/crontabs", "/var/spool/cron/tabs"}
-
 // owner returns the account other than root that can change the path of a system event at will:
-// its home's start-up files and SSH keys, its crontab, its jobs queued with at.
+// its home's start-up files and SSH keys, and its files in the cron and at spools.
 func (b *Batcher) owner(e Event) string {
-	if e.Root || e.Path == "" {
+	if e.Path == "" {
 		return ""
 	}
 	dir, name := path.Split(e.Path)
@@ -258,26 +256,55 @@ func (b *Batcher) owner(e Event) string {
 			return ""
 		}
 		// Only the names watched in a home: an account whose home is /etc must not take
-		// /etc/profile from root.
+		// /etc/profile from root. The .ssh directory itself, created, removed or moved away, is
+		// its home's: an account can do that in a loop.
 		switch {
+		case name == ".ssh":
+			return (*homes)[dir]
 		case e.Class == ClassSSH && path.Base(dir) == ".ssh":
 			return (*homes)[path.Dir(dir)]
-		case e.Class == ClassHook && (name == ".ssh" || slices.Contains(rcFiles, name)):
+		case e.Class == ClassHook && slices.Contains(rcFiles, name):
 			return (*homes)[dir]
 		}
 	case ClassSchedule:
-		if slices.Contains(crontabDirs, dir) {
-			if name == "root" || name == "" {
-				return ""
-			}
-			return name
-		}
-		// Jobs queued with at: their files belong to whoever queued them.
-		if strings.HasPrefix(dir+"/", "/var/spool/") && e.UID != nil && *e.UID != 0 {
-			return "uid " + strconv.FormatUint(uint64(*e.UID), 10)
+		if !e.Root && strings.HasPrefix(e.Path, "/var/spool/") {
+			return b.spoolOwner(e, name)
 		}
 	}
 	return ""
+}
+
+// maxSpoolOwners bounds the owners of spool files remembered for their removal.
+const maxSpoolOwners = 1024
+
+// spoolOwner names the owner of a file in the cron or at spools by its UID, never by its name:
+// crontab writes temporary files with random names there, and anyone allowed to use it can
+// make thousands. A removal carries no UID, so the one seen when the file appeared is used.
+func (b *Batcher) spoolOwner(e Event, name string) string {
+	uid, known := b.spoolUIDs[e.Path]
+	if e.UID != nil {
+		uid, known = *e.UID, true
+	}
+	switch {
+	case e.Op == OpDelete:
+		delete(b.spoolUIDs, e.Path)
+	case e.UID != nil:
+		if b.spoolUIDs == nil || len(b.spoolUIDs) >= maxSpoolOwners {
+			b.spoolUIDs = map[string]uint32{}
+		}
+		b.spoolUIDs[e.Path] = *e.UID
+	}
+	switch {
+	case known && uid == 0:
+		return ""
+	case known:
+		return "uid " + strconv.FormatUint(uint64(uid), 10)
+	case name == "root":
+		// Only root's crontab has this name.
+		return ""
+	}
+	// Gone before it could be read, as crontab's temporary files are: one quota for all of them.
+	return "spool"
 }
 
 // lowPriority are the events a web user can produce at will that no rule raises an alert on:

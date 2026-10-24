@@ -119,7 +119,7 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 	if b.DroppedSystem > 0 {
 		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost-system:" + now.UTC().Format("2006-01-02"), Severity: "high", Kind: "sensor",
 			Title:  "Real-time events on system paths lost",
-			Detail: fmt.Sprintf("Among the lost events, %d were changes to root's accounts, SSH, privileges, services, scheduled tasks or start-up scripts: the sensor's queue was full of them, which only root can cause. Check those places on the server; the next snapshot shows their state.", b.DroppedSystem),
+			Detail: fmt.Sprintf("Among the lost events, %d were changes to root's accounts, SSH, privileges, services, scheduled tasks or start-up scripts: the sensor's queue was full of them. Check those places on the server; the next snapshot shows their state.", b.DroppedSystem),
 		}, now)
 	}
 	if b.Skipped > 0 {

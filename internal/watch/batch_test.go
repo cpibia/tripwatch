@@ -290,23 +290,33 @@ func TestBatcherSendsWhatWaitedTooLong(t *testing.T) {
 	}
 }
 
-func TestBatcherOwnerOfSchedules(t *testing.T) {
+// Owners come from the homes and, in the spools, from the files' UIDs, never from their names.
+func TestBatcherOwners(t *testing.T) {
 	b := &Batcher{}
-	uid := uint32(1001)
-	root := uint32(0)
+	b.SetHomes([]Home{{User: "root", Dir: "/root"}, {User: "alice", Dir: "/home/alice", UID: 1000}})
+	alice, root := uint32(1001), uint32(0)
 	for _, c := range []struct {
 		e    Event
 		want string
 	}{
-		{Event{Class: ClassSchedule, Path: "/var/spool/cron/crontabs/alice"}, "alice"},
-		{Event{Class: ClassSchedule, Path: "/var/spool/cron/root"}, ""},
-		{Event{Class: ClassSchedule, Path: "/var/spool/cron/atjobs/a0001", UID: &uid}, "uid 1001"},
-		{Event{Class: ClassSchedule, Path: "/var/spool/cron/atjobs/a0002", UID: &root}, ""},
-		{Event{Class: ClassSchedule, Path: "/etc/cron.d/alice", UID: &uid}, ""},
-		{Event{Class: ClassSSH, Path: "/home/alice/.ssh/authorized_keys"}, ""},
+		{Event{Class: ClassSSH, Op: OpCreate, Path: "/home/alice/.ssh", Dir: true}, "alice"},
+		{Event{Class: ClassSSH, Op: OpDelete, Path: "/home/alice/.ssh", Root: true}, "alice"},
+		{Event{Class: ClassHook, Op: OpCreate, Path: "/home/alice/.ssh", Dir: true}, "alice"},
+		{Event{Class: ClassSSH, Op: OpWrite, Path: "/home/alice/.ssh/authorized_keys"}, "alice"},
+		{Event{Class: ClassSSH, Op: OpWrite, Path: "/root/.ssh/authorized_keys"}, ""},
+		{Event{Class: ClassSchedule, Op: OpCreate, Path: "/var/spool/cron/crontabs/alice", UID: &alice}, "uid 1001"},
+		{Event{Class: ClassSchedule, Op: OpCreate, Path: "/var/spool/cron/crontabs/toor", UID: &root}, ""},
+		{Event{Class: ClassSchedule, Op: OpCreate, Path: "/var/spool/cron/crontabs/tmp.Xk3a9Q"}, "spool"},
+		{Event{Class: ClassSchedule, Op: OpAttrib, Path: "/var/spool/cron/crontabs", Dir: true, UID: &root}, ""},
+		{Event{Class: ClassSchedule, Op: OpDelete, Path: "/var/spool/cron/crontabs/root"}, ""},
+		{Event{Class: ClassSchedule, Op: OpCreate, Path: "/var/spool/cron/atjobs/a0001", UID: &alice}, "uid 1001"},
+		{Event{Class: ClassSchedule, Op: OpDelete, Path: "/var/spool/cron/atjobs/a0001"}, "uid 1001"},
+		{Event{Class: ClassSchedule, Op: OpDelete, Path: "/var/spool/cron/atjobs/a0001"}, "spool"},
+		{Event{Class: ClassSchedule, Op: OpDelete, Path: "/var/spool/cron", Root: true}, ""},
+		{Event{Class: ClassSchedule, Op: OpCreate, Path: "/etc/cron.d/alice", UID: &alice}, ""},
 	} {
 		if got := b.owner(c.e); got != c.want {
-			t.Errorf("owner of %s = %q, want %q", c.e.Path, got, c.want)
+			t.Errorf("owner of %s %s = %q, want %q", c.e.Op, c.e.Path, got, c.want)
 		}
 	}
 }

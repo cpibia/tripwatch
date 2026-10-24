@@ -17,7 +17,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Events in the homes and crontabs of accounts other than root are marked with the account and
   rank below root's system paths, with at most 64 queued for each account before they count as
   noise; an event that has waited 15 seconds goes before later ones of a higher rank. An account
-  flooding its own `~/.ssh` can no longer delay or evict root's keys, nor a webshell.
+  flooding its own `~/.ssh` can no longer delay or evict root's keys, nor a webshell. The
+  `.ssh` directory itself belongs to its home, and a file in the cron and at spools belongs to
+  the account of its UID, never to its name.
 - The root of a watched place moved away or removed is reported at once and watched again within
   seconds when it is back, retried for a minute; after the kernel's event queue overflows, the
   watches are planned again from scratch.

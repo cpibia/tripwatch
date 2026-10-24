@@ -131,9 +131,11 @@ and among them the events on root's system paths) and whether a package manager 
 known from a lock of dpkg, rpm or apk held by a process of root in `/proc/locks`, never from a
 process name. If the transport cannot seal a batch because an earlier envelope is still pending,
 the batcher keeps it in a queue of 4,096 events and retries with a backoff up to a minute. The
-queue ranks events: root's system paths first; then the start-up files, SSH keys and crontab
-of each account other than root, marked with the account (`owner`), 64 queued at most for each
-account, past which they count as noise; then everything else; then the upload noise no rule
+queue ranks events: root's system paths first; then the start-up files, `.ssh` and SSH keys in
+the home of each account other than root, and the files in the cron and at spools owned by such
+an account (by the file's UID, never its name: `crontab` writes temporary files with random
+names; a removal takes the UID seen when the file appeared, and files gone before they could be
+read share one quota), marked with the account (`owner`), 64 queued at most for each account, past which they count as noise; then everything else; then the upload noise no rule
 raises an alert on. Batches take the ranks in that order, except that an event other than noise
 that has waited 15 seconds goes right after root's; a full queue lets the lowest rank go first. When the sensor stops, what is queued is sent before
 the stop event. Each snapshot carries the watchers' status.
