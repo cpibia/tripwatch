@@ -141,7 +141,7 @@ func TestBatcherKeepsSystemEventsOverNoise(t *testing.T) {
 	for i := 0; i < MaxQueued+5; i++ {
 		b.add(Event{Class: ClassUpload, Op: OpCreate, Path: "/srv/u/cat.jpg"})
 	}
-	batch, _ := b.next()
+	batch := b.next()
 	if !strings.Contains(string(batch.Events[0]), "authorized_keys") || batch.Dropped != 6 || batch.DroppedSystem != 0 {
 		t.Fatalf("the system event was pushed out: dropped %d, system %d", batch.Dropped, batch.DroppedSystem)
 	}
@@ -149,7 +149,7 @@ func TestBatcherKeepsSystemEventsOverNoise(t *testing.T) {
 	for i := 0; i < MaxQueued+2; i++ {
 		b.add(Event{Class: ClassService, Op: OpCreate, Path: "/etc/systemd/system/x.service"})
 	}
-	if batch, _ := b.next(); batch.DroppedSystem != 2 {
+	if batch := b.next(); batch.DroppedSystem != 2 {
 		t.Fatalf("system events lost silently: %+v", batch.DroppedSystem)
 	}
 }
@@ -172,5 +172,50 @@ func TestBatcherFlushesOnStop(t *testing.T) {
 	<-b.Done
 	if len(sent) != 1 || !strings.Contains(string(sent[0]), "sudoers.d") {
 		t.Fatalf("sent %d batches at stop", len(sent))
+	}
+}
+
+// A change to root's keys goes out in the next batch, ahead of a flood of scripts in the uploads.
+func TestBatcherSendsSystemEventsFirst(t *testing.T) {
+	var sent [][]byte
+	b := &Batcher{Now: time.Now, Send: func(_ context.Context, p []byte) error {
+		sent = append(sent, p)
+		return nil
+	}}
+	for i := 0; i < 2000; i++ {
+		b.add(Event{Class: ClassUpload, Op: OpCreate, Path: "/srv/u/" + strings.Repeat("x", 900) + ".php"})
+	}
+	b.add(Event{Class: ClassSSH, Op: OpWrite, Path: "/root/.ssh/authorized_keys"})
+	b.Flush(context.Background())
+	if len(sent) != 1 || !strings.Contains(string(decodeBatch(t, sent[0]).Events[0]), "authorized_keys") {
+		t.Fatal("the system event waits behind the flood")
+	}
+}
+
+// At a stop, what cannot go out in the final burst is counted as lost, not dropped silently.
+func TestBatcherCountsWhatIsLeftAtStop(t *testing.T) {
+	in := make(chan Event)
+	var sent [][]byte
+	b := &Batcher{In: in, Now: time.Now, Done: make(chan struct{}), Send: func(_ context.Context, p []byte) error {
+		sent = append(sent, p)
+		return nil
+	}}
+	queued := MaxQueued
+	for i := 0; i < queued; i++ {
+		b.add(Event{Class: ClassService, Op: OpCreate, Path: "/etc/systemd/system/" + strings.Repeat("y", 2000) + ".service"})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b.Run(ctx)
+	<-b.Done
+	events, dropped, system := 0, int64(0), int64(0)
+	for _, p := range sent {
+		got := decodeBatch(t, p)
+		events += len(got.Events)
+		dropped += got.Dropped
+		system += got.DroppedSystem
+	}
+	if events+int(dropped) != queued || system != dropped || dropped == 0 {
+		t.Fatalf("%d sent, %d counted lost (%d system) of %d", events, dropped, system, queued)
 	}
 }

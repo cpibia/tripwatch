@@ -60,6 +60,7 @@ type Batcher struct {
 	Done chan struct{}
 
 	queue            []queued
+	pending          []queued // the queue without the batch being sent
 	dropped, skipped int64
 	droppedSystem    int64
 	seenD, seenS     int64
@@ -113,18 +114,30 @@ drain:
 	}
 	final, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalFlush)
 	defer cancel()
-	for final.Err() == nil {
+	// The verifier allows a burst: spend part of it, then report what could not go as lost,
+	// so nothing disappears without a count.
+	for i := 0; i < maxFinalBatches && final.Err() == nil; i++ {
 		b.retryAt = time.Time{}
 		b.Flush(final)
-		if len(b.queue) == 0 && b.dropped == 0 && b.skipped == 0 {
-			return
-		}
-		select {
-		case <-final.Done():
-		case <-time.After(time.Second):
+		if len(b.queue) == 0 {
+			break
 		}
 	}
+	for _, q := range b.queue {
+		b.dropped++
+		if q.system {
+			b.droppedSystem++
+		}
+	}
+	b.queue = nil
+	if b.dropped > 0 || b.skipped > 0 {
+		b.retryAt = time.Time{}
+		b.Flush(final)
+	}
 }
+
+// maxFinalBatches is the part of the verifier's burst a stopping sensor spends.
+const maxFinalBatches = 40
 
 func (b *Batcher) add(e Event) {
 	raw, err := json.Marshal(e)
@@ -182,7 +195,7 @@ func (b *Batcher) Flush(ctx context.Context) {
 	// One batch per call, so at most one every Window: the verifier refuses envelopes that come
 	// faster, and a refused one would hold up the snapshot behind it.
 	if len(b.queue) > 0 || b.dropped > 0 || b.skipped > 0 {
-		batch, n := b.next()
+		batch := b.next()
 		payload, err := json.Marshal(batch)
 		if err != nil {
 			return
@@ -194,7 +207,7 @@ func (b *Batcher) Flush(ctx context.Context) {
 			return
 		}
 		b.failures, b.retryAt = 0, time.Time{}
-		b.queue = b.queue[n:]
+		b.queue = b.pending
 		b.dropped, b.skipped, b.droppedSystem = 0, 0, 0
 	}
 	if len(b.queue) == 0 {
@@ -202,23 +215,39 @@ func (b *Batcher) Flush(ctx context.Context) {
 	}
 }
 
-// next builds the batch at the head of the queue and says how many events it takes.
-func (b *Batcher) next() (Batch, int) {
+// next builds the next batch, the system events first; pending holds the queue without them
+// until the batch is sent.
+func (b *Batcher) next() Batch {
 	batch := Batch{Event: BatchEvent, Events: []json.RawMessage{}, Dropped: b.dropped, Skipped: b.skipped, DroppedSystem: b.droppedSystem}
-	size := 0
-	n := 0
-	for _, q := range b.queue {
-		if n > 0 && size+len(q.raw) > MaxBatchBytes {
-			break
+	// System events first, then the others, then the noise, each in the order it came: a
+	// change to root's keys must not wait behind a flood in the uploads.
+	size, n := 0, 0
+	taken := make([]bool, len(b.queue))
+	for pass := 0; pass < 3; pass++ {
+		for i, q := range b.queue {
+			if taken[i] || (pass == 0 && !q.system) || (pass == 1 && (q.system || q.low)) || (pass == 2 && !q.low) {
+				continue
+			}
+			if n > 0 && size+len(q.raw) > MaxBatchBytes {
+				break
+			}
+			size += len(q.raw) + 1
+			n++
+			taken[i] = true
+			batch.Events = append(batch.Events, q.raw)
 		}
-		size += len(q.raw) + 1
-		n++
-		batch.Events = append(batch.Events, q.raw)
 	}
+	rest := b.queue[:0:0]
+	for i, q := range b.queue {
+		if !taken[i] {
+			rest = append(rest, q)
+		}
+	}
+	b.pending = rest
 	if b.PackageManager != nil {
 		batch.PackageManager = b.PackageManager()
 	}
-	return batch, n
+	return batch
 }
 
 // packageLocks are the lock files package managers hold while they change the system. They are

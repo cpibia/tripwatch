@@ -11,6 +11,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A snapshot that cannot be sealed because an earlier envelope is still pending is sent again
   every 10 seconds for five minutes, without collecting it again, instead of an hour later.
   Event batches go out at most one every two seconds, the pace the verifier accepts.
+- Each event batch takes the system events first, then the others, then the noise of the
+  uploads, so a change to root's keys is not held behind a flood; at a stop, what the final
+  burst cannot send is counted as lost in a last batch.
 - The root of a watched place moved away or removed is reported at once and watched again within
   seconds when it is back, retried for a minute; after the kernel's event queue overflows, the
   watches are planned again from scratch.
