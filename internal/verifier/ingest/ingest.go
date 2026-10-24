@@ -337,7 +337,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if overQuota {
-		if err := s.Store.AcceptDropped(ctx, e, host.Chain, state, now); err != nil {
+		if err := s.Store.AcceptWithKey(ctx, e, host.PublicKey, host.Chain, state, now, false); err != nil {
 			s.fail(w, err)
 			return
 		}
@@ -351,7 +351,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAck(w, state.Sequence)
 		return
 	}
-	if err := s.Store.Accept(ctx, e, host.Chain, state, now); err != nil {
+	if err := s.Store.AcceptWithKey(ctx, e, host.PublicKey, host.Chain, state, now, true); err != nil {
 		s.fail(w, err)
 		return
 	}

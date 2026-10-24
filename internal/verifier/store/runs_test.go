@@ -2,10 +2,15 @@ package store
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/cpibia/tripwatch/internal/protocol"
 )
 
 // A host started before the run record exists is known from its latest start alert.
@@ -58,5 +63,24 @@ func TestRunsMigration(t *testing.T) {
 	}
 	if r, err := s.Run(context.Background(), "web-01"); err != nil || r.BootID != "b1" || !r.Shutdown || r.StopReason != "stopped" {
 		t.Fatalf("run = %+v, %v", r, err)
+	}
+}
+
+// An envelope verified with a key the host no longer has cannot move the chain, even a chain
+// that has not started.
+func TestAcceptRequiresTheCurrentKey(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	oldPub, oldKey, _ := ed25519.GenerateKey(rand.Reader)
+	newPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	if err := s.EnrollWithCertificate(ctx, "web-01", oldPub, "aa", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnrollWithCertificate(ctx, "web-01", newPub, "bb", t0); err != nil {
+		t.Fatal(err)
+	}
+	e := protocol.NewSealer("web-01", oldKey, protocol.ChainState{}).Seal(protocol.KindHeartbeat, nil, t0)
+	if err := s.AcceptWithKey(ctx, e, oldPub, protocol.ChainState{}, protocol.ChainState{Sequence: 1}, t0, true); !errors.Is(err, ErrChainMoved) {
+		t.Fatalf("an envelope of the old key moved the new chain: %v", err)
 	}
 }

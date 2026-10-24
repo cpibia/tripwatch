@@ -386,17 +386,24 @@ var ErrChainMoved = errors.New("store: chain position changed concurrently")
 // It runs in one transaction, and only if the chain is still where it was when the envelope was
 // verified (prev), so two envelopes can never both extend the same position.
 func (s *Store) Accept(ctx context.Context, e protocol.Envelope, prev, state protocol.ChainState, now time.Time) error {
-	return s.accept(ctx, e, prev, state, now, true)
+	return s.accept(ctx, e, nil, prev, state, now, true)
+}
+
+// AcceptWithKey is Accept for an envelope verified with key: it moves the chain only while that
+// is still the host's key, so a slow envelope of an earlier enrollment, even one whose chain had
+// not started, never enters the new chain.
+func (s *Store) AcceptWithKey(ctx context.Context, e protocol.Envelope, key ed25519.PublicKey, prev, state protocol.ChainState, now time.Time, keepPayload bool) error {
+	return s.accept(ctx, e, key, prev, state, now, keepPayload)
 }
 
 // AcceptDropped records a verified snapshot envelope without its payload: the chain moves and
 // the host counts as alive, but nothing is stored or analysed. It is for snapshots over the
 // host's storage quota, so that a host flooding the disk does not also lose its liveness.
 func (s *Store) AcceptDropped(ctx context.Context, e protocol.Envelope, prev, state protocol.ChainState, now time.Time) error {
-	return s.accept(ctx, e, prev, state, now, false)
+	return s.accept(ctx, e, nil, prev, state, now, false)
 }
 
-func (s *Store) accept(ctx context.Context, e protocol.Envelope, prev, state protocol.ChainState, now time.Time, keepPayload bool) error {
+func (s *Store) accept(ctx context.Context, e protocol.Envelope, key ed25519.PublicKey, prev, state protocol.ChainState, now time.Time, keepPayload bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -416,7 +423,13 @@ func (s *Store) accept(ctx context.Context, e protocol.Envelope, prev, state pro
 	}
 	// The digest as well as the sequence: a re-enrollment resets both, so an envelope verified
 	// against the chain it replaced can never move the new one.
-	res, err := tx.ExecContext(ctx, `UPDATE hosts SET `+set+` WHERE id = ? AND last_seq = ? AND last_digest IS ?`, append(args, e.HostID, prev.Sequence, digestOrNil(prev.LastDigest))...)
+	where := ` WHERE id = ? AND last_seq = ? AND last_digest IS ?`
+	args = append(args, e.HostID, prev.Sequence, digestOrNil(prev.LastDigest))
+	if key != nil {
+		where += ` AND public_key = ?`
+		args = append(args, []byte(key))
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE hosts SET `+set+where, args...)
 	if err != nil {
 		return err
 	}
