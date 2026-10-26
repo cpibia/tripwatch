@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -49,9 +50,10 @@ type Files struct {
 	scratchSeen map[string]time.Time
 	// webUsers are the web server's UIDs, whose files in the scratch directories are marked.
 	webUsers map[int]bool
-	// scratchEvents counts the scratch events handled this second, against maxScratchEvents,
-	// and scratchByUID those of each owner, against maxScratchPerUID.
-	scratchEvents int
+	// classEvents counts the events of the scratch directories and of the uploads handled this
+	// second, against maxClassEvents, and scratchByUID those of each owner in the scratch
+	// directories, against maxScratchPerUID.
+	classEvents   map[string]int
 	scratchByUID  map[uint32]int
 	scratchSecond time.Time
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
@@ -62,9 +64,15 @@ type Files struct {
 	targets  []Target
 	replanAt time.Time
 	missing  map[string]int
+	// roots is the identity of each target's root directory when its watch was placed, and
+	// rootsCheckedAt when Run last compared them with the paths: a watch follows the inode, so a
+	// root replaced under the same name, or one whose rename the kernel reported out of order,
+	// would stay unwatched without that check.
+	roots          map[string]fileID
+	rootsCheckedAt time.Time
 	// moves are renames of watched directories waiting for their second half, by cookie;
 	// renamed marks the watches whose records already follow a rename.
-	moves   map[uint32]string
+	moves   map[uint32]move
 	renamed map[int]bool
 	// gaps are the places left unwatched by the bounds since the sensor started, kept across
 	// Set: a directory too deep or too full stays a gap until someone looks at it.
@@ -94,7 +102,36 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]string{}, renamed: map[int]bool{}, missing: map[string]int{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}}, nil
+}
+
+// fileID tells one inode from another.
+type fileID struct {
+	dev, ino uint64
+}
+
+// identity is the inode behind dir in the observed filesystem, or false when there is no
+// directory there.
+func (f *Files) identity(dir string) (fileID, bool) {
+	info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
+	if err != nil || !info.IsDir() {
+		return fileID{}, false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fileID{}, false
+	}
+	return fileID{dev: uint64(st.Dev), ino: st.Ino}, true //nolint:unconvert // Dev is already 64 bits wide on linux/amd64 and arm64, not on every port
+}
+
+// isRoot says whether dir is the root of one of the targets it is watched for.
+func isRoot(dir string, targets []Target) bool {
+	for _, t := range targets {
+		if t.Dir == dir {
+			return true
+		}
+	}
+	return false
 }
 
 // Close releases the inotify instance and every watch with it.
@@ -260,10 +297,16 @@ func (f *Files) add(dir string, targets []Target, depth int) {
 		f.gap(class, fmt.Sprintf("watch: more than %d directories of class %s: %s and others are not watched", limit, cls, dir))
 		return
 	}
+	root := isRoot(dir, targets)
 	wd, err := unix.InotifyAddWatch(f.fd, f.abs(dir), watchMask)
 	if err != nil {
-		if errors.Is(err, unix.ENOSPC) {
+		switch {
+		case errors.Is(err, unix.ENOSPC):
 			f.issues.Add(errors.New("watch: the kernel's inotify watch limit is reached (fs.inotify.max_user_watches): " + dir + " is not watched"))
+		case root:
+			// The directory was there a moment ago, when the plan listed it: a root moved
+			// away again is tried again, like one whose move the kernel reported.
+			f.rootLost(dir, class)
 		}
 		return
 	}
@@ -273,6 +316,11 @@ func (f *Files) add(dir string, targets []Target, depth int) {
 	f.byDir[dir] = wd
 	f.byWD[wd] = &watched{dir: dir, targets: targets, depth: depth}
 	f.classWatches[cls]++
+	if root {
+		if id, ok := f.identity(dir); ok {
+			f.roots[dir] = id
+		}
+	}
 }
 
 // forget drops the record of a watch the kernel removed or Set no longer wants. Callers hold
@@ -283,8 +331,10 @@ func (f *Files) forget(wd int) {
 		return
 	}
 	f.classWatches[classOf(w.targets)]--
+	delete(f.renamed, wd)
 	delete(f.byWD, wd)
 	delete(f.byDir, w.dir)
+	delete(f.roots, w.dir)
 }
 
 // Replanning after a watched root went away: soon, and for a minute at most.
@@ -298,14 +348,27 @@ const (
 // Callers hold f.mu.
 func (f *Files) rootGone(w *watched) {
 	for _, t := range w.targets {
-		if t.Dir != w.dir {
-			continue
+		if t.Dir == w.dir {
+			f.rootLost(w.dir, t.Class)
+			return
 		}
-		f.gap(t.Class, fmt.Sprintf("watch: %s was moved away or removed", w.dir))
-		f.missing[w.dir] = replanRetries
-		f.replanAt = f.now().Add(replanDelay)
-		f.send(Event{At: f.now().UTC(), Class: t.Class, Op: OpDelete, Path: w.dir, Dir: true, Root: true})
-		return
+	}
+}
+
+// rootLost is rootGone for a root known by path. Callers hold f.mu.
+func (f *Files) rootLost(dir, class string) {
+	f.gap(class, fmt.Sprintf("watch: %s was moved away or removed", dir))
+	f.missing[dir] = replanRetries
+	f.replanAt = f.now().Add(replanDelay)
+	f.send(Event{At: f.now().UTC(), Class: class, Op: OpDelete, Path: dir, Dir: true, Root: true})
+}
+
+// replanSoon plans the watches again once a burst of renames settles: a plan made in the
+// middle of one, with half its events still queued, would be undone by the other half.
+// Callers hold f.mu.
+func (f *Files) replanSoon() {
+	if at := f.now().Add(time.Second); f.replanAt.IsZero() || f.replanAt.Before(at) {
+		f.replanAt = at
 	}
 }
 
@@ -323,6 +386,40 @@ func (f *Files) replanIfDue() {
 	}
 }
 
+// rootsCheckEvery is how often the roots are compared with the paths they were watched at.
+const rootsCheckEvery = 2 * time.Second
+
+// checkRoots finds the roots the kernel's events could not report: one replaced under its name
+// by another directory (an ancestor moved aside and recreated), one whose watch could not be
+// placed, or one back after the retries ran out. Each is a few dozen Lstat every few seconds.
+func (f *Files) checkRoots() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	if now.Sub(f.rootsCheckedAt) < rootsCheckEvery {
+		return
+	}
+	f.rootsCheckedAt = now
+	for _, t := range f.targets {
+		id, exists := f.identity(t.Dir)
+		wd, watched := f.byDir[t.Dir]
+		switch {
+		case watched && !exists:
+			f.rootGone(f.byWD[wd])
+			f.unwatchTree(t.Dir)
+		case watched && f.roots[t.Dir] != id:
+			// The old inode's watches would keep reporting under a path that is now another
+			// directory's: they go, and the directory now at the path is watched afresh.
+			f.rootGone(f.byWD[wd])
+			f.unwatchTree(t.Dir)
+		case !watched && exists:
+			if _, gone := f.missing[t.Dir]; gone && f.replanAt.IsZero() {
+				f.replanAt = now
+			}
+		}
+	}
+}
+
 // maxMoves bounds the renames waiting for their second half.
 const maxMoves = 1024
 
@@ -330,30 +427,43 @@ const maxMoves = 1024
 // records its old path by cookie, the second moves the records of the directory and of every
 // directory below it to the new path, so their events keep coming under the right names.
 // Callers hold f.mu.
-func (f *Files) moved(mask, cookie uint32, full string, parent *watched) {
+func (f *Files) moved(mask, cookie uint32, full string, parent *watched) bool {
 	if mask&unix.IN_MOVED_FROM != 0 {
-		if _, watched := f.byDir[full]; watched {
+		if wd, watched := f.byDir[full]; watched {
 			if len(f.moves) >= maxMoves {
 				clear(f.moves)
 			}
-			f.moves[cookie] = full
+			f.moves[cookie] = move{from: full, wd: wd}
 		}
-		return
+		return false
 	}
-	old, ok := f.moves[cookie]
+	m, ok := f.moves[cookie]
 	if !ok {
-		return
+		return false
 	}
 	delete(f.moves, cookie)
-	wd, ok := f.byDir[old]
-	if !ok {
-		return
+	old, wd := m.from, m.wd
+	if cur, ok := f.byWD[wd]; !ok || cur.dir != old {
+		return false
+	}
+	// Two directories swapped in one call (renameat2 with RENAME_EXCHANGE): both paths change
+	// meaning at once, and planning the watches again is simpler than following both.
+	if other, taken := f.byDir[full]; taken && other != wd {
+		// Both inodes stay watched: their MOVE_SELF must not unwatch them.
+		f.renamed[wd], f.renamed[other] = true, true
+		f.replanSoon()
+		return true
 	}
 	// A move into another kind of place (from the uploads to /tmp) is a new directory there:
-	// the old watches go now, and the event that follows places new ones.
+	// the old watches go now, and the event that follows places new ones. The root of a
+	// target moved within its parent (/etc/sudoers.d to /etc/s.x) is reported here: its own
+	// MOVE_SELF comes after and finds no record.
 	if moving := f.byWD[wd]; moving == nil || !sameTargets(moving.targets, parent.targets) {
+		if moving != nil {
+			f.rootGone(moving)
+		}
 		f.unwatchTree(old)
-		return
+		return false
 	}
 	for dir, d := range f.byDir {
 		if dir != old && !strings.HasPrefix(dir, old+"/") {
@@ -367,6 +477,13 @@ func (f *Files) moved(mask, cookie uint32, full string, parent *watched) {
 		}
 	}
 	f.renamed[wd] = true
+	return true
+}
+
+// move is the first half of a rename of a watched directory.
+type move struct {
+	from string
+	wd   int
 }
 
 // unwatchTree removes from the kernel and from the records the watches of dir and of every
@@ -425,6 +542,7 @@ func (f *Files) Run(ctx context.Context) error {
 		if err != nil && !errors.Is(err, unix.EINTR) {
 			return err
 		}
+		f.checkRoots()
 		f.replanIfDue()
 		if n <= 0 {
 			continue
@@ -486,6 +604,8 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 			} else {
 				f.rootGone(w)
 				f.unwatchTree(w.dir)
+				// A move not followed may be half of a burst of renames still in the queue.
+				f.replanSoon()
 			}
 		}
 	}
@@ -495,9 +615,12 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 	}
 	full := path.Join(w.dir, name)
 	isDir := mask&unix.IN_ISDIR != 0
+	// A rename followed within the watched places already carries its watches: listing the
+	// directory again would report its whole content as new.
+	followed := false
 	if isDir && mask&(unix.IN_MOVED_FROM|unix.IN_MOVED_TO) != 0 {
 		f.mu.Lock()
-		f.moved(mask, cookie, full, w)
+		followed = f.moved(mask, cookie, full, w)
 		f.mu.Unlock()
 	}
 	op := ""
@@ -524,10 +647,15 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 		if !t.wants(name) {
 			continue
 		}
-		if t.Class == ClassScratch && !f.scratchBudget() {
+		if (t.Class == ClassScratch || t.Class == ClassUpload) && !f.classEventBudget(t.Class) {
+			if isDir && op == OpCreate {
+				f.mu.Lock()
+				f.gap(t.Class, fmt.Sprintf("watch: %s was created while events of class %s were over budget: not watched", full, t.Class))
+				f.mu.Unlock()
+			}
 			continue
 		}
-		if isDir && op == OpCreate && t.Recursive {
+		if isDir && op == OpCreate && t.Recursive && !followed {
 			if w.depth < t.depth() {
 				f.watchNew(full, t, w.depth+1)
 			} else {
@@ -701,22 +829,26 @@ func (f *Files) pruneScratch() {
 // bounds the sensor's work; the share of each owner keeps one account's files from hiding
 // another's. What is over is counted as lost, so the flood shows.
 const (
-	maxScratchEvents = 4000
+	maxClassEvents   = 20000
 	maxScratchPerUID = 1000
 )
 
-// scratchBudget takes one event from this second's budget of the scratch directories.
-func (f *Files) scratchBudget() bool {
+// classEventBudget takes one event from this second's budget of a class anyone can write in,
+// the scratch directories or the uploads. It bounds the work before a file is even looked at;
+// the share of each owner, applied once the owner is known, comes first in practice, being
+// smaller.
+func (f *Files) classEventBudget(class string) bool {
 	now := f.now()
 	if now.Sub(f.scratchSecond) >= time.Second {
-		f.scratchEvents, f.scratchSecond = 0, now
+		clear(f.classEvents)
 		clear(f.scratchByUID)
+		f.scratchSecond = now
 	}
-	if f.scratchEvents >= maxScratchEvents {
+	if f.classEvents[class] >= maxClassEvents {
 		f.Dropped.Add(1)
 		return false
 	}
-	f.scratchEvents++
+	f.classEvents[class]++
 	return true
 }
 

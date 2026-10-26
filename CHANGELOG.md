@@ -44,8 +44,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   account flooding the shared one can no longer have them dropped; a loss there counts in
   `dropped_system`. Adding an event to a full queue costs the same whatever the queue holds.
 - The root of a watched place moved away or removed is reported at once and watched again within
-  seconds when it is back, retried for a minute; after the kernel's event queue overflows, the
-  watches are planned again from scratch.
+  seconds when it is back; after the kernel's event queue overflows, the watches are planned again
+  from scratch. Every few seconds the sensor also checks that each root is still the directory at
+  its path, so a root moved within a watched parent (`/etc/sudoers.d`), one replaced under its name
+  by an ancestor moved aside and recreated, one whose watch could not be placed or one back after
+  a long while is reported and watched again too, and the old inode's watches no longer report
+  under a path that is another directory's. Two directories swapped in one call are watched again
+  under their right names, and the events budget of the uploads is now separate from the scratch
+  directories' one.
 - A watched directory renamed within the watched places keeps reporting under its new name, its
   subdirectories with it; one moved out of them has its watches removed from the kernel. Before,
   a rename (an upload directory, a unit's drop-in directory) left the directory silent until the

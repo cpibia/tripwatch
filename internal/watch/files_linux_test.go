@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/cpibia/tripwatch/internal/collector"
 )
 
@@ -450,5 +452,159 @@ func TestFilesRootMovedAndBack(t *testing.T) {
 	}
 	if got := collect(t, ch, 1); !has(got, ClassUpload, OpCreate, "/srv/app/uploads/shell.php") {
 		t.Fatalf("the root moved back is not watched again: %+v", got)
+	}
+}
+
+// Two directories swapped in one call are watched again under their right names, and the
+// records of renames do not pile up.
+func TestFilesExchangedDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"srv/u/a", "srv/u/b"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 4096)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, []string{"/srv/u"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	a, b := filepath.Join(root, "srv/u/a"), filepath.Join(root, "srv/u/b")
+	n := 200
+	if v := os.Getenv("TW_EXCHANGES"); v != "" {
+		n, _ = strconv.Atoi(v)
+	}
+	for range n {
+		if err := unix.Renameat2(unix.AT_FDCWD, a, unix.AT_FDCWD, b, unix.RENAME_EXCHANGE); err != nil {
+			t.Skipf("renameat2 exchange not supported here: %v", err)
+		}
+	}
+	time.Sleep(2 * time.Second)
+	for len(ch) > 0 {
+		<-ch
+	}
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(filepath.Join(p, "x.php"), []byte("<?php"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := collect(t, ch, 2)
+	if !has(got, ClassUpload, OpCreate, "/srv/u/a/x.php") || !has(got, ClassUpload, OpCreate, "/srv/u/b/x.php") {
+		f.mu.Lock()
+		dirs := map[string]int{}
+		for d, wd := range f.byDir {
+			dirs[d] = wd
+		}
+		recs := map[int]string{}
+		for wd, w := range f.byWD {
+			recs[wd] = w.dir
+		}
+		f.mu.Unlock()
+		t.Fatalf("events after exchanges: %d, byDir %v, byWD %v, kernel %d, issues %v, dropped %d, class %v, replan %v", len(got), dirs, recs, kernelWatches(t, f.fd), f.Issues(), f.Dropped.Load(), f.classWatches, f.replanAt)
+	}
+	f.mu.Lock()
+	renamed := len(f.renamed)
+	f.mu.Unlock()
+	if renamed > 2 {
+		t.Fatalf("%d rename records left", renamed)
+	}
+}
+
+// The root of a target under a watched parent (/etc/sudoers.d) moved aside and back is
+// reported and watched again: the kernel reports the parent's side of the rename first, and
+// the root's own event finds no record.
+func TestFilesRootUnderWatchedParent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc/sudoers.d"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	dir := filepath.Join(root, "etc/sudoers.d")
+	if err := os.Rename(dir, dir+".x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dir+".x", dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, ch, 1); !has(got, ClassPrivilege, OpDelete, "/etc/sudoers.d") {
+		t.Fatalf("the moved root was not reported: %+v", got)
+	}
+	time.Sleep(3 * time.Second)
+	if err := os.WriteFile(filepath.Join(dir, "zz"), []byte("x ALL=(ALL) ALL\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, ch, 1); !has(got, ClassPrivilege, OpCreate, "/etc/sudoers.d/zz") {
+		t.Fatalf("the root moved back is not watched again: %+v", got)
+	}
+}
+
+// An ancestor of the uploads moved aside and recreated leaves the old inode watched under a
+// path that is now another directory's: the check of the roots reports it, drops the old
+// watches and watches the directory now at the path.
+func TestFilesAncestorReplaced(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv/app/wc/uploads/2024"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src := collector.NewSource(root)
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, src, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, []string{"/srv/app/wc/uploads"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	wc := filepath.Join(root, "srv/app/wc")
+	if err := os.Rename(wc, wc+".x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wc, "uploads/2024"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	gone := false
+	deadline := time.After(5 * time.Second)
+	for !gone {
+		select {
+		case e := <-ch:
+			gone = e.Root && e.Path == "/srv/app/wc/uploads"
+		case <-deadline:
+			t.Fatal("the replaced root was not reported")
+		}
+	}
+	time.Sleep(3 * time.Second)
+	if err := os.WriteFile(filepath.Join(wc+".x", "uploads/old.php"), []byte("<?php"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wc, "uploads/2024/shell.php"), []byte("<?php"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, ch, 1)
+	if !has(got, ClassUpload, OpCreate, "/srv/app/wc/uploads/2024/shell.php") {
+		t.Fatalf("the directory now at the path is not watched: %+v", got)
+	}
+	if has(got, ClassUpload, OpCreate, "/srv/app/wc/uploads/old.php") {
+		t.Fatalf("the old inode still reports under the path: %+v", got)
 	}
 }

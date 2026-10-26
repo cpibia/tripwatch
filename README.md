@@ -344,7 +344,10 @@ and 16 MB a second (root's files with a budget of their own, which other users c
 larger ones are reported with their metadata; when the queue is full, noise
 in the uploads is dropped before any change to a system path, and losing one of those is an
 alert of its own; directories left unwatched by the depth or count limits are listed in the
-snapshot; and what is queued when the sensor stops is sent before its stop event.
+snapshot; and what is queued when the sensor stops is sent before its stop event. A watch
+follows the inode, not the path, so every few seconds the sensor checks that each watched root
+is still the directory at its path: one moved away, replaced under its name (an ancestor moved
+aside and recreated) or back after a while is reported and watched again within seconds.
 
 The watchers need Linux and, for process events, `CAP_NET_ADMIN` in the host's network namespace,
 which the systemd unit grants. The sensor needs it only to subscribe: it gives it up right after,
