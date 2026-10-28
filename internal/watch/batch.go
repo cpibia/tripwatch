@@ -380,7 +380,8 @@ func (b *Batcher) spoolOwner(e Event, name string) string {
 // lowPriority are the events a web user can produce at will that no rule raises an alert on:
 // files other than scripts and server configuration in the uploads, attribute changes there.
 func lowPriority(e Event) bool {
-	if e.Class != ClassUpload {
+	// A watched root moved away blinds the watch below it: never noise.
+	if e.Class != ClassUpload || e.Root {
 		return false
 	}
 	return e.Dir || e.Op == OpAttrib || (!web.IsScript(e.Path) && !web.IsOverride(e.Path))

@@ -27,6 +27,10 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   not rewritten for seven days are removed from the state directory.
 - The processes collector lists the names of the host's kernel threads (`kernel_thread_names`,
   reduced to their family: `kworker`, `kswapd`, `scsi_eh_`), at most 512.
+- Real-time watch: the places left unwatched are listed up to five per class, so scratch
+  directories anyone can fill no longer crowd out an upload or system gap; the event of a
+  watched root moved away is never dropped as upload noise; overflows of the kernel queue a
+  second apart no longer put off the replan that watches a moved root again.
 
 ### Verifier
 
@@ -52,6 +56,8 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   `rcu_sched`, `xfsaild/sda1`), as its name or as `[name]` on its command line, is a critical
   "Process disguised as a kernel thread" like the usual names already were; the watchdog daemon
   stays out.
+- "Watched directory moved away or removed" alerts are grouped by class and path: one upload
+  directory moved again and again no longer fills the group a system directory shares.
 - Alert emails are sent as quoted-printable: a path of any length no longer makes a line over
   998 bytes that a relay could bounce after accepting the message.
 

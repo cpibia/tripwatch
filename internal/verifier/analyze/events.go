@@ -74,7 +74,9 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		if e.Class == watch.ClassScratch {
 			sev = "medium"
 		}
-		return event("watch-root", e.Path+occurrence(e), sev, "Watched directory moved away or removed: "+e.Path,
+		// Grouped by class and path: one directory moved again and again fills its own group,
+		// never the one of a system directory.
+		return event("watch-root", e.Class+":"+e.Path+"|"+strings.TrimSpace(occurrence(e)), sev, "Watched directory moved away or removed: "+e.Path,
 			fmt.Sprintf("%s, watched in real time, was moved away or removed at %s. Changes inside it are not seen until it is back in place and watched again, which the sensor checks every few seconds; the next snapshot shows its state.", e.Path, e.At.Format("15:04:05"))), true
 	}
 	if e.Dir || e.Path == "" {

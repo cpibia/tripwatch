@@ -4,6 +4,7 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -638,5 +639,55 @@ func TestFilesAncestorReplaced(t *testing.T) {
 	}
 	if has(got, ClassUpload, OpCreate, "/srv/app/wc/uploads/old.php") {
 		t.Fatalf("the old inode still reports under the path: %+v", got)
+	}
+}
+
+// The places left unwatched are bounded per class: scratch directories anyone can fill do not
+// push out the gap of an upload directory.
+func TestGapsBoundedPerClass(t *testing.T) {
+	root := t.TempDir()
+	f, err := NewFiles(root, collector.NewSource(root), make(chan Event, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.mu.Lock()
+	for i := range 25 {
+		f.gap(ClassScratch, fmt.Sprintf("watch: /tmp/a%d has directories deeper than 2 levels below /tmp, not watched", i))
+	}
+	f.gap(ClassUpload, "watch: more than 6144 directories of class upload: /srv/up/x and others are not watched")
+	f.mu.Unlock()
+	scratch, upload := 0, 0
+	for _, u := range f.Unwatched() {
+		switch {
+		case strings.HasPrefix(u, ClassScratch+": "):
+			scratch++
+		case strings.HasPrefix(u, ClassUpload+": "):
+			upload++
+		}
+	}
+	if scratch != maxGapsPerClass || upload != 1 {
+		t.Errorf("scratch %d, upload %d: %v", scratch, upload, f.Unwatched())
+	}
+}
+
+// Overflows a second apart do not put off a replan already planned.
+func TestOverflowDoesNotPostponeReplan(t *testing.T) {
+	root := t.TempDir()
+	f, err := NewFiles(root, collector.NewSource(root), make(chan Event, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	f.now = func() time.Time { return now }
+	f.event(-1, unix.IN_Q_OVERFLOW, 0, "")
+	planned := f.replanAt
+	for range 5 {
+		now = now.Add(500 * time.Millisecond)
+		f.event(-1, unix.IN_Q_OVERFLOW, 0, "")
+	}
+	if !f.replanAt.Equal(planned) {
+		t.Errorf("replan moved from %v to %v", planned, f.replanAt)
 	}
 }

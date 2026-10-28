@@ -158,7 +158,12 @@ func (f *Files) Issues() collector.Issues {
 }
 
 // maxGaps bounds the unwatched places remembered: past it, the count says enough.
-const maxGaps = 20
+// maxGapsPerClass bounds those listed for each class, so the places anyone can fill (scratch)
+// never crowd out those that matter (uploads, system).
+const (
+	maxGaps         = 20
+	maxGapsPerClass = 5
+)
 
 // Unwatched returns the places of the system, the homes and the uploads left unwatched.
 func (f *Files) Unwatched() []string {
@@ -169,8 +174,19 @@ func (f *Files) Unwatched() []string {
 
 // gap records a place the bounds leave unwatched. Callers hold f.mu.
 func (f *Files) gap(class, msg string) {
-	if entry := class + ": " + msg; !slices.Contains(f.unwatched, entry) && len(f.unwatched) < maxGaps {
-		f.unwatched = append(f.unwatched, entry)
+	if entry := class + ": " + msg; !slices.Contains(f.unwatched, entry) {
+		listed := 0
+		for _, u := range f.unwatched {
+			if strings.HasPrefix(u, class+": ") {
+				listed++
+			}
+		}
+		switch {
+		case listed < maxGapsPerClass-1:
+			f.unwatched = append(f.unwatched, entry)
+		case listed == maxGapsPerClass-1:
+			f.unwatched = append(f.unwatched, class+": watch: more places of class "+class+" are not watched, past the bounds")
+		}
 	}
 	if slices.Contains(f.gaps, msg) {
 		return
@@ -597,7 +613,11 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 		// watches, so they are planned again from the targets.
 		f.Dropped.Add(1)
 		f.mu.Lock()
-		f.replanAt = f.now().Add(time.Second)
+		// A replan already planned is not put off: under overflows a second apart it would
+		// never come, and a root moved meanwhile would stay blind for the whole flood.
+		if f.replanAt.IsZero() {
+			f.replanAt = f.now().Add(time.Second)
+		}
 		f.mu.Unlock()
 		return
 	}

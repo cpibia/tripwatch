@@ -357,3 +357,13 @@ func BenchmarkBatcherAddFull(b *testing.B) {
 		bt.add(e)
 	}
 }
+
+// A watched root moved away blinds the watch below it: it is never dropped as upload noise.
+func TestRootEventIsNotNoise(t *testing.T) {
+	if lowPriority(Event{Class: ClassUpload, Op: OpDelete, Path: "/srv/up", Dir: true, Root: true}) {
+		t.Error("the root event of an upload directory is low priority")
+	}
+	if !lowPriority(Event{Class: ClassUpload, Op: OpCreate, Path: "/srv/up/d", Dir: true}) {
+		t.Error("a directory created in the uploads is not low priority")
+	}
+}

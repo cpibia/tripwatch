@@ -96,7 +96,7 @@ func TestEvaluateEvents(t *testing.T) {
 		{"build output in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/go-build1/a.out", Mode: "-rwxr-xr-x", UID: &dev1000}, false, "scratch-exec:uid1000 medium"},
 		{"plain file in tmp", watch.Event{Class: watch.ClassScratch, Op: watch.OpCreate, Path: "/tmp/sess", Mode: "-rw-------"}, false, ""},
 		{"dropper removed", watch.Event{At: t0.Add(time.Minute), Class: watch.ClassScratch, Op: watch.OpDelete, Path: "/tmp/.bench-dropper"}, false, "scratch-transient:uid0 critical"},
-		{"watched root moved", watch.Event{Class: watch.ClassUpload, Op: watch.OpDelete, Path: "/srv/app/uploads", Dir: true, Root: true}, false, "watch-root high"},
+		{"watched root moved", watch.Event{Class: watch.ClassUpload, Op: watch.OpDelete, Path: "/srv/app/uploads", Dir: true, Root: true}, false, "watch-root:upload high"},
 		{"directory", watch.Event{Class: watch.ClassSchedule, Op: watch.OpCreate, Path: "/var/spool/cron/x", Dir: true}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,6 +106,9 @@ func TestEvaluateEvents(t *testing.T) {
 				fp, _, _ := strings.Cut(f.Fingerprint, " sha256:")
 				fp, _, _ = strings.Cut(fp, " at:")
 				fp, _, _ = strings.Cut(fp, "#")
+				if strings.HasPrefix(fp, EventKind+":watch-root:") {
+					fp, _, _ = strings.Cut(fp, "|")
+				}
 				rule := fp[len(EventKind)+1:]
 				rule = rule[:len(rule)-len(tc.event.Path)-len(tc.event.Exe)-1]
 				got = rule + " " + f.Severity
