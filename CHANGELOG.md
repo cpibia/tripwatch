@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-10-28
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - What real sites keep in their uploads and code that runs nothing is no longer reported: a
@@ -821,7 +825,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.22...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.23...HEAD
+[0.1.23]: https://github.com/cpibia/tripwatch/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/cpibia/tripwatch/compare/v0.1.21...v0.1.22
 [0.1.21]: https://github.com/cpibia/tripwatch/compare/v0.1.20...v0.1.21
 [0.1.20]: https://github.com/cpibia/tripwatch/compare/v0.1.19...v0.1.20
