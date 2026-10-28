@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"path"
 	"slices"
@@ -22,14 +23,16 @@ type Mount struct {
 // Container is a Docker container as its daemon keeps it on disk. Only what gives it power over
 // the host is collected: never its environment, which holds the application's secrets.
 type Container struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Image       string   `json:"image"`
-	ImageID     string   `json:"image_id,omitempty"`
-	Created     string   `json:"created,omitempty"`
-	Running     bool     `json:"running,omitempty"`
-	User        string   `json:"user,omitempty"`
-	Privileged  bool     `json:"privileged,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Image      string `json:"image"`
+	ImageID    string `json:"image_id,omitempty"`
+	Created    string `json:"created,omitempty"`
+	Running    bool   `json:"running,omitempty"`
+	User       string `json:"user,omitempty"`
+	Privileged bool   `json:"privileged,omitempty"`
+	// CapAdd are the capabilities added to Docker's default set, or for the other runtimes
+	// the effective ones.
 	CapAdd      []string `json:"cap_add,omitempty"`
 	PIDMode     string   `json:"pid_mode,omitempty"`
 	NetworkMode string   `json:"network_mode,omitempty"`
@@ -55,8 +58,8 @@ const (
 )
 
 // Containers reads the containers of the Docker daemon from its state directory, which is
-// root's: its data root is read from daemon.json when it is moved. Podman and containerd are
-// not read yet.
+// root's (its data root is read from daemon.json when it is moved), and those of containerd,
+// Podman and CRI-O from their OCI bundles.
 type Containers struct{}
 
 func (Containers) Name() string { return "containers" }
@@ -65,10 +68,9 @@ func (Containers) Collect(ctx context.Context, src collector.Source) (any, error
 	res := ContainersResult{Containers: []Container{}}
 	dir := path.Join(dockerRoot(src.FS, &res.Issues), "containers")
 	entries, err := fs.ReadDir(src.FS, dir)
-	if err != nil {
-		return res, nil
+	if err == nil {
+		res.Runtime = "docker"
 	}
-	res.Runtime = "docker"
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			return res, err
@@ -84,6 +86,7 @@ func (Containers) Collect(ctx context.Context, src collector.Source) (any, error
 			res.Containers = append(res.Containers, c)
 		}
 	}
+	readOCIContainers(src.FS, &res)
 	return res, nil
 }
 
@@ -191,4 +194,114 @@ func shortID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// ociBundles are where runtimes keep the OCI configuration of their containers: containerd's
+// running tasks (one directory per namespace, Kubernetes' included; Docker's own namespace is
+// read from the daemon instead), and the containers of Podman and CRI-O.
+var ociBundles = []struct{ runtime, glob string }{
+	{"containerd", "run/containerd/io.containerd.runtime.v2.task/*/*/config.json"},
+	{"podman", "var/lib/containers/storage/overlay-containers/*/userdata/config.json"},
+	{"cri-o", "run/containers/storage/overlay-containers/*/userdata/config.json"},
+}
+
+// ociConfig holds the fields read from an OCI runtime configuration; the process's environment
+// is skipped by the decoder.
+type ociConfig struct {
+	Hostname string
+	Process  struct {
+		User         struct{ UID int }
+		Capabilities struct{ Effective []string }
+	}
+	Mounts []struct {
+		Destination string
+		Type        string
+		Source      string
+		Options     []string
+	}
+	Linux struct {
+		Namespaces []struct{ Type string }
+		Devices    []struct{ Path string }
+	}
+	Annotations map[string]string
+}
+
+// allCapabilities is how many capabilities a privileged container holds at least.
+const allCapabilities = 38
+
+// readOCIContainers adds the containers of the OCI bundles found, up to the bound.
+func readOCIContainers(fsys fs.FS, res *ContainersResult) {
+	for _, b := range ociBundles {
+		for _, name := range collector.Glob(fsys, b.glob) {
+			if b.runtime == "containerd" && strings.Contains(name, "/io.containerd.runtime.v2.task/moby/") {
+				continue
+			}
+			if len(res.Containers) == maxContainers {
+				res.Truncated = true
+				return
+			}
+			data, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				continue
+			}
+			var cfg ociConfig
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				res.Issues.Add(err)
+				continue
+			}
+			res.Containers = append(res.Containers, ociContainer(b.runtime, name, cfg))
+			if !strings.Contains(res.Runtime, b.runtime) {
+				res.Runtime = strings.TrimPrefix(res.Runtime+","+b.runtime, ",")
+			}
+		}
+	}
+}
+
+func ociContainer(runtime, name string, cfg ociConfig) Container {
+	// The bundle's directory is the container's ID: .../<id>/config.json or .../<id>/userdata/config.json.
+	dir := path.Dir(name)
+	if path.Base(dir) == "userdata" {
+		dir = path.Dir(dir)
+	}
+	a := cfg.Annotations
+	c := Container{ID: shortID(path.Base(dir)), Running: runtime != "podman",
+		Name:  cmp.Or(a["io.kubernetes.cri.container-name"], a["io.kubernetes.container.name"], a["io.container.name"], cfg.Hostname),
+		Image: cmp.Or(a["io.kubernetes.cri.image-name"], a["io.kubernetes.container.image"], a["org.opencontainers.image.ref.name"], a["io.podman.annotations.image"]),
+		User:  fmt.Sprint(cfg.Process.User.UID)}
+	if pod := cmp.Or(a["io.kubernetes.cri.sandbox-name"], a["io.kubernetes.pod.name"]); pod != "" {
+		c.Name = cmp.Or(a["io.kubernetes.cri.sandbox-namespace"], a["io.kubernetes.pod.namespace"]) + "/" + pod + "/" + c.Name
+	}
+	c.Name = runtime + ":" + c.Name
+	caps := cfg.Process.Capabilities.Effective
+	c.Privileged = len(caps) >= allCapabilities
+	if !c.Privileged {
+		c.CapAdd = clipList(caps)
+	}
+	isolated := map[string]bool{}
+	for _, ns := range cfg.Linux.Namespaces {
+		isolated[ns.Type] = true
+	}
+	// A namespace missing from the list is the host's.
+	for kind, mode := range map[string]*string{"pid": &c.PIDMode, "network": &c.NetworkMode, "ipc": &c.IPCMode, "user": &c.UsernsMode} {
+		if !isolated[kind] {
+			*mode = "host"
+		}
+	}
+	if !isolated["user"] && !c.Privileged {
+		// Without a user namespace is the norm: only privileged mode makes it the host's root.
+		c.UsernsMode = ""
+	}
+	for _, m := range cfg.Mounts {
+		if m.Type != "bind" && !slices.Contains(m.Options, "bind") && !slices.Contains(m.Options, "rbind") {
+			continue
+		}
+		c.Mounts = append(c.Mounts, Mount{Source: m.Source, Destination: m.Destination, RW: !slices.Contains(m.Options, "ro")})
+	}
+	slices.SortFunc(c.Mounts, func(a, b Mount) int { return strings.Compare(a.Destination, b.Destination) })
+	c.Mounts = c.Mounts[:min(len(c.Mounts), maxContainerList)]
+	for _, d := range cfg.Linux.Devices {
+		c.Devices = append(c.Devices, d.Path)
+	}
+	c.Devices = clipList(c.Devices)
+	return c
 }

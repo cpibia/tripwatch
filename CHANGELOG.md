@@ -35,7 +35,8 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 - A scratch file rewritten in a loop spends the second's budget once: the repeats are put off
   and the file is looked at once more a second later, so one account rewriting the same files
   no longer uses up the budget every other account's files share.
-- New `containers` collector: Docker containers read from the daemon's state directory, with
+- New `containers` collector: Docker containers read from the daemon's state directory, and
+  those of containerd (Kubernetes included), Podman and CRI-O from their OCI bundles, with
   their image and what gives them power over the host (privileged mode, capabilities, host
   namespaces, unconfined profiles, devices, host directories and runtime sockets mounted),
   never their environment.
