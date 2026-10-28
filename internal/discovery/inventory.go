@@ -144,8 +144,9 @@ func configLoaded(fsys fs.FS, names []string, workers bool) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	// Only the host's processes read the configuration found on the host's disk: a web server in
-	// a container reads its own.
-	hostMnt, _ := fs.ReadLink(fsys, "proc/1/ns/mnt")
+	// a container reads its own. The root tells them apart, not the mount namespace, which
+	// systemd gives every service with PrivateTmp= or ProtectSystem= on the same root.
+	hostRoot, hasRoot := rootID(fsys, "proc/1/root")
 	var procs []serverProcess
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
@@ -159,7 +160,7 @@ func configLoaded(fsys fs.FS, names []string, workers bool) (time.Time, bool) {
 		if err != nil || !slices.Contains(names, path.Base(exe)) || !systemExecutable(exe) {
 			continue
 		}
-		if mnt, _ := fs.ReadLink(fsys, dir+"ns/mnt"); hostMnt != "" && mnt != hostMnt {
+		if root, ok := rootID(fsys, dir+"root"); hasRoot && (!ok || root != hostRoot) {
 			continue
 		}
 		stat, err := fs.ReadFile(fsys, dir+"stat")
@@ -222,6 +223,16 @@ func configLoaded(fsys fs.FS, names []string, workers bool) (time.Time, bool) {
 		}
 	}
 	return oldest(procs), true
+}
+
+// rootID identifies the root directory a process sees.
+func rootID(fsys fs.FS, name string) (string, bool) {
+	info, err := fs.Stat(fsys, name)
+	if err != nil {
+		return "", false
+	}
+	id, ok := collector.FileID(info)
+	return id, ok
 }
 
 // systemExecutable reports whether a path lies in the system's binary directories.

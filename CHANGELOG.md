@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A web server started by systemd with `PrivateTmp=` or `ProtectSystem=` counts for stale
+  configuration again: the host's servers are told from containers by their root, not by their
+  mount namespace (SEC-153).
 - Containers are read where Docker keeps them with `userns-remap`, as a snap or with
   `--data-root` on its command line, and where k3s and MicroK8s keep their tasks; a runtime
   running whose state is found nowhere is said in the issues (SEC-188).

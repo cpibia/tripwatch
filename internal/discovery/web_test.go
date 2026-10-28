@@ -3,6 +3,8 @@ package discovery
 import (
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -643,5 +645,57 @@ func TestCaddyRelativeImportFromImportedFile(t *testing.T) {
 	sites, _, issues := CaddySites(fsys)
 	if len(sites) != 1 || sites[0].Root != "/srv/shop" {
 		t.Errorf("sites %+v issues %v", sites, issues)
+	}
+}
+
+// A web server systemd started with PrivateTmp= has a mount namespace of its own but the host's
+// root: its start counts for stale configuration. One in a container, with another root, does
+// not.
+func TestStaleConfigOfAServiceWithPrivateTmp(t *testing.T) {
+	root := t.TempDir()
+	put := func(name, content string) {
+		t.Helper()
+		p := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(target, name string) {
+		t.Helper()
+		p := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stat := func(pid string, ticks int) string {
+		return pid + " (nginx) S 1 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 " + strconv.Itoa(ticks) + " 0 0"
+	}
+	put("proc/stat", "cpu 1 2 3\nbtime 1700000000\n")
+	put("container/etc/hostname", "c")
+	link(root, "proc/1/root")
+	link("mnt:[1]", "proc/1/ns/mnt")
+	for pid, p := range map[string]struct {
+		root, mnt string
+		ticks     int
+	}{"10": {root, "mnt:[5]", 360000}, "20": {filepath.Join(root, "container"), "mnt:[6]", 900000}} {
+		link("/usr/sbin/nginx", "proc/"+pid+"/exe")
+		link(p.root, "proc/"+pid+"/root")
+		link(p.mnt, "proc/"+pid+"/ns/mnt")
+		put("proc/"+pid+"/status", "Uid:\t0\t0\t0\t0\n")
+		put("proc/"+pid+"/stat", stat(pid, p.ticks))
+	}
+	put("etc/nginx/nginx.conf", "http { server { root /srv; } }")
+	changed := time.Unix(1_700_000_000, 0).Add(90 * time.Minute)
+	if err := os.Chtimes(filepath.Join(root, "etc/nginx/nginx.conf"), changed, changed); err != nil {
+		t.Fatal(err)
+	}
+	if inv := Inspect(collector.NewSource(root).FS); !slices.Equal(inv.StaleConfig, []string{"/etc/nginx/nginx.conf"}) {
+		t.Errorf("stale = %v", inv.StaleConfig)
 	}
 }
