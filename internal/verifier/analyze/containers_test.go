@@ -34,6 +34,18 @@ func TestContainerFindings(t *testing.T) {
 	}
 }
 
+// The same name, tag and powers on another image is another program with root on the host.
+func TestContainerWithPowerOnAnotherImage(t *testing.T) {
+	proxy := system.Container{ID: "aaa", Name: "proxy", Image: "proxy:v2", ImageID: "sha256:1111", Mounts: []system.Mount{{Source: "/var/run/docker.sock", Destination: "/var/run/docker.sock"}}}
+	retagged := proxy
+	retagged.ID, retagged.ImageID = "bbb", "sha256:2222"
+	got := containerFindings(&State{Containers: &system.ContainersResult{Containers: []system.Container{proxy}}},
+		State{Containers: &system.ContainersResult{Containers: []system.Container{retagged}}})
+	if len(got) != 1 || got[0].Severity != "medium" || !strings.Contains(got[0].Detail, "sha256:2222 instead of sha256:1111") {
+		t.Fatalf("findings = %+v", got)
+	}
+}
+
 // The start of a container with power over the host, seen in real time, is raised with the
 // snapshot rule's fingerprint and detail; its removal, and a container without powers, raise
 // nothing.

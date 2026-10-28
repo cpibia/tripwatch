@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- A container with power over the host that keeps its name, tag and powers but runs another
+  image raises a medium alert: a retagged image is another program with root on the host
+  (SEC-189, snapshot side).
+
 ### Sensor
 
 - A local Docker volume of type overlay is judged by the host directories its options name: its

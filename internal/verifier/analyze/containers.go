@@ -17,13 +17,30 @@ func containerFindings(prev *State, cur State) []Finding {
 		return nil
 	}
 	known := map[string]bool{}
+	images := map[string]string{}
 	for _, c := range prev.Containers.Containers {
-		known[containerKey(c, system.ContainerPowers(c))] = true
+		key := containerKey(c, system.ContainerPowers(c))
+		known[key] = true
+		images[key] = c.ImageID
 	}
 	var out []Finding
 	for _, c := range cur.Containers.Containers {
 		powers := system.ContainerPowers(c)
-		if len(powers) == 0 || known[containerKey(c, powers)] {
+		key := containerKey(c, powers)
+		if len(powers) == 0 {
+			continue
+		}
+		// The tag is a label whoever controls the daemon rewrites: the same name, tag and
+		// powers on another image is another program holding root on the host. An update does
+		// this too, hence medium.
+		if was := images[key]; known[key] && was != "" && c.ImageID != "" && was != c.ImageID {
+			out = append(out, Finding{Kind: "containers", Owner: "root", Severity: "medium", Fingerprint: "containers:image:" + key + ":" + c.ImageID,
+				Title: "Container with access to the host runs another image: " + c.Name,
+				Detail: fmt.Sprintf("Container %s (%s), image %s, now runs %s instead of %s, with %s. An update does this; so does an image retagged by whoever controls the daemon. Check that the new image is one you built or pulled.",
+					c.Name, c.ID, orUnknown(c.Image), c.ImageID, was, strings.Join(powers, ", "))})
+			continue
+		}
+		if known[key] {
 			continue
 		}
 		out = append(out, containerFinding(watch.ContainerInfo{ID: c.ID, Name: c.Name, Image: c.Image, Created: c.Created, Powers: powers},
