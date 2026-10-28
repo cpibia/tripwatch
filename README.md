@@ -547,8 +547,11 @@ in the snapshot. The severity of a script in uploads does not depend on the
 HTTP status, which the script itself decides. For each requested script the sensor also says
 whether it exists in the document roots of the nginx or Apache sites writing that log (with
 nginx's location roots and aliases, Apache's `Alias`): a request that failed for a script found
-in none of them ran no code, and raises no alert (scanners probe thousands of such paths). When
-the request may reach a proxy (`proxy_pass`, `ProxyPass`, a rewrite with the `P` flag), a root
+in none of them ran no code, and raises no alert (scanners probe thousands of such paths). Nor
+does a failed request on an nginx site that answers every request itself (`return`, the redirect
+to HTTPS) or hands that path to a proxy: the backend's own log, read when it is on the host,
+judges what ran there. When the request may reach a proxy otherwise (`ProxyPass`, a rewrite with
+the `P` flag, a named location a fallback leads to), a root
 holds a variable, a mapping is not modelled (`AliasMatch`), or the server is Caddy, the answer is
 left open and the request is judged as before. A web
 shell used and deleted between two snapshots looks missing: its creation is seen by the
