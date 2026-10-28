@@ -413,7 +413,10 @@ For each application the `web` collector produces:
 - applications nested in an upload or data directory, and suspicious symlinks. An upload
   directory that is itself a link to a directory inside the application or its deploy directory
   (`releases/5/uploads -> ../../shared/uploads`) is the usual deploy layout: it is followed and
-  scanned, not reported.
+  scanned, not reported. So is a script linked to its copy at the same path in the deploy's
+  shared directory (`releases/5/wp-config.php -> ../../shared/wp-config.php`), when that copy is
+  a regular file outside the upload and data directories with no webshell signature; a script
+  linked to anything else stays a suspicious link.
 
 `reachable` tells whether a file would be executed according to the configuration on disk. It is
 a hint, never a reason to lower a finding's severity: whoever controls the configuration can

@@ -8,6 +8,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A script linked to its copy at the same path in the deploy's shared directory
+  (`releases/5/wp-config.php -> ../../shared/wp-config.php`, the linked files of Capistrano or
+  Deployer) is no longer a suspicious link, when the copy is a regular file outside the upload
+  and data directories and carries no webshell signature.
 - A process start identical to one reported in the last hour (same reason, executable, script,
   parent, users, directory and command line) is counted instead of sent: an account that is
   also the web server's user and runs jobs every minute filled the verifier's daily budget for

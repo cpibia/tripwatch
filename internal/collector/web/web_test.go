@@ -523,6 +523,37 @@ func TestSymlinkedUploadDirectoryIsScanned(t *testing.T) {
 	}
 }
 
+// A release linking a script to its copy in the deploy's shared directory, wp-config.php or an
+// .env kept across releases, is the deploy layout; a script linked to anything else is not.
+func TestSharedScriptOfAReleaseIsNotSuspicious(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/deploy/releases/5/index.php", "<?php echo 1;")
+	tr.file("var/www/deploy/releases/5/lib/app.php", "<?php echo 2;")
+	tr.file("var/www/deploy/shared/wp-config.php", "<?php define('DB_NAME', 'site');")
+	tr.file("var/www/deploy/shared/lib/boot.php", "<?php return [];")
+	tr.file("var/www/deploy/shared/settings.php", `<?php system($_GET['c']);`)
+	tr.file("var/www/deploy/shared/uploads/hook.php", "<?php return [];")
+	tr.file("var/www/deploy/shared/avatar.jpg", "\xff\xd8 photo")
+	tr.link("../../shared/wp-config.php", "var/www/deploy/releases/5/wp-config.php")
+	tr.link("../../../shared/lib/boot.php", "var/www/deploy/releases/5/lib/boot.php")
+	tr.link("../../shared/settings.php", "var/www/deploy/releases/5/settings.php")
+	tr.link("../../shared/uploads/hook.php", "var/www/deploy/releases/5/hook.php")
+	tr.link("../../shared/wp-config.php", "var/www/deploy/releases/5/config.php")
+	tr.link("../../shared/avatar.jpg", "var/www/deploy/releases/5/avatar.php")
+
+	got := findingsOf(tr.scan())
+	for _, quiet := range []string{"/wp-config.php", "/lib/boot.php"} {
+		if slices.Contains(got, KindSuspiciousSymlink+" /var/www/deploy/releases/5"+quiet) {
+			t.Errorf("the shared copy %s was reported: %v", quiet, got)
+		}
+	}
+	for _, loud := range []string{"/settings.php", "/hook.php", "/config.php", "/avatar.php"} {
+		if !slices.Contains(got, KindSuspiciousSymlink+" /var/www/deploy/releases/5"+loud) {
+			t.Errorf("missing the link %s: %v", loud, got)
+		}
+	}
+}
+
 // Upload directories are streamed: one larger than the listing limit is scanned in full.
 func TestHugeUploadDirectoryIsScannedInFull(t *testing.T) {
 	prev := collector.MaxDirEntries

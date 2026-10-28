@@ -744,12 +744,41 @@ func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inDa
 			}
 		}
 	}
+	if kind == KindSuspiciousSymlink && !inData && len(sigs) == 0 && s.sharedFile(name) {
+		if !outside {
+			return
+		}
+		kind = KindExternalSymlink
+	}
 	if f := s.add(kind, name, e, sigs); f != nil {
 		f.Target = target
 	}
 	if s.isPHP(strings.ToLower(e.Name())) {
 		s.markReachable(name)
 	}
+}
+
+// sharedFile reports whether a script link is a release's link to its shared copy, the way
+// Capistrano's linked_files and Deployer's shared_files keep wp-config.php or .env across
+// releases: the target, resolved for real inside the application or its deploy directory, is
+// a regular script at the same path relative to the application, outside every upload or data
+// directory. A script linked to an upload, to another name or to anything else stays
+// suspicious.
+func (s *scanner) sharedFile(name string) bool {
+	rel := strings.TrimPrefix(name, s.root+"/")
+	resolved, ok := s.followable(name)
+	if !ok || rel == name || resolved == name || !strings.HasSuffix(resolved, "/"+rel) || !isScript(strings.ToLower(path.Base(resolved))) {
+		return false
+	}
+	if info, err := fs.Lstat(s.src.FS, resolved); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	for _, dir := range strings.Split(path.Dir(resolved), "/") {
+		if slices.Contains(discovery.GenericUploadDirs, strings.ToLower(dir)) {
+			return false
+		}
+	}
+	return !slices.ContainsFunc(append(slices.Clone(s.uploads), s.data...), func(d string) bool { return resolved == d || strings.HasPrefix(resolved, d+"/") })
 }
 
 // dataScanChunk is how much of a large data file is read at a time; the lexer keeps its state
