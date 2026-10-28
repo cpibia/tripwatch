@@ -109,7 +109,12 @@ func TestCodeInDataInterpolation(t *testing.T) {
 		"log line <?\tsystem($_GET['c']);?> rest":                           "exec_request_input",
 		"<?xml version=\"1.0\"?><a>system($_GET['c'])</a>":                  "",
 		"q=<?php+system($_GET[c]);":                                         "",
-		"<?mso-application progid=\"Excel.Sheet\"?><x/>":                    "",
+		"log <?php:system($_GET['c']);":                                     "exec_request_input",
+		"log <?PHP:system($_GET['c']);":                                     "exec_request_input",
+		"log <?xml:system($_GET['c']);":                                     "exec_request_input",
+		"log <?php::class;system($_GET['c']);":                              "exec_request_input",
+		"Unsupported instruction <?mso-application> in import\n#0 call_user_func_array(Array, Array)\n#1 require_once('/app/x.php')": "",
+		"<?mso-application progid=\"Excel.Sheet\"?><x/>": "",
 		deep: "nested_interpolation",
 	} {
 		whole := strings.Join(first(codeInData([]byte(in), nil)), ",")

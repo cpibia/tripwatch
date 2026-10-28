@@ -92,10 +92,14 @@ func (d *dataSearch) feed(p []byte, final bool) {
 
 func (d *dataSearch) exhausted() bool { return d.long.exhausted || d.short.exhausted }
 
+// signatures joins the two passes. From the short one only the named signatures count: there a
+// "<?" quoted in a log (an XML processing instruction) opens a block that runs to the end of the
+// file, through stack traces full of call_user_func_array(; the weak signals of real code are
+// found by the long pass, where the open tag is unambiguous.
 func (d *dataSearch) signatures() []string {
 	sigs := slices.Clone(d.long.sigs)
 	for _, sig := range d.short.sigs {
-		if !slices.Contains(sigs, sig) {
+		if !slices.Contains(sigs, sig) && !slices.Contains(weakCodeSignals, sig) {
 			sigs = append(sigs, sig)
 		}
 	}
@@ -382,9 +386,10 @@ func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 }
 
 // openTagLen returns the length of what follows "<?" in an open tag PHP runs: "php" and a blank,
-// "=", or a blank alone. With short tags "<?" opens a block whatever follows, but for "xml",
-// which makes PHP refuse the file, and "php" glued to more text, which runs as the undefined
-// constant php and stops there.
+// "=", or a blank alone. With short tags "<?" opens a block whatever follows, but for "php" and
+// "xml" glued to more text: "<?xml version" makes PHP refuse the file and "<?php+" runs as the
+// undefined constant php and stops there, while "<?php:" is a goto label and "<?php::class;"
+// compiles, so those two run what follows.
 func openTagLen(t []byte, short bool) (int, bool) {
 	blank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 	word := func(w string) bool { return len(t) >= len(w) && bytes.EqualFold(t[:len(w)], []byte(w)) }
@@ -393,8 +398,10 @@ func openTagLen(t []byte, short bool) (int, bool) {
 		return 4, true
 	case len(t) > 0 && (t[0] == '=' || blank(t[0])):
 		return 1, true
-	case !short || word("xml") || word("php"):
+	case !short:
 		return 0, false
+	case word("xml") || word("php"):
+		return 0, len(t) > 3 && t[3] == ':'
 	}
 	return 0, true
 }

@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- With short open tags the data-file search opens a block on `<?php:` and `<?xml:` (a goto label)
+  and `<?php::class;`, which PHP runs (SEC-195); from that pass only named signatures count, so
+  a `<?name` quoted in a log no longer turns the stack traces after it into a critical (SEC-210).
 - The PHP lexer of the data-file search takes a carriage return alone for the end of a line, as
   PHP does: it closes a `//` or `#` comment and ends a heredoc's opening line, where code written
   after it ran unseen (SEC-209).
