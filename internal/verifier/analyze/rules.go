@@ -899,6 +899,7 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	out = append(out, kernelFindings(prev, cur)...)
+	out = append(out, containerFindings(prev, cur)...)
 
 	if rt := cur.Realtime; rt != nil && len(rt.Unwatched) > 0 {
 		// Anyone able to create directories can push the watches past their bounds: places left

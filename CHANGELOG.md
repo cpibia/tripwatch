@@ -34,6 +34,10 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 - A scratch file rewritten in a loop spends the second's budget once: the repeats are put off
   and the file is looked at once more a second later, so one account rewriting the same files
   no longer uses up the budget every other account's files share.
+- New `containers` collector: Docker containers read from the daemon's state directory, with
+  their image and what gives them power over the host (privileged mode, capabilities, host
+  namespaces, unconfined profiles, devices, host directories and runtime sockets mounted),
+  never their environment.
 
 ### Verifier
 
@@ -61,6 +65,9 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   stays out.
 - "Watched directory moved away or removed" alerts are grouped by class and path: one upload
   directory moved again and again no longer fills the group a system directory shares.
+- "Container with access to the host" (high): a Docker container that appears with a power
+  that amounts to root on the host. A redeploy of one already there (same name, image and
+  powers, such as a reverse proxy holding the Docker socket) raises nothing.
 - Alert emails are sent as quoted-printable: a path of any length no longer makes a line over
   998 bytes that a relay could bounce after accepting the message.
 

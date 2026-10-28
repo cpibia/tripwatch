@@ -16,5 +16,6 @@ func All() []collector.Collector {
 		Packages{},
 		Privileged{Skip: DefaultSkip, Extra: DefaultExtra},
 		Kernel{},
+		Containers{},
 	}
 }
