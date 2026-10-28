@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime/quotedprintable"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,5 +81,21 @@ func TestRoundSendsOnceAndReportsFailures(t *testing.T) {
 	disabled.Round(ctx)
 	if len(sent) != 1 {
 		t.Fatal("a notifier without SMTP settings sent mail")
+	}
+}
+
+// However long a line chosen on the host, the encoded body has none over the limit of RFC 5322,
+// and decodes to the same text.
+func TestEncodeBodyBoundsLines(t *testing.T) {
+	body := "CRITICAL · web-01 · Script added\n  /" + strings.Repeat("a/", 750) + "x.php\n"
+	enc := encodeBody(body)
+	for _, line := range strings.Split(enc, "\r\n") {
+		if len(line) > 76 {
+			t.Fatalf("line of %d bytes", len(line))
+		}
+	}
+	dec, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(enc)))
+	if err != nil || string(dec) != strings.ReplaceAll(body, "\n", "\r\n") {
+		t.Errorf("decoded %q, err %v", dec, err)
 	}
 }

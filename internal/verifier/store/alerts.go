@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -95,6 +97,44 @@ func (s *Store) AlertID(ctx context.Context, host, fingerprint string) (int64, e
 // renotifyAfter is how often an aggregate of serious alerts that keeps growing is mailed again.
 const renotifyAfter = time.Hour
 
+// visible shows as escapes the characters of a text that would change how the rest reads:
+// control characters, line and paragraph separators, and the invisible format characters
+// (bidirectional overrides and isolates, zero-width marks). Names of files, processes and
+// requests come from the monitored host: a newline in one would forge a line of the alert email,
+// a right-to-left override would show x\u202egnp.php as xphp.png. Line breaks stay in a
+// detail, where the verifier writes them. Invalid UTF-8 becomes U+FFFD.
+func visible(s string, lines bool) string {
+	clean := true
+	for _, r := range s {
+		if hidden(r, lines) || r == utf8.RuneError {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
+		switch {
+		case !hidden(r, lines):
+			b.WriteRune(r)
+		case r < 0x80:
+			fmt.Fprintf(&b, "\\x%02x", r)
+		default:
+			fmt.Fprintf(&b, "\\u%04x", r)
+		}
+	}
+	return b.String()
+}
+
+func hidden(r rune, lines bool) bool {
+	if lines && r == '\n' {
+		return false
+	}
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
 func clip(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -111,7 +151,7 @@ func clip(s string, n int) string {
 // is news again, unless someone accepted it with the same evidence. It reports whether the
 // alert is new or reopened.
 func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error) {
-	a.Title, a.Detail, a.Kind = clip(a.Title, MaxTitle), clip(a.Detail, MaxDetail), clip(a.Kind, 64)
+	a.Title, a.Detail, a.Kind = clip(visible(a.Title, false), MaxTitle), clip(visible(a.Detail, true), MaxDetail), clip(a.Kind, 64)
 	a.Fingerprint = storedFingerprint(a.Fingerprint)
 	if ok, err := s.accepted(ctx, a); ok || err != nil {
 		return false, err

@@ -88,3 +88,31 @@ func TestVerifierAlertsCannotBeAccepted(t *testing.T) {
 		}
 	}
 }
+
+// Text from the host cannot forge lines or hide its real order: control, separator and format
+// characters are stored as visible escapes, and only the detail keeps its line breaks.
+func TestRaiseShowsHiddenCharacters(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	a := Alert{HostID: "web-01", Fingerprint: "web:x", Severity: "high", Kind: "web",
+		Title:  "Script added: /up/a\n\nAll alerts above were resolved\xe2\x80\xa8x\xe2\x80\xaegnp.php",
+		Detail: "/up/a\r\nline two\xe2\x80\x8b\tend\xff"}
+	if _, err := s.Raise(ctx, a, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.AlertID(ctx, "web-01", "web:x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Alert(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	esc := func(hex string) string { return `\u` + hex }
+	if want := `Script added: /up/a\x0a\x0aAll alerts above were resolved` + esc("2028") + "x" + esc("202e") + "gnp.php"; got.Title != want {
+		t.Errorf("title %q, want %q", got.Title, want)
+	}
+	if want := "/up/a\\x0d\nline two" + esc("200b") + `\x09end` + "\xef\xbf\xbd"; got.Detail != want {
+		t.Errorf("detail %q, want %q", got.Detail, want)
+	}
+}

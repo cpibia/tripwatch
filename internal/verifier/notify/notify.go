@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"mime/quotedprintable"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -124,6 +125,18 @@ func Compose(alerts []store.Alert, baseURL string) (string, string) {
 	return subject, b.String()
 }
 
+// encodeBody encodes the body as quoted-printable with CRLF line ends. A path chosen on the
+// monitored host can make a line of any length, and a relay that enforces the 998-byte limit of
+// RFC 5322 would bounce the message after the server accepted it, with every alert in it marked
+// as sent; quoted-printable keeps every line under 77 bytes and the text unchanged.
+func encodeBody(body string) string {
+	var b strings.Builder
+	w := quotedprintable.NewWriter(&b)
+	_, _ = w.Write([]byte(strings.ReplaceAll(body, "\n", "\r\n")))
+	_ = w.Close()
+	return b.String()
+}
+
 func indent(s string) string {
 	if s == "" {
 		return ""
@@ -182,8 +195,9 @@ func sendSMTP(m Mailer, subject, body string) error {
 		"Subject: " + subject + "\r\n" +
 		"MIME-Version: 1.0\r\n" +
 		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"Content-Transfer-Encoding: quoted-printable\r\n" +
 		"Date: " + time.Now().Format(time.RFC1123Z) + "\r\n\r\n" +
-		strings.ReplaceAll(body, "\n", "\r\n")
+		encodeBody(body)
 	if err := c.Mail(m.From); err != nil {
 		return err
 	}

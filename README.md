@@ -739,7 +739,11 @@ locked out.
 
 With `TRIPWATCH_SMTP_HOST` set, critical and high alerts arrive by email, grouped into one message
 per round, with a link to the detail. If sending fails, the interface shows it as a verifier
-alert.
+alert. Names that come from the server (files, processes, requests) cannot forge lines of the
+message or hide their real order: line breaks, control characters and invisible format
+characters such as right-to-left overrides are stored as visible escapes (`\x0a`, `\u202e`),
+in titles and details alike, and the body is sent as quoted-printable, so no line exceeds the
+limit mail servers enforce however long a path is.
 
 ## Sensor
 

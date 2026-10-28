@@ -37,6 +37,13 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   customer's name high. A kind read for the first time is not compared, so updating the sensor
   does not turn every existing object into an alert.
 - An existing administrator whose name, email or active flag changed raises a high alert.
+- Text from the monitored host can no longer forge lines of the alert email or reverse how a
+  name reads: line breaks (in titles), control characters, line separators and invisible
+  format characters (bidirectional overrides, zero-width marks) are stored as visible escapes,
+  and invalid UTF-8 as U+FFFD. The interface isolates the bidirectional text of the alerts
+  already stored.
+- Alert emails are sent as quoted-printable: a path of any length no longer makes a line over
+  998 bytes that a relay could bounce after accepting the message.
 
 ## [0.1.13] - 2026-10-28
 
