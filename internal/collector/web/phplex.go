@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"slices"
+	"strings"
 )
 
 // codeSearch finds the PHP a data file would run if it were included, in content given in one
@@ -11,14 +12,23 @@ import (
 // code sits from its open tag. Each block's code, without its comments and with runs of blanks
 // folded, is matched against the signatures; a block longer than maxBlockCode is matched in
 // parts that overlap. The cost stays linear in the size of the file.
+//
+// Binary data (a PDF, an archive) holds "<?=" or "<? " every few megabytes by chance, and the
+// random "code" after it soon holds a backtick or a word like "exec(". Such a block also holds
+// control bytes outside its strings, which PHP 8 refuses to compile, failing the whole file: the
+// weak signals of a block like that (backtick_exec, dangerous_call) are dropped, the named
+// signatures still count. PHP 7 only warned about those bytes; it is past its end of life.
 type codeSearch struct {
 	mode     int
 	heredoc  []byte // identifier closing the open heredoc or nowdoc
 	atLine   bool   // in a heredoc, nothing but indentation seen on this line yet
 	code     []byte
 	backtick bool
-	carry    []byte
-	sigs     []string
+	// call says a dangerous call was seen in the block, broken that it cannot compile.
+	call   bool
+	broken bool
+	carry  []byte
+	sigs   []string
 	// codeLeft, when set, is the budget of code matched; exhausted says it ran out.
 	codeLeft  *int64
 	exhausted bool
@@ -194,6 +204,16 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 			c.mode, c.heredoc, c.atLine = lexHeredoc, id, true
 			return n
 		}
+	case '_':
+		// PHP compiles nothing after __halt_compiler: what follows cannot break the block.
+		if !more(len(haltCompiler)) {
+			return 0
+		}
+		if c.halts(d, i) {
+			c.emit(d[i : i+len(haltCompiler)])
+			c.endBlock()
+			return len(haltCompiler)
+		}
 	case ' ', '\t', '\n', '\r':
 		if len(c.code) > 0 && c.code[len(c.code)-1] == ' ' {
 			return 1
@@ -201,8 +221,35 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		c.emit([]byte(" "))
 		return 1
 	}
+	if uncompilable(d[i]) {
+		c.broken = true
+	}
 	c.emit(d[i : i+1])
 	return 1
+}
+
+var haltCompiler = []byte("__halt_compiler")
+
+// halts reports whether the code at i is the keyword __halt_compiler, not part of a longer name, a
+// variable, a property, a method or a namespaced name.
+func (c *codeSearch) halts(d []byte, i int) bool {
+	end := i + len(haltCompiler)
+	if end > len(d) || !bytes.EqualFold(d[i:end], haltCompiler) || (end < len(d) && identByte(d[end])) {
+		return false
+	}
+	before := bytes.TrimRight(c.code, " ")
+	if len(before) == 0 {
+		return true
+	}
+	last := before[len(before)-1]
+	return !identByte(last) && !strings.ContainsRune("$>:\\", rune(last))
+}
+
+// uncompilable reports whether PHP 8 refuses a byte in code, outside strings and comments: the
+// control characters other than the blanks it skips. Vertical tab and form feed are left out:
+// whether every version refuses them is not worth an evasion.
+func uncompilable(b byte) bool {
+	return b <= 0x08 || (b >= 0x0e && b <= 0x1f) || b == 0x7f
 }
 
 // stepHeredoc looks for the line that closes the heredoc: its identifier, indented or not,
@@ -303,12 +350,27 @@ func (c *codeSearch) emit(p []byte) {
 	}
 }
 
-// endBlock matches what is left of the block and goes back to text.
+// endBlock matches what is left of the block, adds its weak signals unless it cannot compile,
+// and goes back to text.
 func (c *codeSearch) endBlock() {
 	if c.mode != lexText {
 		c.match()
+		if !c.exhausted && !c.broken {
+			if c.backtick {
+				c.add("backtick_exec")
+			}
+			if c.call && len(c.sigs) == 0 {
+				c.add("dangerous_call")
+			}
+		}
 	}
-	c.mode, c.code, c.backtick, c.heredoc = lexText, c.code[:0], false, nil
+	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken = lexText, c.code[:0], false, nil, false, false
+}
+
+func (c *codeSearch) add(sig string) {
+	if !slices.Contains(c.sigs, sig) {
+		c.sigs = append(c.sigs, sig)
+	}
 }
 
 func (c *codeSearch) match() {
@@ -319,20 +381,12 @@ func (c *codeSearch) match() {
 		}
 		*c.codeLeft -= int64(len(c.code))
 	}
-	add := func(sig string) {
-		if !slices.Contains(c.sigs, sig) {
-			c.sigs = append(c.sigs, sig)
-		}
-	}
 	for _, sig := range matchSignatures(c.code, true) {
 		if sig != "encoded_blob" {
-			add(sig)
+			c.add(sig)
 		}
 	}
-	if c.backtick {
-		add("backtick_exec")
-	}
-	if len(c.sigs) == 0 && dangerousCall.Match(c.code) {
-		add("dangerous_call")
+	if dangerousCall.Match(c.code) {
+		c.call = true
 	}
 }

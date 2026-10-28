@@ -213,7 +213,12 @@ directories that are not scripts are searched for PHP that would run if they wer
 or a line break, or `<?=`), the block up to the `?>` that closes it as PHP's lexer reads it (not
 one inside a string, a heredoc or nowdoc, or a block comment), or to the end, is matched against
 the signatures, a list of dangerous calls and commands in backticks, without its comments and
-with runs of blanks folded, block after block without overlap, so the cost stays linear. The
+with runs of blanks folded, block after block without overlap, so the cost stays linear. Binary
+files (a PDF, an archive) hold an open tag every few megabytes by chance, and the random "code"
+after it soon holds a backtick or a word like `exec(`: a block whose code holds, outside its
+strings and comments, a control byte PHP 8 refuses to compile loses those two weak signals,
+while the named signatures still count. `__halt_compiler` ends the block, since PHP compiles
+nothing after it: binary data appended to a payload cannot hide it. The
 lexer (`phplex.go`) keeps its state from one piece of a file to the next: data files over 4 MB
 are read through 1 MB at a time, within 4 GB a run, and code is judged with its block however far
 from its tag; the code matched is bounded to 64 MB a run, since hostile code is matched at a few

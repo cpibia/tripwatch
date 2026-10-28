@@ -1,6 +1,7 @@
 package web
 
 import (
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -45,6 +46,40 @@ func TestCodeSearchPieces(t *testing.T) {
 			if !slices.Equal(c.sigs, whole) {
 				t.Errorf("pieces of %d: %v, whole %v, in %.40q", size, c.sigs, whole, in)
 			}
+		}
+	}
+}
+
+// Binary data holds open tags and backticks by chance; the blocks it makes cannot compile, so
+// their weak signals are dropped. Code planted in the same file still counts.
+func TestCodeInDataBinary(t *testing.T) {
+	// Without the rule, three in four random files of 5 MB raise backtick_exec.
+	noise := make([]byte, 5<<20)
+	for seed := range uint64(3) {
+		r := rand.NewChaCha8([32]byte{byte(seed)})
+		_, _ = r.Read(noise)
+		if got := first(codeInData(noise, nil)); len(got) > 0 {
+			t.Errorf("random file %d: %v", seed, got)
+		}
+	}
+	binary := string(noise[:64<<10])
+	for in, want := range map[string]string{
+		"%PDF-1.7\n" + binary + "<?= `$_GET[c]` ?>" + binary:     "backtick_exec",
+		binary + "<?php $f = getallheaders(); ?>" + binary:       "dangerous_call",
+		binary + "<?php echo `id`; __halt_compiler();" + binary:  "backtick_exec",
+		binary + "<?php echo `id`; __HALT_COMPILER ();" + binary: "backtick_exec",
+		binary + "<?php system($_GET['c']); \x01" + binary:       "exec_request_input",
+		"<?php echo `id`; \x01 ?>":                               "",
+		"<?php $f = getallheaders(); \x7f ?>":                    "",
+		"<?php echo `id`; $a__halt_compiler = 1; \x01 ?>":        "",
+		"<?php echo `id`; $o->__halt_compiler(); \x01 ?>":        "",
+		"<?php echo `id`; $o-> __halt_compiler(); \x01 ?>":       "",
+		"<?php echo `id`; A\\__halt_compiler(); \x01 ?>":         "",
+		"<?php echo `id`; $x = '\x01'; /* \x02 */ // \x03\n ?>":  "backtick_exec",
+	} {
+		got := strings.Join(first(codeInData([]byte(in), nil)), ",")
+		if !strings.Contains(got, want) || (want == "" && got != "") {
+			t.Errorf("%.60q: %q, want %q", in, got, want)
 		}
 	}
 }

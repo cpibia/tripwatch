@@ -12,6 +12,12 @@ Sensor:
   upgrading a package no longer raise "A program started from /var/tmp", under the same
   conditions as apt's debconf scripts: root, a root-owned file, started by rpm or a package
   manager built on it, known by its executable, UID and command line.
+- Large PDFs and other binary files in data directories no longer raise "Code inside a data
+  file" with `backtick_exec`: binary data holds `<?=` and backticks by chance, but the blocks it
+  makes hold control bytes PHP 8 refuses to compile, so their weak signals (`backtick_exec`,
+  `dangerous_call`) are dropped; named signatures still count, and `__halt_compiler` ends a
+  block so binary data appended to a payload cannot hide it. The alerts already raised stay
+  open (critical alerts are never resolved automatically): resolve them by hand.
 - Directories deeper than the real-time watch below a directory only root can enter (root-owned,
   no search permission for group or others, like snapd's `/tmp/snap-private-tmp/snap.*`) no
   longer raise "Places left without real-time watch": no other user can reach them.
