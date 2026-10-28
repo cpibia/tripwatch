@@ -57,7 +57,9 @@ func TestExecsReportStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	payload := filepath.Join(dir, "payload")
+	// Named after what it is: uutils' multi-call binary, which /bin/sleep is on recent Ubuntu,
+	// picks the utility by the name it is run as.
+	payload := filepath.Join(dir, "sleep")
 	sh, err := os.ReadFile("/bin/sleep")
 	if err != nil {
 		t.Skip("no /bin/sleep to copy")
