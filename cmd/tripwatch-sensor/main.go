@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -243,21 +244,39 @@ func (s sensor) snapshot(ctx context.Context) report {
 }
 
 // interfaceAddresses lists the addresses of the sensor's network interfaces that identify the
-// machine: loopback and link-local ones say nothing about which server this is.
+// machine: loopback and link-local ones say nothing about which server this is, and neither do
+// the bridges and virtual links of container runtimes, which carry the same address everywhere.
 func interfaceAddresses() []string {
-	addrs, err := net.InterfaceAddrs()
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil
 	}
 	var out []string
-	for _, a := range addrs {
-		ipnet, ok := a.(*net.IPNet)
-		if !ok || ipnet.IP.IsLoopback() || ipnet.IP.IsLinkLocalUnicast() || ipnet.IP.IsLinkLocalMulticast() {
+	for _, iface := range ifaces {
+		if containerInterface(iface.Name) {
 			continue
 		}
-		out = append(out, ipnet.IP.String())
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.IsLinkLocalUnicast() || ipnet.IP.IsLinkLocalMulticast() {
+				continue
+			}
+			out = append(out, ipnet.IP.String())
+		}
 	}
 	return out
+}
+
+// containerInterfacePrefixes name the interfaces Docker, Podman, LXD, libvirt and Kubernetes
+// network plugins create.
+var containerInterfacePrefixes = []string{"docker", "br-", "veth", "cni", "flannel", "cali", "cilium", "weave", "vxlan", "kube-", "podman", "lxdbr", "virbr", "tunl", "nodelocaldns"}
+
+func containerInterface(name string) bool {
+	return slices.ContainsFunc(containerInterfacePrefixes, func(p string) bool { return strings.HasPrefix(name, p) })
 }
 
 func (s sensor) printOnce(ctx context.Context) error {

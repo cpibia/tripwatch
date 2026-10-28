@@ -305,7 +305,8 @@ leaves it, `docker compose down -v` deletes it with the CA and every enrollment.
 
 The sensor also detects the environment it runs in (host, container, Kubernetes, Fargate) and the
 container runtimes present, and reports the machine's system: distribution, kernel, architecture,
-hostname, boot time, CPUs, memory, the addresses of its interfaces and its own version.
+hostname, boot time, CPUs, memory, the addresses of its interfaces (not those of container
+bridges and virtual links, the same on every host) and its own version.
 
 ## Real-time events
 
@@ -726,8 +727,10 @@ is needed too, which closes them all.
   square high, circle medium, hollow circle low), and a silent server is a present mark with a
   dashed row, not a dimmed row.
 - **Servers.** The fleet: every server with its system and kernel, the sensor's version (flagged
-  "update available" when it is older than the verifier, with the command to run), its
-  addresses, the web applications found on it, the last heartbeat and snapshot and the number
+  "update available" when it is older than the verifier, with the command to run), the address
+  its sensor connects from (on clouds with NAT, the public address no interface holds) and its
+  interface addresses, the web applications a site serves with their versions and how many
+  others are on disk, the last heartbeat and snapshot and the number
   of alerts; revoked servers listed apart.
 - **Server.** State, the system as the sensor read it (with the package manager and count, the
   listening ports, the web applications and whether the real-time watchers run), every alert,

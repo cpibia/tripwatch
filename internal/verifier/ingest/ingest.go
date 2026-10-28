@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -250,6 +251,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !s.currentCertificate(ctx, w, host, r.TLS.PeerCertificates[0], now) {
 		return
+	}
+	// Recorded only for a host whose certificate checked out: nobody else can set it.
+	if addr, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && addr != host.PeerAddr {
+		if err := s.Store.SetPeerAddr(ctx, identity, addr); err != nil {
+			s.fail(w, err)
+			return
+		}
 	}
 	if kind != protocol.KindSnapshot && !s.allowSmall(identity, now) {
 		// Refused before the body is read: a compromised host cannot keep the verifier busy

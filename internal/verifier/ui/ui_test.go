@@ -989,13 +989,16 @@ func TestServersPage(t *testing.T) {
 			{Path: "/srv/www/releases/1", Framework: "wordpress", Version: "6.6.1"}, {Path: "/home/dev/tool", Framework: "node"}}, SeenAt: now}); err != nil {
 		t.Fatal(err)
 	}
+	if err := h.store.SetPeerAddr(ctx, "web-01", "203.0.113.40"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := h.store.Raise(ctx, store.Alert{HostID: "app-01", Fingerprint: "sensor:started:3", Severity: "high", Kind: "sensor-event", Title: "Sensor started",
 		Detail: "Il sensore è partito (versione 0.1.4, avvio del sistema x)."}, now); err != nil {
 		t.Fatal(err)
 	}
 	h.login()
 	_, body := h.get("/hosts")
-	for _, want := range []string{"Debian GNU/Linux 12 (bookworm)", "6.1.0-26-amd64", `<span class="mono">0.1.7</span>`, "wordpress 6.6.2", "2 more on disk, not served", `<span class="mono">0.1.4</span>`} {
+	for _, want := range []string{"Debian GNU/Linux 12 (bookworm)", "6.1.0-26-amd64", `<span class="mono">0.1.7</span>`, "wordpress 6.6.2", "2 more on disk, not served", "203.0.113.40", `<span class="mono">0.1.4</span>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("servers page lacks %q", want)
 		}

@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS hosts (
 	last_heartbeat INTEGER NOT NULL DEFAULT 0,
 	last_snapshot  INTEGER NOT NULL DEFAULT 0,
 	cert_serial    TEXT NOT NULL DEFAULT '',
-	prev_serial    TEXT NOT NULL DEFAULT ''
+	prev_serial    TEXT NOT NULL DEFAULT '',
+	peer_addr      TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS snapshots (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,7 +225,7 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	for _, col := range []string{"cert_serial", "prev_serial"} {
+	for _, col := range []string{"cert_serial", "prev_serial", "peer_addr"} {
 		var n int
 		if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = ?`, col).Scan(&n); err != nil {
 			return err
@@ -282,6 +283,9 @@ type Host struct {
 	// replaced, still accepted until the new one is first used. Empty means not recorded.
 	CertSerial string
 	PrevSerial string
+	// PeerAddr is the address the host's sensor last connected from, as the verifier saw it:
+	// behind NAT, as on most clouds, its public address, which no interface of the host holds.
+	PeerAddr string
 }
 
 // Enroll registers a host and its signing key, or replaces the key of an existing host and
@@ -369,7 +373,7 @@ func (s *Store) Hosts(ctx context.Context) ([]Host, error) {
 func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, error) {
 	//nolint:gosec // where is a constant clause from this package; values are bound
 	rows, err := s.db.QueryContext(ctx, `SELECT id, public_key, enrolled_at, revoked, last_seq, last_digest,
-		last_seen, last_heartbeat, last_snapshot, cert_serial, prev_serial FROM hosts `+where, args...)
+		last_seen, last_heartbeat, last_snapshot, cert_serial, prev_serial, peer_addr FROM hosts `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +383,7 @@ func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, e
 		var h Host
 		var pub, digest []byte
 		var enrolled, seen, heartbeat, snapshot int64
-		if err := rows.Scan(&h.ID, &pub, &enrolled, &h.Revoked, &h.Chain.Sequence, &digest, &seen, &heartbeat, &snapshot, &h.CertSerial, &h.PrevSerial); err != nil {
+		if err := rows.Scan(&h.ID, &pub, &enrolled, &h.Revoked, &h.Chain.Sequence, &digest, &seen, &heartbeat, &snapshot, &h.CertSerial, &h.PrevSerial, &h.PeerAddr); err != nil {
 			return nil, err
 		}
 		h.PublicKey, h.Chain.LastDigest = pub, digest
@@ -387,6 +391,12 @@ func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, e
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// SetPeerAddr records the address a host's sensor connected from, writing only when it changed.
+func (s *Store) SetPeerAddr(ctx context.Context, host, addr string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET peer_addr = ? WHERE id = ? AND peer_addr != ?`, addr, host, addr)
+	return err
 }
 
 // ErrChainMoved is returned when the host's chain changed between verification and storage:

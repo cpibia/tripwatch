@@ -6,6 +6,18 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier, then the sensors (`tripwatch-sensor -update`).
+
+### Sensor
+
+- The addresses of container bridges and virtual links (`docker0`, `br-*`, `veth*`, `cni*` and
+  the like) are no longer reported among the machine's addresses.
+
+### Verifier
+
+- Each server shows the address its sensor connects from, recorded once its client certificate
+  is checked: on clouds with NAT, the public address that no interface of the host holds.
+
 ## [0.1.14] - 2026-10-28
 
 Update the verifier, then the sensors (`tripwatch-sensor -update`).

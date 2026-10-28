@@ -146,6 +146,9 @@ func TestDeliveryAndChain(t *testing.T) {
 	if err != nil || hst.Chain.Sequence != 1+SnapshotBurst || hst.LastHeartbeat.IsZero() || hst.LastSnapshot.IsZero() {
 		t.Errorf("host = %+v, %v", hst, err)
 	}
+	if hst.PeerAddr != "127.0.0.1" {
+		t.Errorf("peer address = %q", hst.PeerAddr)
+	}
 	snaps, err := h.store.LatestSnapshots(ctx, "web-01", 5)
 	if err != nil || len(snaps) != SnapshotBurst || string(snaps[0].Payload) != `{"x":3}` {
 		t.Errorf("snapshots = %+v, %v", snaps, err)
