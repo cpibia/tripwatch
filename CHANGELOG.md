@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.25] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - A PHP file holding data only may open with comments and WordPress's direct-access guard (a
@@ -884,7 +888,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.24...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.25...HEAD
+[0.1.25]: https://github.com/cpibia/tripwatch/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/cpibia/tripwatch/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/cpibia/tripwatch/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/cpibia/tripwatch/compare/v0.1.21...v0.1.22
