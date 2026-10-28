@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-10-28
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - An envelope sent on a kept-alive connection the verifier had just closed is sent again on a
@@ -758,7 +762,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.19...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.20...HEAD
+[0.1.20]: https://github.com/cpibia/tripwatch/compare/v0.1.19...v0.1.20
 [0.1.19]: https://github.com/cpibia/tripwatch/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/cpibia/tripwatch/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/cpibia/tripwatch/compare/v0.1.16...v0.1.17
