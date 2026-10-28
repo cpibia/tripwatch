@@ -32,12 +32,13 @@ import (
 var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 
 type harness struct {
-	t     *testing.T
-	ca    *pki.CA
-	store *store.Store
-	srv   *httptest.Server
-	wake  chan struct{}
-	clock time.Time
+	t      *testing.T
+	ca     *pki.CA
+	store  *store.Store
+	srv    *httptest.Server
+	wake   chan struct{}
+	clock  time.Time
+	ingest *Server
 }
 
 func newHarness(t *testing.T) *harness {
@@ -60,6 +61,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, ca: ca, store: st, wake: wake, clock: now}
 	ingest := &Server{Store: st, CA: ca, Now: func() time.Time { return h.clock }, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Wake: wake}
 
+	h.ingest = ingest
 	h.srv = httptest.NewUnstartedServer(ingest)
 	h.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: ca.Pool(), ClientAuth: tls.VerifyClientCertIfGiven, MinVersion: tls.VersionTLS13}
 	h.srv.StartTLS()
@@ -889,5 +891,24 @@ func TestRevokedHostIsToldToUninstall(t *testing.T) {
 	pub, _ := b.CAPublicKey()
 	if _, err := protocol.VerifyUninstall(got[0], got[1], pub, "web-01"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Heartbeats lost while the verifier itself restarted are not the sensor's gap.
+func TestHeartbeatGapAcrossAVerifierRestart(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	for _, at := range []time.Duration{0, 5 * time.Minute, 10 * time.Minute} {
+		if at == 5*time.Minute {
+			h.ingest.Started = now.Add(4 * time.Minute)
+		}
+		h.clock = now.Add(at)
+		if err := c.Send(ctx, protocol.KindHeartbeat, nil, h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if a := h.alerts(); len(a) != 1 || a[0].Title != "Missed heartbeats" || !strings.Contains(a[0].Detail, now.Add(5*time.Minute).Format("15:04:05")) {
+		t.Fatalf("alerts = %+v", a)
 	}
 }

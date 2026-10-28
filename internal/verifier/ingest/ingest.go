@@ -172,6 +172,9 @@ type Server struct {
 	Wake  chan<- struct{}
 	Now   func() time.Time
 	Log   *slog.Logger
+	// Started is when this verifier began accepting envelopes: heartbeats lost while it was
+	// down or restarting are its own gap, not the sensors'.
+	Started time.Time
 
 	locks      sync.Map // host -> chan struct{}, a one-slot semaphore
 	small      sync.Map // host -> *bucket, the rate of heartbeats and event batches
@@ -380,7 +383,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// shows only here: as a gap between two heartbeats that were both accepted. A gap with a
 	// start of the sensor in it was judged by that start, with what the sensor signed as it
 	// stopped: a server switched off at night must not raise it a second time.
-	if e.Kind == protocol.KindHeartbeat && !host.LastHeartbeat.IsZero() && now.Sub(host.LastHeartbeat) > HeartbeatGap && !s.restartedSince(ctx, identity, host.LastHeartbeat) {
+	if e.Kind == protocol.KindHeartbeat && !host.LastHeartbeat.IsZero() && now.Sub(host.LastHeartbeat) > HeartbeatGap && !host.LastHeartbeat.Before(s.Started) &&
+		!s.restartedSince(ctx, identity, host.LastHeartbeat) {
 		s.raise(ctx, store.Alert{HostID: identity, Fingerprint: "sensor:gap:" + strconv.FormatInt(now.Unix(), 10), Severity: "medium", Kind: "sensor-event",
 			Title: "Missed heartbeats",
 			Detail: fmt.Sprintf("No heartbeat between %s and %s (%s). A network pause, or the sensor was suspended or stopped for a short while: check what happened in that interval.",

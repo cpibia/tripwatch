@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- Heartbeats lost while the verifier itself restarts no longer raise "Missed heartbeats" on
+  every host.
+
 ## [0.1.21] - 2026-10-28
 
 Update the verifier, then the sensors.
