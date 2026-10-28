@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- Past a thousand Docker containers the sensor reads those whose configuration changed last,
+  which the daemon rewrites when it starts one, and other runtimes have a bound of their own:
+  stopped containers created by the thousand no longer push a running one out (SEC-187).
+
+### Verifier
+
+- A container list cut at its bound raises a high alert (SEC-187).
+
 ## [0.1.24] - 2026-10-29
 
 Update the verifier, then the sensors.

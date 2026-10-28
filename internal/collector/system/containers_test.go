@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 )
@@ -310,5 +311,24 @@ func TestOverlayVolumeIsItsLayers(t *testing.T) {
 		if !slices.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}
+	}
+}
+
+// Past the bound the containers whose configuration changed last are read: stopped ones
+// created by the thousand cannot push out the privileged one started after them, and the cut
+// is said.
+func TestManyStoppedContainersDoNotHideAPrivilegedOne(t *testing.T) {
+	fsys := fstest.MapFS{}
+	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range maxContainers {
+		id := fmt.Sprintf("%064x", i)
+		fsys["var/lib/docker/containers/"+id+"/config.v2.json"] = &fstest.MapFile{Data: []byte(`{"ID": "` + id + `", "Name": "/d"}`), ModTime: old}
+	}
+	id := strings.Repeat("f", 64)
+	fsys["var/lib/docker/containers/"+id+"/config.v2.json"] = &fstest.MapFile{Data: []byte(`{"ID": "` + id + `", "Name": "/escape", "State": {"Running": true}}`), ModTime: old.Add(time.Hour)}
+	fsys["var/lib/docker/containers/"+id+"/hostconfig.json"] = text(`{"Privileged": true}`)
+	res := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys})
+	if !res.Truncated || !slices.ContainsFunc(res.Containers, func(c Container) bool { return c.Name == "escape" && c.Privileged }) {
+		t.Errorf("truncated %v, privileged container read %v", res.Truncated, slices.ContainsFunc(res.Containers, func(c Container) bool { return c.Name == "escape" }))
 	}
 }

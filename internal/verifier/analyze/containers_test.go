@@ -64,3 +64,14 @@ func TestContainerEvents(t *testing.T) {
 		t.Fatalf("event findings %+v, snapshot findings %+v", got, snap)
 	}
 }
+
+// A container list cut at its bound is an alert: what was left out is not checked.
+func TestTruncatedContainersRaiseAnAlert(t *testing.T) {
+	cur := State{Containers: &system.ContainersResult{Truncated: true}}
+	for _, f := range Evaluate(nil, cur) {
+		if f.Fingerprint == "containers:truncated" && f.Severity == "high" {
+			return
+		}
+	}
+	t.Error("no alert for a truncated container list")
+}

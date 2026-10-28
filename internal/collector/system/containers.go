@@ -128,32 +128,45 @@ type ContainerRef struct {
 	Path    string
 }
 
-// ContainerRefs lists the containers of every runtime found, up to the bound, without reading
-// them: cheap enough to be done every second.
+// ContainerRefs lists the containers of every runtime found, up to the bound for each, without
+// reading them: cheap enough to be done every second. Past the bound Docker's are taken by the
+// last change of their configuration, which the daemon rewrites when it starts one, so stopped
+// containers created by the thousand cannot push a running one out of the list.
 func ContainerRefs(fsys fs.FS, issues *collector.Issues) (refs []ContainerRef, truncated bool) {
 	dir := path.Join(dockerRoot(fsys, issues), "containers")
 	entries, _ := fs.ReadDir(fsys, dir)
+	var docker []ContainerRef
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+		if e.IsDir() {
+			docker = append(docker, ContainerRef{Runtime: "docker", Path: path.Join(dir, e.Name())})
 		}
-		if len(refs) == maxContainers {
-			return refs, true
-		}
-		refs = append(refs, ContainerRef{Runtime: "docker", Path: path.Join(dir, e.Name())})
 	}
+	if len(docker) > maxContainers {
+		truncated = true
+		changed := make(map[string]int64, len(docker))
+		for _, r := range docker {
+			if info, err := fs.Stat(fsys, path.Join(r.Path, "config.v2.json")); err == nil {
+				changed[r.Path] = info.ModTime().UnixNano()
+			}
+		}
+		slices.SortStableFunc(docker, func(a, b ContainerRef) int { return cmp.Compare(changed[b.Path], changed[a.Path]) })
+		docker = docker[:maxContainers]
+	}
+	refs = docker
+	others := 0
 	for _, b := range ociBundles {
 		for _, name := range collector.Glob(fsys, b.glob) {
 			if b.runtime == "containerd" && strings.Contains(name, "/io.containerd.runtime.v2.task/moby/") {
 				continue
 			}
-			if len(refs) == maxContainers {
+			if others == maxContainers {
 				return refs, true
 			}
+			others++
 			refs = append(refs, ContainerRef{Runtime: b.runtime, Path: name})
 		}
 	}
-	return refs, false
+	return refs, truncated
 }
 
 // ReadContainer reads one container; false when its configuration is not (yet) there or does

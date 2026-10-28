@@ -910,6 +910,11 @@ func Evaluate(prev *State, cur State) []Finding {
 
 	out = append(out, kernelFindings(prev, cur)...)
 	out = append(out, containerFindings(prev, cur)...)
+	if c := cur.Containers; c != nil && c.Truncated {
+		// Thousands of containers created to push one out of the list leave it unread.
+		state("containers", "truncated", "high", "Containers not all read",
+			"The server has more containers than the sensor reads in one snapshot: those left out are not checked for power over the host. Stopped containers created by the thousand do this; remove the ones not needed.")
+	}
 
 	if rt := cur.Realtime; rt != nil && len(rt.Unwatched) > 0 {
 		// Anyone able to create directories can push the watches past their bounds: places left
