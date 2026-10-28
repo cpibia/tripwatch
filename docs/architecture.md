@@ -135,7 +135,8 @@ appears. Every second the watcher lists the containers of Docker (its data root 
 confined view, only the ones it has not seen, at most 64 a look; a configuration still unreadable
 after five looks is left out. The first look only records what is there. A container whose
 configuration gives it power over the host (`system.ContainerPowers`, the same function the
-verifier's snapshot rule uses) is reported as a `container` event with its name, image, runtime
+verifier's snapshot rule uses; the sensor only adds facts it alone can read: where a mount's
+source leads through links, and the host path behind a Docker volume from its `opts.json`) is reported as a `container` event with its name, image, runtime
 and powers, on root's channel, unless a container with the same name, image and powers was seen
 before (4,096 remembered), and its removal is reported too. The verifier raises the start under
 the snapshot rule's fingerprint and detail, so the next snapshot does not raise it again and an

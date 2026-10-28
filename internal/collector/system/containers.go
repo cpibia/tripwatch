@@ -18,6 +18,12 @@ type Mount struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 	RW          bool   `json:"rw,omitempty"`
+	// Resolved is where Source leads on the host when it goes through symbolic links, read
+	// when the containers are collected: a link to / mounts the host's root under any name.
+	Resolved string `json:"resolved,omitempty"`
+	// Volume names the Docker volume the mount comes from, when its local driver binds a host
+	// path or device (Source is then that path, not the volume's own directory).
+	Volume string `json:"volume,omitempty"`
 }
 
 // Container is a Docker container as its daemon keeps it on disk. Only what gives it power over
@@ -40,6 +46,9 @@ type Container struct {
 	UsernsMode  string   `json:"userns_mode,omitempty"`
 	SecurityOpt []string `json:"security_opt,omitempty"`
 	Devices     []string `json:"devices,omitempty"`
+	// DeviceRules are the device cgroup rules that allow access ("b *:* rwm"): with the
+	// CAP_MKNOD containers have by default, an allowed node can be created and opened.
+	DeviceRules []string `json:"device_rules,omitempty"`
 	Mounts      []Mount  `json:"mounts,omitempty"`
 }
 
@@ -137,7 +146,7 @@ func ReadContainer(fsys fs.FS, ref ContainerRef, issues *collector.Issues) (Cont
 		issues.Add(err)
 		return Container{}, false
 	}
-	return ociContainer(ref.Runtime, ref.Path, cfg), true
+	return ociContainer(fsys, ref.Runtime, ref.Path, cfg), true
 }
 
 // dockerFound says whether the daemon's state directory exists, though no container was read.
@@ -187,19 +196,22 @@ type dockerConfig struct {
 		Destination string
 		RW          bool
 		Type        string
+		Name        string
+		Driver      string
 	}
 }
 
 type dockerHostConfig struct {
-	Privileged  bool
-	CapAdd      []string
-	PidMode     string
-	NetworkMode string
-	IpcMode     string
-	UsernsMode  string
-	SecurityOpt []string
-	Devices     []struct{ PathOnHost string }
-	Binds       []string
+	Privileged        bool
+	CapAdd            []string
+	PidMode           string
+	NetworkMode       string
+	IpcMode           string
+	UsernsMode        string
+	SecurityOpt       []string
+	Devices           []struct{ PathOnHost string }
+	DeviceCgroupRules []string
+	Binds             []string
 }
 
 func readDockerContainer(fsys fs.FS, dir string, issues *collector.Issues) (Container, bool) {
@@ -215,11 +227,19 @@ func readDockerContainer(fsys fs.FS, dir string, issues *collector.Issues) (Cont
 	c := Container{ID: shortID(cfg.ID), Name: strings.TrimPrefix(cfg.Name, "/"), Image: cfg.Config.Image, ImageID: cfg.Image,
 		Created: cfg.Created, Running: cfg.State.Running, User: cfg.Config.User}
 	for _, m := range cfg.MountPoints {
-		// Named volumes live in the daemon's own directory; what matters is the host's tree.
-		if m.Type != "" && m.Type != "bind" || m.Source == "" {
+		mount := Mount{Source: m.Source, Destination: m.Destination, RW: m.RW}
+		if m.Type == "volume" {
+			// Named volumes live in the daemon's own directory, unless the local driver was told
+			// to bind a host path or mount a device there instead.
+			device, ok := volumeDevice(fsys, path.Dir(path.Dir(dir)), m.Name, m.Driver, issues)
+			if !ok {
+				continue
+			}
+			mount.Source, mount.Volume = device, m.Name
+		} else if m.Type != "" && m.Type != "bind" || m.Source == "" {
 			continue
 		}
-		c.Mounts = append(c.Mounts, Mount{Source: m.Source, Destination: m.Destination, RW: m.RW})
+		c.Mounts = append(c.Mounts, resolveMount(fsys, mount))
 	}
 	if data, err := fs.ReadFile(fsys, path.Join(dir, "hostconfig.json")); err == nil {
 		var hc dockerHostConfig
@@ -232,12 +252,71 @@ func readDockerContainer(fsys fs.FS, dir string, issues *collector.Issues) (Cont
 				c.Devices = append(c.Devices, d.PathOnHost)
 			}
 			c.Devices = clipList(c.Devices)
+			c.DeviceRules = deviceRules(hc.DeviceCgroupRules)
 		}
 	}
 	slices.SortFunc(c.Mounts, func(a, b Mount) int { return strings.Compare(a.Destination, b.Destination) })
 	c.Mounts = c.Mounts[:min(len(c.Mounts), maxContainerList)]
 	return c, true
 }
+
+// volumeDevice is the host path or device a local Docker volume is mounted from, from the
+// options its driver keeps in opts.json; false for an ordinary volume or another driver.
+func volumeDevice(fsys fs.FS, dockerRoot, name, driver string, issues *collector.Issues) (string, bool) {
+	if driver != "local" || name == "" || name != path.Base(name) || name == ".." {
+		return "", false
+	}
+	data, err := fs.ReadFile(fsys, path.Join(dockerRoot, "volumes", name, "opts.json"))
+	if err != nil {
+		return "", false
+	}
+	var opts struct{ MountType, MountOpts, MountDevice string }
+	if err := json.Unmarshal(data, &opts); err != nil {
+		issues.Add(err)
+		return "", false
+	}
+	// Network filesystems name a remote ("host:/export"), never a path of this host.
+	if !path.IsAbs(opts.MountDevice) {
+		return "", false
+	}
+	return opts.MountDevice, true
+}
+
+// resolveMount records where a mount's source leads when it goes through links. The link can
+// be removed once the container runs; the bind stays, so this is only seen while it exists.
+func resolveMount(fsys fs.FS, m Mount) Mount {
+	if !path.IsAbs(m.Source) {
+		return m
+	}
+	resolved, err := collector.ResolvePath(fsys, collector.Rel(m.Source))
+	if err != nil {
+		return m
+	}
+	if resolved = path.Clean("/" + strings.TrimPrefix(resolved, ".")); resolved != path.Clean(m.Source) {
+		m.Resolved = resolved
+	}
+	return m
+}
+
+// deviceRules keeps the cgroup rules that grant reading or writing. Past the bound a marker
+// stands for the rest, so that rules hidden behind many harmless ones still count.
+func deviceRules(rules []string) []string {
+	var out []string
+	for _, r := range rules {
+		f := strings.Fields(r)
+		if len(f) != 3 || !strings.ContainsAny(f[2], "rw") {
+			continue
+		}
+		if len(out) == maxContainerList {
+			return append(out, DeviceRulesTruncated)
+		}
+		out = append(out, strings.Join(f, " "))
+	}
+	return out
+}
+
+// DeviceRulesTruncated ends a device rule list cut at its bound.
+const DeviceRulesTruncated = "..."
 
 func clipList(l []string) []string {
 	if len(l) > maxContainerList {
@@ -279,6 +358,15 @@ type ociConfig struct {
 	Linux struct {
 		Namespaces []struct{ Type string }
 		Devices    []struct{ Path string }
+		Resources  struct {
+			Devices []struct {
+				Allow  bool
+				Type   string
+				Major  *int64
+				Minor  *int64
+				Access string
+			}
+		}
 	}
 	Annotations map[string]string
 }
@@ -286,7 +374,7 @@ type ociConfig struct {
 // allCapabilities is how many capabilities a privileged container holds at least.
 const allCapabilities = 38
 
-func ociContainer(runtime, name string, cfg ociConfig) Container {
+func ociContainer(fsys fs.FS, runtime, name string, cfg ociConfig) Container {
 	// The bundle's directory is the container's ID: .../<id>/config.json or .../<id>/userdata/config.json.
 	dir := path.Dir(name)
 	if path.Base(dir) == "userdata" {
@@ -324,7 +412,7 @@ func ociContainer(runtime, name string, cfg ociConfig) Container {
 		if m.Type != "bind" && !slices.Contains(m.Options, "bind") && !slices.Contains(m.Options, "rbind") {
 			continue
 		}
-		c.Mounts = append(c.Mounts, Mount{Source: m.Source, Destination: m.Destination, RW: !slices.Contains(m.Options, "ro")})
+		c.Mounts = append(c.Mounts, resolveMount(fsys, Mount{Source: m.Source, Destination: m.Destination, RW: !slices.Contains(m.Options, "ro")}))
 	}
 	slices.SortFunc(c.Mounts, func(a, b Mount) int { return strings.Compare(a.Destination, b.Destination) })
 	c.Mounts = c.Mounts[:min(len(c.Mounts), maxContainerList)]
@@ -332,16 +420,56 @@ func ociContainer(runtime, name string, cfg ociConfig) Container {
 		c.Devices = append(c.Devices, d.Path)
 	}
 	c.Devices = clipList(c.Devices)
+	var rules []string
+	for _, d := range cfg.Linux.Resources.Devices {
+		if d.Allow {
+			rules = append(rules, cmp.Or(d.Type, "a")+" "+deviceNumber(d.Major)+":"+deviceNumber(d.Minor)+" "+d.Access)
+		}
+	}
+	c.DeviceRules = deviceRules(rules)
 	return c
 }
 
-// hostSockets are the sockets of container runtimes: a container that holds one can start a
-// privileged container of its own.
-var hostSockets = []string{"/var/run/docker.sock", "/run/docker.sock", "/run/containerd/containerd.sock", "/var/run/crio/crio.sock", "/run/podman/podman.sock"}
+func deviceNumber(n *int64) string {
+	if n == nil || *n < 0 {
+		return "*"
+	}
+	return fmt.Sprint(*n)
+}
 
-// hostTrees are the host directories that give a container the host: its root, its
+// runtimeSockets are the sockets of container runtimes, where they usually are: a container that
+// holds one, or a directory above it, can start a privileged container of its own. Daemons can
+// listen elsewhere, so a socket with one of these names counts wherever it is.
+var runtimeSockets = []string{
+	"/run/docker.sock", "/var/run/docker.sock", "/run/containerd/containerd.sock", "/var/run/containerd/containerd.sock",
+	"/run/crio/crio.sock", "/var/run/crio/crio.sock", "/run/podman/podman.sock", "/var/run/podman/podman.sock",
+	"/run/k3s/containerd/containerd.sock", "/run/dockershim.sock", "/var/run/dockershim.sock",
+	"/var/snap/docker/common/run/docker.sock", "/var/snap/microk8s/common/run/containerd.sock",
+}
+
+// hostTrees are the host directories that give a container the host as a whole: its root, its
 // configuration, root's home, the kernel's interfaces and the runtimes' state.
-var hostTrees = []string{"/", "/etc", "/root", "/boot", "/proc", "/sys", "/dev", "/var/lib/docker", "/var/lib/containerd", "/var/run", "/run", "/usr", "/lib", "/bin", "/sbin", "/home", "/var/spool/cron"}
+var hostTrees = []string{"/", "/etc", "/root", "/boot", "/proc", "/sys", "/dev", "/var", "/var/lib", "/var/lib/docker", "/var/lib/containerd",
+	"/var/lib/containers", "/var/lib/kubelet", "/var/run", "/run", "/usr", "/lib", "/lib64", "/bin", "/sbin", "/home", "/var/spool", "/var/spool/cron"}
+
+// systemTrees are those where any directory or file below is the host's too when writable: a
+// cron.d, a unit directory, a library, root's keys, a cgroup's release_agent.
+var systemTrees = []string{"/etc", "/root", "/boot", "/usr", "/lib", "/lib64", "/bin", "/sbin", "/proc", "/sys",
+	"/var/lib/docker", "/var/lib/containerd", "/var/lib/containers", "/var/lib/kubelet", "/var/spool/cron"}
+
+// secretTrees are those where reading is enough: password hashes, private keys, the cluster's
+// and the runtimes' credentials, and through /proc/<pid>/root the whole host.
+var secretTrees = []string{"/root", "/etc/shadow", "/etc/gshadow", "/etc/ssh", "/etc/sudoers", "/etc/sudoers.d", "/etc/kubernetes",
+	"/etc/docker", "/proc", "/var/lib/docker", "/var/lib/containerd", "/var/lib/containers", "/var/lib/kubelet", "/var/spool/cron"}
+
+// harmlessFiles are host files commonly shared writable with containers that give no power
+// over the host, and the time zone files /etc/localtime links to.
+var harmlessFiles = []string{"/etc/localtime", "/etc/timezone", "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/machine-id", "/etc/os-release", "/usr/share/zoneinfo"}
+
+// rawDisks are the device names of disks and memory: raw access to them bypasses every
+// permission of the filesystems on top.
+var rawDisks = []string{"/dev/sd", "/dev/hd", "/dev/vd", "/dev/xvd", "/dev/nvme", "/dev/dm-", "/dev/mapper/", "/dev/loop", "/dev/md",
+	"/dev/mmcblk", "/dev/disk/", "/dev/nbd", "/dev/rbd", "/dev/zd", "/dev/mem", "/dev/kmem", "/dev/port"}
 
 // adminCaps are the capabilities that let a container's root act as the host's.
 var adminCaps = []string{"ALL", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_RAWIO", "DAC_READ_SEARCH", "SYS_BOOT", "BPF", "PERFMON"}
@@ -370,29 +498,84 @@ func ContainerPowers(c Container) []string {
 		}
 	}
 	for _, m := range c.Mounts {
-		src := strings.TrimSuffix(m.Source, "/")
-		switch {
-		case slices.Contains(hostSockets, m.Source):
-			out = append(out, "the runtime socket "+m.Source)
-		case src == "" || slices.Contains(hostTrees, src):
-			mode := "read-only"
-			if m.RW {
-				mode = "writable"
-			}
-			out = append(out, fmt.Sprintf("the host's %s, %s", cmpOrRoot(src), mode))
+		if p := mountPower(m); p != "" {
+			out = append(out, p)
 		}
 	}
 	for _, d := range c.Devices {
-		if strings.HasPrefix(d, "/dev/sd") || strings.HasPrefix(d, "/dev/nvme") || strings.HasPrefix(d, "/dev/mem") || strings.HasPrefix(d, "/dev/kmem") {
+		if isRawDisk(d) {
 			out = append(out, "device "+d)
+		}
+	}
+	for _, r := range c.DeviceRules {
+		if deviceRuleGrantsHost(r) {
+			out = append(out, "device rule "+r)
 		}
 	}
 	return out
 }
 
-func cmpOrRoot(p string) string {
-	if p == "" {
-		return "/"
+// mountPower describes the power a mount gives, judged on where it leads when that is known.
+func mountPower(m Mount) string {
+	src := path.Clean("/" + cmp.Or(m.Resolved, m.Source))
+	name := src
+	if m.Resolved != "" {
+		name = path.Clean("/"+m.Source) + " (" + src + ")"
 	}
-	return p
+	if m.Volume != "" {
+		name = "volume " + m.Volume + " (" + src + ")"
+	}
+	mode := "read-only"
+	if m.RW {
+		mode = "writable"
+	}
+	switch {
+	case src == "/" || slices.Contains(hostTrees, src) && !holdsSocket(src):
+		return fmt.Sprintf("the host's %s, %s", name, mode)
+	case holdsSocket(src) || slices.Contains([]string{"docker.sock", "containerd.sock", "crio.sock", "podman.sock", "dockershim.sock"}, path.Base(src)):
+		return "the runtime socket " + name
+	case isRawDisk(src):
+		return fmt.Sprintf("the host's disk %s, %s", name, mode)
+	case under(src, harmlessFiles) || slices.Contains(harmlessFiles, path.Clean("/"+m.Source)):
+		return ""
+	case under(src, secretTrees) || m.RW && under(src, systemTrees):
+		return fmt.Sprintf("the host's %s, %s", name, mode)
+	}
+	return ""
+}
+
+// holdsSocket says whether dir is a runtime's socket or a directory above one, short of the
+// trees that are reported as the host's own.
+func holdsSocket(dir string) bool {
+	return slices.ContainsFunc(runtimeSockets, func(s string) bool { return s == dir || strings.HasPrefix(s, dir+"/") }) &&
+		!slices.Contains([]string{"/", "/var", "/var/lib", "/var/snap"}, dir)
+}
+
+func under(p string, trees []string) bool {
+	return slices.ContainsFunc(trees, func(t string) bool { return p == t || strings.HasPrefix(p, t+"/") })
+}
+
+func isRawDisk(d string) bool {
+	return slices.ContainsFunc(rawDisks, func(prefix string) bool { return strings.HasPrefix(d, prefix) })
+}
+
+// deviceRuleGrantsHost says whether a cgroup rule ("type major:minor access") lets the container
+// read or write a disk or the host's memory: any block device, or the memory character devices
+// (major 1: mem, kmem, port; the others of major 1 are /dev/null, zero and the random sources).
+func deviceRuleGrantsHost(rule string) bool {
+	if rule == DeviceRulesTruncated {
+		return true
+	}
+	f := strings.Fields(rule)
+	if len(f) != 3 || !strings.ContainsAny(f[2], "rw") {
+		return false
+	}
+	major, minor, _ := strings.Cut(f[1], ":")
+	switch f[0] {
+	case "a", "b":
+		return true
+	case "c":
+		return major == "*" || major == "1" && slices.Contains([]string{"*", "1", "2", "4"}, minor)
+	}
+	return false
 }

@@ -26,6 +26,13 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   silently stopping the naming of changed files; a code file too large to hash is named as
   modified when its fingerprint (size, change time, inode) changes between two runs; manifests
   not rewritten for seven days are removed from the state directory.
+- Container mounts carry where their source leads when it goes through links (`resolved`), and
+  Docker volumes whose local driver binds a host path or device are listed as mounts of that
+  path (`volume`); device cgroup rules granting access are collected (`device_rules`). A
+  container with the host's root under a volume or a link, a system directory below the ones
+  listed before (`/etc/cron.d`, `/root/.ssh`, `/var`), a disk named `vd`, `xvd`, `dm-`, `loop`
+  and the like, a cgroup rule for block devices or memory, or a runtime socket elsewhere than
+  its usual path (or a directory holding one) now counts as having power over the host.
 - New log rules: a cart item added through the REST API and then a fetch from
   `media/custom_options` by the same address (`cart_upload_then_fetch`, high on success), a
   `file_info` parameter on a cart item (`cart_item_file_upload`), a shipping estimate for a
