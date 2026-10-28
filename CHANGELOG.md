@@ -40,6 +40,10 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   their image and what gives them power over the host (privileged mode, capabilities, host
   namespaces, unconfined profiles, devices, host directories and runtime sockets mounted),
   never their environment.
+- Real-time watch of containers: the state of Docker, containerd, Podman and CRI-O is listed
+  every second, and a container that appears with power over the host is reported at once
+  (`container` events), with its removal. Containers already there, plain ones and redeploys of
+  a known one are not.
 
 ### Verifier
 
@@ -70,6 +74,9 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 - "Container with access to the host" (high): a Docker container that appears with a power
   that amounts to root on the host. A redeploy of one already there (same name, image and
   powers, such as a reverse proxy holding the Docker socket) raises nothing.
+- The same alert is raised as soon as the sensor reports the container's start, with the same
+  fingerprint and detail: a container started to escape and removed before the next snapshot
+  is no longer missed, and the snapshot that follows adds nothing.
 - Alert emails are sent as quoted-printable: a path of any length no longer makes a line over
   998 bytes that a relay could bounce after accepting the message.
 

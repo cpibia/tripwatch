@@ -25,6 +25,8 @@ const (
 	// reported: a dropper written there, run and deleted lives too briefly for its process to
 	// be read, but its file is seen.
 	ClassScratch = "scratch"
+	// ClassContainer is containers with power over the host, started or removed.
+	ClassContainer = "container"
 )
 
 // Reasons a process start is reported. Only these are: a busy server starts thousands of
@@ -89,6 +91,8 @@ type Event struct {
 	// Repeats counts the identical starts left out since the previous report of this one, within
 	// RepeatWindow.
 	Repeats int `json:"repeats,omitempty"`
+	// Container is the container a container event is about.
+	Container *ContainerInfo `json:"container,omitempty"`
 }
 
 // Target is a directory to watch. Names, when set, keeps only the entries with those names;

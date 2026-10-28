@@ -64,8 +64,11 @@ func lowered(e watch.Event) bool {
 }
 
 func judgeEvent(e watch.Event, history History) (Finding, bool) {
-	if e.Class == watch.ClassExec {
+	switch e.Class {
+	case watch.ClassExec:
 		return judgeExec(e)
+	case watch.ClassContainer:
+		return judgeContainer(e)
 	}
 	if e.Root {
 		// Moving a watched place away and back blinds the watch on it until it is placed again:
@@ -268,6 +271,18 @@ func judgeExec(e watch.Event) (Finding, bool) {
 			"Process "+proc+". Programs are not installed there: what runs from there was put there."), true
 	}
 	return Finding{}, false
+}
+
+// judgeContainer raises a container with power over the host as soon as it starts, under the
+// fingerprint the snapshot rule gives it, so the next snapshot adds nothing. Its removal raises
+// nothing of its own: the start already did, and the event stays on the host's timeline as the
+// only trace of a container gone before any snapshot.
+func judgeContainer(e watch.Event) (Finding, bool) {
+	c := e.Container
+	if e.Op != watch.OpCreate || c == nil || len(c.Powers) == 0 {
+		return Finding{}, false
+	}
+	return containerFinding(*c, "Container with access to the host started: "+c.Name), true
 }
 
 // processKey identifies a process by what its alert says of it, the PID aside: executable,

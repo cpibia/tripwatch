@@ -389,7 +389,7 @@ func lowPriority(e Event) bool {
 
 func systemClass(class string) bool {
 	switch class {
-	case ClassAccounts, ClassSSH, ClassPrivilege, ClassSchedule, ClassService, ClassHook:
+	case ClassAccounts, ClassSSH, ClassPrivilege, ClassSchedule, ClassService, ClassHook, ClassContainer:
 		return true
 	}
 	return false

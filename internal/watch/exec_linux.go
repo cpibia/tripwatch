@@ -320,13 +320,3 @@ func clipCmdline(s string) string {
 	}
 	return strings.ToValidUTF8(s, "")
 }
-
-// maxText bounds the other text fields of a process event.
-const maxText = 256
-
-func clipText(s string) string {
-	if len(s) > maxText {
-		s = s[:maxText]
-	}
-	return strings.ToValidUTF8(s, "")
-}

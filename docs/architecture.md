@@ -129,6 +129,18 @@ sent, and the count goes with the next report of it: a job the web server's user
 minute costs 24 events a day instead of 1,440. The memory of starts is bounded at 1,024; when
 it is full of recent ones, new starts are reported every time rather than held back.
 
+Containers are not watched with inotify: their configuration is written after their directory
+appears. Every second the watcher lists the containers of Docker (its data root taken from
+`daemon.json`) and the OCI bundles of containerd, Podman and CRI-O, and reads, through the
+confined view, only the ones it has not seen, at most 64 a look; a configuration still unreadable
+after five looks is left out. The first look only records what is there. A container whose
+configuration gives it power over the host (`system.ContainerPowers`, the same function the
+verifier's snapshot rule uses) is reported as a `container` event with its name, image, runtime
+and powers, on root's channel, unless a container with the same name, image and powers was seen
+before (4,096 remembered), and its removal is reported too. The verifier raises the start under
+the snapshot rule's fingerprint and detail, so the next snapshot does not raise it again and an
+acceptance holds for both.
+
 Events go through bounded channels to a batcher: root's system paths have a channel of their own,
 which the batcher reads first and no other account can fill (a loss there counts as root's), the
 rest share one. The batcher sends at most every two seconds, in batches
@@ -311,7 +323,7 @@ not need a database.
 | `internal/weblog` | access log parsing, attack rules, request redaction |
 | `internal/collector/logs` | incremental, bounded log reading, events, statistics, committed positions |
 | `internal/collector/apps` | application configuration and database: administrators, stored scripts, extensions, settings |
-| `internal/watch` | real-time watchers on Linux: inotify on critical paths, the process connector, batching |
+| `internal/watch` | real-time watchers: inotify on critical paths and the process connector on Linux, the container runtimes' state, batching |
 | `internal/transport` | sealing, saving and sending envelopes from the sensor |
 | `internal/verifier/pki` | private CA, server certificate, enrollment bundles |
 | `internal/verifier/ingest` | mTLS ingest and chain verification |
@@ -322,4 +334,4 @@ not need a database.
 | `internal/buildinfo` | version stamped at build time |
 
 `deploy/verifier` holds the verifier's Dockerfile and `docker-compose.yml`, `deploy/systemd` the
-sensor's unit. Planned: `internal/collector/...` for containers, a Kubernetes DaemonSet.
+sensor's unit. Planned: a Kubernetes DaemonSet.

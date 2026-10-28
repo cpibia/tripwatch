@@ -289,3 +289,13 @@ func toolName(exe, comm string) string {
 	}
 	return name
 }
+
+// maxText bounds the text fields of process and container events.
+const maxText = 256
+
+func clipText(s string) string {
+	if len(s) > maxText {
+		s = s[:maxText]
+	}
+	return strings.ToValidUTF8(s, "")
+}

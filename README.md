@@ -331,6 +331,13 @@ what changes there within two seconds, in signed event envelopes of the same cha
   `rpm-tmp.XXXXXX` from rpm, dnf5, microdnf, PackageKit or the system's Python running
   dnf or yum. A start identical to one reported in the last hour
   is counted instead of sent again, so a job that runs every minute does not fill the budget.
+- **Containers**, by listing the state of Docker, containerd, Podman and CRI-O every second: a
+  container that appears with power over the host (privileged mode, an administrative
+  capability, the host's processes, the host's root or a runtime socket mounted, a raw disk) is
+  reported at once, and so is its removal, so one started to escape and removed seconds later is
+  seen although no snapshot ever shows it. Containers there before the sensor started, those
+  without such a power and redeploys of one already known (same name, image and powers) are
+  left to the snapshots.
 
 The verifier keeps the events for seven days (at most 20,000 a server in 24 hours for uploads
 and process starts, as many for the homes and crontabs of accounts other than root, 2,000 of
@@ -598,7 +605,8 @@ The full design is in [docs/architecture.md](docs/architecture.md).
 
 - Container storage (`/var/lib/docker` and similar) is not examined yet: the `containers`
   collector reads only how containers are configured, not what changed inside them compared
-  with their image. A container started and removed between two snapshots is not seen by it.
+  with their image. Between snapshots, containers are listed once a second: one created and
+  removed within that second can be missed.
 - In the scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock`) the watch sees
   executable files, as anyone can write there: a file run without its execute bit (through the
   dynamic loader or an interpreter), one created with `O_TMPFILE` or in memory (`memfd`), one in

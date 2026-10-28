@@ -66,28 +66,85 @@ func (Containers) Name() string { return "containers" }
 
 func (Containers) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := ContainersResult{Containers: []Container{}}
-	dir := path.Join(dockerRoot(src.FS, &res.Issues), "containers")
-	entries, err := fs.ReadDir(src.FS, dir)
-	if err == nil {
-		res.Runtime = "docker"
-	}
-	for _, e := range entries {
+	refs, truncated := ContainerRefs(src.FS, &res.Issues)
+	res.Truncated = truncated
+	for _, ref := range refs {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
+		c, ok := ReadContainer(src.FS, ref, &res.Issues)
+		if !ok {
+			continue
+		}
+		res.Containers = append(res.Containers, c)
+		if !slices.Contains(strings.Split(res.Runtime, ","), ref.Runtime) {
+			res.Runtime = strings.TrimPrefix(res.Runtime+","+ref.Runtime, ",")
+		}
+	}
+	if !strings.HasPrefix(res.Runtime, "docker") && dockerFound(src.FS) {
+		res.Runtime = strings.TrimSuffix("docker,"+res.Runtime, ",")
+	}
+	return res, nil
+}
+
+// ContainerRef is where a runtime keeps one container: Docker's directory of it, or the OCI
+// bundle's config.json for the others.
+type ContainerRef struct {
+	Runtime string
+	Path    string
+}
+
+// ContainerRefs lists the containers of every runtime found, up to the bound, without reading
+// them: cheap enough to be done every second.
+func ContainerRefs(fsys fs.FS, issues *collector.Issues) (refs []ContainerRef, truncated bool) {
+	dir := path.Join(dockerRoot(fsys, issues), "containers")
+	entries, _ := fs.ReadDir(fsys, dir)
+	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		if len(res.Containers) == maxContainers {
-			res.Truncated = true
-			break
+		if len(refs) == maxContainers {
+			return refs, true
 		}
-		if c, ok := readDockerContainer(src.FS, path.Join(dir, e.Name()), &res.Issues); ok {
-			res.Containers = append(res.Containers, c)
+		refs = append(refs, ContainerRef{Runtime: "docker", Path: path.Join(dir, e.Name())})
+	}
+	for _, b := range ociBundles {
+		for _, name := range collector.Glob(fsys, b.glob) {
+			if b.runtime == "containerd" && strings.Contains(name, "/io.containerd.runtime.v2.task/moby/") {
+				continue
+			}
+			if len(refs) == maxContainers {
+				return refs, true
+			}
+			refs = append(refs, ContainerRef{Runtime: b.runtime, Path: name})
 		}
 	}
-	readOCIContainers(src.FS, &res)
-	return res, nil
+	return refs, false
+}
+
+// ReadContainer reads one container; false when its configuration is not (yet) there or does
+// not parse.
+func ReadContainer(fsys fs.FS, ref ContainerRef, issues *collector.Issues) (Container, bool) {
+	if ref.Runtime == "docker" {
+		return readDockerContainer(fsys, ref.Path, issues)
+	}
+	data, err := fs.ReadFile(fsys, ref.Path)
+	if err != nil {
+		return Container{}, false
+	}
+	var cfg ociConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		issues.Add(err)
+		return Container{}, false
+	}
+	return ociContainer(ref.Runtime, ref.Path, cfg), true
+}
+
+// dockerFound says whether the daemon's state directory exists, though no container was read.
+func dockerFound(fsys fs.FS) bool {
+	var none collector.Issues
+	_, err := fs.Stat(fsys, path.Join(dockerRoot(fsys, &none), "containers"))
+	return err == nil
 }
 
 // dockerRoot is the daemon's data root, relative to the observed root.
@@ -229,34 +286,6 @@ type ociConfig struct {
 // allCapabilities is how many capabilities a privileged container holds at least.
 const allCapabilities = 38
 
-// readOCIContainers adds the containers of the OCI bundles found, up to the bound.
-func readOCIContainers(fsys fs.FS, res *ContainersResult) {
-	for _, b := range ociBundles {
-		for _, name := range collector.Glob(fsys, b.glob) {
-			if b.runtime == "containerd" && strings.Contains(name, "/io.containerd.runtime.v2.task/moby/") {
-				continue
-			}
-			if len(res.Containers) == maxContainers {
-				res.Truncated = true
-				return
-			}
-			data, err := fs.ReadFile(fsys, name)
-			if err != nil {
-				continue
-			}
-			var cfg ociConfig
-			if err := json.Unmarshal(data, &cfg); err != nil {
-				res.Issues.Add(err)
-				continue
-			}
-			res.Containers = append(res.Containers, ociContainer(b.runtime, name, cfg))
-			if !strings.Contains(res.Runtime, b.runtime) {
-				res.Runtime = strings.TrimPrefix(res.Runtime+","+b.runtime, ",")
-			}
-		}
-	}
-}
-
 func ociContainer(runtime, name string, cfg ociConfig) Container {
 	// The bundle's directory is the container's ID: .../<id>/config.json or .../<id>/userdata/config.json.
 	dir := path.Dir(name)
@@ -304,4 +333,66 @@ func ociContainer(runtime, name string, cfg ociConfig) Container {
 	}
 	c.Devices = clipList(c.Devices)
 	return c
+}
+
+// hostSockets are the sockets of container runtimes: a container that holds one can start a
+// privileged container of its own.
+var hostSockets = []string{"/var/run/docker.sock", "/run/docker.sock", "/run/containerd/containerd.sock", "/var/run/crio/crio.sock", "/run/podman/podman.sock"}
+
+// hostTrees are the host directories that give a container the host: its root, its
+// configuration, root's home, the kernel's interfaces and the runtimes' state.
+var hostTrees = []string{"/", "/etc", "/root", "/boot", "/proc", "/sys", "/dev", "/var/lib/docker", "/var/lib/containerd", "/var/run", "/run", "/usr", "/lib", "/bin", "/sbin", "/home", "/var/spool/cron"}
+
+// adminCaps are the capabilities that let a container's root act as the host's.
+var adminCaps = []string{"ALL", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_RAWIO", "DAC_READ_SEARCH", "SYS_BOOT", "BPF", "PERFMON"}
+
+// ContainerPowers lists what lets a container reach the host. A runtime's socket, the host's
+// root, privileged mode or the host's process namespace each amount to root on the host.
+func ContainerPowers(c Container) []string {
+	var out []string
+	if c.Privileged {
+		out = append(out, "privileged")
+	}
+	for _, cp := range c.CapAdd {
+		if slices.Contains(adminCaps, strings.TrimPrefix(strings.ToUpper(cp), "CAP_")) {
+			out = append(out, "capability "+cp)
+		}
+	}
+	if c.PIDMode == "host" {
+		out = append(out, "the host's processes")
+	}
+	if c.UsernsMode == "host" && c.Privileged {
+		out = append(out, "the host's users")
+	}
+	for _, opt := range c.SecurityOpt {
+		if strings.HasSuffix(opt, "=unconfined") || strings.HasSuffix(opt, ":unconfined") {
+			out = append(out, "security "+opt)
+		}
+	}
+	for _, m := range c.Mounts {
+		src := strings.TrimSuffix(m.Source, "/")
+		switch {
+		case slices.Contains(hostSockets, m.Source):
+			out = append(out, "the runtime socket "+m.Source)
+		case src == "" || slices.Contains(hostTrees, src):
+			mode := "read-only"
+			if m.RW {
+				mode = "writable"
+			}
+			out = append(out, fmt.Sprintf("the host's %s, %s", cmpOrRoot(src), mode))
+		}
+	}
+	for _, d := range c.Devices {
+		if strings.HasPrefix(d, "/dev/sd") || strings.HasPrefix(d, "/dev/nvme") || strings.HasPrefix(d, "/dev/mem") || strings.HasPrefix(d, "/dev/kmem") {
+			out = append(out, "device "+d)
+		}
+	}
+	return out
+}
+
+func cmpOrRoot(p string) string {
+	if p == "" {
+		return "/"
+	}
+	return p
 }

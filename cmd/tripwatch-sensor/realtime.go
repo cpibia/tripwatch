@@ -19,10 +19,11 @@ import (
 // realtime runs the watchers between snapshots. Where the kernel lacks an interface or the
 // sensor a capability, it goes on with snapshots alone and says so in each of them.
 type realtime struct {
-	files  *watch.Files
-	execs  *watch.Execs
-	mu     sync.Mutex
-	issues []string
+	files      *watch.Files
+	execs      *watch.Execs
+	containers *watch.Containers
+	mu         sync.Mutex
+	issues     []string
 	// sent is closed once the batcher has sent what was queued at the stop.
 	sent    chan struct{}
 	batcher *watch.Batcher
@@ -63,9 +64,9 @@ func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(c
 		}
 		go r.run(ctx, log, "processes", r.execs.Run)
 	}
-	if r.files == nil && r.execs == nil {
-		return r
-	}
+	// Reading the runtimes' state needs no kernel interface: this watcher always runs.
+	r.containers = watch.NewContainers(src, urgent)
+	go r.run(ctx, log, "containers", r.containers.Run)
 	r.sent = b.Done
 	r.mu.Lock()
 	r.batcher = b
@@ -106,9 +107,10 @@ func (r *realtime) run(ctx context.Context, log *slog.Logger, name string, run f
 		r.fail(name, err)
 		log.Error("real-time watcher stopped", "watcher", name, "err", err)
 		r.mu.Lock()
-		if name == "files" {
+		switch name {
+		case "files":
 			r.files = nil
-		} else {
+		case "processes":
 			r.execs = nil
 		}
 		r.mu.Unlock()
@@ -131,6 +133,9 @@ func (r *realtime) lost() (dropped, skipped int64) {
 		dropped += r.execs.Dropped.Load()
 		skipped = r.execs.Skipped.Load()
 	}
+	if r.containers != nil {
+		dropped += r.containers.Dropped.Load()
+	}
 	return dropped, skipped
 }
 
@@ -138,10 +143,14 @@ func (r *realtime) lost() (dropped, skipped int64) {
 func (r *realtime) lostSystem() int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.files == nil {
-		return 0
+	var n int64
+	if r.files != nil {
+		n += r.files.DroppedSystem.Load()
 	}
-	return r.files.DroppedSystem.Load()
+	if r.containers != nil {
+		n += r.containers.Dropped.Load()
+	}
+	return n
 }
 
 // update points the watchers at what the latest snapshot found: the accounts' homes, the web
