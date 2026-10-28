@@ -6,6 +6,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-10-28
+
 Update the verifier, then the sensors once more by hand (`tripwatch-sensor -update`): from this
 release on, sensors update and remove themselves on the verifier's order.
 
@@ -685,7 +687,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.16...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.17...HEAD
+[0.1.17]: https://github.com/cpibia/tripwatch/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/cpibia/tripwatch/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/cpibia/tripwatch/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/cpibia/tripwatch/compare/v0.1.13...v0.1.14
