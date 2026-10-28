@@ -755,3 +755,42 @@ func TestScratchRepeatsAreDeferred(t *testing.T) {
 		t.Errorf("after a second: sent %d, deferred %d", len(ch), len(f.deferred))
 	}
 }
+
+// A name warmed up with a harmless file in the same second does not hide the executable written
+// under it next: another inode or mode is not a repeat.
+func TestScratchRepeatOfAnotherFileIsNotDeferred(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(root, "tmp", "x")
+	if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	f.now = func() time.Time { return now }
+	f.Set([]Target{{Dir: "/tmp", Class: ClassScratch, Recursive: true, Depth: ScratchDepth}})
+	wd := f.byDir["/tmp"]
+	f.event(wd, unix.IN_CLOSE_WRITE, 0, "x")
+	f.event(wd, unix.IN_CLOSE_WRITE, 0, "x")
+	if len(f.deferred) != 1 {
+		t.Fatalf("the same file written again was not deferred: %d", len(f.deferred))
+	}
+	if err := os.Remove(name); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, []byte("#!/bin/sh\n"), 0o700); err != nil { //nolint:gosec // the test's executable
+		t.Fatal(err)
+	}
+	sent := len(ch)
+	f.event(wd, unix.IN_CLOSE_WRITE, 0, "x")
+	if len(ch) != sent+1 {
+		t.Errorf("the executable written under a warmed-up name was deferred: sent %d, before %d", len(ch), sent)
+	}
+}

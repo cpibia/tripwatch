@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A scratch file event repeats one of the same second only for the same inode and mode: a name
+  warmed up with a harmless file no longer hides the executable written under it next (SEC-190).
 - A process start whose command line the redaction shortened carries a short hash of the full
   one: two web shell commands shown alike are no longer one repeat, nor one alert (SEC-192).
 - Past a thousand Docker containers the sensor reads those whose configuration changed last,

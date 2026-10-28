@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,7 +60,7 @@ type Files struct {
 	// scratchRepeats are the events of the scratch directories handled this second; a repeat
 	// is put in deferred, path to operation, and looked at once a second later, at no cost to
 	// the budget meanwhile.
-	scratchRepeats map[string]bool
+	scratchRepeats map[string]string
 	deferred       map[string]string
 	deferredAt     time.Time
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
@@ -108,7 +109,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}, scratchRepeats: map[string]bool{}, deferred: map[string]string{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}, scratchRepeats: map[string]string{}, deferred: map[string]string{}}, nil
 }
 
 // fileID tells one inode from another.
@@ -914,13 +915,25 @@ const maxDeferred = 4096
 // the budget as usual.
 func (f *Files) deferRepeat(op, full string) bool {
 	f.rollSecond()
-	key := op + "\x00" + full
-	if !f.scratchRepeats[key] {
-		if len(f.scratchRepeats) < maxClassEvents {
-			f.scratchRepeats[key] = true
+	// A repeat is the same operation on the same file: a name warmed up with a harmless file
+	// must not hide the program written under it next within the second, which is another
+	// inode or another mode.
+	key, file := op+"\x00"+full, ""
+	if op != OpDelete {
+		if info, err := fs.Lstat(f.src.FS, collector.Rel(full)); err == nil {
+			file = info.Mode().String()
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				file += ":" + strconv.FormatUint(st.Ino, 10)
+			}
+		}
+	}
+	if seen, ok := f.scratchRepeats[key]; !ok || seen != file {
+		if ok || len(f.scratchRepeats) < maxClassEvents {
+			f.scratchRepeats[key] = file
 		}
 		return false
 	}
+
 	if _, waiting := f.deferred[full]; !waiting && len(f.deferred) >= maxDeferred {
 		return false
 	}
