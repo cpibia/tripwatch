@@ -1,12 +1,66 @@
 package watch
 
 import (
+	"crypto/sha256"
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector/system"
 )
+
+// RepeatWindow is how long an identical process start is reported only once. A job the web
+// server's user runs every minute would otherwise fill the verifier's daily budget for what
+// that user can produce; a start that differs in anything is reported at once.
+const RepeatWindow = time.Hour
+
+// maxRepeatKeys bounds the starts remembered. When it is full of recent starts a new one is not
+// remembered and every repeat of it is reported: whoever fills it gains noise, not silence.
+const maxRepeatKeys = 1024
+
+// repeats remembers the process starts reported within RepeatWindow. It is used from the
+// goroutine that reads process events only.
+type repeats struct {
+	seen map[[sha256.Size]byte]*repeat
+}
+
+type repeat struct {
+	at      time.Time
+	skipped int
+}
+
+// report says whether a start is to be reported, and how many identical starts were left out
+// since the last one reported. The caller passes what identifies the start, everything an
+// alert says of the process but its PID, before any clipping: two command lines that differ
+// only past the clipped length are different starts.
+func (r *repeats) report(now time.Time, identity ...string) (bool, int) {
+	if r.seen == nil {
+		r.seen = map[[sha256.Size]byte]*repeat{}
+	}
+	key := sha256.Sum256([]byte(strings.Join(identity, "\x00")))
+	if prev, ok := r.seen[key]; ok {
+		if now.Sub(prev.at) < RepeatWindow && !now.Before(prev.at) {
+			prev.skipped++
+			return false, 0
+		}
+		skipped := prev.skipped
+		prev.at, prev.skipped = now, 0
+		return true, skipped
+	}
+	if len(r.seen) >= maxRepeatKeys {
+		for k, v := range r.seen {
+			if now.Sub(v.at) >= RepeatWindow || now.Before(v.at) {
+				delete(r.seen, k)
+			}
+		}
+		if len(r.seen) >= maxRepeatKeys {
+			return true, 0
+		}
+	}
+	r.seen[key] = &repeat{at: now}
+	return true, 0
+}
 
 // webUserNames are the accounts web servers and their PHP pools run as on common distributions.
 var webUserNames = []string{"www-data", "nginx", "apache", "http", "wwwrun", "lighttpd", "caddy", "httpd"}

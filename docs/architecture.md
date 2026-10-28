@@ -123,7 +123,11 @@ capability on every thread once subscribed, since receiving needs none. Each new
 `/proc` the way the processes collector reads it, command line redacted, at most 200 a second;
 only those matching a reason are reported (`web_user_tool`, `unusual_path`, `deleted_executable`,
 `privilege_gain`). For an interpreter the script it runs is reported as well, since `/proc` shows
-the interpreter as the executable.
+the interpreter as the executable. A start identical to one reported in the last hour (same
+reason, executable, script, parent, users, directory and full command line) is counted, not
+sent, and the count goes with the next report of it: a job the web server's user runs every
+minute costs 24 events a day instead of 1,440. The memory of starts is bounded at 1,024; when
+it is full of recent ones, new starts are reported every time rather than held back.
 
 Events go through bounded channels to a batcher: root's system paths have a channel of their own,
 which the batcher reads first and no other account can fill (a loss there counts as root's), the

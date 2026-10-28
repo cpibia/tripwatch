@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,6 +50,7 @@ type Execs struct {
 	webUsers map[int]bool
 	homes    map[int]string
 	uploads  []string
+	repeats  repeats
 	// Dropped counts events lost because the consumer did not keep up; Skipped, processes not
 	// inspected because more started than MaxInspections in a second.
 	Dropped atomic.Int64
@@ -214,7 +216,10 @@ func (x *Execs) message(m []byte) bool {
 		if reason != "" {
 			e := x.event(reason, p)
 			e.Script = clipText(script)
-			x.send(e)
+			if ok, skipped := x.repeats.report(e.At, reason, p.Exe, script, e.Parent, strconv.Itoa(p.UID), strconv.Itoa(p.EUID), p.Cwd, p.Cmdline); ok {
+				e.Repeats = skipped
+				x.send(e)
+			}
 		}
 		return true
 	case procEventUID:

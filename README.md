@@ -323,7 +323,8 @@ what changes there within two seconds, in signed event envelopes of the same cha
   the thousands a busy server makes. A shell, an interpreter or a network tool started by the web
   server's user; a program or a script run from `/tmp`, `/dev/shm`, a home or a web root; a
   program whose file was deleted after it started; root gained through a set-user-ID program
-  outside the system's binary directories.
+  outside the system's binary directories. A start identical to one reported in the last hour
+  is counted instead of sent again, so a job that runs every minute does not fill the budget.
 
 The verifier keeps the events for seven days (at most 20,000 a server in 24 hours for uploads
 and process starts, as many for the homes and crontabs of accounts other than root, 2,000 of

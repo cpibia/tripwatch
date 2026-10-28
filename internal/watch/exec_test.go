@@ -1,11 +1,66 @@
 package watch
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector/system"
 )
+
+// A job run every minute is reported once an hour, with the starts left out counted; anything
+// that differs is reported at once, and a full memory reports rather than stays silent.
+func TestRepeatedStartsAreReportedOnceAWindow(t *testing.T) {
+	t0 := time.Date(2026, 10, 28, 7, 0, 0, 0, time.UTC)
+	job := []string{ReasonWebShell, "/usr/bin/dash", "", "php", "1000", "1000", "/var/www/html", "sh -c /usr/bin/php8.3 artisan schedule:run"}
+	var r repeats
+	if ok, n := r.report(t0, job...); !ok || n != 0 {
+		t.Fatalf("first start: %v %d", ok, n)
+	}
+	for m := 1; m < 60; m++ {
+		if ok, _ := r.report(t0.Add(time.Duration(m)*time.Minute), job...); ok {
+			t.Fatalf("repeat at minute %d reported", m)
+		}
+	}
+	if ok, n := r.report(t0.Add(RepeatWindow), job...); !ok || n != 59 {
+		t.Fatalf("after the window: %v %d", ok, n)
+	}
+
+	longer := append([]string(nil), job...)
+	longer[7] += strings.Repeat(" x", 3000)
+	other := append([]string(nil), longer...)
+	other[7] += " ; id"
+	for _, start := range [][]string{longer, other} {
+		if ok, _ := r.report(t0.Add(RepeatWindow), start...); !ok {
+			t.Errorf("a different start was left out: %.40s", start[7])
+		}
+	}
+	// A clock set back does not hold a start back for longer than the window.
+	if ok, _ := r.report(t0, job...); !ok {
+		t.Error("a start before the last report was left out")
+	}
+
+	var full repeats
+	for i := range maxRepeatKeys {
+		full.report(t0, "exec", strconv.Itoa(i))
+	}
+	for range 3 {
+		if ok, _ := full.report(t0.Add(time.Minute), job...); !ok {
+			t.Fatal("with the memory full of recent starts, a repeat was left out")
+		}
+	}
+	if len(full.seen) > maxRepeatKeys {
+		t.Fatalf("%d starts remembered", len(full.seen))
+	}
+	// Once the old starts expire they make room.
+	if ok, _ := full.report(t0.Add(RepeatWindow), job...); !ok {
+		t.Fatal("first start after expiry")
+	}
+	if ok, _ := full.report(t0.Add(RepeatWindow+time.Minute), job...); ok {
+		t.Fatal("the job was not remembered after the old starts expired")
+	}
+}
 
 func TestClassifyExec(t *testing.T) {
 	ctx := execContext{

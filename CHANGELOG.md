@@ -8,6 +8,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A process start identical to one reported in the last hour (same reason, executable, script,
+  parent, users, directory and command line) is counted instead of sent: an account that is
+  also the web server's user and runs jobs every minute filled the verifier's daily budget for
+  uploads and process starts. Anything that differs is still reported at once.
 - Card skimmers: scripts, templates and SVG images changed since the previous snapshot are read
   for payment fields sent to another host or hidden behind obfuscation, and for live secret
   payment keys (`payment_skimmer`, critical); SVG images that run script in upload directories

@@ -86,6 +86,9 @@ type Event struct {
 	Comm    string `json:"comm,omitempty"`
 	Parent  string `json:"parent,omitempty"`
 	Cwd     string `json:"cwd,omitempty"`
+	// Repeats counts the identical starts left out since the previous report of this one, within
+	// RepeatWindow.
+	Repeats int `json:"repeats,omitempty"`
 }
 
 // Target is a directory to watch. Names, when set, keeps only the entries with those names;
