@@ -8,6 +8,36 @@ import (
 	"github.com/cpibia/tripwatch/internal/watch"
 )
 
+// Every command the web server's user runs is an alert of its own: where that account also runs
+// scheduled jobs, accepting one job leaves the others, and anything new, raised.
+func TestWebShellAlertsPerCommand(t *testing.T) {
+	uid := 1000
+	start := func(parent, cmdline string, pid int) watch.Event {
+		return watch.Event{Class: watch.ClassExec, Reason: watch.ReasonWebShell, Exe: "/usr/bin/dash", Parent: parent, Cwd: "/var/www/html", Cmdline: cmdline, User: &uid, PID: pid}
+	}
+	fingerprint := func(e watch.Event) string {
+		t.Helper()
+		fs := EvaluateEvents([]watch.Event{e}, false, nil)
+		if len(fs) != 1 || fs[0].Severity != "critical" {
+			t.Fatalf("findings %+v", fs)
+		}
+		return fs[0].Fingerprint
+	}
+	job := fingerprint(start("php", "sh -c /usr/bin/php8.3 artisan schedule:run", 10))
+	if again := fingerprint(start("php", "sh -c /usr/bin/php8.3 artisan schedule:run", 99)); again != job {
+		t.Errorf("the same job in another process: %s, then %s", job, again)
+	}
+	for _, other := range []watch.Event{
+		start("cron", "/bin/sh -c /srv/jobs/mail.sh", 11),
+		start("php-fpm8.4", "sh -c /usr/bin/php8.3 artisan schedule:run", 12),
+		start("php", "sh -c id", 13),
+	} {
+		if fp := fingerprint(other); fp == job || !strings.HasPrefix(fp, "realtime:webshell:/usr/bin/dash#") {
+			t.Errorf("%s: fingerprint %s, the job's %s", other.Cmdline, fp, job)
+		}
+	}
+}
+
 func TestEvaluateEvents(t *testing.T) {
 	t0 := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	uid := 33
@@ -75,6 +105,7 @@ func TestEvaluateEvents(t *testing.T) {
 				f := fs[0]
 				fp, _, _ := strings.Cut(f.Fingerprint, " sha256:")
 				fp, _, _ = strings.Cut(fp, " at:")
+				fp, _, _ = strings.Cut(fp, "#")
 				rule := fp[len(EventKind)+1:]
 				rule = rule[:len(rule)-len(tc.event.Path)-len(tc.event.Exe)-1]
 				got = rule + " " + f.Severity

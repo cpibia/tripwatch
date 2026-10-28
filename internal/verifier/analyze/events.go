@@ -1,6 +1,8 @@
 package analyze
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"slices"
@@ -249,7 +251,9 @@ func judgeExec(e watch.Event) (Finding, bool) {
 	}
 	switch e.Reason {
 	case watch.ReasonWebShell:
-		return event("webshell", e.Exe, "critical", "The web server's user started "+path.Base(orUnknown(e.Exe)),
+		// One alert per command, not per shell: where the web server's user also runs scheduled
+		// jobs, each job can be accepted on its own, and any other command is new.
+		return event("webshell", e.Exe+"#"+processKey(proc), "critical", "The web server's user started "+path.Base(orUnknown(e.Exe)),
 			"Process "+proc+". A web server has no reason to run a shell or a network tool; a webshell in use does. Check the web server's logs for the request that started it."), true
 	case watch.ReasonPrivilege:
 		return event("privilege-gain", e.Exe, "critical", "A process became root through "+path.Base(orUnknown(e.Exe)),
@@ -262,6 +266,13 @@ func judgeExec(e watch.Event) (Finding, bool) {
 			"Process "+proc+". Programs are not installed there: what runs from there was put there."), true
 	}
 	return Finding{}, false
+}
+
+// processKey identifies a process by what its alert says of it, the PID aside: executable,
+// parent, user, directory and command line.
+func processKey(proc string) string {
+	sum := sha256.Sum256([]byte(proc))
+	return hex.EncodeToString(sum[:6])
 }
 
 func event(rule, subject, severity, title, detail string) Finding {

@@ -79,6 +79,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- A process started by the web server's user raises one alert per command (executable, parent,
+  user, directory and command line), no longer one per shell. Where that account also runs
+  scheduled jobs, each job can be accepted as legitimate on its own; before, accepting one was
+  undone by the next different command of the same shell.
 - A gap between heartbeats with a start of the sensor in it no longer raises "Missed heartbeats":
   the start already judges that silence from what the sensor signed as it stopped, so a server
   switched off at night shows one low "Server was off" instead of a medium alert as well.
