@@ -397,11 +397,13 @@ func appsHost() fstest.MapFS {
 		"data/sites/legacy/bin/magento":                                               "",
 		"data/sites/legacy/app/etc/di.xml":                                            "",
 		"data/sites/legacy/pub/index.php":                                             "",
-		"proc/10/comm":                                                                "nginx\n",
-		"proc/11/comm":                                                                "php-fpm8.1\n",
-		"proc/12/comm":                                                                "python3.11\n",
-		"proc/13/comm":                                                                "bash\n",
-		"proc/self/comm":                                                              "sensor\n",
+		"data/sites/legacy/composer.lock": "{\n    \"packages\": [\n        {\n            \"name\": \"magento/framework\",\n            \"version\": \"103.0.7\"\n        },\n" +
+			"        {\n            \"name\": \"magento/magento2-base\",\n            \"version\": \"2.4.6-p8\",\n",
+		"proc/10/comm":   "nginx\n",
+		"proc/11/comm":   "php-fpm8.1\n",
+		"proc/12/comm":   "python3.11\n",
+		"proc/13/comm":   "bash\n",
+		"proc/self/comm": "sensor\n",
 	}
 	for name, content := range files {
 		fsys[name] = text(content)
@@ -420,7 +422,7 @@ func TestInspect(t *testing.T) {
 		got = append(got, app{a.Path, a.Framework, a.Version})
 	}
 	want := []app{
-		{"/data/sites/legacy", "magento", ""},
+		{"/data/sites/legacy", "magento", "2.4.6-p8"},
 		{"/home/deploy/app", "django", ""},
 		{"/opt/api", "rust", ""},
 		{"/srv/shop", "laravel", "11.9.2"},

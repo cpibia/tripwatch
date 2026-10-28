@@ -529,3 +529,17 @@ func TestFactsFromSnapshot(t *testing.T) {
 		t.Errorf("facts = %+v", f)
 	}
 }
+
+// Applications a site serves come first in the facts: however many old releases and projects
+// lie on disk, they cannot push the served ones past the bound.
+func TestFactsKeepServedAppsFirst(t *testing.T) {
+	var reports []web.AppReport
+	for i := range maxAppFacts + 5 {
+		reports = append(reports, web.AppReport{Application: discovery.Application{Path: fmt.Sprintf("/srv/releases/%02d", i), Framework: "wordpress"}})
+	}
+	reports = append(reports, web.AppReport{Application: discovery.Application{Path: "/srv/site", Framework: "wordpress", Version: "6.6.2", Sites: []string{"www.example.com"}}})
+	f := Facts(State{Web: &web.Result{Apps: reports}})
+	if len(f.Apps) != maxAppFacts || f.Apps[0].Path != "/srv/site" || len(f.ServedApps()) != 1 || len(f.OtherApps()) != maxAppFacts-1 {
+		t.Errorf("apps = %d, first %+v", len(f.Apps), f.Apps[0])
+	}
+}

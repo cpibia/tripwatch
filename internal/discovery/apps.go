@@ -25,6 +25,9 @@ type Profile struct {
 	Generic        bool
 	VersionFile    string
 	VersionPattern *regexp.Regexp
+	// LockPackage is the Composer package whose locked version is the stack's, read from
+	// composer.lock when VersionFile is missing, as where dependencies live in an image.
+	LockPackage string
 }
 
 // Profiles are tried in order; specific stacks come before the generic ones they also match.
@@ -37,6 +40,7 @@ var Profiles = []Profile{
 		DataDirs:       []string{"pub/media", "var"},
 		VersionFile:    "vendor/magento/magento2-base/composer.json",
 		VersionPattern: regexp.MustCompile(`"version":\s*"([^"]+)"`),
+		LockPackage:    "magento/magento2-base",
 	},
 	{
 		Name:           "wordpress",
@@ -73,6 +77,7 @@ var Profiles = []Profile{
 		DataDirs:       []string{"storage", "bootstrap/cache"},
 		VersionFile:    "vendor/laravel/framework/src/Illuminate/Foundation/Application.php",
 		VersionPattern: regexp.MustCompile(`const VERSION = '([^']+)'`),
+		LockPackage:    "laravel/framework",
 	},
 	{
 		Name:           "symfony",
@@ -81,6 +86,7 @@ var Profiles = []Profile{
 		DataDirs:       []string{"var"},
 		VersionFile:    "vendor/symfony/http-kernel/Kernel.php",
 		VersionPattern: regexp.MustCompile(`const VERSION = '([^']+)'`),
+		LockPackage:    "symfony/http-kernel",
 	},
 	{
 		Name:       "django",
@@ -213,7 +219,7 @@ func walkApps(fsys fs.FS, dir string, depth int, found map[string]Application) {
 		return
 	}
 	if p := matchProfile(fsys, dir); p != nil {
-		if _, seen := found[dir]; !seen && (!p.Generic || covering(found, dir) == "") {
+		if _, seen := found[dir]; !seen && (!p.Generic || covering(found, dir) == "" && !inDataDir(dir)) {
 			found[dir] = newApplication(fsys, dir, p)
 		}
 		if !p.Generic {
@@ -230,6 +236,14 @@ func walkApps(fsys fs.FS, dir string, depth int, found map[string]Application) {
 		}
 		walkApps(fsys, path.Join(dir, e.Name()), depth+1, found)
 	}
+}
+
+// inDataDir says whether dir lies in a directory of uploads, caches or WordPress content, where
+// plugins leave an index.php or index.html to stop directory listings: that is no application.
+func inDataDir(dir string) bool {
+	return slices.ContainsFunc(strings.Split(dir, "/"), func(part string) bool {
+		return part == "wp-content" || slices.Contains(GenericUploadDirs, part)
+	})
 }
 
 func coveringSpecific(apps map[string]Application, dir string) string {
@@ -266,14 +280,34 @@ func readVersion(fsys fs.FS, dir string, p *Profile) string {
 	if p.VersionFile == "" {
 		return ""
 	}
-	data, err := fs.ReadFile(fsys, path.Join(dir, p.VersionFile))
+	if data, err := fs.ReadFile(fsys, path.Join(dir, p.VersionFile)); err == nil {
+		if m := p.VersionPattern.FindSubmatch(data); m != nil {
+			return clipVersion(string(m[1]))
+		}
+	}
+	if p.LockPackage == "" {
+		return ""
+	}
+	data, err := fs.ReadFile(fsys, path.Join(dir, "composer.lock"))
 	if err != nil {
 		return ""
 	}
-	if m := p.VersionPattern.FindSubmatch(data); m != nil {
-		return string(m[1])
+	// Composer writes each locked package as "name" then "version", one per line.
+	re := regexp.MustCompile(`"name":\s*"` + regexp.QuoteMeta(p.LockPackage) + `",\s*"version":\s*"v?([^"]+)"`)
+	if m := re.FindSubmatch(data); m != nil {
+		return clipVersion(string(m[1]))
 	}
 	return ""
+}
+
+// maxVersionLen bounds a version read from a file the application's owner writes.
+const maxVersionLen = 64
+
+func clipVersion(v string) string {
+	if len(v) > maxVersionLen {
+		return v[:maxVersionLen]
+	}
+	return v
 }
 
 // covering returns the application that contains dir, if any.

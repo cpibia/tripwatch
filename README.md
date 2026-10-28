@@ -385,7 +385,9 @@ as reachable, a script uploaded to a directory protected by `deny all` is not.
 Applications are recognized by their fingerprints in `/var/www`, `/srv`, `/opt`, `/home`, Docker
 volumes and site document roots. Profiles cover the main CMSs and frameworks (WordPress, Drupal 7
 and 8+, Magento, Laravel, Symfony, Django, Rails), Java, Rust, Go, Node and Python applications,
-generic PHP and static sites; for the main frameworks the installed version is read too. Adding a
+generic PHP and static sites; for the main frameworks the installed version is read too, from
+`composer.lock` when the dependencies are not on disk (Laravel, Symfony, Magento). The verifier
+shows the applications a site serves apart from those only found on disk. Adding a
 stack means adding a profile: markers to look for, public directory, upload and data directories,
 files to read the version from.
 

@@ -189,13 +189,19 @@ func (c *Collector) Commit() error { return c.pending.commit() }
 // partial result is returned, marked as truncated, rather than lost.
 func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.Inspect(src.FS)}
-	budget := &hashBudget{left: MaxHashBytesPerRun, dataLeft: MaxDataScanBytesPerRun, codeLeft: MaxDataCodeBytesPerRun}
+	budget := newHashBudget()
 	scanners := make([]*scanner, 0, len(res.Inventory.Applications))
 	for _, app := range res.Inventory.Applications {
 		s := newScanner(src, app, res.Inventory.Sites, res.Inventory.Applications)
 		s.budget = budget
 		scanners = append(scanners, s)
 	}
+	// A directory several applications reach through links (the uploads every release of a
+	// deploy shares) is scanned once, by the first: served applications go first, so what is
+	// found there is reported where it is served.
+	slices.SortStableFunc(scanners, func(a, b *scanner) int {
+		return cmp.Compare(min(len(b.report.Sites), 1), min(len(a.report.Sites), 1))
+	})
 	// Every application's uploads are listed before any file of any application is read.
 	for _, s := range scanners {
 		s.namesPass(ctx)
@@ -232,8 +238,18 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 	return res, nil
 }
 
+func newHashBudget() *hashBudget {
+	return &hashBudget{left: MaxHashBytesPerRun, dataLeft: MaxDataScanBytesPerRun, codeLeft: MaxDataCodeBytesPerRun,
+		followed: map[string]bool{}, listed: map[string]bool{}}
+}
+
 // hashBudget is shared by the scanners of one run.
 type hashBudget struct {
+	// followed holds the directories reached through symlinks: a link loop is walked once, and
+	// so is a directory that several applications link to.
+	followed map[string]bool
+	// listed holds the upload directories whose names were listed this run.
+	listed    map[string]bool
 	left      int64
 	exhausted bool
 	dataLeft  int64
@@ -288,11 +304,13 @@ type scanner struct {
 	// own profile.
 	nested []string
 	budget *hashBudget
-	// followed holds the directories reached through symlinks, so a link loop is walked once.
-	followed map[string]bool
-	stopped  bool
-	findings map[string]int
-	manifest *manifestWriter
+	// deployRoots are the directories that hold an application's releases (deploy/releases/N):
+	// a linked upload or data directory may lead into them, where deploy tools keep what the
+	// releases share.
+	deployRoots []string
+	stopped     bool
+	findings    map[string]int
+	manifest    *manifestWriter
 }
 
 func newScanner(src collector.Source, app discovery.Application, sites []discovery.Site, apps []discovery.Application) *scanner {
@@ -301,8 +319,7 @@ func newScanner(src collector.Source, app discovery.Application, sites []discove
 		root:     strings.TrimPrefix(app.Path, "/"),
 		profile:  app.Profile,
 		report:   AppReport{Application: app, DirHashes: map[string]string{}},
-		budget:   &hashBudget{left: MaxHashBytesPerRun, dataLeft: MaxDataScanBytesPerRun, codeLeft: MaxDataCodeBytesPerRun},
-		followed: map[string]bool{},
+		budget:   newHashBudget(),
 		findings: map[string]int{},
 	}
 	for _, site := range sites {
@@ -313,6 +330,11 @@ func newScanner(src collector.Source, app discovery.Application, sites []discove
 	for _, other := range apps {
 		if strings.HasPrefix(other.Path, app.Path+"/") {
 			s.nested = append(s.nested, strings.TrimPrefix(other.Path, "/"))
+		}
+		if path.Base(path.Dir(other.Path)) == "releases" {
+			if root := path.Dir(path.Dir(other.Path)); strings.Count(root, "/") >= 2 && !slices.Contains(s.deployRoots, root) {
+				s.deployRoots = append(s.deployRoots, root)
+			}
 		}
 	}
 	if s.profile != nil {
@@ -374,6 +396,12 @@ func (s *scanner) namesPass(ctx context.Context) {
 				continue
 			}
 			root, verify = resolved, true
+		}
+		if id, ok := collector.FileID(info); ok {
+			if s.budget.listed[id] {
+				continue
+			}
+			s.budget.listed[id] = true
 		}
 		if info.IsDir() {
 			s.listNames(ctx, root, 0, verify)
@@ -470,10 +498,7 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 			if slices.Contains(s.nested, name) {
 				s.add(KindAppInData, name, e, nil)
 			}
-			if childUploads && !inUploads && maybeDir && len(s.report.UploadDirs) < maxUploadDirs {
-				s.report.UploadDirs = append(s.report.UploadDirs, "/"+name)
-			}
-			s.enterData(ctx, name, e, childUploads)
+			s.enterData(ctx, name, e, childUploads, childUploads && !inUploads && maybeDir)
 			continue
 		}
 
@@ -510,7 +535,13 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 // observed root, and its content scanned as data. That link is the deploy pattern, not a
 // finding, as long as it leads to a directory followable() allows: what it leads to is scanned
 // like any upload directory. Any other link in its place is reported.
-func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inUploads bool) {
+func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inUploads, uploadRoot bool) {
+	// The real location is what the real-time watch is given: it does not follow links.
+	record := func(dir string) {
+		if uploadRoot && len(s.report.UploadDirs) < maxUploadDirs {
+			s.report.UploadDirs = append(s.report.UploadDirs, "/"+dir)
+		}
+	}
 	if e.Type()&fs.ModeSymlink != 0 {
 		target, _ := fs.ReadLink(s.src.FS, name)
 		resolved, ok := s.followable(name)
@@ -523,17 +554,19 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 			s.inspectSymlink(name, e, target, true)
 		}
 		if !ok {
+			record(name)
 			s.issues = append(s.issues, fmt.Sprintf("/%s -> %s not followed: target outside the application and its deploy directory", name, target))
 			return
 		}
 		if err != nil || !info.IsDir() {
 			return
 		}
+		record(resolved)
 		if id, ok := collector.FileID(info); ok {
-			if s.followed[id] {
+			if s.budget.followed[id] {
 				return
 			}
-			s.followed[id] = true
+			s.budget.followed[id] = true
 		}
 		s.walkData(ctx, resolved, inUploads, true)
 		return
@@ -541,6 +574,7 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 		s.inspectFile(name, e, inUploads, true, false)
 		return
 	}
+	record(name)
 	s.walkData(ctx, name, inUploads, false)
 }
 
@@ -559,7 +593,10 @@ func (s *scanner) followable(name string) (string, bool) {
 		return resolved, true
 	}
 	deploy := path.Dir(path.Dir(root))
-	return resolved, strings.Count(deploy, "/") >= 2 && strings.HasPrefix(abs, deploy+"/")
+	if strings.Count(deploy, "/") >= 2 && strings.HasPrefix(abs, deploy+"/") {
+		return resolved, true
+	}
+	return resolved, slices.ContainsFunc(s.deployRoots, func(d string) bool { return strings.HasPrefix(abs, d+"/") })
 }
 
 // unchanged reports whether dir still resolves to itself, that is no component of it has been

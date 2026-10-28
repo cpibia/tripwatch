@@ -523,6 +523,47 @@ func TestSymlinkedUploadDirectoryIsScanned(t *testing.T) {
 	}
 }
 
+// A served site whose uploads link into another deploy's shared directory, next to releases
+// linking there too: the shared uploads are scanned once, as the served site's, the real-time
+// watch is given their real location, and a plugin's index.php in them is no application.
+func TestSharedUploadsScannedOnceForTheServedSite(t *testing.T) {
+	tr := newTree(t)
+	tr.file("etc/nginx/nginx.conf", "events {} http { server { server_name www.example.test; root /var/www/site; } }")
+	for _, app := range []string{"var/www/site", "var/www/deploy/releases/1", "var/www/deploy/releases/2"} {
+		tr.file(app+"/wp-includes/version.php", "<?php $wp_version = '6.6';")
+		tr.file(app+"/wp-content/plugins/p/p.php", "<?php echo 1;")
+	}
+	tr.link("../../../shared/wp-content/uploads", "var/www/deploy/releases/1/wp-content/uploads")
+	tr.link("../../../shared/wp-content/uploads", "var/www/deploy/releases/2/wp-content/uploads")
+	tr.link("../../deploy/shared/wp-content/uploads", "var/www/site/wp-content/uploads")
+	tr.file("var/www/deploy/shared/wp-content/uploads/2026/shell.php", `<?php system($_GET['c']);`)
+	tr.file("var/www/deploy/shared/wp-content/uploads/smush/index.html", "<html></html>")
+
+	res := tr.scan()
+	var where []string
+	for _, a := range res.Apps {
+		if strings.Contains(a.Path, "smush") {
+			t.Errorf("a directory in the uploads is an application: %s", a.Path)
+		}
+		for _, f := range a.Findings {
+			if f.Kind == KindScriptInUploads && strings.HasSuffix(f.Path, "/shell.php") {
+				where = append(where, a.Path)
+			}
+		}
+		if a.Path == "/var/www/site" && !slices.Equal(a.UploadDirs, []string{"/var/www/deploy/shared/wp-content/uploads"}) {
+			t.Errorf("site upload dirs = %v", a.UploadDirs)
+		}
+	}
+	if !slices.Equal(where, []string{"/var/www/site"}) {
+		t.Errorf("shell.php reported by %v, want the served site once", where)
+	}
+	for _, issue := range res.Issues {
+		if strings.Contains(issue, "not followed") {
+			t.Errorf("issue: %s", issue)
+		}
+	}
+}
+
 // A release linking a script to its copy in the deploy's shared directory, wp-config.php or an
 // .env kept across releases, is the deploy layout; a script linked to anything else is not.
 func TestSharedScriptOfAReleaseIsNotSuspicious(t *testing.T) {

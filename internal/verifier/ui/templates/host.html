@@ -28,7 +28,8 @@
     <div><dt>Real-time watch</dt><dd>{{with .Realtime}}{{if and .Files .Processes}}files and processes{{else if .Files}}files only{{else if .Processes}}processes only{{else}}<span class="flag-off">off</span>{{end}}{{if .Watches}} · {{.Watches}} {{plural .Watches "directory" "directories"}}{{end}}{{else}}<span class="quiet">not in this sensor version</span>{{end}}</dd></div>
     <div><dt>Addresses</dt><dd class="mono">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{else}}-{{end}}</dd></div>
   </dl>
-  {{with .Apps}}<div class="apps-list"><h3>Web applications</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span></li>{{end}}</ul></div>{{end}}
+  {{with .ServedApps}}<div class="apps-list"><h3>Web applications</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span>{{range .Sites}} <span class="mono">{{.}}</span>{{end}}</li>{{end}}</ul></div>{{end}}
+  {{with .OtherApps}}<div class="apps-list"><h3>Also on disk, not served by a site</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span></li>{{end}}</ul></div>{{end}}
 </section>
 {{end}}
 

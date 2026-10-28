@@ -44,6 +44,15 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 - The search for PHP in data files follows code interpolated in strings, commands and heredocs
   (`{$...}`, `${...}`), so a quote or `?>` inside an interpolation no longer ends the block,
   and also reads the content as PHP does with short open tags on (`<?` followed by anything).
+- An upload or data directory linked into the directory holding a deploy's releases is followed
+  from any application, as from a served copy whose uploads link to `deploy/shared`; until now
+  such a site's uploads were left unscanned. A directory several applications reach is scanned
+  once a run, served applications first, instead of once per release, which spent the budget for
+  searching data files for code; upload directories reached through a link are given to the
+  real-time watch by their real location. An index file in an upload, cache or `wp-content`
+  directory no longer makes an application of its own.
+- An application's version is also read from `composer.lock` (Laravel, Symfony, Magento) when
+  the version file under `vendor/` is missing, as when dependencies live in an image.
 - New log rules: a cart item added through the REST API and then a fetch from
   `media/custom_options` by the same address (`cart_upload_then_fetch`, high on success), a
   `file_info` parameter on a cart item (`cart_item_file_upload`), a shipping estimate for a
@@ -73,6 +82,8 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 
 ### Verifier
 
+- The servers page lists every web application a site serves, with its version, and counts
+  the others found on disk; the host page lists both groups, served ones with their sites.
 - A request that failed for a script missing from the server (`pentest_proof_*.php` answered
   404, `/tmp/phpinfo.php` answered 502) no longer raises "Log: script in upload path" or the
   other log alerts: no code ran. A script that exists stays serious whatever its status, and

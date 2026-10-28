@@ -532,6 +532,7 @@ func formatTime(t time.Time) string {
 // problems of its real-time watchers.
 const (
 	maxAppFacts       = 50
+	maxAppSites       = 8
 	maxRealtimeIssues = 5
 )
 
@@ -559,11 +560,15 @@ func Facts(st State) store.HostFacts {
 		f.PackageManager, f.Packages = p.Manager, p.Packages
 	}
 	if w := st.Web; w != nil {
-		for _, app := range w.Apps {
-			if len(f.Apps) == maxAppFacts {
-				break
+		// Served applications first: those on disk alone cannot push them past the bound.
+		for _, served := range []bool{true, false} {
+			for _, app := range w.Apps {
+				if len(f.Apps) == maxAppFacts || (len(app.Sites) > 0) != served {
+					continue
+				}
+				f.Apps = append(f.Apps, store.AppFact{Path: app.Path, Framework: app.Framework, Version: app.Version,
+					Sites: app.Sites[:min(len(app.Sites), maxAppSites)]})
 			}
-			f.Apps = append(f.Apps, store.AppFact{Path: app.Path, Framework: app.Framework, Version: app.Version})
 		}
 	}
 	if so := st.Sockets; so != nil {

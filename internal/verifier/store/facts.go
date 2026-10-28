@@ -39,11 +39,35 @@ type RealtimeFact struct {
 	Issues    []string `json:"issues,omitempty"`
 }
 
-// AppFact is one web application found on a host.
+// AppFact is one web application found on a host, with the names of the sites that serve it:
+// none for one only found on disk (an old release, a project in a home directory).
 type AppFact struct {
-	Path      string `json:"path"`
-	Framework string `json:"framework"`
-	Version   string `json:"version,omitempty"`
+	Path      string   `json:"path"`
+	Framework string   `json:"framework"`
+	Version   string   `json:"version,omitempty"`
+	Sites     []string `json:"sites,omitempty"`
+}
+
+// ServedApps are the applications a web server's site serves.
+func (f HostFacts) ServedApps() []AppFact {
+	var out []AppFact
+	for _, a := range f.Apps {
+		if len(a.Sites) > 0 {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// OtherApps are the applications found on disk that no site serves.
+func (f HostFacts) OtherApps() []AppFact {
+	var out []AppFact
+	for _, a := range f.Apps {
+		if len(a.Sites) == 0 {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // SetFacts keeps the facts of a host's latest analysed snapshot.

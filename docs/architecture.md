@@ -280,9 +280,14 @@ families are checked on a corpus of clean JavaScript with no match. SVG images i
 directories that run script are `active_svg_in_upload_dir`, critical when the script is hidden. Data directories
 are read as a stream and not hashed; a code directory with more entries than the limit is
 inspected the same way. Inside uploads, symlinks are reported and never followed; the only link
-followed is an upload directory that is itself a link, and only towards the application or the
-directory that holds its releases. That link is not a finding when it leads to a directory there;
-one leading anywhere else, or named like a script, is.
+followed is an upload directory that is itself a link, and only towards the application, the
+directory that holds its releases, or the directory holding the releases of any application found
+on the host (a served copy linking its uploads to `deploy/shared`). That link is not a finding
+when it leads to a directory there; one leading anywhere else, or named like a script, is. A
+directory reached through links is listed and scanned once a run, served applications first: the
+uploads every release of a deploy shares cost the budget once and are reported as the served
+site's, and the real-time watch is given their real location. An index file in an upload, cache
+or `wp-content` directory (plugins leave one to stop listings) does not make an application.
 
 ## Web server logs
 
