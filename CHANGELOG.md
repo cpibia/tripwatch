@@ -39,6 +39,9 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   configuration is rewritten at the start. Mounts, devices, capabilities and security options
   past the 64 read keep those that give power first, and a cut list is named (`cut`) and counts
   as a power.
+- The search for PHP in data files follows code interpolated in strings, commands and heredocs
+  (`{$...}`, `${...}`), so a quote or `?>` inside an interpolation no longer ends the block,
+  and also reads the content as PHP does with short open tags on (`<?` followed by anything).
 - New log rules: a cart item added through the REST API and then a fetch from
   `media/custom_options` by the same address (`cart_upload_then_fetch`, high on success), a
   `file_info` parameter on a cart item (`cart_item_file_upload`), a shipping estimate for a

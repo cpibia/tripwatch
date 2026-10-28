@@ -863,11 +863,11 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	defer func() { _ = f.Close() }()
 	// What the file had when listed: a log written meanwhile does not keep the scan going.
 	r := io.LimitReader(f, info.Size())
-	c := &codeSearch{codeLeft: &s.budget.codeLeft}
+	c := newDataSearch(&s.budget.codeLeft)
 	before := s.budget.codeLeft
 	defer func() { s.budget.spent(name, info, before-s.budget.codeLeft) }()
 	buf := make([]byte, dataScanChunk)
-	for !c.exhausted {
+	for !c.exhausted() {
 		n, err := io.ReadFull(r, buf)
 		last := err != nil
 		c.feed(buf[:n], last)
@@ -875,11 +875,11 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 			break
 		}
 	}
-	if c.exhausted {
+	if c.exhausted() {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
 		s.budget.unsearched(name)
 	}
-	return c.sigs
+	return c.signatures()
 }
 
 // codeInData searches data for code within the run's budget, and says when it ran out.

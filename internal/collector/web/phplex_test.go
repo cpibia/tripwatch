@@ -83,3 +83,40 @@ func TestCodeInDataBinary(t *testing.T) {
 		}
 	}
 }
+
+// Interpolated code inside a string is code, with strings of its own: a quote or "?>" in it
+// neither closes the string around it nor ends the block. Short open tags open a block whatever
+// follows "<?". The verdict does not depend on how the content is split.
+func TestCodeInDataInterpolation(t *testing.T) {
+	deep := "<?php $x = \"" + strings.Repeat("{$a[\"", maxNested+1) + "\"; system($_GET['c']);"
+	for in, want := range map[string]string{
+		`log line <?php $x = "{$a["\""]}?>"; system($_GET['c']);`:           "exec_request_input",
+		`log line <?php $x = "${a["\""]}?>"; system($_GET['c']);`:           "exec_request_input",
+		"<?php $x = `{$a[\"`\"]}?>`; system($_GET['c']);":                   "exec_request_input",
+		"<?php $x = \"{$a[\"{$b[\"\\\"\"]}\"]}?>\"; system($_GET['c']);":    "exec_request_input",
+		"<?php $x = <<<EOT\n{$a[\"\nEOT\n?>\"]}\nEOT;\nsystem($_GET['c']);": "exec_request_input",
+		"<?php $x = <<<'EOT'\n{$a}?>\nEOT;\n?> after: system($_GET['c'])":   "",
+		`<?php $x = "{ $a } $ "; ?> after: system($_GET['c'])`:              "",
+		`<?php $x = "\{$a}"; ?> after: system($_GET['c'])`:                  "",
+		"log line <?system($_GET['c']);?> rest":                             "exec_request_input",
+		"log line <?\tsystem($_GET['c']);?> rest":                           "exec_request_input",
+		"<?xml version=\"1.0\"?><a>system($_GET['c'])</a>":                  "",
+		"q=<?php+system($_GET[c]);":                                         "",
+		"<?mso-application progid=\"Excel.Sheet\"?><x/>":                    "",
+		deep: "nested_interpolation",
+	} {
+		whole := strings.Join(first(codeInData([]byte(in), nil)), ",")
+		if !strings.Contains(whole, want) || (want == "" && whole != "") {
+			t.Errorf("%.60q: %q, want %q", in, whole, want)
+		}
+		for _, size := range []int{1, 2, 3, 7} {
+			d := newDataSearch(nil)
+			for i := 0; i < len(in); i += size {
+				d.feed([]byte(in[i:min(i+size, len(in))]), i+size >= len(in))
+			}
+			if got := strings.Join(d.signatures(), ","); got != whole {
+				t.Errorf("pieces of %d of %.60q: %q, whole %q", size, in, got, whole)
+			}
+		}
+	}
+}

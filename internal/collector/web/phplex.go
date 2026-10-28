@@ -19,9 +19,16 @@ import (
 // weak signals of a block like that (backtick_exec, dangerous_call) are dropped, the named
 // signatures still count. PHP 7 only warned about those bytes; it is past its end of life.
 type codeSearch struct {
-	mode     int
-	heredoc  []byte // identifier closing the open heredoc or nowdoc
-	atLine   bool   // in a heredoc, nothing but indentation seen on this line yet
+	// shortTags opens a block on "<?" whatever follows, as PHP does with short_open_tag on.
+	// Under it a block that cannot compile makes the whole file fail, so it is dropped unread.
+	shortTags bool
+	mode      int
+	heredoc   []byte // identifier closing the open heredoc or nowdoc
+	nowdoc    bool   // the open heredoc is a nowdoc, which interpolates nothing
+	atLine    bool   // in a heredoc, nothing but indentation seen on this line yet
+	// nested are the strings an interpolation ("{$" or "${") left for code, innermost last:
+	// the code runs to its matching brace, and may hold strings of its own.
+	nested   []interpolation
 	code     []byte
 	backtick bool
 	// call says a dangerous call was seen in the block, broken that it cannot compile.
@@ -32,6 +39,12 @@ type codeSearch struct {
 	// codeLeft, when set, is the budget of code matched; exhausted says it ran out.
 	codeLeft  *int64
 	exhausted bool
+}
+
+type interpolation struct {
+	mode    int // the string mode to go back to
+	braces  int // braces opened in the interpolated code and not yet closed
+	heredoc []byte
 }
 
 // Modes of the lexer.
@@ -50,14 +63,43 @@ const (
 	maxBlockCode     = 1 << 20
 	blockOverlap     = 4 << 10
 	maxHeredocIDSize = 128
+	// maxNested bounds interpolations inside interpolations; deeper nesting has no use in a
+	// data file and is reported rather than followed.
+	maxNested = 64
 )
 
 // codeInData returns the signatures of the PHP content would run if included, and whether the
 // budget of code ran out before the end.
 func codeInData(content []byte, codeLeft *int64) (sigs []string, exhausted bool) {
-	c := &codeSearch{codeLeft: codeLeft}
-	c.feed(content, true)
-	return c.sigs, c.exhausted
+	d := newDataSearch(codeLeft)
+	d.feed(content, true)
+	return d.signatures(), d.exhausted()
+}
+
+// dataSearch lexes content twice, since whether short open tags are on is php.ini's choice: with
+// them off a "<?" followed by code is text, with them on it opens a block that can swallow, up
+// to its "?>", a block that the other setting runs.
+type dataSearch struct{ long, short codeSearch }
+
+func newDataSearch(codeLeft *int64) *dataSearch {
+	return &dataSearch{long: codeSearch{codeLeft: codeLeft}, short: codeSearch{codeLeft: codeLeft, shortTags: true}}
+}
+
+func (d *dataSearch) feed(p []byte, final bool) {
+	d.long.feed(p, final)
+	d.short.feed(p, final)
+}
+
+func (d *dataSearch) exhausted() bool { return d.long.exhausted || d.short.exhausted }
+
+func (d *dataSearch) signatures() []string {
+	sigs := slices.Clone(d.long.sigs)
+	for _, sig := range d.short.sigs {
+		if !slices.Contains(sigs, sig) {
+			sigs = append(sigs, sig)
+		}
+	}
+	return sigs
 }
 
 // feed lexes the next piece of the content; final marks the last one.
@@ -99,7 +141,7 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 			return 0
 		}
 		if i+1 < len(d) && d[i+1] == '?' {
-			if n, ok := openTagLen(d[i+2:]); ok {
+			if n, ok := openTagLen(d[i+2:], c.shortTags); ok {
 				c.mode = lexCode
 				return 2 + n
 			}
@@ -115,6 +157,14 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 			}
 			c.emit(d[i:min(i+2, len(d))])
 			return min(2, len(d)-i)
+		}
+		if c.mode != lexSingle && (b == '{' || b == '$') {
+			if !more(2) {
+				return 0
+			}
+			if n := c.interpolates(d, i); n != 0 {
+				return n
+			}
 		}
 		if b == quote {
 			c.mode = lexCode
@@ -162,11 +212,25 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 	more := func(n int) bool { return i+n <= len(d) || final }
 	switch b := d[i]; b {
+	case '{', '}':
+		if len(c.nested) > 0 {
+			top := &c.nested[len(c.nested)-1]
+			switch {
+			case b == '{':
+				top.braces++
+			case top.braces > 0:
+				top.braces--
+			default:
+				c.mode, c.heredoc, c.nowdoc, c.atLine = top.mode, top.heredoc, false, false
+				c.nested = c.nested[:len(c.nested)-1]
+			}
+		}
 	case '?':
 		if !more(2) {
 			return 0
 		}
-		if i+1 < len(d) && d[i+1] == '>' {
+		// Inside an interpolation "?>" cannot end the block: the string around it is still open.
+		if i+1 < len(d) && d[i+1] == '>' && len(c.nested) == 0 {
 			c.endBlock()
 			return 2
 		}
@@ -202,6 +266,7 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		if id, n, ok := heredocStart(d[i:]); ok {
 			c.emit(d[i : i+n])
 			c.mode, c.heredoc, c.atLine = lexHeredoc, id, true
+			c.nowdoc = bytes.Contains(d[i:i+n], []byte("'"))
 			return n
 		}
 	case '_':
@@ -226,6 +291,22 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 	}
 	c.emit(d[i : i+1])
 	return 1
+}
+
+// interpolates starts the code of an interpolation at i ("{$" or "${") in a string that
+// interpolates, and returns its length; 0 when there is none.
+func (c *codeSearch) interpolates(d []byte, i int) int {
+	if i+2 > len(d) || string(d[i:i+2]) != "{$" && string(d[i:i+2]) != "${" {
+		return 0
+	}
+	if len(c.nested) == maxNested {
+		c.add("nested_interpolation")
+		return 0
+	}
+	c.nested = append(c.nested, interpolation{mode: c.mode, heredoc: c.heredoc})
+	c.mode = lexCode
+	c.emit(d[i : i+2])
+	return 2
 }
 
 var haltCompiler = []byte("__halt_compiler")
@@ -262,7 +343,21 @@ func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 		return 1
 	}
 	if !c.atLine {
-		j := bytes.IndexByte(d[i:], '\n')
+		if !c.nowdoc && (b == '{' || b == '$') {
+			if i+2 > len(d) && !final {
+				return 0
+			}
+			if n := c.interpolates(d, i); n != 0 {
+				return n
+			}
+			c.emit(d[i : i+1])
+			return 1
+		}
+		stops := "\n"
+		if !c.nowdoc {
+			stops = "\n{$"
+		}
+		j := bytes.IndexAny(d[i:], stops)
 		if j < 0 {
 			j = len(d) - i
 		}
@@ -286,18 +381,21 @@ func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 }
 
 // openTagLen returns the length of what follows "<?" in an open tag PHP runs: "php" and a blank,
-// "=", or a blank alone (the short tag).
-func openTagLen(t []byte) (int, bool) {
+// "=", or a blank alone. With short tags "<?" opens a block whatever follows, but for "xml",
+// which makes PHP refuse the file, and "php" glued to more text, which runs as the undefined
+// constant php and stops there.
+func openTagLen(t []byte, short bool) (int, bool) {
 	blank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+	word := func(w string) bool { return len(t) >= len(w) && bytes.EqualFold(t[:len(w)], []byte(w)) }
 	switch {
-	case len(t) > 3 && bytes.EqualFold(t[:3], []byte("php")) && blank(t[3]):
+	case word("php") && len(t) > 3 && blank(t[3]):
 		return 4, true
-	case len(t) > 0 && t[0] == '=':
+	case len(t) > 0 && (t[0] == '=' || blank(t[0])):
 		return 1, true
-	case len(t) > 0 && blank(t[0]):
-		return 1, true
+	case !short || word("xml") || word("php"):
+		return 0, false
 	}
-	return 0, false
+	return 0, true
 }
 
 // heredocStart reads "<<<ID", "<<<\"ID\"" or "<<<'ID'" and the line break after it.
@@ -343,6 +441,9 @@ func identByte(c byte) bool { return isWordByte(c) || c >= 0x80 }
 
 // emit adds code of the current block, matching it in parts when it grows too long.
 func (c *codeSearch) emit(p []byte) {
+	if c.broken && c.shortTags {
+		return
+	}
 	c.code = append(c.code, p...)
 	if len(c.code) > maxBlockCode {
 		c.match()
@@ -353,7 +454,7 @@ func (c *codeSearch) emit(p []byte) {
 // endBlock matches what is left of the block, adds its weak signals unless it cannot compile,
 // and goes back to text.
 func (c *codeSearch) endBlock() {
-	if c.mode != lexText {
+	if c.mode != lexText && (!c.broken || !c.shortTags) {
 		c.match()
 		if !c.exhausted && !c.broken {
 			if c.backtick {
@@ -365,6 +466,7 @@ func (c *codeSearch) endBlock() {
 		}
 	}
 	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken = lexText, c.code[:0], false, nil, false, false
+	c.nested, c.nowdoc = c.nested[:0], false
 }
 
 func (c *codeSearch) add(sig string) {
