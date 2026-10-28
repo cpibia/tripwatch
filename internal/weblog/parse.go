@@ -193,3 +193,8 @@ func ScriptPath(p string) string {
 	}
 	return strings.Join(segments, "/")
 }
+
+// IsScript reports whether the last segment of a path names a script.
+func IsScript(p string) bool {
+	return slices.Contains(scriptExtensions, strings.ToLower(path.Ext(p)))
+}

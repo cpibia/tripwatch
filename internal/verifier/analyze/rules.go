@@ -1118,6 +1118,12 @@ func Evaluate(prev *State, cur State) []Finding {
 
 	if l := cur.Weblog; l != nil {
 		for _, e := range l.Events {
+			// A request that failed for a script missing from every root nginx could serve it
+			// from ran no code: a probe, not an intrusion. A web shell answers as it likes, so
+			// one that exists stays serious whatever its status.
+			if e.OnDisk == "missing" && (e.Status < 200 || e.Status >= 300) {
+				continue
+			}
 			if e.Severity != "critical" && e.Severity != "high" {
 				continue
 			}
@@ -1126,8 +1132,12 @@ func Evaluate(prev *State, cur State) []Finding {
 			// The script the request reached names the alert's group: noise sent to other
 			// scripts does not crowd out the one that matters.
 			script := weblog.ScriptPath(path.Clean("/" + strings.SplitN(e.Evidence.Request, "?", 2)[0]))
-			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.\nRequest text, written by whoever sent it: %s",
-				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, e.Evidence.Request)})
+			onDisk := ""
+			if e.OnDisk == "present" {
+				onDisk = " The script exists on the server."
+			}
+			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.%s\nRequest text, written by whoever sent it: %s",
+				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, onDisk, e.Evidence.Request)})
 		}
 		// A flood that pushed serious events out of the bounded list is itself an alert: it may
 		// have been sent to hide one.

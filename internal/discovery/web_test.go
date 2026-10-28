@@ -148,6 +148,41 @@ func TestNginxExecutes(t *testing.T) {
 	}
 }
 
+// The files a request could reach are named only when nginx serves it from disk; a proxy that
+// may answer it, or a root that cannot be resolved, leaves the question open.
+func TestNginxScriptFiles(t *testing.T) {
+	site := func(conf string) Site {
+		sites, _, _ := NginxSites(fstest.MapFS{"etc/nginx/nginx.conf": text("http { " + conf + " }")})
+		if len(sites) != 1 {
+			t.Fatalf("%d sites in %q", len(sites), conf)
+		}
+		return sites[0]
+	}
+	const php = `location ~ \.php$ { fastcgi_pass unix:/run/php/fpm.sock; }`
+	for _, c := range []struct {
+		name, conf, uri string
+		want            []string
+	}{
+		{"root", "server { root /var/www/site/public; " + php + " }", "/uploads/x.php", []string{"/var/www/site/public/uploads/x.php"}},
+		{"alias", "server { root /var/www/a; location /files/ { alias /srv/files/; } " + php + " }", "/files/x.php",
+			[]string{"/srv/files/files/x.php", "/srv/files/x.php", "/var/www/a/files/x.php"}},
+		{"proxy elsewhere", "server { root /var/www/a; location /api/ { proxy_pass http://127.0.0.1:8080; } " + php + " }", "/uploads/x.php", []string{"/var/www/a/uploads/x.php"}},
+		{"proxied", "server { root /var/www/a; location / { proxy_pass http://127.0.0.1:8080; } }", "/uploads/x.php", nil},
+		{"named fallback", "server { root /var/www/a; location / { try_files $uri @app; } location @app { proxy_pass http://app; } }", "/uploads/x.php", nil},
+		{"variable root", "server { root /var/www/$host; " + php + " }", "/x.php", nil},
+		{"relative location root", "server { root /var/www/a; location /b/ { root html; } " + php + " }", "/x.php", nil},
+	} {
+		s := site(c.conf)
+		got, ok := s.ScriptFiles(c.uri)
+		if ok != (c.want != nil) || !slices.Equal(got, c.want) {
+			t.Errorf("%s: %v %v, want %v", c.name, got, ok, c.want)
+		}
+	}
+	if _, ok := (&Site{Server: ServerApache, Root: "/var/www"}).ScriptFiles("/x.php"); ok {
+		t.Error("an Apache site's files are told")
+	}
+}
+
 func TestFindLocationOrder(t *testing.T) {
 	loc := func(mod, pattern string, executes bool, nested ...Location) Location {
 		l := Location{Modifier: mod, Pattern: pattern, Executes: executes, Locations: nested}

@@ -103,6 +103,36 @@ func TestFirstSnapshot(t *testing.T) {
 	}
 }
 
+// A failed request for a script that is not on the server is a probe and raises nothing; one
+// for a script that exists, or that succeeded, still does.
+func TestWeblogProbesOfMissingScripts(t *testing.T) {
+	event := func(request string, status int, onDisk string) logs.Event {
+		return logs.Event{Rule: "script_in_upload_path", Severity: "high", Method: "GET", Status: status, Log: "/var/log/nginx/access.log",
+			OnDisk: onDisk, Evidence: logs.AttackerControlled{Request: request}}
+	}
+	cur := baseState()
+	cur.Weblog = &logs.Result{Events: []logs.Event{
+		event("/uploads/probe.php", 404, "missing"),
+		event("/tmp/phpinfo.php", 502, "missing"),
+		event("/uploads/shell.php", 404, "present"),
+		event("/uploads/unknown.php", 404, ""),
+		event("/uploads/gone.php", 200, "missing"),
+	}}
+	var got []string
+	for _, f := range Evaluate(nil, cur) {
+		if f.Kind == "weblog" {
+			got = append(got, strings.SplitN(f.Detail, ",", 2)[0])
+			if strings.Contains(f.Detail, "shell.php") && !strings.Contains(f.Detail, "The script exists on the server.") {
+				t.Errorf("detail does not say the script exists: %s", f.Detail)
+			}
+		}
+	}
+	slices.Sort(got)
+	if want := []string{"GET /uploads/gone.php", "GET /uploads/shell.php", "GET /uploads/unknown.php"}; !slices.Equal(got, want) {
+		t.Errorf("alerts for %v, want %v", got, want)
+	}
+}
+
 // Comparing two large snapshots stays linear: 80,000 sudo rules, all different between the two,
 // took 18 seconds with the list scans this replaced.
 func TestEvaluateIsLinear(t *testing.T) {

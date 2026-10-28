@@ -543,3 +543,48 @@ func TestSourceOf(t *testing.T) {
 		t.Error("IPv4 addresses are not grouped by /24")
 	}
 }
+
+// A requested script is looked up in the document roots of the sites writing the log; a log no
+// configuration names, or a site that may proxy the request, leaves the answer open.
+func TestScriptsLookedUpOnDisk(t *testing.T) {
+	h := newHost(t)
+	write := func(name, content string) {
+		t.Helper()
+		p := filepath.Join(h.root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("etc/nginx/nginx.conf", `http {
+		server { root /var/www/a/public; access_log /var/log/nginx/access.log; location ~ \.php$ { fastcgi_pass unix:/run/php.sock; } }
+		server { root /var/www/b; access_log /var/log/nginx/access.log; location /api/ { proxy_pass http://127.0.0.1:8080; } }
+		server { root /var/www/c; access_log /var/log/nginx/c.log; location / { proxy_pass http://127.0.0.1:9000; } }
+	}`)
+	write("var/www/b/uploads/shell.php", "<?php")
+	h.writeLog(logLine("203.0.113.7", "GET", "/wp-content/uploads/probe.php", 404) +
+		logLine("203.0.113.7", "GET", "/uploads/shell.php/x.jpg", 404) +
+		logLine("203.0.113.7", "GET", "/api/files/x.php", 404) +
+		logLine("203.0.113.7", "GET", "/.env", 404))
+	write("var/log/nginx/c.log", logLine("203.0.113.8", "GET", "/media/y.php", 404))
+	write("var/log/nginx/other.access.log", logLine("203.0.113.9", "GET", "/media/z.php", 404))
+
+	got := map[string]string{}
+	for _, e := range h.run().Events {
+		got[e.Evidence.Request] = e.OnDisk
+	}
+	for uri, want := range map[string]string{
+		"/wp-content/uploads/probe.php": "missing",
+		"/uploads/shell.php/x.jpg":      "present",
+		"/api/files/x.php":              "",
+		"/.env":                         "",
+		"/media/y.php":                  "",
+		"/media/z.php":                  "",
+	} {
+		if v, ok := got[uri]; !ok || v != want {
+			t.Errorf("%s: on disk %q (event %v), want %q", uri, v, ok, want)
+		}
+	}
+}

@@ -477,7 +477,13 @@ requested in upload directories, known webshell names, commands in parameters, P
 files or to endpoints that only serve files, access to sensitive files (`.env`, `.git`, backups),
 path traversal, SQL injection, injection probes, known scanners, brute force on public logins and
 known exploit chains, correlated by IP. The severity of a script in uploads does not depend on the
-HTTP status, which the script itself decides.
+HTTP status, which the script itself decides. For each requested script the sensor also says
+whether it exists in the document roots of the nginx sites writing that log: a request that
+failed for a script found in none of them ran no code, and raises no alert (scanners probe
+thousands of such paths). When nginx may hand the request to a proxy, a root holds a variable,
+or the server is not nginx, the answer is left open and the request is judged as before. A web
+shell used and deleted between two snapshots looks missing: its creation is seen by the
+real-time watch of the upload directories.
 
 What goes into the snapshot: IP, method, path, status, user agent and, for events, the request
 with parameter values **redacted** (only the value that proves the attack is kept; parameters

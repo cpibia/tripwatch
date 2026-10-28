@@ -124,3 +124,45 @@ func deepest(l *Location, uri string) *Location {
 	}
 	return l
 }
+
+// maxScriptFiles bounds the places ScriptFiles names for one request.
+const maxScriptFiles = 64
+
+// ScriptFiles names the files a request for uri could have reached on this host, and false when
+// they cannot be told: a server other than nginx (Apache aliases and proxies are not modelled),
+// a request nginx may hand to a proxy (its location, or a named location try_files or
+// error_page can fall back to), a root that holds a variable or is relative, or more places
+// than the bound. Every root of the site is tried, both as root and as alias of its location, so a file
+// served from any of them is found: naming too many places only makes a file look present.
+func (s *Site) ScriptFiles(uri string) ([]string, bool) {
+	if s.Server != ServerNginx || s.Root == "" {
+		return nil, false
+	}
+	if l := findLocation(s.Locations, uri); l != nil && l.Upstream != "" && !l.Executes {
+		return nil, false
+	}
+	files := []string{path.Join(s.Root, uri)}
+	ok := !strings.Contains(s.Root, "$")
+	var walk func(locs []Location)
+	walk = func(locs []Location) {
+		for _, l := range locs {
+			if strings.HasPrefix(l.Pattern, "@") && l.Upstream != "" && !l.Executes {
+				ok = false
+			}
+			if l.Root != "" {
+				ok = ok && !strings.Contains(l.Root, "$") && path.IsAbs(l.Root)
+				files = append(files, path.Join(l.Root, uri))
+				if !l.isRegex() && l.Modifier != "=" && strings.HasPrefix(uri, l.Pattern) {
+					files = append(files, path.Join(l.Root, strings.TrimPrefix(uri, l.Pattern)))
+				}
+			}
+			walk(l.Locations)
+		}
+	}
+	walk(s.Locations)
+	if !ok || len(files) > maxScriptFiles {
+		return nil, false
+	}
+	slices.Sort(files)
+	return slices.Compact(files), true
+}

@@ -6,6 +6,21 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier, then the sensors (`tripwatch-sensor -update`).
+
+### Sensor
+
+- Each log event names whether the script it requested exists in the document roots of the nginx
+  sites writing that log (`on_disk`: `present` or `missing`), left open when nginx may proxy the
+  request, a root holds a variable, or the server is not nginx.
+
+### Verifier
+
+- A request that failed for a script missing from the server (`pentest_proof_*.php` answered
+  404, `/tmp/phpinfo.php` answered 502) no longer raises "Log: script in upload path" or the
+  other log alerts: no code ran. A script that exists stays serious whatever its status, and
+  the alert says it exists. Until the sensors are updated nothing changes.
+
 ## [0.1.13] - 2026-10-28
 
 Only the sensor's behaviour changes. Update the verifier to keep the versions aligned, then the

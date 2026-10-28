@@ -252,6 +252,15 @@ one leading anywhere else, or named like a script, is.
 Caddy JSON, path decoded twice against double encoding) and applies the rules, with a bounded
 per-IP state to correlate chains. The verifier will use the same code on raw logs.
 
+At the end of a run the collector looks up the script each event names (`weblog.ScriptPath`) in
+the sites that write the event's log (`discovery.Site.ScriptFiles`): every root of the nginx
+site, both as root and as alias of its location, so naming too many places can only make a file
+look present. The answer (`on_disk`: `present`, `missing`, or empty) is left open for a server
+other than nginx, a request its location or a named fallback location may proxy, a root with a
+variable or relative, an event seen in more than one log, an error other than "does not exist",
+or past 4,096 lookups a run. The verifier drops events for a missing script that did not
+succeed (status outside 2xx), and adds to the detail when a requested script exists.
+
 `internal/collector/logs` reads files with a cap per line (`MaxLineLength`; beyond it, it skips to
 the next line without keeping the bytes in memory), per file and per round, and with bounded maps
 during the scan. Together with the offset it saves the hash of the last 4 KB read: on the next

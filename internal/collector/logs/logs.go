@@ -107,9 +107,15 @@ type Event struct {
 	First     time.Time          `json:"first,omitzero"`
 	Last      time.Time          `json:"last,omitzero"`
 	Evidence  AttackerControlled `json:"attacker_controlled"`
+	// OnDisk says whether the script the requests named exists in the document roots of the
+	// sites writing the log: "present", "missing", or empty when that cannot be told.
+	OnDisk string `json:"on_disk,omitempty"`
 
 	path   string
 	ipSeen map[string]struct{}
+	// otherLogs says the requests came from more than one log, so from more than one set of
+	// sites.
+	otherLogs bool
 }
 
 const (
@@ -211,7 +217,8 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 	}
 	run.positions = loadPositions(c.StateDir, &run.res.Issues)
 
-	access, errorLogs := logFiles(src.FS)
+	access, errorLogs, sites := logFiles(src.FS)
+	run.sites = sites
 	for _, name := range access {
 		if err := run.read(ctx, name, "access"); err != nil {
 			return nil, err
@@ -288,9 +295,11 @@ func loadPositions(dir string, issues *collector.Issues) map[string]position {
 }
 
 // logFiles lists the logs to read: those named in the web server configurations, then the
-// standard locations. Paths still holding variables are skipped.
-func logFiles(fsys fs.FS) (access, errorLogs []string) {
+// standard locations, and the sites writing each access log. Paths still holding variables are
+// skipped.
+func logFiles(fsys fs.FS) (access, errorLogs []string, sites map[string][]discovery.Site) {
 	inv := discovery.Inspect(fsys)
+	sites = map[string][]discovery.Site{}
 	add := func(list []string, p string) []string {
 		if p == "" || strings.Contains(p, "$") {
 			return list
@@ -304,6 +313,9 @@ func logFiles(fsys fs.FS) (access, errorLogs []string) {
 	for _, s := range inv.Sites {
 		for _, p := range s.AccessLogs {
 			access = add(access, p)
+			if rel := collector.Rel(p); slices.Contains(access, rel) {
+				sites[rel] = append(sites[rel], s)
+			}
 		}
 		for _, p := range s.ErrorLogs {
 			errorLogs = add(errorLogs, p)
@@ -321,7 +333,7 @@ func logFiles(fsys fs.FS) (access, errorLogs []string) {
 			}
 		}
 	}
-	return access, errorLogs
+	return access, errorLogs, sites
 }
 
 type postTally struct {
@@ -347,6 +359,9 @@ type runState struct {
 	sampleRank int
 	sampleSeen int
 	ruleRanks  map[string][5]int
+	// sites lists the sites writing each access log; statsLeft bounds the files looked up.
+	sites     map[string][]discovery.Site
+	statsLeft int
 }
 
 func (r *runState) read(ctx context.Context, name, kind string) error {
@@ -695,6 +710,7 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 		e.Count++
 		e.Last = req.Time
 		e.addIP(req.IP)
+		e.otherLogs = e.otherLogs || e.Log != "/"+log
 	}
 }
 
@@ -866,7 +882,9 @@ func (r *runState) errorLine(log, line string) {
 }
 
 func (r *runState) finish() {
+	r.statsLeft = maxScriptStats
 	for _, e := range r.events {
+		e.OnDisk = r.onDisk(e)
 		r.res.Events = append(r.res.Events, *e)
 	}
 	slices.SortFunc(r.res.Events, func(a, b Event) int {
@@ -892,4 +910,43 @@ func (r *runState) finish() {
 		return cmp.Or(cmp.Compare(b.DistinctIPs, a.DistinctIPs), cmp.Compare(b.Requests, a.Requests), cmp.Compare(a.Path, b.Path))
 	})
 	r.res.Stats.PostTargets = r.res.Stats.PostTargets[:min(len(r.res.Stats.PostTargets), maxPostTargets)]
+}
+
+// maxScriptStats bounds the files looked up in a run to tell whether requested scripts exist.
+const maxScriptStats = 4096
+
+// onDisk tells whether the script an event's requests named is in a document root of the sites
+// writing its log. It stays unknown unless every place nginx could have served it from is
+// known and was looked at: a file under any of them makes it present.
+func (r *runState) onDisk(e *Event) string {
+	script := weblog.ScriptPath(e.path)
+	if !weblog.IsScript(script) || e.otherLogs {
+		return ""
+	}
+	sites := r.sites[strings.TrimPrefix(e.Log, "/")]
+	if len(sites) == 0 {
+		return ""
+	}
+	var files []string
+	for i := range sites {
+		f, ok := sites[i].ScriptFiles(script)
+		if !ok {
+			return ""
+		}
+		files = append(files, f...)
+	}
+	for _, f := range files {
+		if r.statsLeft == 0 {
+			return ""
+		}
+		r.statsLeft--
+		_, err := fs.Stat(r.src.FS, collector.Rel(f))
+		switch {
+		case err == nil:
+			return "present"
+		case !errors.Is(err, fs.ErrNotExist):
+			return ""
+		}
+	}
+	return "missing"
 }
