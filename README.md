@@ -400,13 +400,25 @@ with the same selection order nginx uses. So it knows which scripts are reachabl
 internet and which are not: an admin tool forgotten among the executable entry points is flagged
 as reachable, a script uploaded to a directory protected by `deny all` is not.
 
+Web servers running in containers (Docker, containerd) are read the same way, from the
+container's own filesystem as its server sees it (`/proc/<pid>/root`), and every path in their
+configuration is translated to where it lies on the host through the container's mounts: a host
+serving each site from its own nginx container gets each site with its domain, its code and its
+logs on the host, and the name of the container. What only the image holds (its default page) is
+not on the host's disk and is left out.
+
 Applications are recognized by their fingerprints in `/var/www`, `/srv`, `/opt`, `/home`, Docker
 volumes and site document roots. Profiles cover the main CMSs and frameworks (WordPress, Drupal 7
 and 8+, Magento, Laravel, Symfony, Django, Rails), Java, Rust, Go, Node and Python applications,
-generic PHP and static sites; for the main frameworks the installed version is read too, from
+generic PHP and static sites. An application no profile describes says where it writes through
+its permissions: a directory of its root anyone may write to is an upload directory, one owned by
+another account than the root's (the web server's, as a rule) holds its data. For the main frameworks the installed version is read too, from
 `composer.lock` when the dependencies are not on disk (Laravel, Symfony, Magento). The verifier
 lists every application with its version, grouped on the servers page and with its path and
-sites on the server's page. Adding a
+sites on the server's page. With a release-based deploy (Capistrano, Deployer) only the release
+a site serves is an application; the others are kept for a rollback. Its upload directory links to
+the deploy's `shared` directory, which may itself lead to the volume the uploads live on: that is
+followed and scanned, not reported as a suspicious link. Adding a
 stack means adding a profile: markers to look for, public directory, upload and data directories,
 files to read the version from.
 

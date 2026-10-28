@@ -504,6 +504,61 @@ func TestApplicationInsideUploads(t *testing.T) {
 	}
 }
 
+// A Capistrano deploy served through its current release: the releases kept for a rollback are
+// no applications of their own, and the uploads every release links to the deploy's shared
+// directory, which itself leads to the volume they live on, are scanned there, not reported as
+// a suspicious link.
+func TestCapistranoDeployWithSharedUploadsElsewhere(t *testing.T) {
+	tr := newTree(t)
+	tr.file("etc/nginx/nginx.conf", "http { server { server_name shop.example.com; root /var/www/shop; } }")
+	for _, r := range []string{"1", "2"} {
+		tr.file("var/www/deploy/releases/"+r+"/wp-includes/version.php", "<?php $wp_version = '6.6.2';")
+		tr.file("var/www/deploy/releases/"+r+"/index.php", "<?php")
+		tr.file("var/www/deploy/releases/"+r+"/wp-content/index.php", "<?php")
+		tr.link("../../../shared/wp-content/uploads", "var/www/deploy/releases/"+r+"/wp-content/uploads")
+	}
+	tr.file("data/uploads/2026/shell.php", `<?php system($_GET['c']);`)
+	tr.file("var/www/deploy/shared/wp-content/index.php", "<?php")
+	// Relative links: outside Linux the test runs without confinement to the observed root.
+	tr.link("../../../../../data/uploads", "var/www/deploy/shared/wp-content/uploads")
+	tr.link("deploy/releases/2", "var/www/shop")
+
+	res := tr.scan()
+	var paths []string
+	for _, a := range res.Apps {
+		paths = append(paths, a.Path)
+	}
+	if !slices.Equal(paths, []string{"/var/www/shop"}) {
+		t.Errorf("applications = %v", paths)
+	}
+	got := findingsOf(res)
+	if !slices.Contains(got, KindScriptInUploads+" /data/uploads/2026/shell.php") || slices.ContainsFunc(got, func(f string) bool { return strings.HasPrefix(f, KindSuspiciousSymlink) }) {
+		t.Errorf("findings = %v", got)
+	}
+}
+
+// An application no profile describes says where it writes through its permissions: a script
+// in a directory anyone may write to is a script in an upload directory, the same file in its
+// code is not.
+func TestWorldWritableDirectoryOfAnUnknownApplication(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/template/page.php", "<?php echo 2;")
+	tr.file("var/www/site/captcha/x.php", "<?php echo 3;")
+	if err := os.Chmod(filepath.Join(tr.root, "var/www/site/captcha"), 0o777); err != nil { //nolint:gosec // world-writable on purpose
+		t.Fatal(err)
+	}
+
+	res := tr.scan()
+	got := findingsOf(res)
+	if !slices.Contains(got, KindScriptInUploads+" /var/www/site/captcha/x.php") || slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "template") }) {
+		t.Errorf("findings = %v", got)
+	}
+	if !slices.Contains(res.Apps[0].UploadDirs, "/var/www/site/captcha") {
+		t.Errorf("upload directories = %v", res.Apps[0].UploadDirs)
+	}
+}
+
 // A network share mounted in an application, in its code or as its uploads, is another
 // machine's and can stall the run: it is left out and said, the rest is scanned.
 func TestNetworkMountsAreNotScanned(t *testing.T) {

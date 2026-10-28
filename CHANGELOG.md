@@ -6,6 +6,18 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- Web servers running in containers are read: their sites, with domain, document root, logs and
+  container name, translated to host paths through the container's mounts. Hosts serving every
+  site from its own nginx container showed only the host's default page.
+- An application no profile describes gets its upload and data directories from their
+  permissions: world-writable ones are uploads, those owned by another account than the
+  application's (the web server's) hold its data.
+- With a release-based deploy only the release a site serves is an application, and an upload
+  directory linked to the deploy's `shared` directory is followed even when that leads to another
+  volume: it was reported as a suspicious link in every release.
+
 ### Verifier
 
 - A sensor stopping for an update no longer leaves "Collector did not complete" alerts for

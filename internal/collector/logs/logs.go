@@ -217,7 +217,7 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 	}
 	run.positions = loadPositions(c.StateDir, &run.res.Issues)
 
-	access, errorLogs, sites := logFiles(src.FS)
+	access, errorLogs, sites := logFiles(src)
 	run.sites = sites
 	for _, name := range access {
 		if err := run.read(ctx, name, "access"); err != nil {
@@ -297,8 +297,9 @@ func loadPositions(dir string, issues *collector.Issues) map[string]position {
 // logFiles lists the logs to read: those named in the web server configurations, then the
 // standard locations, and the sites writing each access log. Paths still holding variables are
 // skipped.
-func logFiles(fsys fs.FS) (access, errorLogs []string, sites map[string][]discovery.Site) {
-	inv := discovery.Inspect(fsys)
+func logFiles(src collector.Source) (access, errorLogs []string, sites map[string][]discovery.Site) {
+	fsys := src.FS
+	inv := discovery.InspectWithContainers(src)
 	sites = map[string][]discovery.Site{}
 	add := func(list []string, p string) []string {
 		if p == "" || strings.Contains(p, "$") {

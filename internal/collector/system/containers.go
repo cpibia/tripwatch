@@ -35,12 +35,15 @@ type Mount struct {
 // Container is a Docker container as its daemon keeps it on disk. Only what gives it power over
 // the host is collected: never its environment, which holds the application's secrets.
 type Container struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Image      string `json:"image"`
-	ImageID    string `json:"image_id,omitempty"`
-	Created    string `json:"created,omitempty"`
-	Running    bool   `json:"running,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	ImageID string `json:"image_id,omitempty"`
+	Created string `json:"created,omitempty"`
+	Running bool   `json:"running,omitempty"`
+	// PID is the container's first process on the host, for those reading the container's own
+	// filesystem through /proc; not part of the snapshot.
+	PID        int    `json:"-"`
 	User       string `json:"user,omitempty"`
 	Privileged bool   `json:"privileged,omitempty"`
 	// CapAdd are the capabilities added to Docker's default set, or for the other runtimes
@@ -56,6 +59,9 @@ type Container struct {
 	// CAP_MKNOD containers have by default, an allowed node can be created and opened.
 	DeviceRules []string `json:"device_rules,omitempty"`
 	Mounts      []Mount  `json:"mounts,omitempty"`
+	// Volumes are the ordinary named volumes, in the daemon's own directory: no power over the
+	// host, so not part of the snapshot, but where an application's files may live.
+	Volumes []Mount `json:"-"`
 	// KernelMounts are, for a running container, the host paths its process's mount table leads
 	// to, one per mount of the same filesystem on the host. They add powers to those of Mounts,
 	// whose text a link swapped around the start can fool, and never take any away.
@@ -167,6 +173,7 @@ func ReadContainer(fsys fs.FS, ref ContainerRef, host *HostMounts, issues *colle
 	if ref.Runtime == "containerd" {
 		if data, err := fs.ReadFile(fsys, path.Join(path.Dir(ref.Path), "init.pid")); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				c.PID = pid
 				c.KernelMounts, c.KernelUnverified = kernelMounts(fsys, pid, host, c.Mounts, issues)
 			}
 		}
@@ -277,6 +284,9 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 			// to bind a host path or mount a device there instead.
 			device, ok := volumeDevice(fsys, path.Dir(path.Dir(dir)), m.Name, m.Driver, issues)
 			if !ok {
+				if path.IsAbs(m.Source) && len(c.Volumes) < maxContainerList {
+					c.Volumes = append(c.Volumes, Mount{Source: m.Source, Destination: m.Destination, RW: m.RW, Volume: m.Name})
+				}
 				continue
 			}
 			mount.Source, mount.Volume = device, m.Name
@@ -286,6 +296,7 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 		c.Mounts = append(c.Mounts, resolveMount(fsys, mount))
 	}
 	if cfg.State.Running {
+		c.PID = cfg.State.Pid
 		c.KernelMounts, c.KernelUnverified = kernelMounts(fsys, cfg.State.Pid, host, c.Mounts, issues)
 	}
 	if data, err := fs.ReadFile(fsys, path.Join(dir, "hostconfig.json")); err == nil {

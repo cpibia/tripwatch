@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/cpibia/tripwatch/internal/collector"
 )
 
 // Profile describes how to recognise an application stack and where its parts live. Paths
@@ -195,7 +197,30 @@ func FindApplications(fsys fs.FS, sites []Site) []Application {
 		}
 		apps = append(apps, app)
 	}
-	return apps
+	return withoutIdleReleases(fsys, apps)
+}
+
+// withoutIdleReleases drops the releases of a release-based deploy (Capistrano, Deployer:
+// deploy/releases/N, served through a link such as current) that no site serves, once one of
+// the deploy's releases is served: they are its history, kept for a rollback, and listing each
+// as an application of its own only repeats the one in use.
+func withoutIdleReleases(fsys fs.FS, apps []Application) []Application {
+	served := map[string]bool{}
+	for _, a := range apps {
+		if len(a.Sites) == 0 {
+			continue
+		}
+		where, err := collector.ResolvePath(fsys, strings.TrimPrefix(a.Path, "/"))
+		if err != nil {
+			continue
+		}
+		if p := "/" + where; path.Base(path.Dir(p)) == "releases" {
+			served[path.Dir(path.Dir(p))] = true
+		}
+	}
+	return slices.DeleteFunc(apps, func(a Application) bool {
+		return len(a.Sites) == 0 && path.Base(path.Dir(a.Path)) == "releases" && served[path.Dir(path.Dir(a.Path))]
+	})
 }
 
 func newApplication(fsys fs.FS, dir string, p *Profile) Application {

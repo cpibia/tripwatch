@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,7 +77,13 @@ func isDegraded() bool {
 // normally: its magic links (/proc/<pid>/exe) are what the process collector needs.
 func openPath(dir, name string) (*os.File, error) {
 	full := filepath.Join(dir, filepath.FromSlash(name))
-	if dir == "/" || name == "proc" || strings.HasPrefix(name, "proc/") {
+	inProc := name == "proc" || strings.HasPrefix(name, "proc/")
+	if inProc && containerRoot.MatchString(dir) {
+		// A container's /proc is its own, and its magic links resolve outside its root: nothing
+		// read from a container needs it.
+		return nil, &os.PathError{Op: "open", Path: full, Err: syscall.ENOENT}
+	}
+	if dir == "/" || inProc {
 		return openFlags(full, pathFlags)
 	}
 	if !isDegraded() {
@@ -291,6 +298,17 @@ func rootDescriptor(dir string) (int, error) {
 		return prev.(int), nil
 	}
 	return fd, nil
+}
+
+// containerRoot matches the root of a view of a container's filesystem (ContainerSource).
+var containerRoot = regexp.MustCompile(`/proc/[0-9]+/root$`)
+
+// releaseRoot closes the descriptor kept for dir: a container's root lives as long as the
+// container, and the next one may get the same process ID.
+func releaseRoot(dir string) {
+	if fd, ok := rootFDs.LoadAndDelete(dir); ok {
+		_ = syscall.Close(fd.(int))
+	}
 }
 
 func openFlags(full string, flags int) (*os.File, error) {

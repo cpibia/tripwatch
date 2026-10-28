@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,6 +59,14 @@ func NewSource(dir string) Source {
 		FS:    rootFS{dir: dir},
 		Attrs: func(name string) (Attrs, error) { return attrsIn(dir, name) },
 	}
+}
+
+// ContainerSource observes the filesystem a container's process sees, through
+// /proc/<pid>/root: its image with the volumes and directories mounted in it, links resolved
+// inside it. release frees the root, which is held open until then.
+func ContainerSource(src Source, pid int) (view Source, release func()) {
+	dir := filepath.Join(cmp.Or(src.Root, "/"), "proc", strconv.Itoa(pid), "root")
+	return NewSource(dir), func() { releaseRoot(dir) }
 }
 
 // Rel converts an absolute path, as found in configuration files, to a Source path.

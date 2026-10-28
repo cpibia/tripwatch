@@ -41,6 +41,14 @@ type Inventory struct {
 // Inspect builds the web inventory: sites from every web server configuration present,
 // applications on disk and the runtimes currently running.
 func Inspect(fsys fs.FS) Inventory {
+	inv := inspectSites(fsys)
+	inv.Applications = FindApplications(fsys, inv.Sites)
+	inv.Runtimes = runningRuntimes(fsys)
+	return inv
+}
+
+// inspectSites reads the sites of the web servers installed on the host.
+func inspectSites(fsys fs.FS) Inventory {
 	var inv Inventory
 	servers := []struct {
 		parse     func(fs.FS) ([]Site, []string, collector.Issues)
@@ -72,8 +80,6 @@ func Inspect(fsys fs.FS) Inventory {
 			}
 		}
 	}
-	inv.Applications = FindApplications(fsys, inv.Sites)
-	inv.Runtimes = runningRuntimes(fsys)
 	return inv
 }
 

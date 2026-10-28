@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -189,4 +190,36 @@ func TestUserspaceResolutionRace(t *testing.T) {
 	}
 	close(stop)
 	<-done
+}
+
+// A container's filesystem is read through /proc/<pid>/root, links resolved inside it, and its
+// /proc, whose magic links lead outside, is never opened; released, its root is closed.
+func TestContainerSource(t *testing.T) {
+	root := t.TempDir()
+	mustMkdir(t, filepath.Join(root, "etc"))
+	if err := os.WriteFile(filepath.Join(root, "etc", "site.conf"), []byte("in the container"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/site.conf", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// The test's own process stands for the container: its root is the real one, so the
+	// observed host is a directory whose proc/<pid>/root leads to root.
+	host := t.TempDir()
+	pid := os.Getpid()
+	mustMkdir(t, filepath.Join(host, "proc", strconv.Itoa(pid)))
+	if err := os.Symlink(root, filepath.Join(host, "proc", strconv.Itoa(pid), "root")); err != nil {
+		t.Fatal(err)
+	}
+	view, release := ContainerSource(Source{Root: host}, pid)
+	if data, err := fs.ReadFile(view.FS, "link"); err != nil || string(data) != "in the container" {
+		t.Fatalf("read through the view: %q, %v", data, err)
+	}
+	if _, err := fs.Stat(view.FS, "proc/self"); err == nil {
+		t.Error("the container's /proc was opened")
+	}
+	release()
+	if _, ok := rootFDs.Load(filepath.Join(host, "proc", strconv.Itoa(pid), "root")); ok {
+		t.Error("root still held after release")
+	}
 }

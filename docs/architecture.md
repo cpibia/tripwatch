@@ -215,6 +215,14 @@ queries it in the same order nginx does (exact match, longest prefix, `^~`, rege
 order, nested regexes before outer ones): `Site.Executes(uri)` tells whether a request reaches the
 interpreter. For Apache and Caddy it is enough to know whether there is a PHP handler.
 
+`InspectWithContainers` also reads the web servers of running containers. Each container's
+filesystem is opened through `/proc/<pid>/root` (`collector.ContainerSource`), with the same
+confinement as the host's and its `/proc` refused, since its magic links lead outside; the root
+descriptor is released after the container is read, because the next container may get the same
+PID. Paths in the configuration (roots, `alias`, logs, the files themselves) are translated
+through the deepest of the container's bind mounts and named volumes; one inside the image has no
+place on the host and is dropped, with an issue for a named site.
+
 Applications are recognised through profiles: markers that must exist, the public directory,
 upload directories, data directories and the files to read the version from. Specific profiles
 come before generic ones, and site roots are tried from the outermost to the innermost, so

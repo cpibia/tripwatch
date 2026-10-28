@@ -12,6 +12,8 @@ import (
 // root; files are still checked before and after opening so that FIFOs and devices are never
 // read.
 
+func releaseRoot(string) {}
+
 // Warnings has nothing to report outside Linux.
 func Warnings() []string { return nil }
 

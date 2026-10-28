@@ -16,8 +16,11 @@ const (
 
 // Site is a virtual host found in a web server configuration.
 type Site struct {
-	Server     string   `json:"server"`
-	Config     string   `json:"config"`
+	Server string `json:"server"`
+	Config string `json:"config"`
+	// Container names the container whose web server serves the site; its paths are given
+	// where they lie on the host.
+	Container  string   `json:"container,omitempty"`
 	Names      []string `json:"names,omitempty"`
 	Listen     []string `json:"listen,omitempty"`
 	Root       string   `json:"root,omitempty"`

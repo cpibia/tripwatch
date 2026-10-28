@@ -189,7 +189,7 @@ func (c *Collector) Commit() error { return c.pending.commit() }
 // Collect scans every application. When the context expires the scan stops where it is and the
 // partial result is returned, marked as truncated, rather than lost.
 func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
-	res := Result{Inventory: discovery.Inspect(src.FS)}
+	res := Result{Inventory: discovery.InspectWithContainers(src)}
 	budget := newHashBudget()
 	mounts, err := collector.NetworkMounts(src)
 	if err != nil {
@@ -338,12 +338,21 @@ func newScanner(src collector.Source, app discovery.Application, sites []discove
 			s.sites = append(s.sites, site)
 		}
 	}
+	// An application served through a link to its current release (current -> releases/N)
+	// belongs to that deploy as much as the releases listed next to it.
+	paths := []string{}
+	if where, err := collector.ResolvePath(src.FS, s.root); err == nil && where != s.root {
+		paths = append(paths, "/"+where)
+	}
 	for _, other := range apps {
 		if strings.HasPrefix(other.Path, app.Path+"/") {
 			s.nested = append(s.nested, strings.TrimPrefix(other.Path, "/"))
 		}
-		if path.Base(path.Dir(other.Path)) == "releases" {
-			if root := path.Dir(path.Dir(other.Path)); strings.Count(root, "/") >= 2 && !slices.Contains(s.deployRoots, root) {
+		paths = append(paths, other.Path)
+	}
+	for _, p := range paths {
+		if path.Base(path.Dir(p)) == "releases" {
+			if root := path.Dir(path.Dir(p)); strings.Count(root, "/") >= 2 && !slices.Contains(s.deployRoots, root) {
 				s.deployRoots = append(s.deployRoots, root)
 			}
 		}
@@ -351,8 +360,58 @@ func newScanner(src collector.Source, app discovery.Application, sites []discove
 	if s.profile != nil {
 		s.uploads = s.expand(s.profile.UploadDirs)
 		s.data = s.expand(s.profile.DataDirs)
+		if s.profile.Generic {
+			s.writableDirs()
+		}
 	}
 	return s
+}
+
+// maxWritableDirs bounds the directories an application without a known stack gets from its
+// permissions.
+const maxWritableDirs = 64
+
+// writableDirs finds, for an application no profile describes, where it keeps what it writes
+// at runtime, from who may write there: a directory of its root anyone may write to is an
+// upload directory, one owned by another account than the root's, the web server's as a
+// rule, holds its data (caches, compiled templates, files it was sent).
+func (s *scanner) writableDirs() {
+	rootInfo, err := fs.Stat(s.src.FS, s.root)
+	if err != nil {
+		return
+	}
+	rootOwner, ok := collector.Owner(rootInfo)
+	if !ok {
+		return
+	}
+	entries, err := fs.ReadDir(s.src.FS, s.root)
+	if err != nil {
+		return
+	}
+	found := 0
+	for _, e := range entries {
+		if !e.IsDir() || found == maxWritableDirs {
+			continue
+		}
+		name := path.Join(s.root, e.Name())
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		owner, ok := collector.Owner(info)
+		switch {
+		case info.Mode().Perm()&0o002 != 0:
+			if !slices.Contains(s.uploads, name) {
+				s.uploads = append(s.uploads, name)
+				found++
+			}
+		case ok && owner != 0 && owner != rootOwner:
+			if !slices.Contains(s.data, name) {
+				s.data = append(s.data, name)
+				found++
+			}
+		}
+	}
 }
 
 // expand resolves profile globs (sites/*/files) to concrete paths inside the application.
@@ -607,7 +666,9 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 // followable allows a linked upload or data directory to lead inside the application, or into
 // the directory that holds it and its siblings (releases/5/storage -> ../../shared/storage with
 // release-based deploys), never above that and never into system trees. The decision is taken
-// on the fully resolved location, since the target can itself go through further links.
+// on the fully resolved location, since the target can itself go through further links, with
+// one exception: the deploy's shared directory may itself lead elsewhere, to the volume the
+// uploads of every server live on, as long as that is no system tree.
 func (s *scanner) followable(name string) (string, bool) {
 	resolved, err := collector.ResolvePath(s.src.FS, name)
 	if err != nil {
@@ -619,11 +680,32 @@ func (s *scanner) followable(name string) (string, bool) {
 		return resolved, true
 	}
 	deploy := path.Dir(path.Dir(root))
-	if strings.Count(deploy, "/") >= 2 && strings.HasPrefix(abs, deploy+"/") {
+	roots := s.deployRoots
+	if strings.Count(deploy, "/") >= 2 {
+		roots = append(slices.Clone(roots), deploy)
+	}
+	if slices.ContainsFunc(roots, func(d string) bool { return strings.HasPrefix(abs, d+"/") }) {
 		return resolved, true
 	}
-	return resolved, slices.ContainsFunc(s.deployRoots, func(d string) bool { return strings.HasPrefix(abs, d+"/") })
+	target, err := fs.ReadLink(s.src.FS, name)
+	if err != nil {
+		return resolved, false
+	}
+	if !path.IsAbs(target) {
+		// Relative to where the link really is: the application may be reached through a
+		// link itself (current -> releases/N).
+		dir, err := collector.ResolvePath(s.src.FS, path.Dir(name))
+		if err != nil {
+			return resolved, false
+		}
+		target = path.Join("/"+dir, target)
+	}
+	shared := slices.ContainsFunc(roots, func(d string) bool { return strings.HasPrefix(path.Clean(target), d+"/shared/") })
+	return resolved, shared && !slices.ContainsFunc(systemTrees, func(t string) bool { return abs == t || strings.HasPrefix(abs, t+"/") }) && abs != "/"
 }
+
+// systemTrees are never scanned as an application's data, wherever a link leads.
+var systemTrees = []string{"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/root", "/proc", "/sys", "/dev", "/run", "/var/lib", "/var/run"}
 
 // unchanged reports whether dir still resolves to itself, that is no component of it has been
 // replaced by a link since the walk entered it. Followed trees are walked by their real path
