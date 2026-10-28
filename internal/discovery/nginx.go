@@ -286,6 +286,7 @@ func nginxServers(tree []directive, prefix string) []Site {
 			}
 
 			site.Locations = nginxLocations(server.Block, expand, &site.Upstreams)
+			site.answers = last(server.Block, "return") != ""
 			sites = append(sites, site)
 		}
 	}

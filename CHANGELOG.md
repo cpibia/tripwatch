@@ -8,6 +8,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- A failed request in the log of a site that answers every request itself (`return`) or hands
+  it to a proxy is a probe, like one for a script missing from disk: the backend's own log
+  judges what ran there. Scanners hitting the proxy of a host whose sites live in containers
+  raised dozens of high alerts.
+
 - A container with power over the host that keeps its name, tag and powers but runs another
   image raises a medium alert: a retagged image is another program with root on the host
   (SEC-189, snapshot side).

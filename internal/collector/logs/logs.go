@@ -108,7 +108,8 @@ type Event struct {
 	Last      time.Time          `json:"last,omitzero"`
 	Evidence  AttackerControlled `json:"attacker_controlled"`
 	// OnDisk says whether the script the requests named exists in the document roots of the
-	// sites writing the log: "present", "missing", or empty when that cannot be told.
+	// sites writing the log: "present", "missing", "elsewhere" when every site answers it
+	// itself or passes it to a proxy, or empty when that cannot be told.
 	OnDisk string `json:"on_disk,omitempty"`
 
 	path   string
@@ -927,6 +928,9 @@ func (r *runState) onDisk(e *Event) string {
 	sites := r.sites[strings.TrimPrefix(e.Log, "/")]
 	if len(sites) == 0 {
 		return ""
+	}
+	if !slices.ContainsFunc(sites, func(s discovery.Site) bool { return !s.RunsNothing(script) }) {
+		return "elsewhere"
 	}
 	var files []string
 	for i := range sites {

@@ -38,6 +38,9 @@ type Site struct {
 	// files a request reaches cannot be told. Both only serve ScriptFiles, in the sensor.
 	aliases []alias
 	opaque  bool
+	// answers says the server block answers every request itself with "return" (a redirect to
+	// HTTPS, nginx's 444 for unknown names), so no location and no script is reached.
+	answers bool
 }
 
 type alias struct{ url, dir string }
@@ -134,6 +137,20 @@ func deepest(l *Location, uri string) *Location {
 		return nested
 	}
 	return l
+}
+
+// RunsNothing reports whether nginx answers a request for uri without running anything on this
+// host: the server block answers every request itself, or the location hands it to a proxy
+// (not to FastCGI), whose own log tells what ran there.
+func (s *Site) RunsNothing(uri string) bool {
+	if s.Server != ServerNginx {
+		return false
+	}
+	if s.answers {
+		return true
+	}
+	l := findLocation(s.Locations, uri)
+	return l != nil && l.Upstream != "" && !l.Executes
 }
 
 // maxScriptFiles bounds the places ScriptFiles names for one request.

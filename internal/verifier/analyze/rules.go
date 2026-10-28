@@ -1159,9 +1159,10 @@ func Evaluate(prev *State, cur State) []Finding {
 		attempts := map[string]bool{}
 		for _, e := range l.Events {
 			// A request that failed for a script missing from every root nginx could serve it
-			// from ran no code: a probe, not an intrusion. A web shell answers as it likes, so
+			// from ran no code: a probe, not an intrusion. Nor did one a proxy answered itself or
+			// passed on, whose backend's own log judges it. A web shell answers as it likes, so
 			// one that exists stays serious whatever its status.
-			if e.OnDisk == "missing" && (e.Status < 200 || e.Status >= 300) {
+			if (e.OnDisk == "missing" || e.OnDisk == "elsewhere") && (e.Status < 200 || e.Status >= 300) {
 				continue
 			}
 			if e.Severity == "medium" && slices.Contains(attemptRules, e.Rule) {

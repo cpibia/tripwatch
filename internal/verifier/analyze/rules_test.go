@@ -117,6 +117,8 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 		event("/uploads/shell.php", 404, "present"),
 		event("/uploads/unknown.php", 404, ""),
 		event("/uploads/gone.php", 200, "missing"),
+		event("/uploads/proxied.php", 404, "elsewhere"),
+		event("/uploads/proxied-ok.php", 200, "elsewhere"),
 	}}
 	var got []string
 	for _, f := range Evaluate(nil, cur) {
@@ -128,7 +130,7 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 		}
 	}
 	slices.Sort(got)
-	if want := []string{"GET /uploads/gone.php", "GET /uploads/shell.php", "GET /uploads/unknown.php"}; !slices.Equal(got, want) {
+	if want := []string{"GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php"}; !slices.Equal(got, want) {
 		t.Errorf("alerts for %v, want %v", got, want)
 	}
 }

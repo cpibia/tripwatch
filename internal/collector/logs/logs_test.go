@@ -562,6 +562,7 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		server { root /var/www/a/public; access_log /var/log/nginx/access.log; location ~ \.php$ { fastcgi_pass unix:/run/php.sock; } }
 		server { root /var/www/b; access_log /var/log/nginx/access.log; location /api/ { proxy_pass http://127.0.0.1:8080; } }
 		server { root /var/www/c; access_log /var/log/nginx/c.log; location / { proxy_pass http://127.0.0.1:9000; } }
+		server { listen 80; access_log /var/log/nginx/redirect.log; return 301 https://$host$request_uri; }
 	}`)
 	write("var/www/b/uploads/shell.php", "<?php")
 	h.writeLog(logLine("203.0.113.7", "GET", "/wp-content/uploads/probe.php", 404) +
@@ -570,6 +571,7 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		logLine("203.0.113.7", "GET", "/.env", 404))
 	write("var/log/nginx/c.log", logLine("203.0.113.8", "GET", "/media/y.php", 404))
 	write("var/log/nginx/other.access.log", logLine("203.0.113.9", "GET", "/media/z.php", 404))
+	write("var/log/nginx/redirect.log", logLine("203.0.113.10", "GET", "/tmp/phpinfo.php", 301))
 
 	got := map[string]string{}
 	for _, e := range h.run().Events {
@@ -580,7 +582,8 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		"/uploads/shell.php/x.jpg":      "present",
 		"/api/files/x.php":              "",
 		"/.env":                         "",
-		"/media/y.php":                  "",
+		"/media/y.php":                  "elsewhere",
+		"/tmp/phpinfo.php":              "elsewhere",
 		"/media/z.php":                  "",
 	} {
 		if v, ok := got[uri]; !ok || v != want {
