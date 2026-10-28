@@ -888,8 +888,12 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	php := s.isPHP(base)
 
 	switch {
-	case image && containsCode(content):
+	case image && polyglot(content, php):
 		s.add(KindPolyglotImage, name, e, nil)
+	case script && inUploads && complete && php && (exitGuarded(content) || dataOnly(content)):
+		// A plugin's log kept under a .php name with an exit in front, so that requesting it
+		// shows nothing, or a theme's layouts kept as a returned array: nothing in either runs.
+		s.withdraw(KindScriptInUploads, name)
 	case script && inUploads && complete && isPlaceholder(content):
 		// The names pass reported it; the content shows an empty placeholder.
 		s.withdraw(KindScriptInUploads, name)
@@ -903,7 +907,11 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	case script && inUploads:
 		s.add(KindScriptInUploads, name, e, matchSignatures(content, php))
 	case inUploads && !script && containsCode(content):
-		s.add(KindCodeInUploads, name, e, matchSignatures(content, false))
+		// An archive or a document holding PHP (a plugin backed up as a zip) runs nothing; one
+		// named by a signature is still reported.
+		if sigs := matchSignatures(content, false); !mediaOrDocument(content) || len(strongInDocuments(content, sigs)) > 0 {
+			s.add(KindCodeInUploads, name, e, sigs)
+		}
 	case inData && !script && !image:
 		if sigs := s.codeInData(name, e, content); len(sigs) > 0 {
 			s.add(KindCodeInData, name, e, sigs)
@@ -922,10 +930,16 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 		}
 	}
 	hidden := isSuspiciousHidden(e.Name())
-	// Signatures above still apply to these: only the hidden name stops being a finding.
-	if script && hidden && !inDependencyTests(name) {
+	// Signatures above still apply to these: only the hidden name stops being a finding. A
+	// hidden .php with no PHP in it, or that only sets values, runs nothing (the ._ files macOS
+	// leaves in a zip it packed, a CMS's version file), and an empty file, an image, a video or a document a CMS saved without a name
+	// before its extension hides nothing.
+	runsNothing := php && complete && (!bytes.Contains(content, []byte("<?")) || onlyLiterals(content))
+	switch {
+	case script && hidden && !inDependencyTests(name) && !runsNothing:
 		s.add(KindHiddenScript, name, e, nil)
-	} else if inData && hidden {
+	case inData && hidden && !script && (complete && len(content) == 0 || mediaOrDocument(content)):
+	case inData && hidden:
 		s.add(KindHiddenInData, name, e, nil)
 	}
 
@@ -1043,6 +1057,28 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	return strongInDocuments(head, c.signatures())
 }
 
+// mediaMagic are the first bytes of the images, videos and sounds uploaded every day.
+var mediaMagic = [][]byte{[]byte("\x89PNG"), []byte("\xff\xd8\xff"), []byte("GIF8"), []byte("RIFF"), []byte("ID3"), []byte("\x1a\x45\xdf\xa3"),
+	[]byte("OggS"), []byte("fLaC"), []byte("II*\x00"), []byte("MM\x00*")}
+
+// mediaOrDocument reports content that starts like a document, an archive or a media file. MP4
+// and QuickTime name their type after a four-byte box size.
+func mediaOrDocument(head []byte) bool {
+	starts := func(m []byte) bool { return bytes.HasPrefix(head, m) }
+	return slices.ContainsFunc(documentMagic, starts) || slices.ContainsFunc(mediaMagic, starts) ||
+		len(head) >= 12 && bytes.Equal(head[4:8], []byte("ftyp"))
+}
+
+// polyglot reports an image carrying server-side code. The full open tag cannot come from
+// compressed pixels by chance; the short echo tag can, every few megabytes, so it counts only
+// with code a signature names.
+func polyglot(content []byte, php bool) bool {
+	if bytes.Contains(content, []byte("<?php")) || bytes.Contains(content, []byte("<?PHP")) || bytes.Contains(content, []byte("__HALT_COMPILER")) {
+		return true
+	}
+	return containsCode(content) && slices.ContainsFunc(matchSignatures(content, php), func(sig string) bool { return !slices.Contains(weakCodeSignals, sig) })
+}
+
 // documentMagic are the first bytes of the documents and archives uploaded every day: PDF,
 // ZIP (and the Office and OpenDocument formats inside), gzip, old Office, 7-Zip and RAR.
 var documentMagic = [][]byte{[]byte("%PDF-"), []byte("PK\x03\x04"), []byte("\x1f\x8b"), []byte("\xd0\xcf\x11\xe0"), []byte("7z\xbc\xaf"), []byte("Rar!")}
@@ -1055,7 +1091,7 @@ var weakCodeSignals = []string{"backtick_exec", "dangerous_call"}
 // archive: their compressed streams hold an open tag and a backtick by chance every few
 // megabytes, in text PHP would compile, while code planted to run is named by a signature.
 func strongInDocuments(head []byte, sigs []string) []string {
-	if !slices.ContainsFunc(documentMagic, func(m []byte) bool { return bytes.HasPrefix(head, m) }) {
+	if !mediaOrDocument(head) {
 		return sigs
 	}
 	return slices.DeleteFunc(sigs, func(s string) bool { return slices.Contains(weakCodeSignals, s) })

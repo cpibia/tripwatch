@@ -8,6 +8,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- What real sites keep in their uploads and code that runs nothing is no longer reported: a
+  plugin's log kept as `.php` behind an `exit`, a theme's layouts kept as a PHP file returning a
+  literal array, archives and documents holding PHP (a plugin backed up as a zip) unless a
+  signature names their content, the `._` files macOS leaves in a zip, a hidden PHP file that
+  only sets values (a CMS's version file), hidden files that are empty or an image, a video or a
+  document saved without a name.
+- An image is a polyglot only with a full PHP open tag or code a signature names: the short echo
+  tag turns up in compressed pixels by chance. Weak code signals are dropped in media files as
+  they were in documents (a backtick in a video).
+
 - A container's site that answers any name (`server_name _`) takes the domains of the proxy
   sites that send their requests to a loopback port the container publishes.
 

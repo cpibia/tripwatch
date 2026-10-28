@@ -218,6 +218,91 @@ func isPlaceholder(content []byte) bool {
 	return len(rest) == 0
 }
 
+// literalsOnly matches PHP that only sets variables or constants to literal values, the way a
+// CMS records its schema version in a small file of its own.
+var literalsOnly = regexp.MustCompile(`(?s)^<\?php(?:\s*(?:\$\w+|define\s*\(\s*'\w+'\s*,)\s*=?\s*(?:'[^'\\]*'|"[^"\\$]*"|-?\d+(?:\.\d+)?|true|false|null)\s*\)?\s*;)+\s*(?:\?>\s*)?$`)
+
+// onlyLiterals reports a short PHP file that sets values and runs nothing.
+func onlyLiterals(content []byte) bool {
+	return len(content) <= 1024 && literalsOnly.Match(bytes.TrimSpace(stripPHPComments(content)))
+}
+
+// maxDataOnly bounds the PHP files checked for holding data alone.
+const maxDataOnly = 4 << 20
+
+// dataOnly reports a PHP file that only returns or assigns literal data, as a theme keeps its
+// page layouts in the uploads (<?php return array(...)): strings without interpolation,
+// numbers, the words for arrays and constants, and punctuation. Nothing in it can call
+// anything: a parenthesis after anything but "array", a variable used as a function, a
+// backtick, an interpolated string or any other word, and it is code.
+func dataOnly(content []byte) bool {
+	if len(content) > maxDataOnly {
+		return false
+	}
+	src := bytes.TrimSpace(bytes.TrimPrefix(content, []byte("\xef\xbb\xbf")))
+	if !bytes.HasPrefix(src, []byte("<?php")) {
+		return false
+	}
+	src = bytes.TrimSuffix(src[len("<?php"):], []byte("?>"))
+	word := ""
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		switch {
+		case c == '\'' || c == '"':
+			j := i + 1
+			for ; j < len(src) && src[j] != c; j++ {
+				if c == '"' && (src[j] == '$' || src[j] == '{') {
+					return false
+				}
+				if src[j] == '\\' {
+					j++
+				}
+			}
+			if j >= len(src) {
+				return false
+			}
+			i, word = j, ""
+		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '$':
+			j := i + 1
+			for j < len(src) && (src[j] == '_' || src[j] >= 'a' && src[j] <= 'z' || src[j] >= 'A' && src[j] <= 'Z' || src[j] >= '0' && src[j] <= '9') {
+				j++
+			}
+			word = strings.ToLower(string(src[i:j]))
+			if !strings.HasPrefix(word, "$") && !slices.Contains([]string{"return", "array", "true", "false", "null"}, word) {
+				return false
+			}
+			i = j - 1
+		case c == '(':
+			if word != "array" {
+				return false
+			}
+			word = ""
+		case c >= '0' && c <= '9', c == '.', c == '-', c == '+':
+		case strings.IndexByte(" \t\r\n,;=>)[]", c) >= 0:
+			if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+				word = ""
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// exitGuard is the code a plugin puts in front of a log it keeps under a .php name.
+var exitGuard = regexp.MustCompile(`(?is)^\s*(?:defined\s*\(\s*['"]\w+['"]\s*\)\s*(?:or|\|\|)\s*)?(?:exit|die)\s*(?:\(\s*(?:'[^']*'|"[^"]*"|\d*)\s*\))?\s*;?\s*$`)
+
+// exitGuarded reports a file whose only PHP is an exit at its very start, closed before the
+// rest: nothing it holds after that runs.
+func exitGuarded(content []byte) bool {
+	rest := bytes.TrimLeft(bytes.TrimPrefix(content, []byte("\xef\xbb\xbf")), " \t\r\n")
+	if !bytes.HasPrefix(rest, []byte("<?php")) {
+		return false
+	}
+	code, data, ok := bytes.Cut(rest[len("<?php"):], []byte("?>"))
+	return ok && exitGuard.Match(code) && !bytes.Contains(data, []byte("<?"))
+}
+
 // dangerousCall is what PHP code planted in a data file does: run commands, evaluate or include
 // something, write files, read the request or its headers. A data file holds no code at all, so
 // any of these in a block after a real open tag is enough.

@@ -504,6 +504,53 @@ func TestApplicationInsideUploads(t *testing.T) {
 	}
 }
 
+// What real sites keep in their trees and is no code that runs, next to the same names carrying
+// code: logs behind an exit, archives of plugins, the metadata files macOS leaves in a zip, a
+// CMS's version file, images saved without a name, pixels that happen to spell a short tag.
+func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/blog/wp-includes/version.php", "<?php $wp_version = '6.6.2';")
+	up := "var/www/blog/wp-content/uploads/"
+	tr.file(up+"plugin/debug-log.php", "<?php exit; ?>\n[2026-10-28] request sent\n")
+	tr.file(up+"plugin/guarded-then-code.php", "<?php exit; ?>\n<?php system($_GET['c']);")
+	tr.file(up+"layouts/dance.php", "<?php\nreturn array(\n  'title' => 'Dance studio',\n  'content' => \"<div class='x'>[fusion_builder]</div>\",\n  'ratio' => 1.5, 'tags' => [true, null, -2],\n);\n")
+	tr.file(up+"layouts/call.php", "<?php return array('a' => system($_GET['c']));")
+	tr.file(up+"layouts/variable.php", "<?php $f = 'system'; $f($_GET['c']);")
+	tr.file(up+"layouts/interpolated.php", "<?php return array('a' => \"{$_GET['c']}\");")
+	tr.file(up+"backup-plugin.zip", "PK\x03\x04\x14\x00<?php echo 'plugin';")
+	tr.file(up+"dropper.zip", "PK\x03\x04\x14\x00<?php system($_GET['c']);")
+	tr.file(up+".png", "\x89PNG\r\n\x1a\nIHDR")
+	tr.file(up+".empty", "")
+	tr.file(up+".secret", "notes")
+	tr.file(up+"pixels.png", "\x89PNG\r\n\x1a\nIDAT<?=$x random")
+	tr.file(up+"shell.png", "\x89PNG\r\n\x1a\nIDAT<?php echo 1;")
+	tr.file(up+"clip.mp4", "\x00\x00\x00\x18ftypmp42<?php `x`")
+	tr.file("var/www/blog/wp-content/plugins/kit/__MACOSX/._kit.php", "\x00\x05\x16\x07Mac OS X        ATTR")
+	tr.file("var/www/blog/.dbVersion.php", "<?php $dbVersion = '8.0'; ?>")
+	tr.file("var/www/blog/.loader.php", "<?php include $_GET['f'];")
+
+	got := findingsOf(tr.scan())
+	for _, want := range []string{
+		KindScriptInUploads + " /" + up + "plugin/guarded-then-code.php",
+		KindScriptInUploads + " /" + up + "layouts/call.php",
+		KindScriptInUploads + " /" + up + "layouts/variable.php",
+		KindScriptInUploads + " /" + up + "layouts/interpolated.php",
+		KindCodeInUploads + " /" + up + "dropper.zip",
+		KindHiddenInData + " /" + up + ".secret",
+		KindPolyglotImage + " /" + up + "shell.png",
+		KindHiddenScript + " /var/www/blog/.loader.php",
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	for _, name := range []string{"debug-log.php", "dance.php", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
+		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
+			t.Errorf("%s reported: %v", name, got)
+		}
+	}
+}
+
 // A Capistrano deploy served through its current release: the releases kept for a rollback are
 // no applications of their own, and the uploads every release links to the deploy's shared
 // directory, which itself leads to the volume they live on, are scanned there, not reported as
