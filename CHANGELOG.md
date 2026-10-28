@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- The sensor version shown for a host is the one of its latest start: an updated sensor shows
+  its new version right away instead of after its first snapshot, which can take minutes.
+
 ## [0.1.19] - 2026-10-28
 
 Update the verifier, then the sensors.

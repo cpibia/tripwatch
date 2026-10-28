@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"slices"
 	"testing"
+	"time"
 )
 
 // A host's applications read in one line: one group per framework and version with how many,
@@ -22,5 +24,31 @@ func TestAppGroups(t *testing.T) {
 	}
 	if sorted := f.SortedApps(); sorted[0].Path != "/var/www/html" || sorted[1].Path != "/var/www/blog" || len(sorted) != len(f.Apps) {
 		t.Errorf("sorted = %v", sorted)
+	}
+}
+
+// The version shown is the one the sensor started with, not the one of its last snapshot: an
+// update shows before the first snapshot of the new version is collected.
+func TestFactsVersionFromLatestStart(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	if err := s.SetFacts(ctx, "web-01", HostFacts{SensorVersion: "0.1.16", SeenAt: t0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFacts(ctx, "web-02", HostFacts{SensorVersion: "0.1.16", SeenAt: t0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Started(ctx, "web-01", "b1", "0.1.19", t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	facts, err := s.Facts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := facts["web-01"].SensorVersion; v != "0.1.19" {
+		t.Errorf("updated sensor shows %q", v)
+	}
+	if v := facts["web-02"].SensorVersion; v != "0.1.16" {
+		t.Errorf("sensor without a recorded start shows %q", v)
 	}
 }

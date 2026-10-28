@@ -105,8 +105,8 @@ func (s *Store) SetFacts(ctx context.Context, host string, f HostFacts) error {
 // interface was in English say "versione".
 var startedVersion = regexp.MustCompile(`\(versione? ([0-9A-Za-z.+~-]+),`)
 
-// Facts returns the facts of every host. A host whose sensor predates the system block still
-// gets its version, from the signed event of its latest start.
+// Facts returns the facts of every host, with the sensor version from the signed event of its
+// latest start.
 func (s *Store) Facts(ctx context.Context) (map[string]HostFacts, error) {
 	out := map[string]HostFacts{}
 	rows, err := s.db.QueryContext(ctx, `SELECT host_id, facts FROM host_facts`)
@@ -142,12 +142,27 @@ func (s *Store) Facts(ctx context.Context) (map[string]HostFacts, error) {
 			started[host] = m[1]
 		}
 	}
+	if err := events.Err(); err != nil {
+		return nil, err
+	}
+	// The version of the latest start wins over the snapshot's: a sensor just updated reports it
+	// within seconds, while its first snapshot can take minutes to collect.
+	runs, err := s.db.QueryContext(ctx, `SELECT host_id, version FROM sensor_runs WHERE version != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = runs.Close() }()
+	for runs.Next() {
+		var host, v string
+		if err := runs.Scan(&host, &v); err != nil {
+			return nil, err
+		}
+		started[host] = v
+	}
 	for host, v := range started {
 		f := out[host]
-		if f.SensorVersion == "" {
-			f.SensorVersion = v
-			out[host] = f
-		}
+		f.SensorVersion = v
+		out[host] = f
 	}
-	return out, events.Err()
+	return out, runs.Err()
 }
