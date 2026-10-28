@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/cpibia/tripwatch/internal/collector"
+	"github.com/cpibia/tripwatch/internal/collector/web"
 )
 
 // watchMask is what each watched directory reports. IN_DONT_FOLLOW and IN_ONLYDIR keep a
@@ -691,6 +692,11 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 			continue
 		}
 		if t.Class == ClassScratch && !isDir && f.deferRepeat(op, full) {
+			continue
+		}
+		// In the uploads only scripts and server configuration files are judged: images and
+		// junk written by the thousand must not spend the budget a script then lacks.
+		if t.Class == ClassUpload && !isDir && !web.IsScript(name) && !web.IsOverride(name) {
 			continue
 		}
 		if (t.Class == ClassScratch || t.Class == ClassUpload) && !f.classEventBudget(t.Class) {

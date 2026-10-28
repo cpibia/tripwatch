@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- In the upload directories only scripts and server configuration files spend the real-time event
+  budget: images or junk written by the thousand no longer push out the script written after
+  them (SEC-191).
 - A scratch file event repeats one of the same second only for the same inode and mode: a name
   warmed up with a harmless file no longer hides the executable written under it next (SEC-190).
 - A process start whose command line the redaction shortened carries a short hash of the full

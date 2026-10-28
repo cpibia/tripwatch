@@ -794,3 +794,30 @@ func TestScratchRepeatOfAnotherFileIsNotDeferred(t *testing.T) {
 		t.Errorf("the executable written under a warmed-up name was deferred: sent %d, before %d", len(ch), sent)
 	}
 }
+
+// Junk written by the thousand in an upload directory does not spend the budget: the script
+// written after it is still reported.
+func TestUploadJunkDoesNotStarveScripts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv/up"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "srv/up/x.php"), []byte("<?php"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set([]Target{{Dir: "/srv/up", Class: ClassUpload, Recursive: true}})
+	wd := f.byDir["/srv/up"]
+	for i := range maxClassEvents + 10 {
+		f.event(wd, unix.IN_CLOSE_WRITE, 0, fmt.Sprintf("junk-%d.jpg", i))
+	}
+	f.event(wd, unix.IN_CLOSE_WRITE, 0, "x.php")
+	if len(ch) != 1 || (<-ch).Path != "/srv/up/x.php" {
+		t.Errorf("the script after the junk was not reported")
+	}
+}
