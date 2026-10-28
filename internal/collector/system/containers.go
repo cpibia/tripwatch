@@ -546,6 +546,15 @@ var runtimeSockets = []string{
 	"/var/snap/docker/common/run/docker.sock", "/var/snap/microk8s/common/run/containerd.sock",
 }
 
+// rootSockets are the sockets of other daemons that do as root what whoever talks to them asks:
+// systemd starts a unit (directly or through the system bus), snapd installs, libvirt and LXD
+// start machines, BuildKit runs builds. Root in the container reaches them as root.
+var rootSockets = []string{
+	"/run/dbus/system_bus_socket", "/var/run/dbus/system_bus_socket", "/run/systemd/private", "/run/snapd.socket",
+	"/run/libvirt/libvirt-sock", "/var/run/libvirt/libvirt-sock", "/var/snap/lxd/common/lxd/unix.socket", "/var/lib/lxd/unix.socket",
+	"/run/buildkit/buildkitd.sock",
+}
+
 // hostTrees are the host directories that give a container the host as a whole: its root, its
 // configuration, root's home, the kernel's interfaces and the runtimes' state.
 var hostTrees = []string{"/", "/etc", "/root", "/boot", "/proc", "/sys", "/dev", "/var", "/var/lib", "/var/lib/docker", "/var/lib/containerd",
@@ -553,7 +562,7 @@ var hostTrees = []string{"/", "/etc", "/root", "/boot", "/proc", "/sys", "/dev",
 
 // systemTrees are those where any directory or file below is the host's too when writable: a
 // cron.d, a unit directory, a library, root's keys, a cgroup's release_agent.
-var systemTrees = []string{"/etc", "/root", "/boot", "/usr", "/lib", "/lib64", "/bin", "/sbin", "/proc", "/sys",
+var systemTrees = []string{"/etc", "/root", "/boot", "/usr", "/lib", "/lib64", "/bin", "/sbin", "/proc", "/sys", "/run/systemd",
 	"/var/lib/docker", "/var/lib/containerd", "/var/lib/containers", "/var/lib/kubelet", "/var/spool/cron"}
 
 // secretTrees are those where reading is enough: password hashes, private keys, the cluster's
@@ -562,8 +571,10 @@ var secretTrees = []string{"/root", "/etc/shadow", "/etc/gshadow", "/etc/ssh", "
 	"/etc/docker", "/proc", "/var/lib/docker", "/var/lib/containerd", "/var/lib/containers", "/var/lib/kubelet", "/var/spool/cron"}
 
 // harmlessFiles are host files commonly shared writable with containers that give no power
-// over the host, and the time zone files /etc/localtime links to.
-var harmlessFiles = []string{"/etc/localtime", "/etc/timezone", "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/machine-id", "/etc/os-release", "/usr/share/zoneinfo"}
+// over the host, the time zone files /etc/localtime links to, and the journal's sockets
+// containers log to.
+var harmlessFiles = []string{"/etc/localtime", "/etc/timezone", "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/machine-id", "/etc/os-release", "/usr/share/zoneinfo",
+	"/run/systemd/journal"}
 
 // rawDisks are the device names of disks and memory: raw access to them bypasses every
 // permission of the filesystems on top.
@@ -652,6 +663,9 @@ func mountPower(m Mount) string {
 		return fmt.Sprintf("the host's %s, %s", name, mode)
 	case holdsSocket(src) || slices.Contains([]string{"docker.sock", "containerd.sock", "crio.sock", "podman.sock", "dockershim.sock"}, path.Base(src)):
 		return "the runtime socket " + name
+	case slices.ContainsFunc(rootSockets, func(r string) bool { return r == src || strings.HasPrefix(r, src+"/") }) &&
+		!slices.Contains([]string{"/", "/var", "/var/lib", "/var/snap"}, src) || slices.Contains([]string{"system_bus_socket", "buildkitd.sock", "libvirt-sock"}, path.Base(src)):
+		return "the root socket " + name
 	case isRawDisk(src):
 		return fmt.Sprintf("the host's disk %s, %s", name, mode)
 	case under(src, harmlessFiles) || slices.Contains(harmlessFiles, path.Clean("/"+m.Source)) || podOwned(src):

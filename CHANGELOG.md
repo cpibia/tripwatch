@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A container holding the socket of a daemon that acts as root for whoever talks to it (system
+  D-Bus, systemd, snapd, libvirt, LXD, BuildKit), or the directory holding it, has power over
+  the host like one holding a runtime socket; so has one writing `/run/systemd` (SEC-204).
 - The file behind a release's link to its shared copy (`shared/wp-config.php`, `.env`) is hashed
   and inspected under the link's name: a change to it is named as a change of the application's
   code, where before nothing recorded it (SEC-197).
