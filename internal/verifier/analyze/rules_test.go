@@ -153,6 +153,56 @@ func TestCodeSearchIncomplete(t *testing.T) {
 	t.Error("no finding for an incomplete code search")
 }
 
+// Code planted in the database is judged by change: a new or changed trigger, token or layout
+// update raises an alert, a kind read for the first time does not, and stored template code
+// raises one on its own.
+func TestDatabaseObjects(t *testing.T) {
+	read := []string{apps.ObjectTrigger, apps.ObjectAdminToken, apps.ObjectLayoutUpdate, apps.ObjectEmailTemplate}
+	prev := baseState()
+	prev.Apps.Apps[0].ObjectsRead = read
+	prev.Apps.Apps[0].Admins[0].Email = "a@example.com"
+	prev.Apps.Apps[0].Objects = []apps.DBObject{
+		{Kind: apps.ObjectEmailTemplate, ID: "2", Name: "order_new", Hash: "e1"},
+		{Kind: apps.ObjectLayoutUpdate, ID: "3", Name: "default", Hash: "l1"},
+	}
+	cur := baseState()
+	app := &cur.Apps.Apps[0]
+	app.ObjectsRead = append(read, apps.ObjectEvent)
+	app.Admins[0].Email = "attacker@example.net"
+	app.Objects = []apps.DBObject{
+		{Kind: apps.ObjectEmailTemplate, ID: "2", Name: "order_new", Hash: "e2"},
+		{Kind: apps.ObjectLayoutUpdate, ID: "3", Name: "default", Hash: "l1"},
+		{Kind: apps.ObjectTrigger, ID: "trg", Name: "trg", Target: "sales_order (AFTER INSERT)", Hash: "t1"},
+		{Kind: apps.ObjectAdminToken, ID: "9", Name: "access", Target: "administrator 1"},
+		{Kind: apps.ObjectEvent, ID: "ev", Name: "ev", Hash: "v1"},
+		{Kind: apps.ObjectLayoutUpdate, ID: "4", Name: "checkout_cart_index", Hash: "l2", Markers: []string{"gettemplatefilter"}},
+		{Kind: apps.ObjectCustomer, ID: "77", Markers: []string{"{{"}},
+	}
+	got := map[string]string{}
+	for _, f := range Evaluate(&prev, cur) {
+		got[f.Title] = f.Severity
+	}
+	for title, sev := range map[string]string{
+		"Database email template changed in /var/www/shop":     "medium",
+		"New trigger in the database of /var/www/shop":         "critical",
+		"New admin API token in the database of /var/www/shop": "high",
+		"New layout update in the database of /var/www/shop":   "high",
+		"Code in a stored layout update of /var/www/shop":      "critical",
+		"Template code in a customer's name in /var/www/shop":  "high",
+		"Administrator changed in /var/www/shop: admin":        "high",
+	} {
+		if got[title] != sev {
+			t.Errorf("%q: %q, want %q (all: %v)", title, got[title], sev, got)
+		}
+	}
+	if _, ok := got["New scheduled event in the database of /var/www/shop"]; ok {
+		t.Error("a kind read for the first time raised an alert")
+	}
+	if len(got) != 7 {
+		t.Errorf("findings = %v", got)
+	}
+}
+
 // Comparing two large snapshots stays linear: 80,000 sudo rules, all different between the two,
 // took 18 seconds with the list scans this replaced.
 func TestEvaluateIsLinear(t *testing.T) {

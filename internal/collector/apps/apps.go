@@ -56,6 +56,10 @@ type Profile struct {
 	Settings   map[string]string `json:"settings,omitempty"`
 	Warnings   []string          `json:"warnings,omitempty"`
 	Issues     collector.Issues  `json:"issues,omitempty"`
+	// Objects are the database's triggers, routines, events and the framework's stored ways in;
+	// ObjectsRead names the kinds actually read, the only ones that can be compared.
+	Objects     []DBObject `json:"db_objects,omitempty"`
+	ObjectsRead []string   `json:"db_objects_read,omitempty"`
 }
 
 type Result struct {
@@ -209,6 +213,10 @@ func profile(ctx context.Context, src collector.Source, app discovery.Applicatio
 	case "drupal7":
 		drupal7Checks(ctx, db, cfg.DB.Prefix, &p)
 	}
+	readObjects(ctx, db, schemaQueries, &p)
+	if app.Framework == "magento" {
+		readObjects(ctx, db, magentoQueries(cfg.DB.Prefix), &p)
+	}
 	return p
 }
 
@@ -269,13 +277,20 @@ func loadConfigFiles(fsys fs.FS, root, framework string) (fstest.MapFS, []untrus
 }
 
 func run(ctx context.Context, db querier, p *Profile, q string, args ...any) []map[string]string {
+	rows, _ := runChecked(ctx, db, p, q, args...)
+	return rows
+}
+
+// runChecked is run that also says whether the query succeeded.
+func runChecked(ctx context.Context, db querier, p *Profile, q string, args ...any) ([]map[string]string, bool) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 	rows, err := db.query(ctx, q, args...)
 	if err != nil {
 		p.Issues = append(p.Issues, fmt.Sprintf("query failed: %v", err))
+		return rows, false
 	}
-	return rows
+	return rows, true
 }
 
 // Capabilities that amount to administration: whoever holds one can take over the site.

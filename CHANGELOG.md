@@ -16,6 +16,11 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 - When the budget for searching data files for code runs out, the web result names the files
   left unsearched and the five that spent the most of it, with their owners
   (`code_search`), instead of only an issue line.
+- The `apps` collector lists the code kept in the database (`db_objects`): the schema's
+  triggers, stored routines and scheduled events on any framework, and on Magento integrations,
+  admin and integration API tokens, layout updates, email templates and customers whose names
+  carry template code. Each comes with a hash computed by the database server, never its body,
+  token value or the customer's name; `db_objects_read` names the kinds actually read.
 
 ### Verifier
 
@@ -26,6 +31,12 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 - "Data files not searched for code" (high): files stuffed with code that spend the run's budget
   can no longer hide a payload behind them in silence; the alert lists the unsearched files and
   the ones that spent the budget.
+- New or changed database objects raise an alert (critical for a trigger on orders, quotes,
+  payments, customers, settings or users; medium for an email template); a layout update or
+  email template holding PHP or an executing call is critical on its own, template code in a
+  customer's name high. A kind read for the first time is not compared, so updating the sensor
+  does not turn every existing object into an alert.
+- An existing administrator whose name, email or active flag changed raises a high alert.
 
 ## [0.1.13] - 2026-10-28
 

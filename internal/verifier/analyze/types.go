@@ -14,4 +14,5 @@ type (
 	unitT    = system.Unit
 	fileT    = collector.File
 	adminT   = apps.Admin
+	objectT  = apps.DBObject
 )

@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
+	"github.com/cpibia/tripwatch/internal/collector/apps"
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/watch"
@@ -1186,6 +1188,18 @@ func Evaluate(prev *State, cur State) []Finding {
 			for _, w := range app.Warnings {
 				state("apps", "warning:"+app.Path+":"+w, "low", "Development setting in "+app.Path, w)
 			}
+			for _, o := range app.Objects {
+				if len(o.Markers) == 0 {
+					continue
+				}
+				sev, title := "critical", "Code in a stored "+objectLabel(o.Kind)+" of "+app.Path
+				if o.Kind == apps.ObjectCustomer {
+					sev, title = "high", "Template code in a customer's name in "+app.Path
+				}
+				state("apps", "markers:"+app.Path+":"+o.Kind+":"+o.ID+":"+o.Hash, sev, title,
+					fmt.Sprintf("%s %s %s holds %s: rendered by the template engine, this runs code on the server.\nName, written by whoever created it: %s",
+						objectLabel(o.Kind), o.ID, app.Path, strings.Join(o.Markers, ", "), o.Name))
+			}
 			if prev == nil || prev.Apps == nil {
 				continue
 			}
@@ -1194,13 +1208,80 @@ func Evaluate(prev *State, cur State) []Finding {
 					continue
 				}
 				for _, ad := range app.Admins {
-					if !slices.ContainsFunc(pa.Admins, func(p adminT) bool { return p.ID == ad.ID }) {
+					i := slices.IndexFunc(pa.Admins, func(p adminT) bool { return p.ID == ad.ID })
+					switch {
+					case i < 0:
 						change("apps-change", "admin:"+app.Path+":"+ad.ID, "critical", "New administrator in "+app.Path+": "+ad.Name,
 							fmt.Sprintf("Email %s, created %s.", ad.Email, ad.Created))
+					case pa.Admins[i].Name != ad.Name || pa.Admins[i].Email != ad.Email || pa.Admins[i].Active != ad.Active:
+						old := pa.Admins[i]
+						// A changed email is how an account is taken over through a password reset.
+						change("apps-change", "admin-changed:"+app.Path+":"+ad.ID+":"+ad.Name+"|"+ad.Email+"|"+ad.Active, "high", "Administrator changed in "+app.Path+": "+ad.Name,
+							fmt.Sprintf("Administrator %s: name %q, email %q, active %q; it was name %q, email %q, active %q.", ad.ID, ad.Name, ad.Email, ad.Active, old.Name, old.Email, old.Active))
 					}
+				}
+				for _, f := range objectChanges(app.Path, pa, app) {
+					change("apps-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
 			}
 		}
+	}
+	return out
+}
+
+// objectLabels name the kinds of database objects in alerts.
+var objectLabels = map[string]string{
+	apps.ObjectTrigger: "trigger", apps.ObjectProcedure: "stored procedure", apps.ObjectFunction: "stored function",
+	apps.ObjectEvent: "scheduled event", apps.ObjectIntegration: "integration", apps.ObjectAdminToken: "admin API token",
+	apps.ObjectLayoutUpdate: "layout update", apps.ObjectEmailTemplate: "email template", apps.ObjectCustomer: "customer",
+}
+
+func objectLabel(kind string) string { return cmp.Or(objectLabels[kind], kind) }
+
+// sensitiveTables are the tables a trigger on which reads or rewrites payments, orders,
+// credentials or settings.
+var sensitiveTables = []string{"sales_", "quote", "payment", "order", "core_config_data", "admin_user", "users", "options", "customer"}
+
+// objectChanges compares the database objects of an application with the previous snapshot:
+// a new or changed one is how code is planted in the database. Only the kinds read in both
+// snapshots are compared, so a kind read for the first time does not look new all at once.
+func objectChanges(appPath string, prev, cur apps.Profile) []Finding {
+	old := map[string]objectT{}
+	for _, o := range prev.Objects {
+		old[o.Kind+"\x00"+o.ID] = o
+	}
+	var out []Finding
+	for _, o := range cur.Objects {
+		if o.Kind == apps.ObjectCustomer || !slices.Contains(prev.ObjectsRead, o.Kind) {
+			continue
+		}
+		before, seen := old[o.Kind+"\x00"+o.ID]
+		if seen && before.Hash == o.Hash {
+			continue
+		}
+		sev := "high"
+		switch {
+		case o.Kind == apps.ObjectEmailTemplate:
+			sev = "medium"
+		case o.Kind == apps.ObjectTrigger && slices.ContainsFunc(sensitiveTables, func(t string) bool { return strings.Contains(strings.ToLower(o.Target), t) }):
+			sev = "critical"
+		}
+		title, what := "New "+objectLabel(o.Kind)+" in the database of "+appPath, "was added"
+		if seen {
+			title, what = "Database "+objectLabel(o.Kind)+" changed in "+appPath, "changed"
+		}
+		detail := fmt.Sprintf("The %s %s %s since the previous snapshot.", objectLabel(o.Kind), o.ID, what)
+		if o.Target != "" {
+			detail += " On: " + o.Target + "."
+		}
+		if o.Definer != "" {
+			detail += " Definer: " + o.Definer + "."
+		}
+		if o.Created != "" {
+			detail += " Created or changed: " + o.Created + "."
+		}
+		detail += "\nName, written by whoever created it: " + o.Name
+		out = append(out, Finding{Fingerprint: "object:" + appPath + ":" + o.Kind + ":" + o.ID + ":" + o.Hash, Severity: sev, Title: title, Detail: detail})
 	}
 	return out
 }

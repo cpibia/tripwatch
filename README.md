@@ -299,7 +299,7 @@ leaves it, `docker compose down -v` deletes it with the CA and every enrollment.
 | `privileged` | a scan of the whole filesystem (including the world-writable directories in `/run` and `/dev/shm`) for setuid and setgid binaries, files with Linux capabilities, immutable and append-only files; files on a FUSE filesystem mounted by a user other than root are marked with that mount, since that user chooses their owner and mode |
 | `kernel` | loaded modules from both of the kernel's lists (`/proc/modules` and `/sys/module`: a module in only one of them is hiding), each with its file in the running kernel's `modules.dep` (a module outside the tree was loaded by hand), taint flags and lockdown mode; processes that exist but are missing from `/proc`'s listing, found by probing every PID the kernel may have handed out (threads told apart by their thread group); eBPF programs held open by processes with their type, pinned BPF objects, dynamic kprobes defined through tracefs |
 | `weblog` | web server access and error logs, read incrementally: attack events grouped by rule, IP and path, statistics on IPs and POST targets |
-| `apps` | for WordPress, Magento, Drupal and Laravel: administrators in the database, active extensions, scripts stored in settings and content with the domains they load from or send to, development settings left on in production |
+| `apps` | for WordPress, Magento, Drupal and Laravel: administrators in the database, active extensions, scripts stored in settings and content with the domains they load from or send to, triggers, routines and events of the schema, Magento integrations, admin tokens, layout updates and email templates, development settings left on in production |
 | `web` | inventory of sites and applications, and for each application: hash tree of the code, scripts in upload directories, polyglot images, webshell signatures, hidden files, scripts the web server actually executes |
 
 The sensor also detects the environment it runs in (host, container, Kubernetes, Fargate) and the
@@ -446,6 +446,17 @@ or MariaDB, queries it with `SELECT` statements only and timeouts of a few secon
   CMS blocks and pages, Drupal content. For each one the domains the scripts load from or talk to
   are reported: that is where skimmers injected from the admin panel or through an injection end
   up;
+- **code kept in the database**, which survives a cleanup of the files: the schema's triggers,
+  stored procedures and functions and scheduled events on any framework; on Magento also
+  integrations, the REST API tokens of administrators and integrations (never their values),
+  layout updates and email templates, which Magento renders through its template engine, and
+  customers whose names carry template code. Each object is reported with a hash its database
+  computes over what it does, never with its body. A new or changed one is an alert (critical
+  for a trigger on orders, quotes, payments, customers, settings or users; medium for an email
+  template), and a layout update or email template holding PHP, an executing call or the
+  template filter callbacks of TrojanOrder-style attacks is critical even without a change;
+- **administrators changed**: a new name, email or active flag of an existing administrator is
+  an alert, since a changed email is how an account is taken over through a password reset;
 - **active extensions** (plugins, modules) and the site URLs;
 - **development settings** left on in production: debug enabled, developer mode, PHP file
   editing from the admin panel.

@@ -20,11 +20,18 @@ func text(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s), Mo
 // fakeDB answers each query with the rows of the first entry whose key it contains.
 type fakeDB struct {
 	answers map[string][]map[string]string
+	// fail lists keys of queries that return an error.
+	fail    []string
 	queries []string
 }
 
 func (f *fakeDB) query(_ context.Context, q string, _ ...any) ([]map[string]string, error) {
 	f.queries = append(f.queries, q)
+	for _, k := range f.fail {
+		if strings.Contains(q, k) {
+			return nil, errors.New("table missing")
+		}
+	}
 	for k, rows := range f.answers {
 		if strings.Contains(q, k) {
 			return rows, nil
@@ -108,7 +115,7 @@ func TestWordPress(t *testing.T) {
 		t.Errorf("warnings = %v", p.Warnings)
 	}
 	for _, q := range db.queries {
-		if !strings.HasPrefix(strings.TrimSpace(q), "SELECT") || !strings.Contains(q, "wpx_") {
+		if !strings.HasPrefix(strings.TrimSpace(q), "SELECT") || (!strings.Contains(q, "wpx_") && !strings.Contains(q, "information_schema.")) {
 			t.Errorf("query %q", q)
 		}
 	}
@@ -424,5 +431,61 @@ $databases['default']['default'] = array('database' => 'd', 'username' => 'u', '
 	}
 	if !slices.ContainsFunc(res.Apps[0].Warnings, func(w string) bool { return strings.Contains(w, "settings.local.php") }) {
 		t.Errorf("warnings = %v", res.Apps[0].Warnings)
+	}
+}
+
+// The database's code and Magento's ways back in are listed with a hash of what they do, never
+// their bodies; a kind whose query failed is not marked as read.
+func TestMagentoDatabaseObjects(t *testing.T) {
+	db := &fakeDB{answers: map[string][]map[string]string{
+		"information_schema.TRIGGERS": {{"name": "trg_order", "target": "sales_order", "what": "AFTER INSERT", "definer": "shop@localhost", "hash": "aa", "created": "2026-10-27"}},
+		"information_schema.ROUTINES": {{"name": "f1", "what": "FUNCTION", "hash": "bb"}, {"name": "p1", "what": "PROCEDURE", "hash": "cc"}},
+		"FROM oauth_token":            {{"id": "9", "admin": "1", "consumer": "", "what": "access", "created": "2026-10-27"}},
+		"FROM layout_update": {{"id": "4", "handle": "checkout_cart_index", "hash": "dd",
+			"body": `<block class="Magento\Framework\View\Element\Template"><arguments><argument name="x">{{var this.getTemplateFilter().filter(system)}}</argument></arguments></block>`}},
+		"FROM email_template":  {{"id": "2", "name": "order_new", "hash": "ee", "body": "Thanks {{var order.increment_id}}"}},
+		"FROM customer_entity": {{"id": "77", "body": "Mr {{var this.getTemplateFilter()}} x"}},
+	}, fail: []string{"FROM integration"}}
+	var seen dbConfig
+	res := collect(t, fstest.MapFS{
+		"var/www/shop/bin/magento":     text(""),
+		"var/www/shop/app/etc/di.xml":  text(""),
+		"var/www/shop/app/etc/env.php": text(magentoEnv),
+	}, Collector{Connect: connectTo(db, &seen)})
+	p := res.Apps[0]
+	byKind := map[string][]DBObject{}
+	for _, o := range p.Objects {
+		byKind[o.Kind] = append(byKind[o.Kind], o)
+	}
+	if o := byKind[ObjectTrigger]; len(o) != 1 || o[0].Target != "sales_order (AFTER INSERT)" || o[0].Hash != "aa" {
+		t.Errorf("triggers = %+v", o)
+	}
+	if len(byKind[ObjectFunction]) != 1 || len(byKind[ObjectProcedure]) != 1 {
+		t.Errorf("routines = %+v", p.Objects)
+	}
+	if o := byKind[ObjectAdminToken]; len(o) != 1 || o[0].Target != "administrator 1" {
+		t.Errorf("tokens = %+v", o)
+	}
+	if o := byKind[ObjectLayoutUpdate]; len(o) != 1 || !slices.Contains(o[0].Markers, "gettemplatefilter") {
+		t.Errorf("layout updates = %+v", o)
+	}
+	if o := byKind[ObjectEmailTemplate]; len(o) != 1 || len(o[0].Markers) != 0 {
+		t.Errorf("email templates = %+v", o)
+	}
+	if o := byKind[ObjectCustomer]; len(o) != 1 || !slices.Contains(o[0].Markers, "{{") || o[0].Name != "" {
+		t.Errorf("customers = %+v", o)
+	}
+	for _, k := range []string{ObjectTrigger, ObjectProcedure, ObjectFunction, ObjectEvent, ObjectAdminToken, ObjectLayoutUpdate, ObjectEmailTemplate, ObjectCustomer} {
+		if !slices.Contains(p.ObjectsRead, k) {
+			t.Errorf("%s not marked as read: %v", k, p.ObjectsRead)
+		}
+	}
+	if slices.Contains(p.ObjectsRead, ObjectIntegration) {
+		t.Error("integrations marked as read although the query failed")
+	}
+	for _, q := range db.queries {
+		if strings.Contains(q, "customer_entity") && strings.Contains(q, "LIMIT 200") && !strings.Contains(q, "LIKE '%{{%'") {
+			t.Errorf("customer query without its filter: %q", q)
+		}
 	}
 }
