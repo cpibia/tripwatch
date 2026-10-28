@@ -235,7 +235,12 @@ With `-state-dir`, the web collector writes a manifest of each application's cod
 compares it with the manifest in use as two sorted streams, so memory does not grow with the
 application. The changes (`changes`, at most 200, `change_count`) go in the snapshot; the new
 manifest replaces the old one only once that snapshot is delivered, like the log positions, so
-a snapshot that is lost is compared again. A scan cut short keeps the old manifest. The scripts,
+a snapshot that is lost is compared again. A scan cut short keeps the old manifest; a manifest
+that cannot be written (a full state directory, more than a million code files) is an issue
+naming why, not a silent stop. Files too large to hash (or reached once the hash budget is spent)
+are compared by their fingerprint of size, change time and inode when both runs have one, and
+named as modified without a hash. Manifests no run has rewritten for seven days (an application
+that is gone, a `.next` of a run that never finished) are removed. The scripts,
 templates and SVG images among the changes, when no more than 50 files changed (a deploy rebuilds
 bundles that hold payment code and every library's `eval` at once), are read for a card
 skimmer (`payment_skimmer`, critical): payment fields together with an exit to another host or

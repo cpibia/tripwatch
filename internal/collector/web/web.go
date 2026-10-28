@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 	"github.com/cpibia/tripwatch/internal/discovery"
@@ -220,6 +221,11 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 		res.Issues = append(res.Issues, s.issues...)
 	}
 	c.pending.set(manifests)
+	if c.StateDir != "" {
+		if err := removeStaleManifests(c.StateDir, time.Now()); err != nil {
+			res.Issues.Add(err)
+		}
+	}
 	if len(budget.search.Unsearched) > 0 {
 		res.CodeSearch = &budget.search
 	}

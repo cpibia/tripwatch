@@ -21,6 +21,10 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   admin and integration API tokens, layout updates, email templates and customers whose names
   carry template code. Each comes with a hash computed by the database server, never its body,
   token value or the customer's name; `db_objects_read` names the kinds actually read.
+- A code manifest that cannot be written is reported as an issue with its reason, instead of
+  silently stopping the naming of changed files; a code file too large to hash is named as
+  modified when its fingerprint (size, change time, inode) changes between two runs; manifests
+  not rewritten for seven days are removed from the state directory.
 
 ### Verifier
 

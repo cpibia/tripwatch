@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // A manifest lists the hash of every code file of an application, in the order the walk visits
@@ -52,8 +54,16 @@ type manifestWriter struct {
 	next string
 	last string
 	n    int
-	// broken is set when the manifest cannot be trusted to be complete or ordered.
+	// broken is set when the manifest cannot be trusted to be complete or ordered; reason
+	// says why, for the issue that reports it.
 	broken bool
+	reason string
+}
+
+func (m *manifestWriter) fail(reason string) {
+	if !m.broken {
+		m.broken, m.reason = true, reason
+	}
 }
 
 func manifestPath(stateDir, app string) string {
@@ -80,34 +90,37 @@ func (m *manifestWriter) add(name, sum string) {
 	if m == nil || m.broken {
 		return
 	}
-	if m.n > 0 && comparePaths(name, m.last) <= 0 || m.n >= maxManifestFiles {
-		m.broken = true
+	switch {
+	case m.n >= maxManifestFiles:
+		m.fail(fmt.Sprintf("more than %d code files", maxManifestFiles))
+		return
+	case m.n > 0 && comparePaths(name, m.last) <= 0:
+		m.fail("files listed out of order")
 		return
 	}
 	m.last = name
 	m.n++
 	// The path is quoted: file names may hold tabs and line breaks.
 	if _, err := fmt.Fprintf(m.w, "%s %s\n", strconv.Quote(name), sum); err != nil {
-		m.broken = true
+		m.fail(err.Error())
 	}
 }
 
 // close finishes the file; it returns false when the manifest must not be used.
 func (m *manifestWriter) close() bool {
-	ok := !m.broken
 	if err := m.w.Flush(); err != nil {
-		ok = false
+		m.fail(err.Error())
 	}
 	if err := m.f.Sync(); err != nil {
-		ok = false
+		m.fail(err.Error())
 	}
 	if err := m.f.Close(); err != nil {
-		ok = false
+		m.fail(err.Error())
 	}
-	if !ok {
+	if m.broken {
 		_ = os.Remove(m.next)
 	}
-	return ok
+	return !m.broken
 }
 
 // comparePaths orders paths as the walk visits them: component by component, each in byte order.
@@ -197,8 +210,9 @@ func diffManifests(prev, cur string) ([]FileChange, int, error) {
 			now.advance()
 		default:
 			// A file hashed in one run and only fingerprinted in the other (the hash budget ran
-			// out) cannot be compared.
-			if old.sum != now.sum && !strings.HasPrefix(old.sum, "unhashed:") && !strings.HasPrefix(now.sum, "unhashed:") {
+			// out) cannot be compared; two fingerprints can, since a rewrite changes the change
+			// time or the inode.
+			if old.sum != now.sum && strings.HasPrefix(old.sum, "unhashed:") == strings.HasPrefix(now.sum, "unhashed:") {
 				emit(FileChange{Path: "/" + now.path, Change: ChangeModified, SHA256: contentHash(now.sum)})
 			}
 			old.advance()
@@ -236,10 +250,15 @@ func (s *scanner) finishManifest(stateDir string) string {
 	if m == nil {
 		return ""
 	}
-	if s.report.Truncated || s.stopped {
-		m.broken = true
+	cut := s.report.Truncated || s.stopped
+	if cut {
+		m.fail("scan cut short")
 	}
 	if !m.close() {
+		// A cut scan already says so; anything else would switch the naming off in silence.
+		if !cut {
+			s.issues = append(s.issues, fmt.Sprintf("%s: manifest not written, changed files not named: %s", s.report.Path, m.reason))
+		}
 		return ""
 	}
 	prev := manifestPath(stateDir, s.report.Path)
@@ -280,6 +299,34 @@ func (p *pendingManifests) commit() error {
 	var errs []error
 	for _, next := range files {
 		errs = append(errs, os.Rename(next, strings.TrimSuffix(next, ".next")))
+	}
+	return errors.Join(errs...)
+}
+
+// staleManifestAge is how long a manifest is kept after its application was last scanned: one
+// in use is rewritten at every run, so an older one belongs to an application that is gone, and
+// a leftover ".next" to a run that never finished.
+const staleManifestAge = 7 * 24 * time.Hour
+
+// removeStaleManifests deletes the manifests no run has rewritten for staleManifestAge. Going by
+// age rather than by the applications found keeps the manifests of one that discovery missed
+// for a run.
+func removeStaleManifests(stateDir string, now time.Time) error {
+	dir := filepath.Join(stateDir, manifestDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < staleManifestAge {
+			continue
+		}
+		errs = append(errs, os.Remove(filepath.Join(dir, e.Name())))
 	}
 	return errors.Join(errs...)
 }

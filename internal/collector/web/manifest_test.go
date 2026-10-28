@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
+	"github.com/cpibia/tripwatch/internal/discovery"
 )
 
 // The second run names the code files that changed since the first one was delivered; data
@@ -93,5 +96,69 @@ func TestComparePaths(t *testing.T) {
 		if got := comparePaths(c.a, c.b); got != c.want {
 			t.Errorf("comparePaths(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// Two fingerprints of a file too large to hash are compared; a fingerprint against a hash is
+// not, since that only says the budget ran out in one of the runs.
+func TestDiffComparesUnhashedFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, lines ...string) string {
+		p := filepath.Join(dir, name)
+		var b strings.Builder
+		for _, l := range lines {
+			b.WriteString(l + "\n")
+		}
+		if err := os.WriteFile(p, []byte(b.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	sum := strings.Repeat("a", 64)
+	prev := write("prev", `"a/big.php" unhashed:size:9:ctime:1:id:1`, `"a/mixed.php" `+sum, `"a/same.php" unhashed:size:9:ctime:1:id:2`)
+	cur := write("cur", `"a/big.php" unhashed:size:9:ctime:2:id:1`, `"a/mixed.php" unhashed:size:9:ctime:1:id:3`, `"a/same.php" unhashed:size:9:ctime:1:id:2`)
+	changes, n, err := diffManifests(prev, cur)
+	if err != nil || n != 1 || changes[0].Path != "/a/big.php" || changes[0].Change != ChangeModified || changes[0].SHA256 != "" {
+		t.Errorf("changes %+v (%d), err %v", changes, n, err)
+	}
+}
+
+// A manifest that cannot be written says so instead of switching the naming of changes off, and
+// manifests no run has rewritten for a week are removed.
+func TestManifestFailuresAndStaleManifests(t *testing.T) {
+	state := t.TempDir()
+	m, err := newManifestWriter(state, "/var/www/shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.add("var/www/shop/b.php", "x")
+	m.add("var/www/shop/a.php", "x")
+	s := &scanner{manifest: m, report: AppReport{Application: discovery.Application{Path: "/var/www/shop"}}}
+	if next := s.finishManifest(state); next != "" || len(s.issues) != 1 || !strings.Contains(s.issues[0], "manifest not written, changed files not named: files listed out of order") {
+		t.Errorf("next %q, issues %v", next, s.issues)
+	}
+
+	dir := filepath.Join(state, manifestDir)
+	old, fresh := filepath.Join(dir, "gone"), filepath.Join(dir, "live")
+	for _, p := range []string{old, fresh} {
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	if err := os.Chtimes(old, now.Add(-8*24*time.Hour), now.Add(-8*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeStaleManifests(state, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Error("a stale manifest is kept")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Error("a manifest in use was removed")
+	}
+	if err := removeStaleManifests(t.TempDir(), now); err != nil {
+		t.Errorf("no manifest directory: %v", err)
 	}
 }
