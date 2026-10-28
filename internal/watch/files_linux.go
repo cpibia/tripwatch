@@ -56,6 +56,12 @@ type Files struct {
 	classEvents   map[string]int
 	scratchByUID  map[uint32]int
 	scratchSecond time.Time
+	// scratchRepeats are the events of the scratch directories handled this second; a repeat
+	// is put in deferred, path to operation, and looked at once a second later, at no cost to
+	// the budget meanwhile.
+	scratchRepeats map[string]bool
+	deferred       map[string]string
+	deferredAt     time.Time
 	// known is the last content seen of files outside the uploads, by path, for PrevSHA256.
 	known map[string]string
 	// targets are the last ones Set was given; replanAt, when set, is when Run sets them again,
@@ -102,7 +108,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}}, nil
+	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}, scratchRepeats: map[string]bool{}, deferred: map[string]string{}}, nil
 }
 
 // fileID tells one inode from another.
@@ -575,6 +581,7 @@ func (f *Files) Run(ctx context.Context) error {
 		}
 		f.checkRoots()
 		f.replanIfDue()
+		f.flushDeferred()
 		if n <= 0 {
 			continue
 		}
@@ -680,6 +687,9 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 			continue
 		}
 		if !t.wants(name) {
+			continue
+		}
+		if t.Class == ClassScratch && !isDir && f.deferRepeat(op, full) {
 			continue
 		}
 		if (t.Class == ClassScratch || t.Class == ClassUpload) && !f.classEventBudget(t.Class) {
@@ -875,18 +885,65 @@ const (
 // the share of each owner, applied once the owner is known, comes first in practice, being
 // smaller.
 func (f *Files) classEventBudget(class string) bool {
-	now := f.now()
-	if now.Sub(f.scratchSecond) >= time.Second {
-		clear(f.classEvents)
-		clear(f.scratchByUID)
-		f.scratchSecond = now
-	}
+	f.rollSecond()
 	if f.classEvents[class] >= maxClassEvents {
 		f.Dropped.Add(1)
 		return false
 	}
 	f.classEvents[class]++
 	return true
+}
+
+// rollSecond starts the budgets of a new second.
+func (f *Files) rollSecond() {
+	if now := f.now(); now.Sub(f.scratchSecond) >= time.Second {
+		clear(f.classEvents)
+		clear(f.scratchByUID)
+		clear(f.scratchRepeats)
+		f.scratchSecond = now
+	}
+}
+
+// maxDeferred bounds the scratch files waiting to be looked at again.
+const maxDeferred = 4096
+
+// deferRepeat reports whether an event of a scratch file repeats one already handled this
+// second, and puts it off: rewriting the same few files in a loop costs the attacker nothing
+// and would otherwise spend the budget every other account's files share. The file is looked
+// at once a second later, in the state it is then. With no room left the event goes through
+// the budget as usual.
+func (f *Files) deferRepeat(op, full string) bool {
+	f.rollSecond()
+	key := op + "\x00" + full
+	if !f.scratchRepeats[key] {
+		if len(f.scratchRepeats) < maxClassEvents {
+			f.scratchRepeats[key] = true
+		}
+		return false
+	}
+	if _, waiting := f.deferred[full]; !waiting && len(f.deferred) >= maxDeferred {
+		return false
+	}
+	if len(f.deferred) == 0 {
+		f.deferredAt = f.now()
+	}
+	f.deferred[full] = op
+	return true
+}
+
+// flushDeferred looks at the scratch files put off by deferRepeat once a second has passed.
+func (f *Files) flushDeferred() {
+	if len(f.deferred) == 0 || f.now().Sub(f.deferredAt) < time.Second {
+		return
+	}
+	pending := f.deferred
+	f.deferred = map[string]string{}
+	for p, op := range pending {
+		if !f.classEventBudget(ClassScratch) {
+			continue
+		}
+		f.emit(f.describe(ClassScratch, op, p, false))
+	}
 }
 
 // scratchOwnerBudget takes one event from this second's share of the file's owner.

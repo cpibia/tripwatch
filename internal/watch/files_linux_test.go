@@ -691,3 +691,44 @@ func TestOverflowDoesNotPostponeReplan(t *testing.T) {
 		t.Errorf("replan moved from %v to %v", planned, f.replanAt)
 	}
 }
+
+// A scratch file rewritten in a loop spends the budget once a second: the repeats are put off
+// and the file is looked at again a second later, as it is then.
+func TestScratchRepeatsAreDeferred(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(root, "tmp", "x")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o700); err != nil { //nolint:gosec // the test's executable
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	f.now = func() time.Time { return now }
+	f.Set([]Target{{Dir: "/tmp", Class: ClassScratch, Recursive: true, Depth: ScratchDepth}})
+	wd, ok := f.byDir["/tmp"]
+	if !ok {
+		t.Fatal("/tmp not watched")
+	}
+	for range 50 {
+		f.event(wd, unix.IN_CLOSE_WRITE, 0, "x")
+	}
+	if n := f.classEvents[ClassScratch]; n != 1 || len(f.deferred) != 1 || len(ch) != 1 {
+		t.Fatalf("budget spent %d, deferred %d, sent %d", n, len(f.deferred), len(ch))
+	}
+	f.flushDeferred()
+	if len(ch) != 1 {
+		t.Fatal("deferred files looked at before a second passed")
+	}
+	now = now.Add(1100 * time.Millisecond)
+	f.flushDeferred()
+	if len(ch) != 2 || len(f.deferred) != 0 {
+		t.Errorf("after a second: sent %d, deferred %d", len(ch), len(f.deferred))
+	}
+}

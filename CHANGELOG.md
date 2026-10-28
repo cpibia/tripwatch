@@ -31,6 +31,9 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   directories anyone can fill no longer crowd out an upload or system gap; the event of a
   watched root moved away is never dropped as upload noise; overflows of the kernel queue a
   second apart no longer put off the replan that watches a moved root again.
+- A scratch file rewritten in a loop spends the second's budget once: the repeats are put off
+  and the file is looked at once more a second later, so one account rewriting the same files
+  no longer uses up the budget every other account's files share.
 
 ### Verifier
 
