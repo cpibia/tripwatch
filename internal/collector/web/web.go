@@ -594,6 +594,12 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 			target, _ := fs.ReadLink(s.src.FS, name)
 			childHash = "link:" + target
 			s.inspectSymlink(name, e, target, false)
+			// A release's link to its shared copy (wp-config.php, .env) leads to code included
+			// on every request: its content is hashed under the link's name, so a change to it
+			// is a change of the application's code.
+			if sum := s.sharedContent(name); sum != "" {
+				childHash += ":" + sum
+			}
 			s.manifest.add(name, childHash)
 		case e.IsDir():
 			if e.Name() == ".git" {
@@ -988,6 +994,23 @@ func (s *scanner) inspectSymlink(name string, e fs.DirEntry, target string, inDa
 	if s.isPHP(strings.ToLower(e.Name())) {
 		s.markReachable(name)
 	}
+}
+
+// sharedContent hashes, and inspects, the file behind a release's link to its shared copy;
+// "" for any other link.
+func (s *scanner) sharedContent(name string) string {
+	if !isScript(strings.ToLower(path.Base(name))) || !s.sharedFile(name) {
+		return ""
+	}
+	resolved, ok := s.followable(name)
+	if !ok {
+		return ""
+	}
+	info, err := fs.Lstat(s.src.FS, resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return s.inspectFile(resolved, fs.FileInfoToDirEntry(info), false, false, true)
 }
 
 // sharedFile reports whether a script link is a release's link to its shared copy, the way

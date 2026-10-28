@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- The file behind a release's link to its shared copy (`shared/wp-config.php`, `.env`) is hashed
+  and inspected under the link's name: a change to it is named as a change of the application's
+  code, where before nothing recorded it (SEC-197).
+
 ## [0.1.23] - 2026-10-28
 
 Update the verifier, then the sensors.

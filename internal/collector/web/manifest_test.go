@@ -162,3 +162,30 @@ func TestManifestFailuresAndStaleManifests(t *testing.T) {
 		t.Errorf("no manifest directory: %v", err)
 	}
 }
+
+// A release's link to its shared wp-config.php is code included on every request: a line
+// appended to the shared file is a change named under the link.
+func TestManifestNamesAChangedSharedFile(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/deploy/releases/5/wp-includes/version.php", "<?php $wp_version = '6.6.2';")
+	tr.file("var/www/deploy/releases/5/index.php", "<?php")
+	tr.file("var/www/deploy/shared/wp-config.php", "<?php define('DB_NAME', 'site');")
+	tr.link("../../shared/wp-config.php", "var/www/deploy/releases/5/wp-config.php")
+	c := &Collector{StateDir: t.TempDir()}
+	collect := func() AppReport {
+		t.Helper()
+		out, err := c.Collect(context.Background(), collector.NewSource(tr.root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.(Result).Apps[0]
+	}
+	collect()
+	if err := c.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	tr.file("var/www/deploy/shared/wp-config.php", "<?php define('DB_NAME', 'site'); @include '/tmp/.sess_x';")
+	if r := collect(); r.ChangeCount != 1 || r.Changes[0].Path != "/var/www/deploy/releases/5/wp-config.php" || r.Changes[0].Change != "modified" {
+		t.Fatalf("changes = %+v", r.Changes)
+	}
+}
