@@ -940,7 +940,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	// hidden .php with no PHP in it, or that only sets values, runs nothing (the ._ files macOS
 	// leaves in a zip it packed, a CMS's version file), and an empty file, an image, a video or a document a CMS saved without a name
 	// before its extension hides nothing.
-	runsNothing := php && complete && (!bytes.Contains(content, []byte("<?")) || onlyLiterals(content))
+	runsNothing := php && complete && (!bytes.Contains(content, []byte("<?")) || onlyLiterals(content) || dataOnly(content))
 	switch {
 	case script && hidden && !inDependencyTests(name) && !runsNothing:
 		s.add(KindHiddenScript, name, e, nil)
@@ -1103,8 +1103,11 @@ func polyglot(content []byte, php bool) bool {
 }
 
 // documentMagic are the first bytes of the documents and archives uploaded every day: PDF,
-// ZIP (and the Office and OpenDocument formats inside), gzip, old Office, 7-Zip and RAR.
-var documentMagic = [][]byte{[]byte("%PDF-"), []byte("PK\x03\x04"), []byte("\x1f\x8b"), []byte("\xd0\xcf\x11\xe0"), []byte("7z\xbc\xaf"), []byte("Rar!")}
+// ZIP (and the Office and OpenDocument formats inside), gzip, old Office, 7-Zip, RAR, and
+// database dumps.
+var documentMagic = [][]byte{[]byte("%PDF-"), []byte("PK\x03\x04"), []byte("\x1f\x8b"), []byte("\xd0\xcf\x11\xe0"), []byte("7z\xbc\xaf"), []byte("Rar!"),
+	// Database dumps quote every identifier in backticks.
+	[]byte("-- MySQL dump"), []byte("-- MariaDB dump"), []byte("-- phpMyAdmin SQL Dump"), []byte("-- Adminer")}
 
 // weakCodeSignals are the signals of a block that random bytes produce too: a backtick, a word
 // like exec(.

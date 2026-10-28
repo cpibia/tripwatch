@@ -227,6 +227,9 @@ func onlyLiterals(content []byte) bool {
 	return len(content) <= 1024 && literalsOnly.Match(bytes.TrimSpace(stripPHPComments(content)))
 }
 
+// directAccessGuard is the check WordPress files open with: exit unless loaded by WordPress.
+var directAccessGuard = regexp.MustCompile(`^\s*(?:if\s*\(\s*!\s*defined\s*\(\s*['"]\w+['"]\s*\)\s*\)\s*\{?\s*(?:exit|die)\s*(?:\(\s*(?:'[^']*'|"[^"]*")?\s*\))?\s*;?\s*\}?|defined\s*\(\s*['"]\w+['"]\s*\)\s*(?:or|\|\|)\s*(?:exit|die)\s*(?:\(\s*(?:'[^']*'|"[^"]*")?\s*\))?\s*;)`)
+
 // maxDataOnly bounds the PHP files checked for holding data alone.
 const maxDataOnly = 4 << 20
 
@@ -244,6 +247,11 @@ func dataOnly(content []byte) bool {
 		return false
 	}
 	src = bytes.TrimSuffix(src[len("<?php"):], []byte("?>"))
+	src = stripPHPComments(src)
+	// WordPress files start by refusing to be requested directly; that guard runs nothing.
+	if m := directAccessGuard.FindIndex(src); m != nil {
+		src = src[m[1]:]
+	}
 	word := ""
 	for i := 0; i < len(src); i++ {
 		c := src[i]

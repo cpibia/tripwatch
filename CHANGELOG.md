@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A PHP file holding data only may open with comments and WordPress's direct-access guard (a
+  theme's page layouts), and a hidden one is no finding either (a CMS's redirect map); database
+  dumps are documents, whose backticks are no code.
 - In the upload directories only scripts and server configuration files spend the real-time event
   budget: images or junk written by the thousand no longer push out the script written after
   them (SEC-191).

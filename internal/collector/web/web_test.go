@@ -514,6 +514,10 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	tr.file(up+"plugin/debug-log.php", "<?php exit; ?>\n[2026-10-28] request sent\n")
 	tr.file(up+"plugin/guarded-then-code.php", "<?php exit; ?>\n<?php system($_GET['c']);")
 	tr.file(up+"layouts/dance.php", "<?php\nreturn array(\n  'title' => 'Dance studio',\n  'content' => \"<div class='x'>[fusion_builder]</div>\",\n  'ratio' => 1.5, 'tags' => [true, null, -2],\n);\n")
+	tr.file(up+"layouts/guarded.php", "<?php\n/**\n * Demo page.\n */\nif ( ! defined( 'ABSPATH' ) ) {\n\texit( 'Direct script access denied.' );\n}\n// Page.\n$page = array( 'title' => 'Bakery' );\n")
+	tr.file(up+"layouts/guarded-then-code.php", "<?php\ndefined( 'ABSPATH' ) || exit;\nsystem($_GET['c']);\n")
+	tr.file("var/www/blog/.redirects.php", "<?php\n$redirects = array(\n  '/old' => '/new',\n);\n")
+	tr.file(up+"backup/site-dump", "-- MySQL dump 10.13\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `date`; ?>');\n")
 	tr.file(up+"layouts/call.php", "<?php return array('a' => system($_GET['c']));")
 	tr.file(up+"layouts/variable.php", "<?php $f = 'system'; $f($_GET['c']);")
 	tr.file(up+"layouts/interpolated.php", "<?php return array('a' => \"{$_GET['c']}\");")
@@ -533,6 +537,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	for _, want := range []string{
 		KindScriptInUploads + " /" + up + "plugin/guarded-then-code.php",
 		KindScriptInUploads + " /" + up + "layouts/call.php",
+		KindScriptInUploads + " /" + up + "layouts/guarded-then-code.php",
 		KindScriptInUploads + " /" + up + "layouts/variable.php",
 		KindScriptInUploads + " /" + up + "layouts/interpolated.php",
 		KindCodeInUploads + " /" + up + "dropper.zip",
@@ -544,7 +549,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, name := range []string{"debug-log.php", "dance.php", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
+	for _, name := range []string{"debug-log.php", "dance.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
 		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
 			t.Errorf("%s reported: %v", name, got)
 		}
