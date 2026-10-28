@@ -302,33 +302,29 @@ func dockerRoot(fsys fs.FS, issues *collector.Issues) string {
 	return root
 }
 
-// dockerdDataRoot reads --data-root (or the old -g/--graph) from a running dockerd's command line.
+// dockerdDataRoot reads --data-root (or the old -g/--graph) from the command line of the running
+// dockerd, found through its pidfile: cheap enough for the watcher's every second.
 func dockerdDataRoot(fsys fs.FS) string {
-	entries, err := fs.ReadDir(fsys, "proc")
+	pid, err := fs.ReadFile(fsys, "run/docker.pid")
 	if err != nil {
 		return ""
 	}
-	for _, e := range entries {
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue
+	n, err := strconv.Atoi(strings.TrimSpace(string(pid)))
+	if err != nil || n <= 0 {
+		return ""
+	}
+	cmdline, _ := fs.ReadFile(fsys, "proc/"+strconv.Itoa(n)+"/cmdline")
+	args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+	for i, a := range args {
+		var v string
+		switch {
+		case strings.HasPrefix(a, "--data-root="), strings.HasPrefix(a, "--graph="):
+			_, v, _ = strings.Cut(a, "=")
+		case (a == "--data-root" || a == "--graph" || a == "-g") && i+1 < len(args):
+			v = args[i+1]
 		}
-		comm, _ := fs.ReadFile(fsys, "proc/"+e.Name()+"/comm")
-		if strings.TrimSpace(string(comm)) != "dockerd" {
-			continue
-		}
-		cmdline, _ := fs.ReadFile(fsys, "proc/"+e.Name()+"/cmdline")
-		args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
-		for i, a := range args {
-			var v string
-			switch {
-			case strings.HasPrefix(a, "--data-root="), strings.HasPrefix(a, "--graph="):
-				_, v, _ = strings.Cut(a, "=")
-			case (a == "--data-root" || a == "--graph" || a == "-g") && i+1 < len(args):
-				v = args[i+1]
-			}
-			if path.IsAbs(v) {
-				return collector.Rel(v)
-			}
+		if path.IsAbs(v) {
+			return collector.Rel(v)
 		}
 	}
 	return ""

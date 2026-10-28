@@ -344,7 +344,7 @@ func TestContainersInOtherDockerLayouts(t *testing.T) {
 		"userns-remap": {"var/lib/docker/100000.100000/containers/" + id + "/config.v2.json": cfg(id, "remapped")},
 		"snap":         {"var/snap/docker/common/var-lib-docker/containers/" + id + "/config.v2.json": cfg(id, "snapped")},
 		"command line": {
-			"proc/42/comm":    text("dockerd\n"),
+			"run/docker.pid":  text("42\n"),
 			"proc/42/cmdline": text("/usr/bin/dockerd\x00--data-root\x00/data/docker\x00"),
 			"data/docker/containers/" + id + "/config.v2.json": cfg(id, "moved"),
 		},
