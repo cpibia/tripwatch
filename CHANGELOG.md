@@ -6,7 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
-Sensor:
+## [0.1.13] - 2026-10-28
+
+Only the sensor's behaviour changes. Update the verifier to keep the versions aligned, then the
+sensors (`tripwatch-sensor -update`).
+
+### Sensor
 
 - The scriptlets rpm writes to `/var/tmp` as `rpm-tmp.XXXXXX` and runs while installing or
   upgrading a package no longer raise "A program started from /var/tmp", under the same
@@ -512,7 +517,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.12...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/cpibia/tripwatch/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/cpibia/tripwatch/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/cpibia/tripwatch/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/cpibia/tripwatch/compare/v0.1.9...v0.1.10
