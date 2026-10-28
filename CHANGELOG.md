@@ -91,6 +91,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- Alert groups whose titles share only part of a word ("Cod" of two titles) or only the root of
+  a path ("A program started from /") are named after their lead alert or the last whole word.
 - A process started by the web server's user raises one alert per command (executable, parent,
   user, directory and command line), no longer one per shell. Where that account also runs
   scheduled jobs, each job can be accepted as legitimate on its own; before, accepting one was

@@ -782,6 +782,9 @@ func TestGroupLabel(t *testing.T) {
 		{titles("Hidden entry under /usr: /usr/src/a/.x", "Hidden entry under /usr: /usr/src/b/.y"), "Hidden entry under /usr"},
 		{titles("Development setting in /srv/app/one", "Development setting in /srv/app/two"), "Development setting in /srv/app/"},
 		{titles("Alpha", "Beta"), "Alpha"},
+		{titles("Code injected into php-fpm8.4", "Codice iniettato in php-fpm8.4"), "Code injected into php-fpm8.4"},
+		{titles("A program started from /tmp", "A program started from /home/ubuntu"), "A program started from"},
+		{titles("Sensor started", "Sensor updated"), "Sensor"},
 	} {
 		if got := commonLabel(tc.alerts); got != tc.want {
 			t.Errorf("commonLabel = %q, want %q", got, tc.want)
