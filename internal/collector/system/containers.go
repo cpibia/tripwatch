@@ -311,7 +311,7 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 			c.Privileged, c.PIDMode, c.NetworkMode, c.IPCMode, c.UsernsMode = hc.Privileged, hc.PidMode, hc.NetworkMode, hc.IpcMode, hc.UsernsMode
 			c.CapAdd, c.SecurityOpt = hc.CapAdd, hc.SecurityOpt
 			for _, d := range hc.Devices {
-				c.Devices = append(c.Devices, d.PathOnHost)
+				c.Devices = append(c.Devices, hostDevice(fsys, d.PathOnHost))
 			}
 			c.DeviceRules = deviceRules(hc.DeviceCgroupRules)
 			for port, bindings := range hc.PortBindings {
@@ -517,7 +517,7 @@ func ociContainer(fsys fs.FS, runtime, name string, cfg ociConfig) Container {
 		c.Mounts = append(c.Mounts, resolveMount(fsys, Mount{Source: m.Source, Destination: m.Destination, RW: !slices.Contains(m.Options, "ro")}))
 	}
 	for _, d := range cfg.Linux.Devices {
-		c.Devices = append(c.Devices, d.Path)
+		c.Devices = append(c.Devices, hostDevice(fsys, d.Path))
 	}
 	var rules []string
 	for _, d := range cfg.Linux.Resources.Devices {
@@ -579,7 +579,7 @@ var harmlessFiles = []string{"/etc/localtime", "/etc/timezone", "/etc/hostname",
 // rawDisks are the device names of disks and memory: raw access to them bypasses every
 // permission of the filesystems on top.
 var rawDisks = []string{"/dev/sd", "/dev/hd", "/dev/vd", "/dev/xvd", "/dev/nvme", "/dev/dm-", "/dev/mapper/", "/dev/loop", "/dev/md",
-	"/dev/mmcblk", "/dev/disk/", "/dev/nbd", "/dev/rbd", "/dev/zd", "/dev/mem", "/dev/kmem", "/dev/port"}
+	"/dev/mmcblk", "/dev/disk/", "/dev/nbd", "/dev/rbd", "/dev/zd", "/dev/mem", "/dev/kmem", "/dev/port", "/dev/sg", "/dev/ng", "/dev/bsg/"}
 
 // adminCaps are the capabilities that let a container's root act as the host's.
 var adminCaps = []string{"ALL", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_RAWIO", "DAC_READ_SEARCH", "SYS_BOOT", "BPF", "PERFMON"}
@@ -711,13 +711,25 @@ func under(p string, trees []string) bool {
 	return slices.ContainsFunc(trees, func(t string) bool { return p == t || strings.HasPrefix(p, t+"/") })
 }
 
+// hostDevice is the device a container was given, through the links the runtime resolved when
+// it created it (/dev/<vg>/<lv> -> /dev/dm-0, /dev/block/8:0 -> /dev/sda): the configuration
+// keeps the name it was given.
+func hostDevice(fsys fs.FS, d string) string {
+	resolved, err := collector.ResolvePath(fsys, collector.Rel(d))
+	if err != nil || !strings.HasPrefix(resolved, "dev/") || "/"+resolved == path.Clean(d) {
+		return d
+	}
+	return "/" + resolved
+}
+
 func isRawDisk(d string) bool {
 	return slices.ContainsFunc(rawDisks, func(prefix string) bool { return strings.HasPrefix(d, prefix) })
 }
 
 // deviceRuleGrantsHost says whether a cgroup rule ("type major:minor access") lets the container
 // read or write a disk or the host's memory: any block device, or the memory character devices
-// (major 1: mem, kmem, port; the others of major 1 are /dev/null, zero and the random sources).
+// (major 1: mem, kmem, port; the others of major 1 are /dev/null, zero and the random sources),
+// or the SCSI generic devices (major 21), which pass commands to the disks behind them.
 func deviceRuleGrantsHost(rule string) bool {
 	if rule == DeviceRulesTruncated {
 		return true
@@ -731,7 +743,7 @@ func deviceRuleGrantsHost(rule string) bool {
 	case "a", "b":
 		return true
 	case "c":
-		return major == "*" || major == "1" && slices.Contains([]string{"*", "1", "2", "4"}, minor)
+		return major == "*" || major == "21" || major == "1" && slices.Contains([]string{"*", "1", "2", "4"}, minor)
 	}
 	return false
 }

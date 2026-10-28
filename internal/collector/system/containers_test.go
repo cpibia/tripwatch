@@ -275,3 +275,21 @@ func TestSameRootAsTheHost(t *testing.T) {
 		}
 	}
 }
+
+// A disk given by one of its links (an LVM volume, /dev/block/<major>:<minor>) is the disk the
+// runtime resolved; SCSI generic devices and their cgroup rules reach the disks too.
+func TestContainerDevicesThroughLinks(t *testing.T) {
+	id := strings.Repeat("d", 64)
+	dir := "var/lib/docker/containers/" + id + "/"
+	fsys := fstest.MapFS{
+		"dev/dm-0":              &fstest.MapFile{Mode: fs.ModeDevice},
+		"dev/vg0/root":          &fstest.MapFile{Data: []byte("../dm-0"), Mode: fs.ModeSymlink},
+		dir + "config.v2.json":  text(`{"ID": "` + id + `", "Name": "/lvm"}`),
+		dir + "hostconfig.json": text(`{"Devices": [{"PathOnHost": "/dev/vg0/root"}, {"PathOnHost": "/dev/sg0"}], "DeviceCgroupRules": ["c 21:* rw"]}`),
+	}
+	c := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys}).Containers[0]
+	want := []string{"device /dev/dm-0", "device /dev/sg0", "device rule c 21:* rw"}
+	if got := ContainerPowers(c); !slices.Equal(got, want) {
+		t.Errorf("powers = %q, want %q", got, want)
+	}
+}

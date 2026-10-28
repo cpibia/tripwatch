@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A device given to a container through a link (`/dev/<vg>/<lv>`, `/dev/block/8:0`) is judged as the
+  disk it leads to, and SCSI generic and NVMe passthrough devices (`/dev/sg*`, `/dev/ng*`,
+  `/dev/bsg/`, cgroup rule `c 21`) count as disks (SEC-205).
 - A container holding the socket of a daemon that acts as root for whoever talks to it (system
   D-Bus, systemd, snapd, libvirt, LXD, BuildKit), or the directory holding it, has power over
   the host like one holding a runtime socket; so has one writing `/run/systemd` (SEC-204).
