@@ -15,6 +15,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 ### Verifier
 
 - A container list cut at its bound raises a high alert (SEC-187).
+- A command passed in a failed request for a script missing at collection time still raises an
+  alert: a web shell used and deleted before the collection looks missing (SEC-196).
 
 ## [0.1.24] - 2026-10-29
 
