@@ -187,8 +187,9 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 		c.emit([]byte(" "))
 		return j + 2
 	case lexLineComment:
-		// The line ends the comment, and so does "?>", which ends the block too.
-		if b == '\n' {
+		// The line ends the comment, and so does "?>", which ends the block too. A carriage
+		// return alone ends a line for PHP as a line feed does.
+		if b == '\n' || b == '\r' {
 			c.mode = lexCode
 			c.emit([]byte("\n"))
 			return 1
@@ -337,7 +338,7 @@ func uncompilable(b byte) bool {
 // followed by anything that cannot continue an identifier.
 func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 	b := d[i]
-	if b == '\n' {
+	if b == '\n' || b == '\r' {
 		c.atLine = true
 		c.emit(d[i : i+1])
 		return 1
@@ -353,9 +354,9 @@ func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 			c.emit(d[i : i+1])
 			return 1
 		}
-		stops := "\n"
+		stops := "\r\n"
 		if !c.nowdoc {
-			stops = "\n{$"
+			stops = "\r\n{$"
 		}
 		j := bytes.IndexAny(d[i:], stops)
 		if j < 0 {
@@ -426,11 +427,12 @@ func heredocStart(d []byte) (id []byte, n int, ok bool) {
 		}
 		j++
 	}
+	// PHP takes "\r\n", "\n" and a carriage return alone for the end of the line.
 	switch {
-	case j < len(d) && d[j] == '\n':
-		j++
 	case j+1 < len(d) && d[j] == '\r' && d[j+1] == '\n':
 		j += 2
+	case j < len(d) && (d[j] == '\n' || d[j] == '\r'):
+		j++
 	default:
 		return nil, 0, false
 	}

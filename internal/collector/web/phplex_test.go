@@ -17,6 +17,13 @@ func TestCodeInDataHeredoc(t *testing.T) {
 		"<?php $x = <<<EOT\n?> EOTX\nEOT, 1;\nsystem($_GET['c']);":              "exec_request_input",
 		"<?php $x = <<<EOT\nnever closed ?>\nsystem($_GET['c']);":               "exec_request_input",
 		"<?php $x = <<<EOT\ntext\nEOT;\n?> after the block: system($_GET['c'])": "",
+		// A carriage return alone ends a line for PHP: it closes a line comment and follows the
+		// heredoc's opening, so what comes after runs.
+		"log <?php //x\rsystem($_GET['c']);\n":                 "exec_request_input",
+		"log <?php #x\rsystem($_GET['c']);\n":                  "exec_request_input",
+		"log <?php $x=<<<EOT\r?>\rEOT;\rsystem($_GET['c']);":   "exec_request_input",
+		"log <?php $x=<<<'EOT'\r?>\rEOT;\rsystem($_GET['c']);": "exec_request_input",
+		"log <?$x=<<<EOT\r\x01\rEOT;\rsystem($_GET['c']);":     "exec_request_input",
 	} {
 		got := strings.Join(first(codeInData([]byte(in), nil)), ",")
 		if !strings.Contains(got, want) || (want == "" && got != "") {
