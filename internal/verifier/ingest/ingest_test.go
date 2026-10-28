@@ -644,6 +644,46 @@ func TestHeartbeatGapRaisesAnAlert(t *testing.T) {
 	}
 }
 
+// A server switched off at night: its start judges the silence, the heartbeats after it do not
+// raise the same gap again.
+func TestHeartbeatGapAcrossAStartIsLeftToTheStart(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	send := func(kind protocol.Kind, payload string, at time.Duration) {
+		t.Helper()
+		h.clock = now.Add(at)
+		var body []byte
+		if payload != "" {
+			body = []byte(payload)
+		}
+		if err := c.Send(ctx, kind, body, h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(protocol.KindEvent, `{"event":"sensor_started","version":"1.2.0","boot_id":"aaaaaaaa-1"}`, 0)
+	send(protocol.KindHeartbeat, "", time.Minute)
+	send(protocol.KindEvent, `{"event":"sensor_stopping","version":"1.2.0","reason":"stopped","shutdown":true}`, 2*time.Minute)
+	send(protocol.KindEvent, `{"event":"sensor_started","version":"1.2.0","boot_id":"bbbbbbbb-2"}`, 8*time.Hour)
+	send(protocol.KindHeartbeat, "", 8*time.Hour+time.Second)
+	for _, a := range h.alerts() {
+		if a.Title == "Missed heartbeats" {
+			t.Fatalf("the night raised a gap besides the start: %+v", h.alerts())
+		}
+	}
+	// The next pause without a start is a gap again.
+	send(protocol.KindHeartbeat, "", 9*time.Hour)
+	var gaps int
+	for _, a := range h.alerts() {
+		if a.Title == "Missed heartbeats" {
+			gaps++
+		}
+	}
+	if gaps != 1 {
+		t.Fatalf("a pause without a start: %d gaps", gaps)
+	}
+}
+
 // An upload that stalls past the chunk time is cut, and the host's next snapshot is turned away
 // without waiting for a slot.
 func TestSlowUploadIsPenalised(t *testing.T) {

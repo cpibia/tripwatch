@@ -109,7 +109,8 @@ CREATE TABLE IF NOT EXISTS sensor_runs (
 	version    TEXT NOT NULL DEFAULT '',
 	stopped_at INTEGER NOT NULL DEFAULT 0,
 	stop_reason TEXT NOT NULL DEFAULT '',
-	shutdown   INTEGER NOT NULL DEFAULT 0
+	shutdown   INTEGER NOT NULL DEFAULT 0,
+	started_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS enroll_tokens (
 	host_id    TEXT PRIMARY KEY,
@@ -234,8 +235,8 @@ func migrate(db *sql.DB) error {
 			}
 		}
 	}
-	// sensor_runs as created by 0.1.10 lacks how the sensor said it stopped.
-	for col, def := range map[string]string{"stop_reason": "TEXT NOT NULL DEFAULT ''", "shutdown": "INTEGER NOT NULL DEFAULT 0"} {
+	// sensor_runs as created by 0.1.10 lacks how the sensor said it stopped, and when it started.
+	for col, def := range map[string]string{"stop_reason": "TEXT NOT NULL DEFAULT ''", "shutdown": "INTEGER NOT NULL DEFAULT 0", "started_at": "INTEGER NOT NULL DEFAULT 0"} {
 		var have int
 		if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('sensor_runs') WHERE name = ?`, col).Scan(&have); err != nil {
 			return err

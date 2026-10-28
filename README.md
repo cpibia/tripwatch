@@ -529,8 +529,9 @@ not pretend otherwise, but aims to make both visible. Already today:
   and, on Linux, symlinks are resolved inside the observed root;
 - the heartbeat reveals a stopped sensor within minutes, and a sensor that keeps sending
   heartbeats but no more snapshots raises an alert of its own; every sensor start arrives as a
-  signed event and every gap between two heartbeats over 100 seconds becomes an alert, so even a
-  stop or a suspension shorter than the silence threshold leaves a trace; a sensor that is
+  signed event and every gap between two heartbeats over 100 seconds becomes an alert (unless a
+  start of the sensor falls in it, which is judged on its own), so even a stop or a suspension
+  shorter than the silence threshold leaves a trace; a sensor that is
   stopped says so in a last signed event, and one removed with its package (`apt remove`,
   `dnf remove`) raises a high alert at once instead of only falling silent; each start is judged
   against how the previous run ended, from what the sensor signed as it stopped: only a stop made

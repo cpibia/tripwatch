@@ -79,6 +79,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- A gap between heartbeats with a start of the sensor in it no longer raises "Missed heartbeats":
+  the start already judges that silence from what the sensor signed as it stopped, so a server
+  switched off at night shows one low "Server was off" instead of a medium alert as well.
 - Security fix: the page asked for before signing in is followed only when it is a path on the
   console. A tab or a control byte in it (`/%09/evil.example/`), which browsers drop, could send
   the operator to another host after the login.

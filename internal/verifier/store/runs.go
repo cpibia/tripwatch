@@ -19,6 +19,8 @@ type SensorRun struct {
 	// "package_removed", and whether systemd was shutting the system down.
 	StopReason string
 	Shutdown   bool
+	// StartedAt is when the verifier accepted the sensor's latest start.
+	StartedAt time.Time
 }
 
 // startedBoot reads the boot out of a "Sensor started" alert, for hosts whose last start predates
@@ -29,12 +31,12 @@ var startedBoot = regexp.MustCompile(`\(versione? ([0-9A-Za-z.+~-]+), (?:system 
 // record exists falls back on its latest "Sensor started" alert.
 func (s *Store) Run(ctx context.Context, host string) (SensorRun, error) {
 	var r SensorRun
-	var stopped int64
-	err := s.db.QueryRowContext(ctx, `SELECT boot_id, version, stopped_at, stop_reason, shutdown FROM sensor_runs WHERE host_id = ?`, host).Scan(&r.BootID, &r.Version, &stopped, &r.StopReason, &r.Shutdown)
+	var stopped, started int64
+	err := s.db.QueryRowContext(ctx, `SELECT boot_id, version, stopped_at, stop_reason, shutdown, started_at FROM sensor_runs WHERE host_id = ?`, host).Scan(&r.BootID, &r.Version, &stopped, &r.StopReason, &r.Shutdown, &started)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return r, err
 	}
-	r.StoppedAt = unix(stopped)
+	r.StoppedAt, r.StartedAt = unix(stopped), unix(started)
 	if r.BootID != "" {
 		return r, nil
 	}
@@ -54,10 +56,10 @@ func (s *Store) Run(ctx context.Context, host string) (SensorRun, error) {
 }
 
 // Started records a start of the host's sensor and clears its stop.
-func (s *Store) Started(ctx context.Context, host, bootID, version string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sensor_runs (host_id, boot_id, version, stopped_at, stop_reason, shutdown) VALUES (?, ?, ?, 0, '', 0)
-		ON CONFLICT (host_id) DO UPDATE SET boot_id = excluded.boot_id, version = excluded.version, stopped_at = 0, stop_reason = '', shutdown = 0`,
-		host, clip(bootID, 64), clip(version, 64))
+func (s *Store) Started(ctx context.Context, host, bootID, version string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sensor_runs (host_id, boot_id, version, stopped_at, stop_reason, shutdown, started_at) VALUES (?, ?, ?, 0, '', 0, ?)
+		ON CONFLICT (host_id) DO UPDATE SET boot_id = excluded.boot_id, version = excluded.version, stopped_at = 0, stop_reason = '', shutdown = 0, started_at = excluded.started_at`,
+		host, clip(bootID, 64), clip(version, 64), at.Unix())
 	return err
 }
 

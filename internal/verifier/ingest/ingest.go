@@ -360,8 +360,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.event(ctx, identity, e, now)
 	}
 	// A pause shorter than the silence threshold, a sensor frozen with SIGSTOP for instance,
-	// shows only here: as a gap between two heartbeats that were both accepted.
-	if e.Kind == protocol.KindHeartbeat && !host.LastHeartbeat.IsZero() && now.Sub(host.LastHeartbeat) > HeartbeatGap {
+	// shows only here: as a gap between two heartbeats that were both accepted. A gap with a
+	// start of the sensor in it was judged by that start, with what the sensor signed as it
+	// stopped: a server switched off at night must not raise it a second time.
+	if e.Kind == protocol.KindHeartbeat && !host.LastHeartbeat.IsZero() && now.Sub(host.LastHeartbeat) > HeartbeatGap && !s.restartedSince(ctx, identity, host.LastHeartbeat) {
 		s.raise(ctx, store.Alert{HostID: identity, Fingerprint: "sensor:gap:" + strconv.FormatInt(now.Unix(), 10), Severity: "medium", Kind: "sensor-event",
 			Title: "Missed heartbeats",
 			Detail: fmt.Sprintf("No heartbeat between %s and %s (%s). A network pause, or the sensor was suspended or stopped for a short while: check what happened in that interval.",
@@ -375,6 +377,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeAck(w, state.Sequence)
+}
+
+// restartedSince reports whether the host's sensor started after the given heartbeat. The start
+// envelope precedes the run's first heartbeat in the chain, so it is always accepted first.
+func (s *Server) restartedSince(ctx context.Context, host string, heartbeat time.Time) bool {
+	run, err := s.Store.Run(ctx, host)
+	if err != nil {
+		s.Log.Error("read sensor run", "host", host, "err", err)
+		return false
+	}
+	return !run.StartedAt.Before(heartbeat)
 }
 
 // chainAlert raises a critical alert for an envelope that breaks the host's chain: replayed,
@@ -601,7 +614,7 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 		}
 	}
 	s.raise(ctx, a, now)
-	if err := s.Store.Started(ctx, host, boot, version); err != nil {
+	if err := s.Store.Started(ctx, host, boot, version, now); err != nil {
 		s.Log.Error("record sensor start", "host", host, "err", err)
 	}
 }
