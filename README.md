@@ -504,7 +504,12 @@ the customer address form and loaded by a failing guest cart call, a cart item a
 REST API followed by a fetch from `media/custom_options` by the same address (the attached file is
 in the request body, which no log shows), and a shipping estimate for a guest cart whose ID is not
 one the shop hands out (the shape of the XML external entity exploit against the address parser,
-whose outcome the status does not tell). The severity of a script in uploads does not depend on the
+whose outcome the status does not tell). Magento's front controller prefix (`/index.php/rest/...`)
+is matched too. Critical and high events are alerts; of the medium ones, those aimed at the
+application's own weak points (a made-up cart's shipping estimate, PHP sent in a request, a file
+attached to a cart item, a POST to a static file) raise one medium alert a day per rule and log,
+shown on the verifier and not mailed, while the scans every site receives all day are only kept
+in the snapshot. The severity of a script in uploads does not depend on the
 HTTP status, which the script itself decides. For each requested script the sensor also says
 whether it exists in the document roots of the nginx or Apache sites writing that log (with
 nginx's location roots and aliases, Apache's `Alias`): a request that failed for a script found

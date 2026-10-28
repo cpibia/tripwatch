@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 	"github.com/cpibia/tripwatch/internal/collector/apps"
@@ -62,6 +63,11 @@ func unitOwner(u unitT) string { return homeOwner(u.Path) }
 
 // noLogin are the shells that refuse a session. Only these exact paths count: a copy of bash
 // named nologin elsewhere is a shell.
+// attemptRules are the medium log rules aimed at an application's own weak points (a shipping
+// estimate for a made-up cart, PHP sent to be logged or cached, a file attached to a cart item,
+// a POST to a static file): unlike the scans every site receives all day, each is worth seeing.
+var attemptRules = []string{"shipping_estimate_probe", "php_code_in_request", "cart_item_file_upload", "cart_upload_then_fetch", "post_to_static_file"}
+
 var noLogin = map[string]bool{"/usr/sbin/nologin": true, "/sbin/nologin": true, "/bin/false": true, "/usr/bin/false": true, "": true}
 
 // grantWords mark policy lines that name who gets a power or take it away: sudo user specs,
@@ -1139,11 +1145,27 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if l := cur.Weblog; l != nil {
+		attempts := map[string]bool{}
 		for _, e := range l.Events {
 			// A request that failed for a script missing from every root nginx could serve it
 			// from ran no code: a probe, not an intrusion. A web shell answers as it likes, so
 			// one that exists stays serious whatever its status.
 			if e.OnDisk == "missing" && (e.Status < 200 || e.Status >= 300) {
+				continue
+			}
+			if e.Severity == "medium" && slices.Contains(attemptRules, e.Rule) {
+				// Attempts aimed at the application's own weak points, which leave nothing on
+				// disk when they work: one alert a day per rule and log, shown but not mailed.
+				day := cur.TakenAt.UTC().Format(time.DateOnly)
+				fp := "weblog:" + e.Rule + ":" + e.Log + "|" + day
+				if attempts[fp] {
+					continue
+				}
+				attempts[fp] = true
+				add(Finding{Kind: "weblog", Fingerprint: fp, Severity: "medium",
+					Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "),
+					Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s) on %s, log %s.\nRequest text, written by whoever sent it: %s",
+						e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, day, e.Log, e.Evidence.Request)})
 				continue
 			}
 			if e.Severity != "critical" && e.Severity != "high" {

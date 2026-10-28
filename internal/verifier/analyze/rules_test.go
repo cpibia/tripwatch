@@ -687,3 +687,28 @@ func TestScriptChanges(t *testing.T) {
 		t.Errorf("deploy alerts: %d", n)
 	}
 }
+
+// A medium log event aimed at the application's weak points is one alert a day per rule and log,
+// however many requests and scripts it spans; the scans every site receives raise nothing.
+func TestWeblogAttemptsDaily(t *testing.T) {
+	cur := baseState()
+	cur.TakenAt = time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)
+	ev := func(rule, uri string) logs.Event {
+		return logs.Event{Rule: rule, Severity: "medium", Method: "POST", Status: 404, Log: "/var/log/nginx/access.log", Evidence: logs.AttackerControlled{Request: uri}}
+	}
+	cur.Weblog = &logs.Result{Events: []logs.Event{
+		ev("shipping_estimate_probe", "/rest/V1/guest-carts/a/estimate-shipping-methods"),
+		ev("shipping_estimate_probe", "/index.php/rest/V1/guest-carts/b/estimate-shipping-methods"),
+		ev("sql_injection", "/p?id=[redacted]"),
+		ev("injection_probe", "/"),
+	}}
+	var got []string
+	for _, f := range Evaluate(nil, cur) {
+		if f.Kind == "weblog" {
+			got = append(got, f.Severity+" "+f.Fingerprint)
+		}
+	}
+	if want := []string{"medium weblog:shipping_estimate_probe:/var/log/nginx/access.log|2026-10-28"}; !slices.Equal(got, want) {
+		t.Errorf("weblog findings = %v, want %v", got, want)
+	}
+}

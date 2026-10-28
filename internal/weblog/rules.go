@@ -60,12 +60,14 @@ var (
 	commandParamRe  = regexp.MustCompile(`(?i)(^|&)(cmd|exec|command|c|e|run|shell|do|code)=[^&]*(whoami|\bid\b|uname|cat\s+/|wget\s|curl\s|/bin/(ba)?sh|\bnc\s|python\s|perl\s|base64|chmod\s|powershell)`)
 	injectionProbes = regexp.MustCompile(`(?i)(\$\{jndi:|\$\{\$\{|\(\)\s*\{\s*:\s*;\s*\}|<script\b|\{\{\s*7\s*\*\s*7\s*\}\})`)
 	scannerAgentRe  = regexp.MustCompile(`(?i)(sqlmap|nikto|nuclei|wpscan|masscan|zgrab|gobuster|dirbuster|ffuf|feroxbuster|nmap|acunetix|nessus|openvas|whatweb|jaeles|xray|commix|joomscan|droopescan|cmsmap)`)
-	sessionReaperRe = regexp.MustCompile(`^(/[a-z0-9_]+)?/customer/address_file/upload/?$`)
-	guestCartRe     = regexp.MustCompile(`^/rest(/[a-z0-9_]+)?/v1/guest-carts/`)
-	cartItemsRe     = regexp.MustCompile(`^/rest(/[a-z0-9_]+)?/v1/(guest-carts/[^/]+|carts/mine)/items/?$`)
-	shippingProbeRe = regexp.MustCompile(`^/rest(/[a-z0-9_]+)?/v1/guest-carts/([^/]+)/estimate-shipping-methods/?$`)
+	// Magento routes the same controllers through its front controller: /index.php/rest/...
+	// reaches what /rest/... does.
+	sessionReaperRe = regexp.MustCompile(`^(/index\.php)?(/[a-z0-9_]+)?/customer/address_file/upload/?$`)
+	guestCartRe     = regexp.MustCompile(`^(/index\.php)?/rest(/[a-z0-9_]+)?/v1/guest-carts/`)
+	cartItemsRe     = regexp.MustCompile(`^(/index\.php)?/rest(/[a-z0-9_]+)?/v1/(guest-carts/[^/]+|carts/mine)/items/?$`)
+	shippingProbeRe = regexp.MustCompile(`^(/index\.php)?/rest(/[a-z0-9_]+)?/v1/guest-carts/([^/]+)/estimate-shipping-methods/?$`)
 	maskedCartIDRe  = regexp.MustCompile(`^[a-z0-9]{32}$`)
-	phpCodeRe       = regexp.MustCompile(`(?i)<\?(php|=)`)
+	phpCodeRe       = regexp.MustCompile(`(?i)<\?(php|=|\s)`)
 	// HTTP libraries rather than browsers or known crawlers: common in exploit scripts, and in
 	// many legitimate integrations too, so only a weak signal.
 	scriptedAgentRe = regexp.MustCompile(`(?i)(python-requests|python-urllib|python-httpx|aiohttp|go-http-client|libwww-perl)`)
@@ -134,7 +136,7 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	// Guest carts are addressed by a 32-character masked ID that the shop hands out; an XML
 	// external entity exploit against the address parser sends its body to a made-up cart,
 	// and the 404 that follows says nothing about whether the entity was already resolved.
-	if m := shippingProbeRe.FindStringSubmatch(p); m != nil && post && !maskedCartIDRe.MatchString(m[2]) {
+	if m := shippingProbeRe.FindStringSubmatch(p); m != nil && post && !maskedCartIDRe.MatchString(m[3]) {
 		hit("shipping_estimate_probe", SeverityMedium)
 	}
 	// PHP in a request has no business there: it is meant to be written to a log or a cache
