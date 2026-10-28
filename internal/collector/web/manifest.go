@@ -342,8 +342,10 @@ const staleManifestAge = 7 * 24 * time.Hour
 
 // removeStaleManifests deletes the manifests no run has rewritten for staleManifestAge. Going by
 // age rather than by the applications found keeps the manifests of one that discovery missed
-// for a run.
-func removeStaleManifests(stateDir string, now time.Time) error {
+// for a run; the manifest of an application found in this run is kept whatever its age, since
+// a verifier out of reach for a week stops the commits that rewrite it, and the changes made
+// meanwhile are the ones to name.
+func removeStaleManifests(stateDir string, now time.Time, found ...string) error {
 	dir := filepath.Join(stateDir, manifestDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -355,7 +357,8 @@ func removeStaleManifests(stateDir string, now time.Time) error {
 	var errs []error
 	for _, e := range entries {
 		info, err := e.Info()
-		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < staleManifestAge {
+		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < staleManifestAge ||
+			slices.ContainsFunc(found, func(app string) bool { return filepath.Base(manifestPath(stateDir, app)) == e.Name() }) {
 			continue
 		}
 		errs = append(errs, os.Remove(filepath.Join(dir, e.Name())))

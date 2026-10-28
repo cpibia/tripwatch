@@ -161,6 +161,21 @@ func TestManifestFailuresAndStaleManifests(t *testing.T) {
 	if err := removeStaleManifests(t.TempDir(), now); err != nil {
 		t.Errorf("no manifest directory: %v", err)
 	}
+	// An application found in this run keeps its manifest however old: commits stop while the
+	// verifier is out of reach.
+	kept := manifestPath(state, "/var/www/shop")
+	if err := os.WriteFile(kept, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(kept, now.Add(-30*24*time.Hour), now.Add(-30*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeStaleManifests(state, now, "/var/www/shop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Error("the manifest of an application found in this run was removed")
+	}
 }
 
 // A release's link to its shared wp-config.php is code included on every request: a line

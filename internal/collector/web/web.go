@@ -236,7 +236,11 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 	}
 	c.pending.set(manifests)
 	if c.StateDir != "" {
-		if err := removeStaleManifests(c.StateDir, time.Now()); err != nil {
+		found := make([]string, 0, len(res.Apps))
+		for _, a := range res.Apps {
+			found = append(found, a.Path)
+		}
+		if err := removeStaleManifests(c.StateDir, time.Now(), found...); err != nil {
 			res.Issues.Add(err)
 		}
 	}

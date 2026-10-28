@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The code manifest of an application found in the run is never removed as stale: after a week
+  without reaching the verifier, the changes made meanwhile are still named (SEC-200).
 - A web server started by systemd with `PrivateTmp=` or `ProtectSystem=` counts for stale
   configuration again: the host's servers are told from containers by their root, not by their
   mount namespace (SEC-153).
