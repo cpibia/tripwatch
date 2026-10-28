@@ -584,6 +584,8 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   a private tmpfs of a user namespace, or one removed within a millisecond, before the sensor
   reads it, is not seen there; a process still alive from such a file shows in the snapshot's
   processes. Past 2,000 events a second there the rest is counted as lost and reported.
+  Directories more than two levels deep are not watched and are reported, except below a
+  directory only root can enter (such as the private `/tmp` snapd keeps for each snap).
 - Real-time events cover the watched places and the process starts listed in
   [Real-time events](#real-time-events): a file that appears and disappears elsewhere between two
   snapshots is not seen. inotify has a per-user watch limit (`fs.inotify.max_user_watches`): when

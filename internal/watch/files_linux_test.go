@@ -148,6 +148,38 @@ func TestFilesDoNotFollowLinks(t *testing.T) {
 	}
 }
 
+// Below a directory only root can enter, depth is no hiding place: no gap is reported there,
+// while the same tree open to the group still is.
+func TestFilesSkipGapsOnlyRootCanReach(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to own the directories")
+	}
+	root := t.TempDir()
+	for _, d := range []string{"tmp/snap-private-tmp/snap.lxd/tmp/x", "tmp/open/shared/tmp/x"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(root, "tmp/open/shared"), 0o750); err != nil { //nolint:gosec // the group can enter it on purpose
+		t.Fatal(err)
+	}
+	f, err := NewFiles(root, collector.NewSource(root), make(chan Event, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set([]Target{{Dir: "/tmp", Class: ClassScratch, Recursive: true, Depth: ScratchDepth}})
+	var gaps []string
+	for _, issue := range f.Issues() {
+		if strings.Contains(issue, "deeper than") {
+			gaps = append(gaps, issue)
+		}
+	}
+	if len(gaps) != 1 || !strings.Contains(gaps[0], "/tmp/open/shared ") {
+		t.Fatalf("gaps = %v, want only the one under /tmp/open/shared", gaps)
+	}
+}
+
 // What the bounds leave unwatched is said, not silently skipped; a terminal reached through a
 // link in the uploads is never opened.
 func TestFilesReportGapsAndSkipDevices(t *testing.T) {

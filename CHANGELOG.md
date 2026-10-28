@@ -12,6 +12,9 @@ Sensor:
   upgrading a package no longer raise "A program started from /var/tmp", under the same
   conditions as apt's debconf scripts: root, a root-owned file, started by rpm or a package
   manager built on it, known by its executable, UID and command line.
+- Directories deeper than the real-time watch below a directory only root can enter (root-owned,
+  no search permission for group or others, like snapd's `/tmp/snap-private-tmp/snap.*`) no
+  longer raise "Places left without real-time watch": no other user can reach them.
 
 ## [0.1.12] - 2026-10-28
 

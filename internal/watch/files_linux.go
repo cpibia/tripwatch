@@ -110,6 +110,19 @@ type fileID struct {
 	dev, ino uint64
 }
 
+// rootOnly reports whether only root can enter dir: a root-owned directory that grants its group
+// and everyone else no search permission (an ACL entry shows in the group bits). Nothing below it
+// can be created or reached by another user, so directories deeper than the watch there, like
+// the private /tmp snapd keeps for a snap, are not a way to hide from it.
+func (f *Files) rootOnly(dir string) bool {
+	info, err := fs.Lstat(f.src.FS, collector.Rel(dir))
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	uid, ok := collector.Owner(info)
+	return ok && uid == 0 && info.Mode().Perm()&0o011 == 0
+}
+
 // identity is the inode behind dir in the observed filesystem, or false when there is no
 // directory there.
 func (f *Files) identity(dir string) (fileID, bool) {
@@ -277,7 +290,9 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 			continue
 		}
 		if depth >= t.depth() {
-			f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, t.depth(), t.Dir))
+			if !f.rootOnly(dir) {
+				f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, t.depth(), t.Dir))
+			}
 			break
 		}
 		f.expand(t, path.Join(dir, e.Name()), depth+1, keep, depths, planned)
@@ -658,7 +673,7 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 		if isDir && op == OpCreate && t.Recursive && !followed {
 			if w.depth < t.depth() {
 				f.watchNew(full, t, w.depth+1)
-			} else {
+			} else if !f.rootOnly(w.dir) {
 				f.mu.Lock()
 				f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", w.dir, t.depth(), t.Dir))
 				f.mu.Unlock()
@@ -696,9 +711,11 @@ func (f *Files) watchNew(dir string, t Target, depth int) {
 		// mkdir -p makes the whole chain before the first watch is placed.
 		if e.IsDir() && t.Recursive {
 			if depth >= t.depth() {
-				f.mu.Lock()
-				f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, t.depth(), t.Dir))
-				f.mu.Unlock()
+				if !f.rootOnly(dir) {
+					f.mu.Lock()
+					f.gap(t.Class, fmt.Sprintf("watch: %s has directories deeper than %d levels below %s, not watched", dir, t.depth(), t.Dir))
+					f.mu.Unlock()
+				}
 				continue
 			}
 			f.watchNew(child, t, depth+1)
