@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - The first run that hashes the content behind a release's shared link no longer reports that
@@ -908,7 +912,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.25...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.26...HEAD
+[0.1.26]: https://github.com/cpibia/tripwatch/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/cpibia/tripwatch/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/cpibia/tripwatch/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/cpibia/tripwatch/compare/v0.1.22...v0.1.23
