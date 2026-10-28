@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-10-28
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - Web servers running in containers are read: their sites, with domain, document root, logs and
@@ -784,7 +788,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.20...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.21...HEAD
+[0.1.21]: https://github.com/cpibia/tripwatch/compare/v0.1.20...v0.1.21
 [0.1.20]: https://github.com/cpibia/tripwatch/compare/v0.1.19...v0.1.20
 [0.1.19]: https://github.com/cpibia/tripwatch/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/cpibia/tripwatch/compare/v0.1.17...v0.1.18
