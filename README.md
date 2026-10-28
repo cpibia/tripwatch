@@ -494,8 +494,14 @@ those in the standard locations, resuming where it stopped. Recognized formats a
 Apache combined (also with extra trailing fields) and Caddy's JSON. The rules look for scripts
 requested in upload directories, known webshell names, commands in parameters, POSTs to static
 files or to endpoints that only serve files, access to sensitive files (`.env`, `.git`, backups),
-path traversal, SQL injection, injection probes, known scanners, brute force on public logins and
-known exploit chains, correlated by IP. The severity of a script in uploads does not depend on the
+path traversal, SQL injection, injection probes, PHP code sent in a request (meant for a log or
+cache the application includes), known scanners and HTTP libraries (a weak signal, low), brute
+force on public logins and known exploit chains, correlated by IP: a session file uploaded through
+the customer address form and loaded by a failing guest cart call, a cart item added through the
+REST API followed by a fetch from `media/custom_options` by the same address (the attached file is
+in the request body, which no log shows), and a shipping estimate for a guest cart whose ID is not
+one the shop hands out (the shape of the XML external entity exploit against the address parser,
+whose outcome the status does not tell). The severity of a script in uploads does not depend on the
 HTTP status, which the script itself decides. For each requested script the sensor also says
 whether it exists in the document roots of the nginx or Apache sites writing that log (with
 nginx's location roots and aliases, Apache's `Alias`): a request that failed for a script found

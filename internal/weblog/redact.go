@@ -23,6 +23,10 @@ var nestedSecret = regexp.MustCompile(`(?i)([a-z0-9_]*(?:token|passw|pwd|secret|
 // wherever they appear: in a path segment or inside a kept value.
 var tokenLike = regexp.MustCompile(`[A-Za-z0-9_\-.=]{12,}`)
 
+// slugLike is lowercase words joined by hyphens or underscores, such as a REST route: varied
+// enough to pass for random, but no token generator produces it.
+var slugLike = regexp.MustCompile(`^[a-z]+([-_][a-z]+)+$`)
+
 // queryInLine finds query strings inside free text such as an error log line.
 var queryInLine = regexp.MustCompile(`\?[^\s"'<>]+`)
 
@@ -51,6 +55,8 @@ func maskTokens(s string) string {
 	return tokenLike.ReplaceAllStringFunc(s, func(t string) string {
 		mixed := strings.ContainsFunc(t, unicode.IsDigit) && strings.ContainsFunc(t, unicode.IsLetter)
 		switch {
+		case slugLike.MatchString(t):
+			return t
 		case len(t) >= 20 && entropy(t) >= 3.5:
 			return "[redacted]"
 		case len(t) >= 12 && mixed && entropy(t) >= 3.0:
@@ -106,7 +112,7 @@ func redactQuery(raw string) string {
 }
 
 func isEvidence(value string) bool {
-	return slices.ContainsFunc([]*regexp.Regexp{traversalRe, sqlInjectionRe, injectionProbes}, func(re *regexp.Regexp) bool {
+	return slices.ContainsFunc([]*regexp.Regexp{traversalRe, sqlInjectionRe, injectionProbes, phpCodeRe}, func(re *regexp.Regexp) bool {
 		return re.MatchString(value)
 	}) || commandParamRe.MatchString("cmd="+value)
 }

@@ -62,6 +62,13 @@ var (
 	scannerAgentRe  = regexp.MustCompile(`(?i)(sqlmap|nikto|nuclei|wpscan|masscan|zgrab|gobuster|dirbuster|ffuf|feroxbuster|nmap|acunetix|nessus|openvas|whatweb|jaeles|xray|commix|joomscan|droopescan|cmsmap)`)
 	sessionReaperRe = regexp.MustCompile(`^(/[a-z0-9_]+)?/customer/address_file/upload/?$`)
 	guestCartRe     = regexp.MustCompile(`^/rest(/[a-z0-9_]+)?/v1/guest-carts/`)
+	cartItemsRe     = regexp.MustCompile(`^/rest(/[a-z0-9_]+)?/v1/(guest-carts/[^/]+|carts/mine)/items/?$`)
+	shippingProbeRe = regexp.MustCompile(`^/rest(/[a-z0-9_]+)?/v1/guest-carts/([^/]+)/estimate-shipping-methods/?$`)
+	maskedCartIDRe  = regexp.MustCompile(`^[a-z0-9]{32}$`)
+	phpCodeRe       = regexp.MustCompile(`(?i)<\?(php|=)`)
+	// HTTP libraries rather than browsers or known crawlers: common in exploit scripts, and in
+	// many legitimate integrations too, so only a weak signal.
+	scriptedAgentRe = regexp.MustCompile(`(?i)(python-requests|python-urllib|python-httpx|aiohttp|go-http-client|libwww-perl)`)
 )
 
 // maxTrackedIPs bounds the per-IP state: a remote attacker controls how many distinct
@@ -71,12 +78,13 @@ const maxTrackedIPs = 50_000
 // Analyzer applies the rules to requests in log order. It keeps per-IP state to correlate
 // requests into chains, so one Analyzer must see all the requests of a site.
 type Analyzer struct {
-	uploads map[string]time.Time
-	logins  map[string][]time.Time
+	uploads     map[string]time.Time
+	cartUploads map[string]time.Time
+	logins      map[string][]time.Time
 }
 
 func NewAnalyzer() *Analyzer {
-	return &Analyzer{uploads: map[string]time.Time{}, logins: map[string][]time.Time{}}
+	return &Analyzer{uploads: map[string]time.Time{}, cartUploads: map[string]time.Time{}, logins: map[string][]time.Time{}}
 }
 
 // Analyze returns the rules r matches.
@@ -104,6 +112,37 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 		if at, seen := a.uploads[r.IP]; seen && r.Time.Sub(at) <= chainWindow && !r.Time.Before(at) {
 			hit("sessionreaper_chain", SeverityCritical)
 		}
+	}
+
+	// A file attached to a cart item through the REST API lands under media/custom_options
+	// with the name and extension the client chose. The JSON body carrying it is not in the
+	// log, so the POST is remembered per IP and the alert comes when the same address then
+	// fetches anything there: shops deny that directory to browsers, which download such files
+	// through a controller.
+	if post && cartItemsRe.MatchString(p) {
+		evictOne(a.cartUploads, r.IP)
+		a.cartUploads[r.IP] = r.Time
+		if strings.Contains(strings.ToLower(q), "file_info") {
+			hit("cart_item_file_upload", SeverityMedium)
+		}
+	}
+	if strings.Contains(p, "/custom_options/") {
+		if at, seen := a.cartUploads[r.IP]; seen && r.Time.Sub(at) <= chainWindow && !r.Time.Before(at) {
+			hit("cart_upload_then_fetch", bySuccess(ok, SeverityHigh, SeverityMedium))
+		}
+	}
+	// Guest carts are addressed by a 32-character masked ID that the shop hands out; an XML
+	// external entity exploit against the address parser sends its body to a made-up cart,
+	// and the 404 that follows says nothing about whether the entity was already resolved.
+	if m := shippingProbeRe.FindStringSubmatch(p); m != nil && post && !maskedCartIDRe.MatchString(m[2]) {
+		hit("shipping_estimate_probe", SeverityMedium)
+	}
+	// PHP in a request has no business there: it is meant to be written to a log or a cache
+	// that the application later includes. Mass scanners send it to every site with any status,
+	// so the request alone stays medium; whether it landed is decided on disk, where the web
+	// collector searches data files for code.
+	if phpCodeRe.MatchString(q) || phpCodeRe.MatchString(r.path) || phpCodeRe.MatchString(r.UserAgent) {
+		hit("php_code_in_request", SeverityMedium)
 	}
 
 	// The status is chosen by the script itself, and many web shells answer 404 to blend in:
@@ -156,6 +195,8 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	}
 	if scannerAgentRe.MatchString(r.UserAgent) {
 		hit("scanner_user_agent", SeverityLow)
+	} else if scriptedAgentRe.MatchString(r.UserAgent) {
+		hit("scripted_user_agent", SeverityLow)
 	}
 	if r.Method == "POST" && isLogin(p) && a.countLogin(r.IP, r.Time) == bruteForceLimit {
 		hit("login_bruteforce", SeverityMedium)

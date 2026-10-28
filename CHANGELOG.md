@@ -26,6 +26,14 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   silently stopping the naming of changed files; a code file too large to hash is named as
   modified when its fingerprint (size, change time, inode) changes between two runs; manifests
   not rewritten for seven days are removed from the state directory.
+- New log rules: a cart item added through the REST API and then a fetch from
+  `media/custom_options` by the same address (`cart_upload_then_fetch`, high on success), a
+  `file_info` parameter on a cart item (`cart_item_file_upload`), a shipping estimate for a
+  guest cart ID the shop never hands out (`shipping_estimate_probe`), PHP code in the path, query
+  or user agent (`php_code_in_request`), all medium, and HTTP libraries such as
+  `python-requests` as user agent (`scripted_user_agent`, low). PHP code in a parameter is kept
+  in the evidence, and route segments made only of words (`estimate-shipping-methods`) are no
+  longer masked as tokens.
 - The processes collector lists the names of the host's kernel threads (`kernel_thread_names`,
   reduced to their family: `kworker`, `kswapd`, `scsi_eh_`), at most 512.
 - Real-time watch: the places left unwatched are listed up to five per class, so scratch

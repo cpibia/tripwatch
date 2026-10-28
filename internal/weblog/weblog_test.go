@@ -97,6 +97,16 @@ func TestRules(t *testing.T) {
 		{req("GET", "/", 200, "${jndi:ldap://x/a}"), []string{"injection_probe:medium"}},
 		{req("GET", "/", 404, "sqlmap/1.7"), []string{"scanner_user_agent:low"}},
 		{req("GET", "/media/x.php.jpg", 200, "-"), []string{"script_in_upload_path:critical"}},
+		{req("POST", "/rest/default/V1/guest-carts/abc/items?file_info=PD9waHA=", 200, "-"), []string{"cart_item_file_upload:medium"}},
+		{req("POST", "/rest/default/V1/guest-carts/abc/items", 200, "-"), nil},
+		{req("POST", "/rest/V1/guest-carts/test-cart/estimate-shipping-methods", 404, "-"), []string{"shipping_estimate_probe:medium"}},
+		{req("POST", "/rest/default/V1/guest-carts/q0ZbC7WLnEzR4uUv8mK2yXfTgH5sJd1A/estimate-shipping-methods", 200, "Mozilla"), nil},
+		{req("GET", "/rest/V1/guest-carts/test-cart/estimate-shipping-methods", 404, "-"), nil},
+		{req("GET", "/paypal/transparent/response/?x=%3C%3Fphp%20system(1);", 200, "-"), []string{"php_code_in_request:medium"}},
+		{req("GET", "/", 404, "<?= `id` ?>"), []string{"php_code_in_request:medium"}},
+		{req("GET", "/", 200, "python-requests/2.31.0"), []string{"scripted_user_agent:low"}},
+		{req("GET", "/", 200, "Go-http-client/1.1"), []string{"scripted_user_agent:low"}},
+		{req("GET", "/", 200, "sqlmap/1.7 python-requests/2.31"), []string{"scanner_user_agent:low"}},
 		{req("GET", "/catalog/product/view", 200, "Mozilla"), nil},
 		{req("POST", "/checkout/cart/add", 200, "Mozilla"), nil},
 	}
@@ -133,6 +143,40 @@ func TestUploadThenTriggerChain(t *testing.T) {
 	}
 	tooLate := *trigger
 	tooLate.Time = upload.Time.Add(48 * time.Hour)
+	if got := rules(a.Analyze(&tooLate)); len(got) != 0 {
+		t.Errorf("outside the window: %v", got)
+	}
+}
+
+// A file attached to a cart item is in the request body, never in the log: the alert comes
+// when the address that added items then fetches the directory such files are stored in.
+func TestCartUploadThenFetch(t *testing.T) {
+	a := NewAnalyzer()
+	fetch := req("GET", "/media/custom_options/quote/a/b/0f3c.png", 200, "-")
+	if got := rules(a.Analyze(fetch)); len(got) != 0 {
+		t.Errorf("fetch without a cart upload: %v", got)
+	}
+	if got := rules(a.Analyze(req("POST", "/rest/V1/guest-carts/abc/items", 200, "-"))); len(got) != 0 {
+		t.Errorf("cart item: %v", got)
+	}
+	other := *fetch
+	other.IP = "198.51.100.1"
+	if got := rules(a.Analyze(&other)); len(got) != 0 {
+		t.Errorf("fetch from another IP: %v", got)
+	}
+	if got := rules(a.Analyze(fetch)); !slices.Equal(got, []string{"cart_upload_then_fetch:high"}) {
+		t.Errorf("chain: %v", got)
+	}
+	missing := req("GET", "/media/custom_options/quote/a/b/0f3c.png", 404, "-")
+	if got := rules(a.Analyze(missing)); !slices.Equal(got, []string{"cart_upload_then_fetch:medium"}) {
+		t.Errorf("chain on a missing file: %v", got)
+	}
+	script := req("GET", "/media/custom_options/quote/a/b/0f3c.php", 200, "-")
+	if got := rules(a.Analyze(script)); !slices.Equal(got, []string{"cart_upload_then_fetch:high", "script_in_upload_path:critical"}) {
+		t.Errorf("script: %v", got)
+	}
+	tooLate := *fetch
+	tooLate.Time = fetch.Time.Add(48 * time.Hour)
 	if got := rules(a.Analyze(&tooLate)); len(got) != 0 {
 		t.Errorf("outside the window: %v", got)
 	}
@@ -227,6 +271,9 @@ func TestRedactKeepsEvidenceHidesTokens(t *testing.T) {
 		"/reset/SECRETTOKEN123":                            "/reset/[redacted]",
 		"/auth/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig42": "/auth/[redacted]",
 		"/blog/2026/10/how-to-secure-your-shop":            "/blog/2026/10/how-to-secure-your-shop",
+		"/rest/V1/guest-carts/x/estimate-shipping-methods": "/rest/V1/guest-carts/x/estimate-shipping-methods",
+		"/p/?x=%3C%3Fphp%20eval($_POST[1]);":               "/p/?x=%3C%3Fphp%20eval($_POST[1]);",
+		"/p/?q=organic-cotton-tshirt":                      "/p/?q=[redacted]",
 	} {
 		if got := RedactURI(in); got != want {
 			t.Errorf("RedactURI(%q) = %q, want %q", in, got, want)
