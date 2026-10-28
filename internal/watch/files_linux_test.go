@@ -215,7 +215,8 @@ func TestFilesReportGapsAndSkipDevices(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "srv/u/a/b/c/x/y"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	// Generous: under the race detector and coverage on a busy runner the reader can lag.
+	deadline := time.Now().Add(15 * time.Second)
 	for !strings.Contains(strings.Join(f.Issues(), "\n"), "/srv/u/a/b/c/x has directories deeper") {
 		if time.Now().After(deadline) {
 			t.Fatalf("live depth gap not reported: %v", f.Issues())
