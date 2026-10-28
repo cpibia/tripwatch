@@ -56,6 +56,9 @@ type Containers struct {
 	// looked is set after the first look, whose containers were there before the sensor and are
 	// left to the snapshots.
 	looked bool
+	// rereadFrom is where in the list the next look starts reading changed containers again,
+	// so that containers rewritten every second (by a health check) cannot take every turn.
+	rereadFrom int
 	// Dropped counts events lost because the consumer did not keep up.
 	Dropped atomic.Int64
 }
@@ -91,56 +94,37 @@ func (c *Containers) look() {
 	refs, _ := system.ContainerRefs(c.fsys, &issues)
 	host := system.NewHostMounts(c.fsys)
 	present := make(map[string]bool, len(refs))
+	// Containers never seen come first, with a budget of their own: rewrites of known ones
+	// cannot hold back the one started to escape.
 	reads := 0
+	var changed []system.ContainerRef
 	for _, ref := range refs {
 		present[ref.Path] = true
-		t, seen := c.known[ref.Path]
-		stamp := system.ContainerStamp(c.fsys, ref)
-		if seen && t.stamp == stamp {
+		if _, seen := c.known[ref.Path]; seen {
+			changed = append(changed, ref)
 			continue
 		}
 		if c.looked && reads == maxContainerReads {
 			continue
 		}
 		reads++
-		ct, ok := system.ReadContainer(c.fsys, ref, host, &issues)
-		if !ok && seen {
-			t.stamp = stamp
+		c.read(ref, nil, host, &issues)
+	}
+	rereads := 0
+	for n := range changed {
+		if rereads == maxContainerReads {
+			break
+		}
+		ref := changed[(c.rereadFrom+n)%len(changed)]
+		t := c.known[ref.Path]
+		if system.ContainerStamp(c.fsys, ref) == t.stamp {
 			continue
 		}
-		if !ok {
-			if c.tries[ref.Path]++; c.tries[ref.Path] < maxContainerTries {
-				continue
-			}
-			ct = system.Container{}
-		}
-		delete(c.tries, ref.Path)
-		if !seen {
-			t = &tracked{}
-			c.known[ref.Path] = t
-		}
-		t.stamp = stamp
-		powers := system.ContainerPowers(ct)
-		if len(powers) == 0 {
-			continue
-		}
-		info := &ContainerInfo{ID: clipText(ct.ID), Name: clipText(ct.Name), Image: clipText(ct.Image), Runtime: ref.Runtime,
-			Created: clipText(ct.Created), Powers: powers[:min(len(powers), maxPowers)]}
-		key := info.Key()
-		if t.info != nil && t.info.Key() == key {
-			continue
-		}
-		t.info = info
-		if c.keys[key] {
-			continue
-		}
-		if len(c.keys) < maxContainerKeys {
-			c.keys[key] = true
-		}
-		if c.looked {
-			t.reported = true
-			c.send(Event{At: c.now(), Class: ClassContainer, Op: OpCreate, Path: "/" + ref.Path, Container: t.info})
-		}
+		rereads++
+		c.read(ref, t, host, &issues)
+	}
+	if len(changed) > 0 {
+		c.rereadFrom = (c.rereadFrom + maxContainerReads) % len(changed)
 	}
 	for p, t := range c.known {
 		if present[p] {
@@ -157,6 +141,50 @@ func (c *Containers) look() {
 		}
 	}
 	c.looked = true
+}
+
+// read reads a container, new when t is nil, and reports it when it has power over the host
+// that was not reported for it, or for a container like it, before.
+func (c *Containers) read(ref system.ContainerRef, t *tracked, host *system.HostMounts, issues *collector.Issues) {
+	stamp := system.ContainerStamp(c.fsys, ref)
+	ct, ok := system.ReadContainer(c.fsys, ref, host, issues)
+	if !ok && t != nil {
+		t.stamp = stamp
+		return
+	}
+	if !ok {
+		if c.tries[ref.Path]++; c.tries[ref.Path] < maxContainerTries {
+			return
+		}
+		ct = system.Container{}
+	}
+	delete(c.tries, ref.Path)
+	if t == nil {
+		t = &tracked{}
+		c.known[ref.Path] = t
+	}
+	t.stamp = stamp
+	powers := system.ContainerPowers(ct)
+	if len(powers) == 0 {
+		return
+	}
+	info := &ContainerInfo{ID: clipText(ct.ID), Name: clipText(ct.Name), Image: clipText(ct.Image), Runtime: ref.Runtime,
+		Created: clipText(ct.Created), Powers: powers[:min(len(powers), maxPowers)]}
+	key := info.Key()
+	if t.info != nil && t.info.Key() == key {
+		return
+	}
+	t.info = info
+	if c.keys[key] {
+		return
+	}
+	if len(c.keys) < maxContainerKeys {
+		c.keys[key] = true
+	}
+	if c.looked {
+		t.reported = true
+		c.send(Event{At: c.now(), Class: ClassContainer, Op: OpCreate, Path: "/" + ref.Path, Container: t.info})
+	}
 }
 
 func (c *Containers) send(e Event) {

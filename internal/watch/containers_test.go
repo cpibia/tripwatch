@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -116,11 +117,54 @@ func TestContainersReadAgainAtStart(t *testing.T) {
 	fsys[cfg] = &fstest.MapFile{Data: []byte(started), ModTime: time.Unix(101, 0)}
 	c.look()
 	got := drain(out)
-	if len(got) != 1 || got[0].Op != OpCreate || got[0].Container.Powers[0] != "the host's /tmp/x (/), writable" {
+	if len(got) != 1 || got[0].Op != OpCreate || got[0].Container.Powers[0] != "the host's /, writable" {
 		t.Fatalf("after the start: %+v", got)
 	}
 	c.look()
 	if got := drain(out); len(got) != 0 {
 		t.Errorf("reported again without a change: %+v", got)
+	}
+}
+
+// Containers rewritten at every look, as a health check does, neither hold back a new one nor
+// keep a started one from being read again within a few looks.
+func TestContainersRewritesDoNotStarve(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/1/mountinfo":  &fstest.MapFile{Data: []byte("22 1 8:1 / / rw shared:1 - ext4 /dev/vda1 rw\n")},
+		"proc/77/mountinfo": &fstest.MapFile{Data: []byte("501 500 8:1 / /h rw - ext4 /dev/vda1 rw\n")},
+	}
+	busy := maxContainerReads + 6
+	for i := range busy {
+		dockerContainer(fsys, fmt.Sprintf("a%03d", i), fmt.Sprintf("busy-%d", i), `{}`)
+	}
+	const late = "var/lib/docker/containers/ffff/config.v2.json"
+	created := `{"ID": "ffff", "Name": "/s", "MountPoints": {"/h": {"Source": "/tmp/x", "Destination": "/h", "RW": true, "Type": "bind"}}}`
+	fsys[late] = &fstest.MapFile{Data: []byte(created)}
+	out := make(chan Event, 8)
+	c := NewContainers(collector.Source{FS: fsys}, out)
+	c.look()
+	tick := 0
+	rewrite := func() {
+		tick++
+		for i := range busy {
+			fsys[fmt.Sprintf("var/lib/docker/containers/a%03d/config.v2.json", i)].ModTime = time.Unix(int64(tick), 0)
+		}
+	}
+	rewrite()
+	dockerContainer(fsys, "fffe", "escape", `{"Privileged": true}`)
+	c.look()
+	if got := drain(out); len(got) != 1 || got[0].Container.Name != "escape" {
+		t.Fatalf("new container behind rewrites: %+v", got)
+	}
+	started := strings.Replace(created, `"MountPoints"`, `"State": {"Running": true, "Pid": 77}, "MountPoints"`, 1)
+	fsys[late] = &fstest.MapFile{Data: []byte(started), ModTime: time.Unix(1000, 0)}
+	var got []Event
+	for range 3 {
+		rewrite()
+		c.look()
+		got = append(got, drain(out)...)
+	}
+	if len(got) != 1 || got[0].Container.Name != "s" {
+		t.Errorf("started container behind rewrites: %+v", got)
 	}
 }

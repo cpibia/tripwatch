@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -25,6 +26,10 @@ type Mount struct {
 	// Volume names the Docker volume the mount comes from, when its local driver binds a host
 	// path or device (Source is then that path, not the volume's own directory).
 	Volume string `json:"volume,omitempty"`
+	// Undeclared marks a mount of the kernel's table at a point the configuration does not
+	// list: the runtime's own (the root filesystem, /etc/hosts), or one moved by a link in the
+	// image or a chroot.
+	Undeclared bool `json:"undeclared,omitempty"`
 }
 
 // Container is a Docker container as its daemon keeps it on disk. Only what gives it power over
@@ -51,6 +56,12 @@ type Container struct {
 	// CAP_MKNOD containers have by default, an allowed node can be created and opened.
 	DeviceRules []string `json:"device_rules,omitempty"`
 	Mounts      []Mount  `json:"mounts,omitempty"`
+	// KernelMounts are, for a running container, the host paths its process's mount table leads
+	// to, one per mount of the same filesystem on the host. They add powers to those of Mounts,
+	// whose text a link swapped around the start can fool, and never take any away.
+	KernelMounts []Mount `json:"kernel_mounts,omitempty"`
+	// KernelUnverified says why a running container's mount table could not be read.
+	KernelUnverified string `json:"kernel_unverified,omitempty"`
 	// Cut names the lists cut at their bound ("mounts", "devices", "cap_add", "security_opt"):
 	// what gives power is kept first, and what was left out may give more.
 	Cut []string `json:"cut,omitempty"`
@@ -156,7 +167,7 @@ func ReadContainer(fsys fs.FS, ref ContainerRef, host *HostMounts, issues *colle
 	if ref.Runtime == "containerd" {
 		if data, err := fs.ReadFile(fsys, path.Join(path.Dir(ref.Path), "init.pid")); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-				kernelMounts(fsys, pid, host, c.Mounts)
+				c.KernelMounts, c.KernelUnverified = kernelMounts(fsys, pid, host, c.Mounts, issues)
 			}
 		}
 	}
@@ -275,7 +286,7 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 		c.Mounts = append(c.Mounts, resolveMount(fsys, mount))
 	}
 	if cfg.State.Running {
-		kernelMounts(fsys, cfg.State.Pid, host, c.Mounts)
+		c.KernelMounts, c.KernelUnverified = kernelMounts(fsys, cfg.State.Pid, host, c.Mounts, issues)
 	}
 	if data, err := fs.ReadFile(fsys, path.Join(dir, "hostconfig.json")); err == nil {
 		var hc dockerHostConfig
@@ -302,6 +313,11 @@ func finishContainer(c *Container) {
 		return cmp.Or(rank(mountPower(b) != "")-rank(mountPower(a) != ""), strings.Compare(a.Destination, b.Destination))
 	})
 	c.Mounts = clipNamed(c, "mounts", c.Mounts)
+	slices.SortFunc(c.KernelMounts, func(a, b Mount) int {
+		return cmp.Or(rank(kernelMountPower(b) != "")-rank(kernelMountPower(a) != ""), strings.Compare(a.Destination, b.Destination),
+			strings.Compare(a.Source, b.Source))
+	})
+	c.KernelMounts = clipNamed(c, "kernel_mounts", c.KernelMounts)
 	c.Devices = clipNamed(c, "devices", powerFirst(c.Devices, isRawDisk))
 	c.CapAdd = clipNamed(c, "cap_add", powerFirst(c.CapAdd, isAdminCap))
 	c.SecurityOpt = clipNamed(c, "security_opt", powerFirst(c.SecurityOpt, isUnconfined))
@@ -560,6 +576,14 @@ func ContainerPowers(c Container) []string {
 			out = append(out, p)
 		}
 	}
+	for _, m := range c.KernelMounts {
+		if p := kernelMountPower(m); p != "" && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	if c.KernelUnverified != "" {
+		out = append(out, "mounts not verified by the kernel")
+	}
 	for _, d := range c.Devices {
 		if isRawDisk(d) {
 			out = append(out, "device "+d)
@@ -605,12 +629,36 @@ func mountPower(m Mount) string {
 		return "the runtime socket " + name
 	case isRawDisk(src):
 		return fmt.Sprintf("the host's disk %s, %s", name, mode)
-	case under(src, harmlessFiles) || slices.Contains(harmlessFiles, path.Clean("/"+m.Source)):
+	case under(src, harmlessFiles) || slices.Contains(harmlessFiles, path.Clean("/"+m.Source)) || podOwned(src):
 		return ""
 	case under(src, secretTrees) || m.RW && under(src, systemTrees):
 		return fmt.Sprintf("the host's %s, %s", name, mode)
 	}
 	return ""
+}
+
+// kernelMountPower is the power of a mount read from the kernel. One the configuration does not
+// list counts only when it is a whole tree of the host or a socket: the runtime's own mounts
+// (the root filesystem's layers, the container's hosts file) lie deep in its state directory.
+func kernelMountPower(m Mount) string {
+	p := mountPower(m)
+	src := path.Clean("/" + m.Source)
+	if m.Undeclared && src != "/" && !slices.Contains(hostTrees, src) && !strings.HasPrefix(p, "the runtime socket") {
+		return ""
+	}
+	return p
+}
+
+// podRuntimeDirs hold one directory per pod or sandbox whose files the runtime mounts into it:
+// its volumes, its hosts and resolv.conf.
+var podRuntimeDirs = []string{"/var/lib/kubelet/pods/", "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/",
+	"/run/containerd/io.containerd.grpc.v1.cri/sandboxes/"}
+
+func podOwned(p string) bool {
+	return slices.ContainsFunc(podRuntimeDirs, func(dir string) bool {
+		rest, ok := strings.CutPrefix(p, dir)
+		return ok && strings.Contains(rest, "/")
+	})
 }
 
 // holdsSocket says whether dir is a runtime's socket or a directory above one, short of the
@@ -652,44 +700,48 @@ func deviceRuleGrantsHost(rule string) bool {
 // maxMountEntries bounds the mount table entries parsed from one mountinfo file.
 const maxMountEntries = 16384
 
-type mountEntry struct{ dev, root, point string }
+type mountEntry struct {
+	dev, root, point, fstype string
+	rw                       bool
+}
 
 // HostMounts is the host's mount table, read once when first needed, to tell which host
-// directory a running container's mount really is.
+// directories a running container's mounts really are.
 type HostMounts struct {
-	fsys    fs.FS
-	read    bool
-	entries []mountEntry
+	fsys     fs.FS
+	read     bool
+	entries  []mountEntry
+	err      error
+	reported bool
 }
 
 func NewHostMounts(fsys fs.FS) *HostMounts { return &HostMounts{fsys: fsys} }
 
-func readMountEntries(fsys fs.FS, name string) []mountEntry {
+func readMountEntries(fsys fs.FS, name string) ([]mountEntry, error) {
 	lines, err := collector.ReadLines(fsys, name)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []mountEntry
 	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 5 {
+		left, right, ok := strings.Cut(line, " - ")
+		fields, tail := strings.Fields(left), strings.Fields(right)
+		if !ok || len(fields) < 6 || len(tail) < 1 {
 			continue
 		}
 		if len(out) == maxMountEntries {
-			break
+			return out, fmt.Errorf("%s: more than %d mounts", name, maxMountEntries)
 		}
-		out = append(out, mountEntry{dev: fields[2], root: unescapeMount(fields[3]), point: unescapeMount(fields[4])})
+		out = append(out, mountEntry{dev: fields[2], root: unescapeMount(fields[3]), point: unescapeMount(fields[4]), fstype: tail[0],
+			rw: slices.Contains(strings.Split(fields[5], ","), "rw")})
 	}
-	return out
+	return out, nil
 }
 
-// hostPath is where the part root of the filesystem dev appears on the host: the shortest of
-// the paths the host's mounts of that filesystem give it.
-func (h *HostMounts) hostPath(dev, root string) (string, bool) {
-	if !h.read {
-		h.entries, h.read = readMountEntries(h.fsys, "proc/1/mountinfo"), true
-	}
-	best := ""
+// hostPaths are the paths where the part root of the filesystem dev appears on the host, one
+// per host mount of it that contains that part.
+func (h *HostMounts) hostPaths(dev, root string) []string {
+	var out []string
 	for _, e := range h.entries {
 		if e.dev != dev {
 			continue
@@ -698,34 +750,65 @@ func (h *HostMounts) hostPath(dev, root string) (string, bool) {
 		if !ok || e.root != "/" && rest != "" && !strings.HasPrefix(rest, "/") {
 			continue
 		}
-		if p := path.Join("/", e.point, rest); best == "" || len(p) < len(best) {
-			best = p
+		if p := path.Join("/", e.point, rest); !slices.Contains(out, p) {
+			out = append(out, p)
 		}
 	}
-	return best, best != ""
+	return out
 }
 
-// kernelMounts sets where each mount of a running container comes from as its kernel sees it,
-// from the mount table of the container's process: unlike the source written in its
-// configuration, a link swapped before the start and put back after cannot change it.
-func kernelMounts(fsys fs.FS, pid int, host *HostMounts, mounts []Mount) {
-	if pid <= 0 || host == nil || len(mounts) == 0 {
-		return
+// pseudoFilesystems are the kernel's own; a container gets an instance of its own, or the
+// host's read-only (sysfs with the host's network), at points the runtime chooses.
+var pseudoFilesystems = []string{"proc", "sysfs", "cgroup", "cgroup2", "mqueue", "devpts"}
+
+// kernelMounts reads the mount table of a running container's process and returns the host
+// paths each of its mounts leads to: unlike the source written in its configuration, a link
+// swapped before the start and put back after cannot change them. Every entry counts, not
+// only those at the declared destinations: a link in the image moves a mount elsewhere, and a
+// process chrooted into one sees it as "/". The reason is returned when the table cannot be
+// read, as when the process chroots outside its mounts, which empties it.
+func kernelMounts(fsys fs.FS, pid int, host *HostMounts, declared []Mount, issues *collector.Issues) ([]Mount, string) {
+	if pid <= 0 || host == nil {
+		return nil, ""
 	}
-	byPoint := map[string]mountEntry{}
-	for _, e := range readMountEntries(fsys, "proc/"+strconv.Itoa(pid)+"/mountinfo") {
-		byPoint[e.point] = e
+	proc := "proc/" + strconv.Itoa(pid)
+	if _, err := fs.Stat(fsys, proc); errors.Is(err, fs.ErrNotExist) {
+		// The container stopped since its state was written.
+		return nil, ""
 	}
-	for i := range mounts {
-		e, ok := byPoint[path.Clean("/"+mounts[i].Destination)]
-		if !ok {
+	entries, err := readMountEntries(fsys, proc+"/mountinfo")
+	switch {
+	case err != nil:
+		return nil, "its mount table could not be read: " + err.Error()
+	case len(entries) == 0:
+		return nil, "its mount table is empty"
+	}
+	if !host.read {
+		host.entries, host.err = readMountEntries(host.fsys, "proc/1/mountinfo")
+		host.read = true
+	}
+	if host.err != nil {
+		if !host.reported {
+			issues.Add(fmt.Errorf("the host's mount table was not read whole, containers' mounts are not verified: %w", host.err))
+			host.reported = true
+		}
+		return nil, "the host's mount table could not be read"
+	}
+	points := map[string]bool{}
+	for _, m := range declared {
+		points[path.Clean("/"+m.Destination)] = true
+	}
+	var out []Mount
+	for _, e := range entries {
+		if slices.Contains(pseudoFilesystems, e.fstype) && !points[e.point] {
 			continue
 		}
-		if p, ok := host.hostPath(e.dev, e.root); ok {
-			mounts[i].Resolved = ""
-			if p != path.Clean("/"+mounts[i].Source) {
-				mounts[i].Resolved = p
+		for _, p := range host.hostPaths(e.dev, e.root) {
+			m := Mount{Source: p, Destination: e.point, RW: e.rw, Undeclared: !points[e.point]}
+			if !slices.Contains(out, m) {
+				out = append(out, m)
 			}
 		}
 	}
+	return out, ""
 }

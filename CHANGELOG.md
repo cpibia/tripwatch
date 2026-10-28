@@ -33,10 +33,12 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   listed before (`/etc/cron.d`, `/root/.ssh`, `/var`), a disk named `vd`, `xvd`, `dm-`, `loop`
   and the like, a cgroup rule for block devices or memory, or a runtime socket elsewhere than
   its usual path (or a directory holding one) now counts as having power over the host.
-- A running container's mounts are taken from its process's mount table (`/proc/<pid>/mountinfo`)
-  and matched to the host's, so a link swapped in before the start and put back after it no
-  longer hides the host's root; the real-time watcher reads a container again when its
-  configuration is rewritten at the start. Mounts, devices, capabilities and security options
+- A running container's process mount table (`/proc/<pid>/mountinfo`) is matched to the host's
+  and listed as `kernel_mounts`, which add powers to those of the configuration and never take
+  one away: a link swapped around the start, a link in the image or a chroot no longer hides
+  the host's root, and a table that cannot be read is reported (`kernel_unverified`). The
+  real-time watcher reads a container again when its configuration is rewritten at the start,
+  with a budget apart from new containers. Mounts, devices, capabilities and security options
   past the 64 read keep those that give power first, and a cut list is named (`cut`) and counts
   as a power.
 - The search for PHP in data files follows code interpolated in strings, commands and heredocs

@@ -135,12 +135,18 @@ appears. Every second the watcher lists the containers of Docker (its data root 
 confined view, only the ones it has not seen, at most 64 a look; a configuration still unreadable
 after five looks is left out. A container is read again when its configuration changes (Docker
 rewrites it at the start, containerd writes the task's PID): created with a harmless directory
-and started with a link in its place, it is judged on what its process mounted. The first look only records what is there. A container whose
+and started with a link in its place, it is judged on what its process mounted. New containers
+are read first; the reads again have a budget of their own, 64 a look, taken in turn through
+the list, so containers a health check rewrites every second hold back neither. The first look only records what is there. A container whose
 configuration gives it power over the host (`system.ContainerPowers`, the same function the
 verifier's snapshot rule uses; the sensor only adds facts it alone can read: where a mount's
 source leads through links, the host path behind a Docker volume from its `opts.json`, and for
-a running container the host path of each mount from `/proc/<pid>/mountinfo`, the device and
-root of the mount matched against the host's own table) is reported as a `container` event with its name, image, runtime
+a running container `kernel_mounts`: every entry of `/proc/<pid>/mountinfo`, its device and
+root matched against the host's own table to every host path that shows that part of the
+filesystem. They only add powers to those of the configuration; an entry at a point the
+configuration does not list counts only as a whole tree or a socket, since the runtime's own
+mounts (layers, hosts file) lie deep in its state; a table that cannot be read, or is empty as
+after a chroot outside the mounts, is `kernel_unverified`, a power of its own) is reported as a `container` event with its name, image, runtime
 and powers, on root's channel, unless a container with the same name, image and powers was seen
 before (4,096 remembered), and its removal is reported too. The verifier raises the start under
 the snapshot rule's fingerprint and detail, so the next snapshot does not raise it again and an

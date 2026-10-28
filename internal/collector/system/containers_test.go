@@ -158,43 +158,69 @@ func TestDockerVolumesLinksAndDeviceRules(t *testing.T) {
 	}
 }
 
-// A running container's mounts are judged by its kernel's mount table: a link swapped in before
-// the start and put back afterwards, invisible to the path, still shows the host's root.
+// A running container's mounts are also judged by its kernel's mount table, which a link swapped
+// in before the start and put back afterwards cannot fool. The kernel adds powers and never
+// takes one away: a shorter alias of a sensitive tree does not hide it.
 func TestRunningContainerMountsFromTheKernel(t *testing.T) {
-	const id = "a1b2c3d4e5f6a1b2c3d4e5f6"
-	dir := "var/lib/docker/containers/" + id + "/"
+	const host = "22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw\n" +
+		"23 22 8:16 / /data rw shared:2 - ext4 /dev/vdb1 rw\n" +
+		"24 22 8:16 /docker /var/lib/docker rw shared:2 - ext4 /dev/vdb1 rw\n" +
+		"25 24 0:52 / /var/lib/docker/overlay2/abc/merged rw - overlay overlay rw\n" +
+		"26 22 8:1 /srv/x /mnt/x rw shared:1 - ext4 /dev/vda1 rw\n"
+	const rootfs = "500 400 0:52 / / rw - overlay overlay rw\n" +
+		"501 500 0:60 / /proc rw - proc proc rw\n" +
+		"502 500 8:16 /docker/containers/0123/hosts /etc/hosts rw - ext4 /dev/vdb1 rw\n"
+	run := func(mountinfo, mountPoints string) Container {
+		t.Helper()
+		const id = "a1b2c3d4e5f6a1b2c3d4e5f6"
+		fsys := fstest.MapFS{
+			"proc/1/mountinfo":    text(host),
+			"proc/4242/mountinfo": text(mountinfo),
+			"var/lib/docker/containers/" + id + "/config.v2.json": text(`{"ID": "` + id + `", "Name": "/s", "State": {"Running": true, "Pid": 4242},
+				"MountPoints": {` + mountPoints + `}}`),
+		}
+		return collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys}).Containers[0]
+	}
+	bind := func(src, dst string) string {
+		return `"` + dst + `": {"Source": "` + src + `", "Destination": "` + dst + `", "RW": true, "Type": "bind"}`
+	}
+	for _, tt := range []struct {
+		name, mountinfo, mountPoints string
+		want                         []string
+	}{
+		{"link swapped back", rootfs + "503 500 8:1 / /h rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable"}},
+		{"link in the image", rootfs + "503 500 8:1 / /x rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable"}},
+		{"chrooted into the mount", "503 500 8:1 / / rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable"}},
+		{"chrooted elsewhere", "", bind("/tmp/x", "/h"), []string{"mounts not verified by the kernel"}},
+		{"data root behind a shorter alias", rootfs + "503 500 8:16 /docker /x rw - ext4 /dev/vdb1 rw\n", bind("/var/lib/docker", "/x"),
+			[]string{"the host's /var/lib/docker, writable"}},
+		{"system tree as the kernel sees it", rootfs + "503 500 8:1 /etc/cron.d /c rw - ext4 /dev/vda1 rw\n", bind("/srv/c", "/c"),
+			[]string{"the host's /etc/cron.d, writable"}},
+		{"plain container", rootfs + "503 500 8:1 /srv/data /data rw - ext4 /dev/vda1 rw\n", bind("/srv/data", "/data"), nil},
+		{"pod volume", rootfs, bind("/var/lib/kubelet/pods/7f3a/volumes/kubernetes.io~configmap/cfg", "/cfg"), nil},
+	} {
+		if got := ContainerPowers(run(tt.mountinfo, tt.mountPoints)); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: powers = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+// A host mount table too large to read is an issue, and the containers it leaves unverified say so.
+func TestHostMountTableTooLarge(t *testing.T) {
+	const id = "b1b2c3d4e5f6a1b2c3d4e5f6"
+	var b strings.Builder
+	for i := range maxMountEntries + 1 {
+		fmt.Fprintf(&b, "%d 1 0:%d / /home/u/m%d rw - fuse.x x rw,user_id=1000\n", i+30, i+100, i)
+	}
 	fsys := fstest.MapFS{
-		"proc/1/mountinfo": text("22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw\n" +
-			"23 22 8:2 / /var rw shared:2 - ext4 /dev/vda2 rw\n" +
-			"24 22 8:1 /srv/x /mnt/x rw shared:1 - ext4 /dev/vda1 rw\n"),
-		"proc/4242/mountinfo": text("500 400 0:52 / / rw - overlay overlay rw\n" +
-			"501 500 8:1 / /h rw - ext4 /dev/vda1 rw\n" +
-			"502 500 8:2 /lib/docker /d rw - ext4 /dev/vda2 rw\n" +
-			"503 500 8:1 /srv/data /data rw - ext4 /dev/vda1 rw\n" +
-			"504 500 8:1 /srv/x/y /my\\040dir rw - ext4 /dev/vda1 rw\n"),
-		"tmp/x/keep": text(""),
-		dir + "config.v2.json": text(`{"ID": "` + id + `", "Name": "/s", "State": {"Running": true, "Pid": 4242}, "MountPoints": {
-			"/h": {"Source": "/tmp/x", "Destination": "/h", "RW": true, "Type": "bind"},
-			"/d": {"Source": "/srv/cache", "Destination": "/d", "Type": "bind"},
-			"/data": {"Source": "/srv/data", "Destination": "/data", "RW": true, "Type": "bind"},
-			"/my dir": {"Source": "/srv/x/y", "Destination": "/my dir", "RW": true, "Type": "bind"}}}`),
+		"proc/1/mountinfo": text(b.String()),
+		"proc/9/mountinfo": text("501 500 8:1 / /h rw - ext4 /dev/vda1 rw\n"),
+		"var/lib/docker/containers/" + id + "/config.v2.json": text(`{"ID": "` + id + `", "Name": "/s", "State": {"Running": true, "Pid": 9},
+			"MountPoints": {"/h": {"Source": "/tmp/x", "Destination": "/h", "RW": true, "Type": "bind"}}}`),
 	}
 	res := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys})
-	if len(res.Containers) != 1 {
-		t.Fatalf("result = %+v", res)
-	}
-	c := res.Containers[0]
-	want := []Mount{
-		{Source: "/srv/cache", Destination: "/d", Resolved: "/var/lib/docker"},
-		{Source: "/tmp/x", Destination: "/h", RW: true, Resolved: "/"},
-		{Source: "/srv/data", Destination: "/data", RW: true},
-		{Source: "/srv/x/y", Destination: "/my dir", RW: true},
-	}
-	if !slices.Equal(c.Mounts, want) {
-		t.Errorf("mounts = %+v", c.Mounts)
-	}
-	if got := ContainerPowers(c); !slices.Equal(got, []string{"the host's /srv/cache (/var/lib/docker), read-only", "the host's /tmp/x (/), writable"}) {
-		t.Errorf("powers = %q", got)
+	if got := ContainerPowers(res.Containers[0]); !slices.Equal(got, []string{"mounts not verified by the kernel"}) || len(res.Issues) != 1 {
+		t.Errorf("powers = %q, issues = %q", got, res.Issues)
 	}
 }
 
