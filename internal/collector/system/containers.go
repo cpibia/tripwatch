@@ -287,6 +287,12 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 			// Named volumes live in the daemon's own directory, unless the local driver was told
 			// to bind a host path or mount a device there instead.
 			device, ok := volumeDevice(fsys, path.Dir(path.Dir(dir)), m.Name, m.Driver, issues)
+			if layers := volumeOverlay(fsys, path.Dir(path.Dir(dir)), m.Name, m.Driver); !ok && len(layers) > 0 {
+				for _, l := range layers {
+					c.Mounts = append(c.Mounts, resolveMount(fsys, Mount{Source: l.Source, Destination: m.Destination, RW: l.RW && m.RW, Volume: m.Name}))
+				}
+				continue
+			}
 			if !ok {
 				if path.IsAbs(m.Source) && len(c.Volumes) < maxContainerList {
 					c.Volumes = append(c.Volumes, Mount{Source: m.Source, Destination: m.Destination, RW: m.RW, Volume: m.Name})
@@ -389,6 +395,39 @@ func volumeDevice(fsys fs.FS, dockerRoot, name, driver string, issues *collector
 		return "", false
 	}
 	return opts.MountDevice, true
+}
+
+// volumeOverlay is what a local Docker volume of type overlay is made of: the host directories
+// its options name, the upper one written to. Its device is the word "overlay", not a path.
+func volumeOverlay(fsys fs.FS, dockerRoot, name, driver string) []Mount {
+	if driver != "local" || name == "" || name != path.Base(name) || name == ".." {
+		return nil
+	}
+	data, err := fs.ReadFile(fsys, path.Join(dockerRoot, "volumes", name, "opts.json"))
+	if err != nil {
+		return nil
+	}
+	var opts struct{ MountType, MountOpts string }
+	if json.Unmarshal(data, &opts) != nil || opts.MountType != "overlay" {
+		return nil
+	}
+	var out []Mount
+	for _, opt := range strings.Split(opts.MountOpts, ",") {
+		key, value, _ := strings.Cut(opt, "=")
+		switch key {
+		case "lowerdir":
+			for _, dir := range strings.Split(value, ":") {
+				if path.IsAbs(dir) && len(out) < maxContainerList {
+					out = append(out, Mount{Source: dir})
+				}
+			}
+		case "upperdir", "workdir":
+			if path.IsAbs(value) && len(out) < maxContainerList {
+				out = append(out, Mount{Source: value, RW: true})
+			}
+		}
+	}
+	return out
 }
 
 // resolveMount records where a mount's source leads when it goes through links. The link can

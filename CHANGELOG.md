@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A local Docker volume of type overlay is judged by the host directories its options name: its
+  lower layers read, its upper one written (SEC-203).
 - Sendmail started through `sh -c --`, as Symfony's mailer does (Drupal), is PHP's mail too, not
   the web server's user starting a shell.
 - With short open tags the data-file search opens a block on `<?php:` and `<?xml:` (a goto label)

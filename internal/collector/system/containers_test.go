@@ -293,3 +293,22 @@ func TestContainerDevicesThroughLinks(t *testing.T) {
 		t.Errorf("powers = %q, want %q", got, want)
 	}
 }
+
+// A local volume of type overlay is the host directories its options name: the root as a lower
+// layer is read, the upper one is written.
+func TestOverlayVolumeIsItsLayers(t *testing.T) {
+	id := strings.Repeat("e", 64)
+	dir := "var/lib/docker/containers/" + id + "/"
+	fsys := fstest.MapFS{
+		"var/lib/docker/volumes/v/opts.json": text(`{"MountType": "overlay", "MountOpts": "lowerdir=/:/etc,upperdir=/etc/cron.d,workdir=/tmp/w", "MountDevice": "overlay"}`),
+		dir + "config.v2.json": text(`{"ID": "` + id + `", "Name": "/o", "MountPoints": {
+			"/o": {"Source": "/var/lib/docker/volumes/v/_data", "Destination": "/o", "RW": true, "Name": "v", "Driver": "local", "Type": "volume"}}}`),
+	}
+	c := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys}).Containers[0]
+	got := ContainerPowers(c)
+	for _, want := range []string{"the host's volume v (/), read-only", "the host's volume v (/etc/cron.d), writable"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
