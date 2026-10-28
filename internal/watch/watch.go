@@ -85,9 +85,12 @@ type Event struct {
 	Exe     string `json:"exe,omitempty"`
 	Script  string `json:"script,omitempty"`
 	Cmdline string `json:"cmdline,omitempty"`
-	Comm    string `json:"comm,omitempty"`
-	Parent  string `json:"parent,omitempty"`
-	Cwd     string `json:"cwd,omitempty"`
+	// CommandSum is a short hash of the command line before redaction, set when the redaction
+	// hid part of it: two commands shown alike are told apart.
+	CommandSum string `json:"command_sum,omitempty"`
+	Comm       string `json:"comm,omitempty"`
+	Parent     string `json:"parent,omitempty"`
+	Cwd        string `json:"cwd,omitempty"`
 	// Repeats counts the identical starts left out since the previous report of this one, within
 	// RepeatWindow.
 	Repeats int `json:"repeats,omitempty"`

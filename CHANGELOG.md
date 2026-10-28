@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A process start whose command line the redaction shortened carries a short hash of the full
+  one: two web shell commands shown alike are no longer one repeat, nor one alert (SEC-192).
 - Past a thousand Docker containers the sensor reads those whose configuration changed last,
   which the daemon rewrites when it starts one, and other runtimes have a bound of their own:
   stopped containers created by the thousand no longer push a running one out (SEC-187).

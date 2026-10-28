@@ -3,6 +3,8 @@ package system
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"path"
@@ -20,12 +22,15 @@ const deletedSuffix = " (deleted)"
 // ExeDeleted means it was removed from disk after starting, a common way to leave no file
 // behind. ExeSHA256 is computed through /proc, so it is available even then.
 type Process struct {
-	PID        int    `json:"pid"`
-	PPID       int    `json:"ppid"`
-	UID        int    `json:"uid"`
-	EUID       int    `json:"euid"`
-	Comm       string `json:"comm"`
-	Cmdline    string `json:"cmdline"`
+	PID     int    `json:"pid"`
+	PPID    int    `json:"ppid"`
+	UID     int    `json:"uid"`
+	EUID    int    `json:"euid"`
+	Comm    string `json:"comm"`
+	Cmdline string `json:"cmdline"`
+	// CommandSum tells apart command lines the redaction made identical (a secret, or what
+	// looked like one, hidden in each): a short hash of the full one, never sent by snapshots.
+	CommandSum string `json:"-"`
 	Exe        string `json:"exe,omitempty"`
 	ExeDeleted bool   `json:"exe_deleted,omitempty"`
 	// ExeReplaced means a file exists again where a deleted executable was: a package upgrade
@@ -281,6 +286,10 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 
 	cmdline, _ := fs.ReadFile(fsys, dir+"cmdline")
 	p.Cmdline = redactCmdline(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"))
+	if raw := strings.ReplaceAll(strings.TrimRight(string(cmdline), "\x00"), "\x00", " "); raw != p.Cmdline {
+		sum := sha256.Sum256(cmdline)
+		p.CommandSum = hex.EncodeToString(sum[:6])
+	}
 
 	p.kernel = isKernelThread(fsys, dir, p.PPID, pid)
 	if exe, err := fs.ReadLink(fsys, dir+"exe"); err == nil {

@@ -216,7 +216,7 @@ func (x *Execs) message(m []byte) bool {
 		if reason != "" {
 			e := x.event(reason, p)
 			e.Script = clipText(script)
-			if ok, skipped := x.repeats.report(e.At, reason, p.Exe, script, e.Parent, strconv.Itoa(p.UID), strconv.Itoa(p.EUID), p.Cwd, p.Cmdline); ok {
+			if ok, skipped := x.repeats.report(e.At, reason, p.Exe, script, e.Parent, strconv.Itoa(p.UID), strconv.Itoa(p.EUID), p.Cwd, p.Cmdline, p.CommandSum); ok {
 				e.Repeats = skipped
 				x.send(e)
 			}
@@ -296,7 +296,7 @@ func (x *Execs) owner(p string) (int, bool) {
 func (x *Execs) event(reason string, p system.Process) Event {
 	uid, euid := p.UID, p.EUID
 	e := Event{At: x.now().UTC(), Class: ClassExec, Op: "exec", Reason: reason, PID: p.PID, PPID: p.PPID, User: &uid, EUser: &euid,
-		Exe: clipText(p.Exe), Cmdline: clipCmdline(p.Cmdline), Comm: clipText(p.Comm), Cwd: clipText(p.Cwd)}
+		Exe: clipText(p.Exe), Cmdline: clipCmdline(p.Cmdline), CommandSum: p.CommandSum, Comm: clipText(p.Comm), Cwd: clipText(p.Cwd)}
 	if parent, ok := system.ReadProcess(x.src.FS, p.PPID); ok {
 		e.Parent = clipText(parent.Comm)
 	}

