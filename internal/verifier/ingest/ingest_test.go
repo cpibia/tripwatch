@@ -826,3 +826,56 @@ func TestSmallEnvelopesAreRateLimited(t *testing.T) {
 		t.Fatalf("after the bucket refilled: %v", err)
 	}
 }
+
+// The update order in force reaches every authenticated sensor with its answer, and verifies
+// under the CA of the sensor's own bundle.
+func TestUpdateOrderReachesTheSensor(t *testing.T) {
+	h := newHarness(t)
+	c, b := h.sensor("web-01")
+	ctx := context.Background()
+	var got []string
+	c.OnUpdate = func(payload, signature string) { got = append(got, payload, signature) }
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil || len(got) != 0 {
+		t.Fatalf("no order yet: %v %v", got, err)
+	}
+	payload, sig, err := h.ca.SignUpdate(protocol.UpdateOrder{Version: "0.2.0", Sums: map[string]string{"tripwatch-sensor_0.2.0_amd64.deb": strings.Repeat("ab", 32)}, IssuedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetUpdateOrder(ctx, store.UpdateOrder{Version: "0.2.0", Payload: payload, Signature: sig, OrderedBy: "admin@example.com", OrderedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil || len(got) != 2 {
+		t.Fatalf("order not received: %v %v", got, err)
+	}
+	pub, err := b.CAPublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order, err := protocol.VerifyUpdate(got[0], got[1], pub); err != nil || order.Version != "0.2.0" {
+		t.Fatalf("order = %+v, %v", order, err)
+	}
+}
+
+// A revoked host is refused with an order to remove itself, naming it and signed by the CA; an
+// enrolled host never receives one.
+func TestRevokedHostIsToldToUninstall(t *testing.T) {
+	h := newHarness(t)
+	c, b := h.sensor("web-01")
+	ctx := context.Background()
+	var got []string
+	c.OnUninstall = func(payload, signature string) { got = append(got, payload, signature) }
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); err != nil || len(got) != 0 {
+		t.Fatalf("enrolled host: %v %v", got, err)
+	}
+	if err := h.store.Revoke(ctx, "web-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Send(ctx, protocol.KindHeartbeat, nil, now); !errors.Is(err, transport.ErrRejected) || len(got) != 2 {
+		t.Fatalf("revoked host: %v %v", got, err)
+	}
+	pub, _ := b.CAPublicKey()
+	if _, err := protocol.VerifyUninstall(got[0], got[1], pub, "web-01"); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -54,6 +54,11 @@ type Client struct {
 
 	mu      sync.Mutex
 	pending *protocol.Envelope
+
+	// OnUpdate and OnUninstall, when set, receive the update or uninstall order and signature
+	// the verifier's answer carries, unchecked: the caller verifies them.
+	OnUpdate    func(payload, signature string)
+	OnUninstall func(payload, signature string)
 }
 
 func New(url string, hc *http.Client, stateDir, hostID string, key ed25519.PrivateKey) (*Client, error) {
@@ -124,8 +129,14 @@ func (c *Client) deliver(ctx context.Context, e protocol.Envelope) error {
 	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	switch resp.StatusCode {
 	case http.StatusOK:
+		if order := resp.Header.Get(protocol.UpdateHeader); order != "" && c.OnUpdate != nil {
+			c.OnUpdate(order, resp.Header.Get(protocol.UpdateSignatureHeader))
+		}
 		return nil
 	case http.StatusConflict, http.StatusForbidden:
+		if order := resp.Header.Get(protocol.UninstallHeader); order != "" && c.OnUninstall != nil {
+			c.OnUninstall(order, resp.Header.Get(protocol.UninstallSignatureHeader))
+		}
 		return fmt.Errorf("%w: %s", ErrRejected, bytes.TrimSpace(msg))
 	default:
 		return fmt.Errorf("verifier answered %s: %s", resp.Status, bytes.TrimSpace(msg))

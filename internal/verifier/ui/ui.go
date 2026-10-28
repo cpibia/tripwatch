@@ -4,6 +4,7 @@ package ui
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -15,7 +16,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -28,6 +31,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cpibia/tripwatch/internal/protocol"
+	"github.com/cpibia/tripwatch/internal/selfupdate"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
@@ -80,8 +85,13 @@ type Config struct {
 	SilenceAfter  time.Duration
 	// LoginBackoff is the first delay after repeated failed logins; zero means one second.
 	LoginBackoff time.Duration
-	Now          func() time.Time
-	Log          *slog.Logger
+	// Releases is where the release's SHA256SUMS is read to order the sensors' update, and
+	// Fetch the client that reads it; empty and nil mean the public repository and a client
+	// with a timeout.
+	Releases string
+	Fetch    *http.Client
+	Now      func() time.Time
+	Log      *slog.Logger
 }
 
 type server struct {
@@ -127,6 +137,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /{$}", s.authed(s.overview))
 	mux.HandleFunc("GET /hosts", s.authed(s.servers))
 	mux.HandleFunc("GET /hosts/{id}", s.authed(s.host))
+	mux.HandleFunc("POST /hosts/update", s.authed(s.orderUpdate))
 	mux.HandleFunc("POST /hosts/{id}/revoke", s.authed(s.revoke))
 	mux.HandleFunc("POST /hosts/{id}/withdraw", s.authed(s.withdraw))
 	mux.HandleFunc("GET /alerts", s.authed(s.alerts))
@@ -1455,6 +1466,8 @@ type serversData struct {
 	Revoked  []hostRow
 	Release  string
 	Outdated int
+	// Order is the update order in force, if any.
+	Order *store.UpdateOrder
 }
 
 func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
@@ -1475,6 +1488,12 @@ func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
 		return
 	}
 	d := serversData{Release: s.release()}
+	if o, ok, err := s.Store.CurrentUpdateOrder(ctx); err != nil {
+		s.internal(w, r, err)
+		return
+	} else if ok {
+		d.Order = &o
+	}
 	for _, h := range hosts {
 		sum, has := summaries[h.ID]
 		row := s.hostRow(h, sum, has)
@@ -1491,6 +1510,73 @@ func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
 	}
 	slices.SortStableFunc(d.Hosts, func(a, b hostRow) int { return strings.Compare(a.ID, b.ID) })
 	s.render(w, r, http.StatusOK, "servers", page{Title: "Servers", Nav: "servers", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
+}
+
+// maxSumsSize bounds the release's SHA256SUMS read to order an update.
+const maxSumsSize = 64 << 10
+
+// orderUpdate orders every sensor to install the verifier's own release. The hashes of its
+// files are read from the release once, here, and signed with the CA key with them: a sensor
+// installs a file only if it matches, so a release changed later installs nothing.
+func (s *server) orderUpdate(w http.ResponseWriter, r *http.Request, se session) {
+	release := s.release()
+	if release == "" {
+		s.fail(w, r, http.StatusConflict, "No release to update to", "This verifier is a development build: sensors are updated to the verifier's own release only.")
+		return
+	}
+	sums, err := s.releaseSums(r.Context(), release)
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, "Release not read", "The checksums of release "+release+" could not be read: "+err.Error())
+		return
+	}
+	now := s.Now()
+	payload, sig, err := s.CA.SignUpdate(protocol.UpdateOrder{Version: release, Sums: sums, IssuedAt: now})
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	if err := s.Store.SetUpdateOrder(r.Context(), store.UpdateOrder{Version: release, Payload: payload, Signature: sig, OrderedBy: se.Email, OrderedAt: now}); err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	s.Log.Info("sensor update ordered", "version", release, "by", se.Email)
+	http.Redirect(w, r, "/hosts", http.StatusSeeOther)
+}
+
+// releaseSums reads the hashes of the sensor's files in the release's SHA256SUMS.
+func (s *server) releaseSums(ctx context.Context, release string) (map[string]string, error) {
+	base := cmp.Or(s.Releases, selfupdate.Repository)
+	client := s.Fetch
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/releases/download/v"+release+"/SHA256SUMS", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("answer %s", resp.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSumsSize))
+	if err != nil {
+		return nil, err
+	}
+	sums := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && strings.HasPrefix(f[1], "tripwatch-sensor") {
+			sums[f[1]] = f[0]
+		}
+	}
+	if len(sums) == 0 {
+		return nil, errors.New("no sensor file listed")
+	}
+	return sums, nil
 }
 
 // outdated reports whether a sensor runs an older release than the verifier: the verifier is

@@ -69,17 +69,45 @@ func (u Updater) Update(ctx context.Context) (string, error) {
 		_, _ = fmt.Fprintf(u.Out, "tripwatch-sensor %s is up to date (latest release %s)\n", u.Current, latest)
 		return u.Current, nil
 	}
+	return u.install(ctx, latest, func(name string) (string, error) {
+		sums, err := u.fetch(ctx, u.BaseURL+"/releases/download/v"+latest+"/SHA256SUMS", maxSumsSize)
+		if err != nil {
+			return "", fmt.Errorf("checksums of %s: %w", latest, err)
+		}
+		return lookupSum(sums, name)
+	})
+}
+
+// UpdateTo installs version, if newer than the running one, checking its file against the hash
+// sums gives for it instead of the release's own SHA256SUMS: the sums come with an order the
+// caller verified, so a file changed where releases are published is refused.
+func (u Updater) UpdateTo(ctx context.Context, version string, sums map[string]string) (string, error) {
+	if !releaseVersion.MatchString(version) {
+		return "", fmt.Errorf("%q is not a release version", version)
+	}
+	if !newer(version, u.Current) {
+		_, _ = fmt.Fprintf(u.Out, "tripwatch-sensor %s is not older than %s\n", u.Current, version)
+		return u.Current, nil
+	}
+	return u.install(ctx, version, func(name string) (string, error) {
+		want, ok := sums[name]
+		if !ok {
+			return "", fmt.Errorf("no hash for %s in the order", name)
+		}
+		return want, nil
+	})
+}
+
+// install downloads the release's file for this installation, checks it against the hash want
+// gives, and installs it.
+func (u Updater) install(ctx context.Context, latest string, want func(name string) (string, error)) (string, error) {
 	kind := u.detect(ctx)
 	name, err := AssetName(kind, latest, u.Arch)
 	if err != nil {
 		return "", err
 	}
 	base := u.BaseURL + "/releases/download/v" + latest + "/"
-	sums, err := u.fetch(ctx, base+"SHA256SUMS", maxSumsSize)
-	if err != nil {
-		return "", fmt.Errorf("checksums of %s: %w", latest, err)
-	}
-	want, err := lookupSum(sums, name)
+	sum, err := want(name)
 	if err != nil {
 		return "", err
 	}
@@ -91,7 +119,7 @@ func (u Updater) Update(ctx context.Context) (string, error) {
 	defer func() { _ = os.RemoveAll(dir) }()
 	_, _ = fmt.Fprintf(u.Out, "Downloading %s\n", name)
 	path := filepath.Join(dir, name)
-	if err := u.download(ctx, base+name, path, want); err != nil {
+	if err := u.download(ctx, base+name, path, sum); err != nil {
 		return "", err
 	}
 
@@ -139,6 +167,9 @@ func (u Updater) Latest(ctx context.Context) (string, error) {
 	}
 	return v, nil
 }
+
+// Detect is how the running sensor was installed.
+func (u Updater) Detect(ctx context.Context) Kind { return u.detect(ctx) }
 
 // detect asks the package managers whether they own the running binary; a binary owned by
 // neither was installed by hand and is replaced in place.
@@ -266,6 +297,10 @@ func replaceExecutable(src, dst string) error {
 
 // newer reports whether latest is a later release than current. A current version that is not
 // a release, such as a development build, is always replaced.
+// Newer reports whether release version latest is newer than current; a current version that
+// is not a release (a development build) is older than any release.
+func Newer(latest, current string) bool { return newer(latest, current) }
+
 func newer(latest, current string) bool {
 	if !releaseVersion.MatchString(current) {
 		return true

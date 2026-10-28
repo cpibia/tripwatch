@@ -240,6 +240,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer unlock()
 	host, err := s.Store.Host(r.Context(), identity)
+	if err == nil && host.Revoked && s.CA != nil {
+		// A revoked host's sensor is told to remove itself, by an order naming it and signed by
+		// the CA: revoking is how a server stops being watched.
+		if payload, sig, err := s.CA.SignUninstall(protocol.UninstallOrder{HostID: identity, IssuedAt: now}); err == nil {
+			w.Header().Set(protocol.UninstallHeader, payload)
+			w.Header().Set(protocol.UninstallSignatureHeader, sig)
+		}
+	}
 	if errors.Is(err, store.ErrNotFound) || (err == nil && host.Revoked) {
 		http.Error(w, "host not enrolled", http.StatusForbidden)
 		return
@@ -252,6 +260,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.currentCertificate(ctx, w, host, r.TLS.PeerCertificates[0], now) {
 		return
 	}
+	s.offerUpdate(ctx, w)
 	// Recorded only for a host whose certificate checked out: nobody else can set it.
 	if addr, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && addr != host.PeerAddr {
 		if err := s.Store.SetPeerAddr(ctx, identity, addr); err != nil {
@@ -713,4 +722,18 @@ func (s *Server) allowSmall(host string, now time.Time) bool {
 func writeAck(w http.ResponseWriter, seq uint64) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]uint64{"accepted": seq})
+}
+
+// offerUpdate puts the update order in force, if any, in the answer to an authenticated sensor.
+// The sensor checks the signature and the version itself: one already up to date ignores it.
+func (s *Server) offerUpdate(ctx context.Context, w http.ResponseWriter) {
+	o, ok, err := s.Store.CurrentUpdateOrder(ctx)
+	if err != nil {
+		s.Log.Error("update order", "err", err)
+		return
+	}
+	if ok {
+		w.Header().Set(protocol.UpdateHeader, o.Payload)
+		w.Header().Set(protocol.UpdateSignatureHeader, o.Signature)
+	}
 }

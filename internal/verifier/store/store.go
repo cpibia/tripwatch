@@ -166,6 +166,14 @@ CREATE TABLE IF NOT EXISTS sessions (
 	email      TEXT NOT NULL REFERENCES users(email),
 	expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS update_order (
+	id         INTEGER PRIMARY KEY CHECK (id = 1),
+	version    TEXT NOT NULL,
+	payload    TEXT NOT NULL,
+	signature  TEXT NOT NULL,
+	ordered_by TEXT NOT NULL,
+	ordered_at INTEGER NOT NULL
+);
 `
 
 type Store struct {

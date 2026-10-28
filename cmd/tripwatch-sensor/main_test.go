@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // The bridges and virtual links of container runtimes carry the same addresses on every host and
 // are left out; the machine's own interfaces are kept.
@@ -10,5 +14,35 @@ func TestContainerInterface(t *testing.T) {
 		if got := containerInterface(name); got != want {
 			t.Errorf("%s: %v, want %v", name, got, want)
 		}
+	}
+}
+
+// Removal takes tripwatch's own directories whole, and only the bundle file from anywhere else.
+func TestRemoveOwn(t *testing.T) {
+	root := t.TempDir()
+	own := filepath.Join(root, "etc", "tripwatch")
+	shared := filepath.Join(root, "etc")
+	if err := os.MkdirAll(own, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{filepath.Join(own, "bundle.json"), filepath.Join(shared, "bundle.json"), filepath.Join(shared, "hosts")} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := removeOwn(own, filepath.Join(own, "bundle.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(own); !os.IsNotExist(err) {
+		t.Error("tripwatch's own directory was kept")
+	}
+	if err := removeOwn(shared, filepath.Join(shared, "bundle.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(shared, "hosts")); err != nil {
+		t.Error("a directory not tripwatch's own was removed")
+	}
+	if _, err := os.Stat(filepath.Join(shared, "bundle.json")); !os.IsNotExist(err) {
+		t.Error("the bundle was kept")
 	}
 }

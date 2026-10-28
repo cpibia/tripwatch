@@ -213,3 +213,30 @@ func TestAssetNameRejectsUnbuiltArchitectures(t *testing.T) {
 		t.Fatalf("arm64 rpm named %s", got)
 	}
 }
+
+// An ordered update checks the file against the hash the order carries, not against the
+// release's own SHA256SUMS: a release whose file and sums were both replaced installs nothing.
+func TestUpdateToChecksTheOrderedHash(t *testing.T) {
+	genuine := map[string][]byte{"tripwatch-sensor_0.2.0_amd64.deb": []byte("genuine")}
+	ordered := map[string]string{}
+	for name, data := range genuine {
+		h := sha256.Sum256(data)
+		ordered[name] = hex.EncodeToString(h[:])
+	}
+	replaced := map[string][]byte{"tripwatch-sensor_0.2.0_amd64.deb": []byte("replaced")}
+	srv := fakeRelease{latest: "0.2.0", files: replaced, sums: sumsFor(replaced)}.server(t)
+	c := &commands{owner: "dpkg"}
+	if _, err := newUpdater(srv, "0.1.3", "/usr/bin/tripwatch-sensor", c).UpdateTo(t.Context(), "0.2.0", ordered); err == nil || c.installed != nil {
+		t.Fatalf("a file replaced in the release was installed: %v", err)
+	}
+
+	srv = fakeRelease{latest: "0.2.0", files: genuine, sums: "garbage"}.server(t)
+	c = &commands{owner: "dpkg"}
+	if got, err := newUpdater(srv, "0.1.3", "/usr/bin/tripwatch-sensor", c).UpdateTo(t.Context(), "0.2.0", ordered); err != nil || string(c.installed) != "genuine" || got != "0.2.0" {
+		t.Fatalf("ordered update: %q installed, %v", c.installed, err)
+	}
+	c = &commands{owner: "dpkg"}
+	if got, err := newUpdater(srv, "0.2.0", "/usr/bin/tripwatch-sensor", c).UpdateTo(t.Context(), "0.2.0", ordered); err != nil || got != "0.2.0" || c.installed != nil {
+		t.Fatalf("an order for the running version installed again: %v", err)
+	}
+}

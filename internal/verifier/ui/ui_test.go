@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -1027,5 +1028,61 @@ func TestLocalPath(t *testing.T) {
 		if got := localPath(in, "/"); got != want {
 			t.Errorf("localPath(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Ordering the update reads the sensor's hashes from the verifier's own release and signs them
+// with the CA key: the order in force verifies under the CA every sensor holds.
+func TestOrderSensorUpdate(t *testing.T) {
+	sum := strings.Repeat("ab", 32)
+	releases := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/releases/download/v0.2.0/SHA256SUMS" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, sum+"  tripwatch-sensor_0.2.0_amd64.deb\n"+sum+"  tripwatch-verifier_0.2.0_linux_amd64\n")
+	}))
+	t.Cleanup(releases.Close)
+	dir := t.TempDir()
+	ca, err := pki.LoadOrCreate(dir, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.SetUser(context.Background(), email, password, now); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := New(Config{Store: st, CA: ca, Release: "0.2.0", Releases: releases.URL, Fetch: releases.Client(), SilenceAfter: 3 * time.Minute,
+		LoginBackoff: 10 * time.Millisecond, Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	jar, _ := cookiejar.New(nil)
+	h := &harness{t: t, store: st, srv: srv, http: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	csrf := h.login()
+
+	if res, _ := h.post("/hosts/update", url.Values{"csrf": {"wrong"}}); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("without the CSRF token: %d", res.StatusCode)
+	}
+	if res, _ := h.post("/hosts/update", url.Values{"csrf": {csrf}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("order: %d", res.StatusCode)
+	}
+	o, ok, err := st.CurrentUpdateOrder(context.Background())
+	if err != nil || !ok || o.Version != "0.2.0" || o.OrderedBy != email {
+		t.Fatalf("order = %+v, %v, %v", o, ok, err)
+	}
+	pub := ca.Cert.PublicKey.(ed25519.PublicKey)
+	order, err := protocol.VerifyUpdate(o.Payload, o.Signature, pub)
+	if err != nil || len(order.Sums) != 1 || order.Sums["tripwatch-sensor_0.2.0_amd64.deb"] != sum {
+		t.Fatalf("signed order = %+v, %v", order, err)
+	}
+	if _, body := h.get("/hosts"); !strings.Contains(body, "Update to 0.2.0 ordered") {
+		t.Error("the order in force is not shown")
 	}
 }

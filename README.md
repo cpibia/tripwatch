@@ -261,6 +261,19 @@ rpm or by replacing the binary. A running sensor is restarted and resumes the sa
 latest release is not newer, nothing changes. The checksum comes from the same release, so it
 catches a damaged download; to prove where a file was built, use `gh attestation verify`.
 
+From 0.1.17 every sensor can also be updated from the verifier: when sensors are older than it,
+the servers page offers to update them all to the verifier's own release. The verifier reads the
+release's `SHA256SUMS` once, signs the hashes of the sensor's files with its CA key, which every
+sensor holds since enrollment, and hands the order to each sensor in its answers. A sensor checks
+the signature and the version (never older than its own), then installs in a transient systemd
+unit, outside its own service, the file only if it matches the signed hash: a release changed
+after the order installs nothing. Revoking a server likewise tells its sensor, by an order naming
+that host and signed the same way, to remove itself: the package is purged (or the service, its
+unit and the binary removed), and `/etc/tripwatch` and `/var/lib/tripwatch` are deleted.
+Whoever controls the verifier's console can therefore update every sensor to a published release,
+or remove a sensor by revoking its server; neither reaches a host whose sensor runs without
+systemd, nor installs anything but the files of a release as they were when the order was given.
+
 Sensors older than 0.1.4 have no `-update`: install the package of the new release the same way
 as the first time. Debian and Ubuntu:
 

@@ -77,11 +77,27 @@ func main() {
 	bundlePath := flag.String("bundle", "", "enrollment bundle issued by the verifier; runs as a daemon reporting to it")
 	interval := flag.Duration("interval", time.Hour, "time between snapshots in daemon mode")
 	heartbeat := flag.Duration("heartbeat", time.Minute, "time between heartbeats in daemon mode")
+	uninstallFlag := flag.Bool("apply-uninstall", false, "remove the sensor and its data on the order of the verifier that revoked this host, as the sensor starts it outside its service (needs -bundle)")
+	applyUpdate := flag.Bool("apply-update", false, "install the update the verifier ordered, as the sensor starts it on its own outside its service (needs -bundle)")
 	watchOnly := flag.Bool("watch-only", false, "print the real-time event batches as JSON lines until interrupted, without a verifier, to see what the watchers report")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println(buildinfo.String("tripwatch-sensor"))
+		return
+	}
+	if *uninstallFlag {
+		if err := applyUninstall(*bundlePath, *stateDir); err != nil {
+			fmt.Fprintln(os.Stderr, "tripwatch-sensor -apply-uninstall:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *applyUpdate {
+		if err := applyOrderedUpdate(*bundlePath, *stateDir); err != nil {
+			fmt.Fprintln(os.Stderr, "tripwatch-sensor -apply-update:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if *update {
@@ -190,22 +206,31 @@ func enroll(args []string) error {
 }
 
 func selfUpdate(stateDir string) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("releases are built for Linux only, not %s", runtime.GOOS)
-	}
-	if os.Geteuid() != 0 {
-		return errors.New("run it as root, with sudo")
-	}
-	exe, err := os.Executable()
+	u, err := newUpdater(stateDir)
 	if err != nil {
-		return err
-	}
-	if exe, err = filepath.EvalSymlinks(exe); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	u := selfupdate.Updater{
+	_, err = u.Update(ctx)
+	return err
+}
+
+func newUpdater(stateDir string) (selfupdate.Updater, error) {
+	if runtime.GOOS != "linux" {
+		return selfupdate.Updater{}, fmt.Errorf("releases are built for Linux only, not %s", runtime.GOOS)
+	}
+	if os.Geteuid() != 0 {
+		return selfupdate.Updater{}, errors.New("run it as root, with sudo")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return selfupdate.Updater{}, err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return selfupdate.Updater{}, err
+	}
+	return selfupdate.Updater{
 		Client:     &http.Client{Timeout: 5 * time.Minute},
 		BaseURL:    selfupdate.Repository,
 		Current:    buildinfo.Version,
@@ -222,9 +247,7 @@ func selfUpdate(stateDir string) error {
 			cmd.Stdout, cmd.Stderr = out, out
 			return cmd.Run()
 		},
-	}
-	_, err = u.Update(ctx)
-	return err
+	}, nil
 }
 
 func (s sensor) snapshot(ctx context.Context) report {
@@ -316,6 +339,14 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 	client, err := transport.New(bundle.VerifierURL, httpClient, stateDir, bundle.HostID, key)
 	if err != nil {
 		return err
+	}
+	if ca, err := bundle.CAPublicKey(); err != nil {
+		log.Warn("update orders ignored: no CA key in the bundle", "err", err)
+	} else {
+		orders := &updateOrders{ca: ca, hostID: bundle.HostID, bundlePath: bundlePath, stateDir: stateDir, log: log, tried: map[string]time.Time{}}
+		client.OnUpdate = func(payload, signature string) { go orders.receive(payload, signature) }
+		// Synchronous: the refusal that carries it may end the sensor right after.
+		client.OnUninstall = orders.uninstall
 	}
 	log.Info("tripwatch sensor started", "version", buildinfo.Version, "host", bundle.HostID, "verifier", bundle.VerifierURL)
 

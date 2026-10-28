@@ -6,6 +6,25 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier, then the sensors once more by hand (`tripwatch-sensor -update`): from this
+release on, sensors update and remove themselves on the verifier's order.
+
+### Sensor
+
+- An update order from the verifier, signed with its CA key, makes the sensor install that
+  release when it is newer, in a transient systemd unit (`-apply-update`), checking the file
+  against the hash signed in the order rather than the release's own `SHA256SUMS`.
+- A revoked host's sensor, given an order naming it and signed the same way, removes itself in a
+  transient unit (`-apply-uninstall`): package purged, or service, unit and binary removed; then
+  `/etc/tripwatch` and `/var/lib/tripwatch`.
+
+### Verifier
+
+- The servers page offers to update every sensor older than the verifier to its release; the
+  order, with the hashes of the release's sensor files, is signed with the CA key and given to
+  sensors in the answers to their envelopes (`Tripwatch-Update`).
+- A revoked host is refused with an order to remove itself (`Tripwatch-Uninstall`).
+
 ## [0.1.16] - 2026-10-28
 
 Update the verifier.

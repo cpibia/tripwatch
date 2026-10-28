@@ -1,7 +1,9 @@
 {{define "content"}}{{$d := .Data}}
 <header class="head">
   <div class="title-line"><h1>Servers</h1><p class="aside">{{len $d.Hosts}} enrolled{{with $d.Revoked}}, {{len .}} revoked{{end}}{{with $d.Release}} · verifier {{.}}{{end}}</p></div>
-  {{if $d.Outdated}}<p class="notice">{{shape "high" ""}}<span>{{$d.Outdated}} {{plural $d.Outdated "sensor is" "sensors are"}} older than the verifier. On each, as root: <code class="mono">tripwatch-sensor -update</code></span></p>{{end}}
+  {{if $d.Outdated}}<p class="notice">{{shape "high" ""}}<span>{{$d.Outdated}} {{plural $d.Outdated "sensor is" "sensors are"}} older than the verifier. On each, as root: <code class="mono">tripwatch-sensor -update</code>, or order them all to update.</span></p>
+  {{if not (and $d.Order (eq $d.Order.Version $d.Release))}}<form method="post" action="/hosts/update" class="form inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Update every sensor to {{$d.Release}}</button></form>{{end}}{{end}}
+  {{with $d.Order}}<p class="aside">Update to {{.Version}} ordered <time datetime="{{iso .OrderedAt}}">{{stamp .OrderedAt}}</time> by {{.OrderedBy}}: each sensor older than that installs it at its next heartbeat, within a minute, if the files match the hashes signed with the order.</p>{{end}}
 </header>
 
 {{if $d.Hosts}}

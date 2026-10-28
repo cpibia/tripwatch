@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cpibia/tripwatch/internal/protocol"
 )
 
 const (
@@ -132,6 +134,17 @@ func (ca *CA) withChain(certPEM, keyPEM []byte) (tls.Certificate, error) {
 func (ca *CA) Fingerprint() string {
 	sum := sha256.Sum256(ca.Cert.Raw)
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// SignUpdate signs an order for the sensors to install a release: they check it against the CA
+// certificate they hold since enrollment.
+func (ca *CA) SignUpdate(order protocol.UpdateOrder) (payload, signature string, err error) {
+	return protocol.SignUpdate(order, ca.key)
+}
+
+// SignUninstall signs the order for a revoked host's sensor to remove itself.
+func (ca *CA) SignUninstall(order protocol.UninstallOrder) (payload, signature string, err error) {
+	return protocol.SignUninstall(order, ca.key)
 }
 
 // IssueClient issues a client certificate for a key the host generated itself, so that its
@@ -261,6 +274,23 @@ func LoadBundle(path string) (Bundle, ed25519.PrivateKey, error) {
 		return Bundle{}, nil, fmt.Errorf("bundle %s: %w", path, err)
 	}
 	return b, key, nil
+}
+
+// CAPublicKey is the key of the verifier's CA, which signs update orders.
+func (b Bundle) CAPublicKey() (ed25519.PublicKey, error) {
+	block, _ := pem.Decode([]byte(b.CA))
+	if block == nil {
+		return nil, errors.New("bundle: no CA certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	pub, ok := cert.PublicKey.(ed25519.PublicKey)
+	if !ok {
+		return nil, errors.New("bundle: the CA key is not Ed25519")
+	}
+	return pub, nil
 }
 
 // SigningPrivateKey decodes the key the sensor signs envelopes with.
