@@ -25,6 +25,8 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   silently stopping the naming of changed files; a code file too large to hash is named as
   modified when its fingerprint (size, change time, inode) changes between two runs; manifests
   not rewritten for seven days are removed from the state directory.
+- The processes collector lists the names of the host's kernel threads (`kernel_thread_names`,
+  reduced to their family: `kworker`, `kswapd`, `scsi_eh_`), at most 512.
 
 ### Verifier
 
@@ -46,6 +48,10 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   format characters (bidirectional overrides, zero-width marks) are stored as visible escapes,
   and invalid UTF-8 as U+FFFD. The interface isolates the bidirectional text of the alerts
   already stored.
+- A program that takes the name of one of the host's kernel threads (`kauditd`, `ksmd`,
+  `rcu_sched`, `xfsaild/sda1`), as its name or as `[name]` on its command line, is a critical
+  "Process disguised as a kernel thread" like the usual names already were; the watchdog daemon
+  stays out.
 - Alert emails are sent as quoted-printable: a path of any length no longer makes a line over
   998 bytes that a relay could bounce after accepting the message.
 

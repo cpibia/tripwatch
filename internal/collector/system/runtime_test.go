@@ -108,8 +108,8 @@ func procHost() fstest.MapFS {
 func TestProcesses(t *testing.T) {
 	res := collect[ProcessesResult](t, Processes{}, collector.Source{FS: procHost()})
 
-	if res.KernelThreads != 1 {
-		t.Errorf("kernel threads = %d, want 1", res.KernelThreads)
+	if res.KernelThreads != 1 || !slices.Equal(res.KernelThreadNames, []string{"kthreadd"}) {
+		t.Errorf("kernel threads = %d %v, want 1 kthreadd", res.KernelThreads, res.KernelThreadNames)
 	}
 	var pidList []int
 	byPID := map[int]Process{}

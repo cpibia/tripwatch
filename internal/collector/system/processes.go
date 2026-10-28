@@ -54,9 +54,23 @@ type Process struct {
 const pfKthread = 0x00200000
 
 type ProcessesResult struct {
-	Processes     []Process        `json:"processes"`
-	KernelThreads int              `json:"kernel_threads"`
-	Issues        collector.Issues `json:"issues,omitempty"`
+	Processes     []Process `json:"processes"`
+	KernelThreads int       `json:"kernel_threads"`
+	// KernelThreadNames are the names of this host's kernel threads, as KernelThreadFamily
+	// reduces them: a program that takes one is hiding among them in ps.
+	KernelThreadNames []string         `json:"kernel_thread_names,omitempty"`
+	Issues            collector.Issues `json:"issues,omitempty"`
+}
+
+// maxKernelThreadNames bounds the kernel thread names listed.
+const maxKernelThreadNames = 512
+
+// KernelThreadFamily reduces a kernel thread's name to what its instances share: the part
+// before "/" and without trailing digits, so kworker/0:1H, kswapd0 and scsi_eh_3 are kworker,
+// kswapd and scsi_eh_.
+func KernelThreadFamily(comm string) string {
+	name, _, _ := strings.Cut(comm, "/")
+	return strings.TrimRight(name, "0123456789")
 }
 
 // Processes collects every user-space process from /proc. Kernel threads, recognised by the
@@ -92,6 +106,9 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 		}
 		if p.kernel {
 			res.KernelThreads++
+			if f := KernelThreadFamily(p.Comm); f != "" && !slices.Contains(res.KernelThreadNames, f) && len(res.KernelThreadNames) < maxKernelThreadNames {
+				res.KernelThreadNames = append(res.KernelThreadNames, f)
+			}
 			continue
 		}
 		if p.Exe != "" {

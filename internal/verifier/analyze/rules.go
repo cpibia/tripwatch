@@ -967,7 +967,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			case suspiciousPath(pr.Exe):
 				state("processes", "exe:"+pr.Exe+":"+pr.ExeSHA256, "high", "Process from an unusual directory", fmt.Sprintf("PID %d (%s) runs %s as UID %d.", pr.PID, pr.Comm, pr.Exe, pr.UID))
 			}
-			if kernelThreadDisguise(pr) {
+			if kernelThreadDisguise(pr, cur.Processes.KernelThreadNames) {
 				state("processes", "kthread-name:"+pr.Exe+":"+pr.ExeSHA256, "critical", "Process disguised as a kernel thread: "+pr.Comm,
 					fmt.Sprintf("PID %d calls itself %q (command line %q) but runs %s as UID %d, parent %d. Kernel threads have no executable and the sensor counts them apart; a program that takes their name is hiding in ps, as miners and backdoors do.", pr.PID, pr.Comm, pr.Cmdline, pr.Exe, pr.UID, pr.PPID))
 			}
@@ -1390,17 +1390,36 @@ func webFinding(f web.Finding) (string, string) {
 // shape no user-space program has, so the watchdog daemon or md tools stay out.
 var kernelThreadNames = regexp.MustCompile(`^(?:\[[\w./:+-]{1,64}\]|(?:kworker|ksoftirqd|migration|cpuhp|irq|jbd2|rcuop|rcuos|idle_inject|kcompactd|scsi_eh)/.*|kswapd\d+|kthreadd|kworker|raid\d+wq|kdevtmpfs|khugepaged|oom_reaper)$`)
 
-// kernelThreadDisguise reports a process of user space named like a kernel thread. Kernel
-// threads are told apart by the collector from the flag the kernel sets on them and never
+// userSpaceKernelNames are kernel thread names that programs of user space also go by: the
+// watchdog daemon shares its name with the per-CPU threads of older kernels.
+var userSpaceKernelNames = []string{"watchdog"}
+
+// kernelThreadDisguise reports a process of user space named like a kernel thread: a name of
+// the usual list, or of a kernel thread running on this host (hostThreads, from the collector).
+// Kernel threads are told apart by the collector from the flag the kernel sets on them and never
 // listed; one listed with an executable and a parent other than kthreadd is a program.
-func kernelThreadDisguise(pr system.Process) bool {
+func kernelThreadDisguise(pr system.Process, hostThreads []string) bool {
 	if pr.Exe == "" || pr.PPID == 2 {
 		return false
 	}
 	// Only a bare name in brackets, as ps shows kernel threads: titles such as celery's
 	// "[celeryd: worker@host:MainProcess]" have spaces in them.
 	cmd := strings.TrimSpace(pr.Cmdline)
-	return kernelThreadNames.MatchString(pr.Comm) || (strings.HasPrefix(cmd, "[") && kernelThreadNames.MatchString(cmd))
+	if kernelThreadNames.MatchString(pr.Comm) || (strings.HasPrefix(cmd, "[") && kernelThreadNames.MatchString(cmd)) {
+		return true
+	}
+	hostThread := func(name string) bool {
+		f := system.KernelThreadFamily(name)
+		return f != "" && slices.Contains(hostThreads, f) && !slices.Contains(userSpaceKernelNames, f)
+	}
+	if inner, ok := strings.CutPrefix(cmd, "["); ok {
+		if inner, ok = strings.CutSuffix(inner, "]"); ok && !strings.ContainsAny(inner, " \t") && hostThread(inner) {
+			return true
+		}
+	}
+	// The name the program runs as: a binary named after a kernel thread counts too, it is how
+	// the disguise is usually made.
+	return hostThread(pr.Comm)
 }
 
 // scratchDirs are writable by everyone and hold no installed code.

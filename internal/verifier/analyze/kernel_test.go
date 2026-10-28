@@ -184,8 +184,30 @@ func TestKernelThreadDisguise(t *testing.T) {
 		{system.Process{PID: 703, PPID: 1, Comm: "gunicorn", Cmdline: "gunicorn: master [shop]", Exe: "/usr/bin/python3.11"}, false},
 		{system.Process{PID: 704, PPID: 1, Comm: "mdadm", Cmdline: "/sbin/mdadm --monitor --scan", Exe: "/usr/sbin/mdadm"}, false},
 	} {
-		if got := kernelThreadDisguise(c.pr); got != c.want {
+		if got := kernelThreadDisguise(c.pr, nil); got != c.want {
 			t.Errorf("%+v: %v, want %v", c.pr, got, c.want)
+		}
+	}
+
+	// Names off the list are known from the kernel threads of the host itself.
+	host := []string{"kthreadd", "kworker", "kauditd", "ksmd", "rcu_sched", "xfsaild", "scsi_eh_", "watchdog", "kswapd"}
+	for _, c := range []struct {
+		pr   system.Process
+		want bool
+	}{
+		{system.Process{PID: 910, PPID: 1, Comm: "kauditd", Cmdline: "", Exe: "/usr/sbin/kauditd"}, true},
+		{system.Process{PID: 911, PPID: 1, Comm: "perl", Cmdline: "[ksmd]", Exe: "/usr/bin/perl"}, true},
+		{system.Process{PID: 912, PPID: 1, Comm: "xfsaild/sda1", Cmdline: "xfsaild/sda1", Exe: "/usr/local/bin/x"}, true},
+		{system.Process{PID: 913, PPID: 1, Comm: "scsi_eh_7", Exe: "/usr/bin/svc"}, true},
+		{system.Process{PID: 914, PPID: 1, Comm: "rcu_sched", Exe: "/usr/bin/svc"}, true},
+		{system.Process{PID: 920, PPID: 1, Comm: "watchdog", Cmdline: "/usr/sbin/watchdog", Exe: "/usr/sbin/watchdog"}, false},
+		{system.Process{PID: 921, PPID: 1, Comm: "auditd", Cmdline: "/sbin/auditd", Exe: "/usr/sbin/auditd"}, false},
+		{system.Process{PID: 922, PPID: 1, Comm: "python3", Cmdline: "[ksmd worker]", Exe: "/usr/bin/python3"}, false},
+		{system.Process{PID: 923, PPID: 2, Comm: "kauditd", Cmdline: "", Exe: "/usr/sbin/modprobe"}, false},
+		{system.Process{PID: 924, PPID: 1, Comm: "nginx", Cmdline: "nginx: worker process", Exe: "/usr/sbin/nginx"}, false},
+	} {
+		if got := kernelThreadDisguise(c.pr, host); got != c.want {
+			t.Errorf("host threads, %+v: %v, want %v", c.pr, got, c.want)
 		}
 	}
 	cur := State{Processes: &system.ProcessesResult{Processes: []system.Process{{PID: 900, PPID: 1, Comm: "raid5wq", Cmdline: "[raid5wq]", Exe: "/usr/lib/systemd/sd-helper", ExeSHA256: "ab"}}}}
