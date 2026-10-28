@@ -1,8 +1,10 @@
 package watch
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 )
@@ -87,5 +89,38 @@ func TestContainersGiveUpOnUnreadable(t *testing.T) {
 	}
 	if len(c.tries) != 0 || c.known["var/lib/docker/containers/bad1"] == nil {
 		t.Errorf("tries %v, known %v", c.tries, c.known)
+	}
+}
+
+// A container is read again when its configuration is rewritten, as at its start: created with
+// a harmless directory, started with the host's root behind it, it is reported then.
+func TestContainersReadAgainAtStart(t *testing.T) {
+	const cfg = "var/lib/docker/containers/s1/config.v2.json"
+	fsys := fstest.MapFS{
+		"proc/1/mountinfo":     &fstest.MapFile{Data: []byte("22 1 8:1 / / rw shared:1 - ext4 /dev/vda1 rw\n")},
+		"proc/77/mountinfo":    &fstest.MapFile{Data: []byte("501 500 8:1 / /h rw - ext4 /dev/vda1 rw\n")},
+		"tmp/x/keep":           &fstest.MapFile{},
+		"var/lib/docker/.keep": &fstest.MapFile{},
+	}
+	out := make(chan Event, 4)
+	c := NewContainers(collector.Source{FS: fsys}, out)
+	c.look()
+	created := `{"ID": "s1", "Name": "/s", "MountPoints": {"/h": {"Source": "/tmp/x", "Destination": "/h", "RW": true, "Type": "bind"}}}`
+	fsys[cfg] = &fstest.MapFile{Data: []byte(created), ModTime: time.Unix(100, 0)}
+	c.look()
+	if got := drain(out); len(got) != 0 {
+		t.Fatalf("after the creation: %+v", got)
+	}
+	c.look()
+	started := strings.Replace(created, `"MountPoints"`, `"State": {"Running": true, "Pid": 77}, "MountPoints"`, 1)
+	fsys[cfg] = &fstest.MapFile{Data: []byte(started), ModTime: time.Unix(101, 0)}
+	c.look()
+	got := drain(out)
+	if len(got) != 1 || got[0].Op != OpCreate || got[0].Container.Powers[0] != "the host's /tmp/x (/), writable" {
+		t.Fatalf("after the start: %+v", got)
+	}
+	c.look()
+	if got := drain(out); len(got) != 0 {
+		t.Errorf("reported again without a change: %+v", got)
 	}
 }

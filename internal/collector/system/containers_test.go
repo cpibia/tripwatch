@@ -157,3 +157,70 @@ func TestDockerVolumesLinksAndDeviceRules(t *testing.T) {
 		t.Errorf("device rules = %q", c.DeviceRules)
 	}
 }
+
+// A running container's mounts are judged by its kernel's mount table: a link swapped in before
+// the start and put back afterwards, invisible to the path, still shows the host's root.
+func TestRunningContainerMountsFromTheKernel(t *testing.T) {
+	const id = "a1b2c3d4e5f6a1b2c3d4e5f6"
+	dir := "var/lib/docker/containers/" + id + "/"
+	fsys := fstest.MapFS{
+		"proc/1/mountinfo": text("22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw\n" +
+			"23 22 8:2 / /var rw shared:2 - ext4 /dev/vda2 rw\n" +
+			"24 22 8:1 /srv/x /mnt/x rw shared:1 - ext4 /dev/vda1 rw\n"),
+		"proc/4242/mountinfo": text("500 400 0:52 / / rw - overlay overlay rw\n" +
+			"501 500 8:1 / /h rw - ext4 /dev/vda1 rw\n" +
+			"502 500 8:2 /lib/docker /d rw - ext4 /dev/vda2 rw\n" +
+			"503 500 8:1 /srv/data /data rw - ext4 /dev/vda1 rw\n" +
+			"504 500 8:1 /srv/x/y /my\\040dir rw - ext4 /dev/vda1 rw\n"),
+		"tmp/x/keep": text(""),
+		dir + "config.v2.json": text(`{"ID": "` + id + `", "Name": "/s", "State": {"Running": true, "Pid": 4242}, "MountPoints": {
+			"/h": {"Source": "/tmp/x", "Destination": "/h", "RW": true, "Type": "bind"},
+			"/d": {"Source": "/srv/cache", "Destination": "/d", "Type": "bind"},
+			"/data": {"Source": "/srv/data", "Destination": "/data", "RW": true, "Type": "bind"},
+			"/my dir": {"Source": "/srv/x/y", "Destination": "/my dir", "RW": true, "Type": "bind"}}}`),
+	}
+	res := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys})
+	if len(res.Containers) != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	c := res.Containers[0]
+	want := []Mount{
+		{Source: "/srv/cache", Destination: "/d", Resolved: "/var/lib/docker"},
+		{Source: "/tmp/x", Destination: "/h", RW: true, Resolved: "/"},
+		{Source: "/srv/data", Destination: "/data", RW: true},
+		{Source: "/srv/x/y", Destination: "/my dir", RW: true},
+	}
+	if !slices.Equal(c.Mounts, want) {
+		t.Errorf("mounts = %+v", c.Mounts)
+	}
+	if got := ContainerPowers(c); !slices.Equal(got, []string{"the host's /srv/cache (/var/lib/docker), read-only", "the host's /tmp/x (/), writable"}) {
+		t.Errorf("powers = %q", got)
+	}
+}
+
+// Harmless entries in front of a power do not push it out of the bounded lists, and a list cut
+// at its bound is a power of its own.
+func TestContainerListsKeepPowersFirst(t *testing.T) {
+	const id = "f00df00df00df00df00df00d"
+	dir := "var/lib/docker/containers/" + id + "/"
+	var mounts, devices, caps []string
+	for i := range maxContainerList {
+		mounts = append(mounts, fmt.Sprintf(`"/a%02d": {"Source": "/srv/d%02d", "Destination": "/a%02d", "Type": "bind"}`, i, i, i))
+		devices = append(devices, `{"PathOnHost": "/dev/null"}`)
+		caps = append(caps, `"CHOWN"`)
+	}
+	mounts = append(mounts, `"/zz": {"Source": "/", "Destination": "/zz", "RW": true, "Type": "bind"}`)
+	fsys := fstest.MapFS{
+		dir + "config.v2.json":  text(`{"ID": "` + id + `", "Name": "/many", "MountPoints": {` + strings.Join(mounts, ",") + `}}`),
+		dir + "hostconfig.json": text(`{"Devices": [` + strings.Join(devices, ",") + `, {"PathOnHost": "/dev/vda"}], "CapAdd": [` + strings.Join(caps, ",") + `, "SYS_ADMIN"]}`),
+	}
+	c := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys}).Containers[0]
+	if len(c.Mounts) != maxContainerList || len(c.Devices) != maxContainerList || len(c.CapAdd) != maxContainerList {
+		t.Fatalf("lists not bounded: %d %d %d", len(c.Mounts), len(c.Devices), len(c.CapAdd))
+	}
+	want := []string{"capability SYS_ADMIN", "the host's /, writable", "device /dev/vda", "more mounts than the sensor reads",
+		"more devices than the sensor reads", "more cap_add than the sensor reads"}
+	if got := ContainerPowers(c); !slices.Equal(got, want) {
+		t.Errorf("powers = %q", got)
+	}
+}

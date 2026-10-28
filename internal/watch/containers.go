@@ -63,6 +63,9 @@ type Containers struct {
 type tracked struct {
 	info     *ContainerInfo
 	reported bool
+	// stamp is the configuration's as last read: a start rewrites it, and the container is
+	// read again, since its mounts are only certain once its process runs.
+	stamp string
 }
 
 func NewContainers(src collector.Source, out chan<- Event) *Containers {
@@ -86,18 +89,25 @@ func (c *Containers) Run(ctx context.Context) error {
 func (c *Containers) look() {
 	var issues collector.Issues
 	refs, _ := system.ContainerRefs(c.fsys, &issues)
+	host := system.NewHostMounts(c.fsys)
 	present := make(map[string]bool, len(refs))
 	reads := 0
 	for _, ref := range refs {
 		present[ref.Path] = true
-		if _, ok := c.known[ref.Path]; ok {
+		t, seen := c.known[ref.Path]
+		stamp := system.ContainerStamp(c.fsys, ref)
+		if seen && t.stamp == stamp {
 			continue
 		}
 		if c.looked && reads == maxContainerReads {
 			continue
 		}
 		reads++
-		ct, ok := system.ReadContainer(c.fsys, ref, &issues)
+		ct, ok := system.ReadContainer(c.fsys, ref, host, &issues)
+		if !ok && seen {
+			t.stamp = stamp
+			continue
+		}
 		if !ok {
 			if c.tries[ref.Path]++; c.tries[ref.Path] < maxContainerTries {
 				continue
@@ -105,15 +115,22 @@ func (c *Containers) look() {
 			ct = system.Container{}
 		}
 		delete(c.tries, ref.Path)
-		t := &tracked{}
-		c.known[ref.Path] = t
+		if !seen {
+			t = &tracked{}
+			c.known[ref.Path] = t
+		}
+		t.stamp = stamp
 		powers := system.ContainerPowers(ct)
 		if len(powers) == 0 {
 			continue
 		}
-		t.info = &ContainerInfo{ID: clipText(ct.ID), Name: clipText(ct.Name), Image: clipText(ct.Image), Runtime: ref.Runtime,
+		info := &ContainerInfo{ID: clipText(ct.ID), Name: clipText(ct.Name), Image: clipText(ct.Image), Runtime: ref.Runtime,
 			Created: clipText(ct.Created), Powers: powers[:min(len(powers), maxPowers)]}
-		key := t.info.Key()
+		key := info.Key()
+		if t.info != nil && t.info.Key() == key {
+			continue
+		}
+		t.info = info
 		if c.keys[key] {
 			continue
 		}

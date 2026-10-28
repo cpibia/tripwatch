@@ -33,6 +33,12 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   listed before (`/etc/cron.d`, `/root/.ssh`, `/var`), a disk named `vd`, `xvd`, `dm-`, `loop`
   and the like, a cgroup rule for block devices or memory, or a runtime socket elsewhere than
   its usual path (or a directory holding one) now counts as having power over the host.
+- A running container's mounts are taken from its process's mount table (`/proc/<pid>/mountinfo`)
+  and matched to the host's, so a link swapped in before the start and put back after it no
+  longer hides the host's root; the real-time watcher reads a container again when its
+  configuration is rewritten at the start. Mounts, devices, capabilities and security options
+  past the 64 read keep those that give power first, and a cut list is named (`cut`) and counts
+  as a power.
 - New log rules: a cart item added through the REST API and then a fetch from
   `media/custom_options` by the same address (`cart_upload_then_fetch`, high on success), a
   `file_info` parameter on a cart item (`cart_item_file_upload`), a shipping estimate for a

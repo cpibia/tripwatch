@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -50,6 +51,9 @@ type Container struct {
 	// CAP_MKNOD containers have by default, an allowed node can be created and opened.
 	DeviceRules []string `json:"device_rules,omitempty"`
 	Mounts      []Mount  `json:"mounts,omitempty"`
+	// Cut names the lists cut at their bound ("mounts", "devices", "cap_add", "security_opt"):
+	// what gives power is kept first, and what was left out may give more.
+	Cut []string `json:"cut,omitempty"`
 }
 
 type ContainersResult struct {
@@ -77,11 +81,12 @@ func (Containers) Collect(ctx context.Context, src collector.Source) (any, error
 	res := ContainersResult{Containers: []Container{}}
 	refs, truncated := ContainerRefs(src.FS, &res.Issues)
 	res.Truncated = truncated
+	host := NewHostMounts(src.FS)
 	for _, ref := range refs {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		c, ok := ReadContainer(src.FS, ref, &res.Issues)
+		c, ok := ReadContainer(src.FS, ref, host, &res.Issues)
 		if !ok {
 			continue
 		}
@@ -133,9 +138,9 @@ func ContainerRefs(fsys fs.FS, issues *collector.Issues) (refs []ContainerRef, t
 
 // ReadContainer reads one container; false when its configuration is not (yet) there or does
 // not parse.
-func ReadContainer(fsys fs.FS, ref ContainerRef, issues *collector.Issues) (Container, bool) {
+func ReadContainer(fsys fs.FS, ref ContainerRef, host *HostMounts, issues *collector.Issues) (Container, bool) {
 	if ref.Runtime == "docker" {
-		return readDockerContainer(fsys, ref.Path, issues)
+		return readDockerContainer(fsys, ref.Path, host, issues)
 	}
 	data, err := fs.ReadFile(fsys, ref.Path)
 	if err != nil {
@@ -146,7 +151,34 @@ func ReadContainer(fsys fs.FS, ref ContainerRef, issues *collector.Issues) (Cont
 		issues.Add(err)
 		return Container{}, false
 	}
-	return ociContainer(fsys, ref.Runtime, ref.Path, cfg), true
+	c := ociContainer(fsys, ref.Runtime, ref.Path, cfg)
+	// containerd's shim writes the task's PID next to its bundle once it has started.
+	if ref.Runtime == "containerd" {
+		if data, err := fs.ReadFile(fsys, path.Join(path.Dir(ref.Path), "init.pid")); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				kernelMounts(fsys, pid, host, c.Mounts)
+			}
+		}
+	}
+	finishContainer(&c)
+	return c, true
+}
+
+// ContainerStamp changes when a container's configuration is rewritten, as Docker does when it
+// starts one: what was read at its creation may no longer be what it runs with.
+func ContainerStamp(fsys fs.FS, ref ContainerRef) string {
+	name := ref.Path
+	switch ref.Runtime {
+	case "docker":
+		name = path.Join(ref.Path, "config.v2.json")
+	case "containerd":
+		name = path.Join(path.Dir(ref.Path), "init.pid")
+	}
+	info, err := fs.Stat(fsys, name)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatInt(info.ModTime().UnixNano(), 10) + ":" + strconv.FormatInt(info.Size(), 10)
 }
 
 // dockerFound says whether the daemon's state directory exists, though no container was read.
@@ -190,6 +222,7 @@ type dockerConfig struct {
 	}
 	State struct {
 		Running bool
+		Pid     int
 	}
 	MountPoints map[string]struct {
 		Source      string
@@ -214,7 +247,7 @@ type dockerHostConfig struct {
 	Binds             []string
 }
 
-func readDockerContainer(fsys fs.FS, dir string, issues *collector.Issues) (Container, bool) {
+func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *collector.Issues) (Container, bool) {
 	data, err := fs.ReadFile(fsys, path.Join(dir, "config.v2.json"))
 	if err != nil {
 		return Container{}, false
@@ -241,23 +274,58 @@ func readDockerContainer(fsys fs.FS, dir string, issues *collector.Issues) (Cont
 		}
 		c.Mounts = append(c.Mounts, resolveMount(fsys, mount))
 	}
+	if cfg.State.Running {
+		kernelMounts(fsys, cfg.State.Pid, host, c.Mounts)
+	}
 	if data, err := fs.ReadFile(fsys, path.Join(dir, "hostconfig.json")); err == nil {
 		var hc dockerHostConfig
 		if err := json.Unmarshal(data, &hc); err != nil {
 			issues.Add(err)
 		} else {
 			c.Privileged, c.PIDMode, c.NetworkMode, c.IPCMode, c.UsernsMode = hc.Privileged, hc.PidMode, hc.NetworkMode, hc.IpcMode, hc.UsernsMode
-			c.CapAdd, c.SecurityOpt = clipList(hc.CapAdd), clipList(hc.SecurityOpt)
+			c.CapAdd, c.SecurityOpt = hc.CapAdd, hc.SecurityOpt
 			for _, d := range hc.Devices {
 				c.Devices = append(c.Devices, d.PathOnHost)
 			}
-			c.Devices = clipList(c.Devices)
 			c.DeviceRules = deviceRules(hc.DeviceCgroupRules)
 		}
 	}
-	slices.SortFunc(c.Mounts, func(a, b Mount) int { return strings.Compare(a.Destination, b.Destination) })
-	c.Mounts = c.Mounts[:min(len(c.Mounts), maxContainerList)]
+	finishContainer(&c)
 	return c, true
+}
+
+// finishContainer orders the container's lists and cuts them at their bound. What gives power
+// goes first, so that harmless entries put in front of it cannot push it out, and a cut list
+// is named: it counts as a power of its own.
+func finishContainer(c *Container) {
+	slices.SortFunc(c.Mounts, func(a, b Mount) int {
+		return cmp.Or(rank(mountPower(b) != "")-rank(mountPower(a) != ""), strings.Compare(a.Destination, b.Destination))
+	})
+	c.Mounts = clipNamed(c, "mounts", c.Mounts)
+	c.Devices = clipNamed(c, "devices", powerFirst(c.Devices, isRawDisk))
+	c.CapAdd = clipNamed(c, "cap_add", powerFirst(c.CapAdd, isAdminCap))
+	c.SecurityOpt = clipNamed(c, "security_opt", powerFirst(c.SecurityOpt, isUnconfined))
+}
+
+func powerFirst(l []string, power func(string) bool) []string {
+	l = slices.Clone(l)
+	slices.SortStableFunc(l, func(a, b string) int { return rank(power(b)) - rank(power(a)) })
+	return l
+}
+
+func rank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func clipNamed[T any](c *Container, name string, l []T) []T {
+	if len(l) <= maxContainerList {
+		return l
+	}
+	c.Cut = append(c.Cut, name)
+	return l[:maxContainerList]
 }
 
 // volumeDevice is the host path or device a local Docker volume is mounted from, from the
@@ -317,13 +385,6 @@ func deviceRules(rules []string) []string {
 
 // DeviceRulesTruncated ends a device rule list cut at its bound.
 const DeviceRulesTruncated = "..."
-
-func clipList(l []string) []string {
-	if len(l) > maxContainerList {
-		l = l[:maxContainerList]
-	}
-	return l
-}
 
 func shortID(id string) string {
 	if len(id) > 12 {
@@ -392,7 +453,7 @@ func ociContainer(fsys fs.FS, runtime, name string, cfg ociConfig) Container {
 	caps := cfg.Process.Capabilities.Effective
 	c.Privileged = len(caps) >= allCapabilities
 	if !c.Privileged {
-		c.CapAdd = clipList(caps)
+		c.CapAdd = caps
 	}
 	isolated := map[string]bool{}
 	for _, ns := range cfg.Linux.Namespaces {
@@ -414,12 +475,9 @@ func ociContainer(fsys fs.FS, runtime, name string, cfg ociConfig) Container {
 		}
 		c.Mounts = append(c.Mounts, resolveMount(fsys, Mount{Source: m.Source, Destination: m.Destination, RW: !slices.Contains(m.Options, "ro")}))
 	}
-	slices.SortFunc(c.Mounts, func(a, b Mount) int { return strings.Compare(a.Destination, b.Destination) })
-	c.Mounts = c.Mounts[:min(len(c.Mounts), maxContainerList)]
 	for _, d := range cfg.Linux.Devices {
 		c.Devices = append(c.Devices, d.Path)
 	}
-	c.Devices = clipList(c.Devices)
 	var rules []string
 	for _, d := range cfg.Linux.Resources.Devices {
 		if d.Allow {
@@ -482,7 +540,7 @@ func ContainerPowers(c Container) []string {
 		out = append(out, "privileged")
 	}
 	for _, cp := range c.CapAdd {
-		if slices.Contains(adminCaps, strings.TrimPrefix(strings.ToUpper(cp), "CAP_")) {
+		if isAdminCap(cp) {
 			out = append(out, "capability "+cp)
 		}
 	}
@@ -493,7 +551,7 @@ func ContainerPowers(c Container) []string {
 		out = append(out, "the host's users")
 	}
 	for _, opt := range c.SecurityOpt {
-		if strings.HasSuffix(opt, "=unconfined") || strings.HasSuffix(opt, ":unconfined") {
+		if isUnconfined(opt) {
 			out = append(out, "security "+opt)
 		}
 	}
@@ -512,7 +570,18 @@ func ContainerPowers(c Container) []string {
 			out = append(out, "device rule "+r)
 		}
 	}
+	for _, name := range c.Cut {
+		out = append(out, "more "+name+" than the sensor reads")
+	}
 	return out
+}
+
+func isAdminCap(cp string) bool {
+	return slices.Contains(adminCaps, strings.TrimPrefix(strings.ToUpper(cp), "CAP_"))
+}
+
+func isUnconfined(opt string) bool {
+	return strings.HasSuffix(opt, "=unconfined") || strings.HasSuffix(opt, ":unconfined")
 }
 
 // mountPower describes the power a mount gives, judged on where it leads when that is known.
@@ -578,4 +647,85 @@ func deviceRuleGrantsHost(rule string) bool {
 		return major == "*" || major == "1" && slices.Contains([]string{"*", "1", "2", "4"}, minor)
 	}
 	return false
+}
+
+// maxMountEntries bounds the mount table entries parsed from one mountinfo file.
+const maxMountEntries = 16384
+
+type mountEntry struct{ dev, root, point string }
+
+// HostMounts is the host's mount table, read once when first needed, to tell which host
+// directory a running container's mount really is.
+type HostMounts struct {
+	fsys    fs.FS
+	read    bool
+	entries []mountEntry
+}
+
+func NewHostMounts(fsys fs.FS) *HostMounts { return &HostMounts{fsys: fsys} }
+
+func readMountEntries(fsys fs.FS, name string) []mountEntry {
+	lines, err := collector.ReadLines(fsys, name)
+	if err != nil {
+		return nil
+	}
+	var out []mountEntry
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		if len(out) == maxMountEntries {
+			break
+		}
+		out = append(out, mountEntry{dev: fields[2], root: unescapeMount(fields[3]), point: unescapeMount(fields[4])})
+	}
+	return out
+}
+
+// hostPath is where the part root of the filesystem dev appears on the host: the shortest of
+// the paths the host's mounts of that filesystem give it.
+func (h *HostMounts) hostPath(dev, root string) (string, bool) {
+	if !h.read {
+		h.entries, h.read = readMountEntries(h.fsys, "proc/1/mountinfo"), true
+	}
+	best := ""
+	for _, e := range h.entries {
+		if e.dev != dev {
+			continue
+		}
+		rest, ok := strings.CutPrefix(root, e.root)
+		if !ok || e.root != "/" && rest != "" && !strings.HasPrefix(rest, "/") {
+			continue
+		}
+		if p := path.Join("/", e.point, rest); best == "" || len(p) < len(best) {
+			best = p
+		}
+	}
+	return best, best != ""
+}
+
+// kernelMounts sets where each mount of a running container comes from as its kernel sees it,
+// from the mount table of the container's process: unlike the source written in its
+// configuration, a link swapped before the start and put back after cannot change it.
+func kernelMounts(fsys fs.FS, pid int, host *HostMounts, mounts []Mount) {
+	if pid <= 0 || host == nil || len(mounts) == 0 {
+		return
+	}
+	byPoint := map[string]mountEntry{}
+	for _, e := range readMountEntries(fsys, "proc/"+strconv.Itoa(pid)+"/mountinfo") {
+		byPoint[e.point] = e
+	}
+	for i := range mounts {
+		e, ok := byPoint[path.Clean("/"+mounts[i].Destination)]
+		if !ok {
+			continue
+		}
+		if p, ok := host.hostPath(e.dev, e.root); ok {
+			mounts[i].Resolved = ""
+			if p != path.Clean("/"+mounts[i].Source) {
+				mounts[i].Resolved = p
+			}
+		}
+	}
 }
