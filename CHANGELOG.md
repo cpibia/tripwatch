@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A container's site that answers any name (`server_name _`) takes the domains of the proxy
+  sites that send their requests to a loopback port the container publishes.
+
 ## [0.1.22] - 2026-10-28
 
 Update the verifier, then the sensors.

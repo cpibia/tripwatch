@@ -404,7 +404,8 @@ Web servers running in containers (Docker, containerd) are read the same way, fr
 container's own filesystem as its server sees it (`/proc/<pid>/root`), and every path in their
 configuration is translated to where it lies on the host through the container's mounts: a host
 serving each site from its own nginx container gets each site with its domain, its code and its
-logs on the host, and the name of the container. What only the image holds (its default page) is
+logs on the host, and the name of the container; one that answers any name takes the domain of
+the proxy that sends it requests through a port the container publishes. What only the image holds (its default page) is
 not on the host's disk and is left out.
 
 Applications are recognized by their fingerprints in `/var/www`, `/srv`, `/opt`, `/home`, Docker

@@ -88,3 +88,37 @@ func TestSitesServedFromContainers(t *testing.T) {
 		t.Errorf("config files = %v", inv.ConfigFiles)
 	}
 }
+
+// A proxy on the host sends a domain to a loopback port a container publishes, and the
+// container's server answers any name: the container's site carries the proxy's domain.
+func TestContainerSitesNamedByTheProxy(t *testing.T) {
+	host := fstest.MapFS{
+		"etc/nginx/nginx.conf": text("http { server { server_name shop.example.com www.shop.example.com; location / { proxy_pass http://127.0.0.1:8101; } }\n" +
+			"server { server_name other.example.com; location / { proxy_pass http://127.0.0.1:9999/; } } }"),
+		"proc/1/ns/mnt":      {Data: []byte("mnt:[1]"), Mode: fs.ModeSymlink},
+		"proc/100/ns/mnt":    {Data: []byte("mnt:[2]"), Mode: fs.ModeSymlink},
+		"srv/shop/index.php": text("<?php"),
+		"var/lib/docker/containers/a1/config.v2.json": text(`{"ID": "a1", "Name": "/shop-web-1", "State": {"Running": true, "Pid": 100},
+			"MountPoints": {"/srv/www": {"Source": "/srv/shop", "Destination": "/srv/www", "Type": "bind"}}}`),
+		"var/lib/docker/containers/a1/hostconfig.json": text(`{"PortBindings": {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8101"}]}}`),
+	}
+	view := fstest.MapFS{"etc/nginx/nginx.conf": text("http { server { listen 80; server_name _; root /srv/www; } }")}
+	defer func(orig func(collector.Source, int) (collector.Source, func())) { containerView = orig }(containerView)
+	containerView = func(collector.Source, int) (collector.Source, func()) { return collector.Source{FS: view}, func() {} }
+
+	inv := InspectWithContainers(collector.Source{FS: host})
+	var shop Site
+	for _, s := range inv.Sites {
+		if s.Container == "shop-web-1" {
+			shop = s
+		}
+	}
+	if !slices.Equal(shop.Names, []string{"shop.example.com", "www.shop.example.com", "_"}) {
+		t.Errorf("container site names = %v", shop.Names)
+	}
+	for _, a := range inv.Applications {
+		if a.Path == "/srv/shop" && !slices.Equal(a.Sites, []string{"shop.example.com"}) {
+			t.Errorf("application sites = %v", a.Sites)
+		}
+	}
+}

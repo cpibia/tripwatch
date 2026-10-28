@@ -59,6 +59,9 @@ type Container struct {
 	// CAP_MKNOD containers have by default, an allowed node can be created and opened.
 	DeviceRules []string `json:"device_rules,omitempty"`
 	Mounts      []Mount  `json:"mounts,omitempty"`
+	// Published maps the host ports the container publishes to its own ("8101" to "80"), for
+	// telling which container a proxy on the host sends a site to; not part of the snapshot.
+	Published map[string]string `json:"-"`
 	// Volumes are the ordinary named volumes, in the daemon's own directory: no power over the
 	// host, so not part of the snapshot, but where an application's files may live.
 	Volumes []Mount `json:"-"`
@@ -263,6 +266,7 @@ type dockerHostConfig struct {
 	Devices           []struct{ PathOnHost string }
 	DeviceCgroupRules []string
 	Binds             []string
+	PortBindings      map[string][]struct{ HostIP, HostPort string }
 }
 
 func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *collector.Issues) (Container, bool) {
@@ -310,6 +314,16 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 				c.Devices = append(c.Devices, d.PathOnHost)
 			}
 			c.DeviceRules = deviceRules(hc.DeviceCgroupRules)
+			for port, bindings := range hc.PortBindings {
+				for _, b := range bindings {
+					if len(c.Published) < maxContainerList && b.HostPort != "" {
+						if c.Published == nil {
+							c.Published = map[string]string{}
+						}
+						c.Published[b.HostPort], _, _ = strings.Cut(port, "/")
+					}
+				}
+			}
 		}
 	}
 	finishContainer(&c)
