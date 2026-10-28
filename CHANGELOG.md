@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- Sendmail started through `sh -c --`, as Symfony's mailer does (Drupal), is PHP's mail too, not
+  the web server's user starting a shell.
 - With short open tags the data-file search opens a block on `<?php:` and `<?xml:` (a goto label)
   and `<?php::class;`, which PHP runs (SEC-195); from that pass only named signatures count, so
   a `<?name` quoted in a log no longer turns the stack traces after it into a critical (SEC-210).

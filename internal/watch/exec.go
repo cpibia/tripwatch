@@ -171,6 +171,8 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	if !ok {
 		return false
 	}
+	// Symfony's mailer ends the shell's options with "--" before the command.
+	command = strings.TrimPrefix(command, "-- ")
 	if sendmailCommand.MatchString(command) {
 		return true
 	}

@@ -216,6 +216,9 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 1000, Exe: "/usr/bin/php8.3", Cmdline: "php /home/ubuntu/applications/site/public/uploads/artisan"}, ReasonUnusualPath},
 		// PHP's mail() runs sendmail through the shell; anything more is a shell command.
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i -fnoreply@example.com"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/sbin/sendmail -t -i -fadmin@example.com"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/sbin/sendmail -bs"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- id"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i; id"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t $(id)"}, ReasonWebShell},
 		// A scheduler runs its commands through the shell; the same command from the PHP pool
