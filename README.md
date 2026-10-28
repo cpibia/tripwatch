@@ -388,7 +388,8 @@ volumes and site document roots. Profiles cover the main CMSs and frameworks (Wo
 and 8+, Magento, Laravel, Symfony, Django, Rails), Java, Rust, Go, Node and Python applications,
 generic PHP and static sites; for the main frameworks the installed version is read too, from
 `composer.lock` when the dependencies are not on disk (Laravel, Symfony, Magento). The verifier
-shows the applications a site serves apart from those only found on disk. Adding a
+lists every application with its version, grouped on the servers page and with its path and
+sites on the server's page. Adding a
 stack means adding a profile: markers to look for, public directory, upload and data directories,
 files to read the version from.
 
@@ -729,8 +730,8 @@ is needed too, which closes them all.
 - **Servers.** The fleet: every server with its system and kernel, the sensor's version (flagged
   "update available" when it is older than the verifier, with the command to run), the address
   its sensor connects from (on clouds with NAT, the public address no interface holds) and its
-  interface addresses, the web applications a site serves with their versions and how many
-  others are on disk, the last heartbeat and snapshot and the number
+  interface addresses, the web applications grouped by framework and version (stacks first, with
+  how many of each), the last heartbeat and snapshot and the number
   of alerts; revoked servers listed apart.
 - **Server.** State, the system as the sensor read it (with the package manager and count, the
   listening ports, the web applications and whether the real-time watchers run), every alert,

@@ -1,9 +1,11 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"time"
 )
 
@@ -48,25 +50,43 @@ type AppFact struct {
 	Sites     []string `json:"sites,omitempty"`
 }
 
-// ServedApps are the applications a web server's site serves.
-func (f HostFacts) ServedApps() []AppFact {
-	var out []AppFact
+// AppGroup is the applications of one framework and version on a host.
+type AppGroup struct {
+	Framework string
+	Version   string
+	Count     int
+}
+
+// genericFrameworks name directories recognised by a file any project has (index.html,
+// package.json), not by a stack.
+var genericFrameworks = []string{"static", "php", "node", "python", "go", "rust", "java", "unknown"}
+
+// AppGroups are the host's applications grouped by framework and version, stacks first, then
+// the most numerous: what runs on a host in one line, however many releases or copies it keeps.
+func (f HostFacts) AppGroups() []AppGroup {
+	var out []AppGroup
 	for _, a := range f.Apps {
-		if len(a.Sites) > 0 {
-			out = append(out, a)
+		i := slices.IndexFunc(out, func(g AppGroup) bool { return g.Framework == a.Framework && g.Version == a.Version })
+		if i < 0 {
+			out = append(out, AppGroup{Framework: a.Framework, Version: a.Version})
+			i = len(out) - 1
 		}
+		out[i].Count++
 	}
+	generic := func(g AppGroup) int {
+		if slices.Contains(genericFrameworks, g.Framework) {
+			return 1
+		}
+		return 0
+	}
+	slices.SortStableFunc(out, func(a, b AppGroup) int { return cmp.Or(generic(a)-generic(b), b.Count-a.Count) })
 	return out
 }
 
-// OtherApps are the applications found on disk that no site serves.
-func (f HostFacts) OtherApps() []AppFact {
-	var out []AppFact
-	for _, a := range f.Apps {
-		if len(a.Sites) == 0 {
-			out = append(out, a)
-		}
-	}
+// SortedApps are the host's applications, those a site serves first.
+func (f HostFacts) SortedApps() []AppFact {
+	out := slices.Clone(f.Apps)
+	slices.SortStableFunc(out, func(a, b AppFact) int { return min(len(b.Sites), 1) - min(len(a.Sites), 1) })
 	return out
 }
 

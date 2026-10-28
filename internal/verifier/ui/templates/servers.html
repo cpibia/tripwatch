@@ -16,7 +16,7 @@
     <td class="sys">{{if $f.OS}}<span>{{$f.OS}}</span>{{else}}<span class="quiet">not reported yet</span>{{end}}<span class="sub">{{with $f.Kernel}}<span class="mono">{{.}}</span>{{end}}{{with $f.Arch}} · {{.}}{{end}}{{with $f.Environment}}{{if ne . "host"}} · {{.}}{{end}}{{end}}</span></td>
     <td class="ver">{{if $f.SensorVersion}}<span class="mono">{{$f.SensorVersion}}</span>{{if .Outdated}}<span class="flag-update">update available</span>{{end}}{{else}}<span class="quiet">unknown</span>{{end}}</td>
     <td class="addr">{{with .PeerAddr}}<span class="mono" title="the address its sensor connects from">{{.}}</span>{{end}}{{range $i, $a := $f.Addresses}}{{if lt $i 2}}<span class="{{if $row.PeerAddr}}sub {{end}}mono">{{$a}}</span>{{end}}{{end}}{{if gt (len $f.Addresses) 2}}<span class="sub">+{{sub (len $f.Addresses) 2}} more</span>{{end}}</td>
-    <td class="apps">{{range $f.ServedApps}}<span title="{{.Path}}">{{.Framework}}{{with .Version}} {{.}}{{end}}</span>{{end}}{{with $f.OtherApps}}<span class="sub">{{len .}} more on disk, not served</span>{{end}}{{if not $f.Apps}}<span class="quiet">none</span>{{end}}</td>
+    <td class="apps">{{range $f.AppGroups}}<span>{{.Framework}}{{with .Version}} {{.}}{{end}}{{if gt .Count 1}} <span class="quiet">×{{.Count}}</span>{{end}}</span>{{else}}<span class="quiet">none</span>{{end}}</td>
     <td class="num"><time datetime="{{iso .LastHeartbeat}}" title="{{stamp .LastHeartbeat}}">{{clock .LastHeartbeat}}</time></td>
     <td class="num"><time datetime="{{iso .LastSnapshot}}" title="{{stamp .LastSnapshot}}">{{clock .LastSnapshot}}</time></td>
     <td class="num">{{if .Open}}{{.Open}}{{else}}<span class="quiet">0</span>{{end}}</td>

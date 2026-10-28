@@ -6,6 +6,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier.
+
+### Verifier
+
+- The servers page lists every web application grouped by framework and version, stacks first,
+  with how many of each (`laravel 10.48.28 ×3`); the server's page lists them all with path and
+  sites. Applications no site of the host's web server points to are no longer labelled as not
+  served: a server in a container or behind a proxy serves them all the same.
+
 ## [0.1.15] - 2026-10-28
 
 Update the verifier, then the sensors (`tripwatch-sensor -update`).

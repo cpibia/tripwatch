@@ -998,7 +998,7 @@ func TestServersPage(t *testing.T) {
 	}
 	h.login()
 	_, body := h.get("/hosts")
-	for _, want := range []string{"Debian GNU/Linux 12 (bookworm)", "6.1.0-26-amd64", `<span class="mono">0.1.7</span>`, "wordpress 6.6.2", "2 more on disk, not served", "203.0.113.40", `<span class="mono">0.1.4</span>`} {
+	for _, want := range []string{"Debian GNU/Linux 12 (bookworm)", "6.1.0-26-amd64", `<span class="mono">0.1.7</span>`, "wordpress 6.6.2", "wordpress 6.6.1", "node", "203.0.113.40", `<span class="mono">0.1.4</span>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("servers page lacks %q", want)
 		}

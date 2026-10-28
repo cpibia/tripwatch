@@ -29,8 +29,7 @@
     <div><dt>Connects from</dt><dd class="mono">{{with $d.Row.PeerAddr}}{{.}}{{else}}-{{end}}</dd></div>
     <div><dt>Interface addresses</dt><dd class="mono">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{else}}-{{end}}</dd></div>
   </dl>
-  {{with .ServedApps}}<div class="apps-list"><h3>Web applications</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span>{{range .Sites}} <span class="mono">{{.}}</span>{{end}}</li>{{end}}</ul></div>{{end}}
-  {{with .OtherApps}}<div class="apps-list"><h3>Also on disk, not served by a site</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span></li>{{end}}</ul></div>{{end}}
+  {{with .SortedApps}}<div class="apps-list"><h3>Web applications</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span>{{range .Sites}} <span class="mono">{{.}}</span>{{end}}</li>{{end}}</ul></div>{{end}}
 </section>
 {{end}}
 

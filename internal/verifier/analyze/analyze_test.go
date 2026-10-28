@@ -539,7 +539,7 @@ func TestFactsKeepServedAppsFirst(t *testing.T) {
 	}
 	reports = append(reports, web.AppReport{Application: discovery.Application{Path: "/srv/site", Framework: "wordpress", Version: "6.6.2", Sites: []string{"www.example.com"}}})
 	f := Facts(State{Web: &web.Result{Apps: reports}})
-	if len(f.Apps) != maxAppFacts || f.Apps[0].Path != "/srv/site" || len(f.ServedApps()) != 1 || len(f.OtherApps()) != maxAppFacts-1 {
+	if len(f.Apps) != maxAppFacts || f.Apps[0].Path != "/srv/site" || len(f.SortedApps()) != maxAppFacts {
 		t.Errorf("apps = %d, first %+v", len(f.Apps), f.Apps[0])
 	}
 }
