@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- A sensor stopping for an update no longer leaves "Collector did not complete" alerts for
+  the snapshot it was collecting, and the transient unit a signed update or removal runs in is
+  not a new systemd service.
+- The units netplan's generator rewrites in `/run/systemd/system` at every systemd reload are
+  not reported as services added, changed or disabled.
+- Scratch directories left without a real-time watch (caches, private `/tmp` directories of
+  services) are a low alert instead of medium.
+
 ## [0.1.20] - 2026-10-28
 
 Update the verifier, then the sensors.

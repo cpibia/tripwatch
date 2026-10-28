@@ -161,7 +161,7 @@ func TestUnwatchedPlacesRaiseAlert(t *testing.T) {
 	for _, f := range Evaluate(nil, cur) {
 		got[f.Fingerprint] = f.Severity
 	}
-	if got["sensor:unwatched:upload"] != "high" || got["sensor:unwatched:scratch"] != "medium" {
+	if got["sensor:unwatched:upload"] != "high" || got["sensor:unwatched:scratch"] != "low" {
 		t.Fatalf("unwatched alerts %v", got)
 	}
 }

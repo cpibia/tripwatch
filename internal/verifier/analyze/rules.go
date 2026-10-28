@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -647,6 +648,9 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	for name, msg := range cur.Errors {
+		if stoppedMidway(msg) {
+			continue
+		}
 		state("sensor", "error:"+name, "medium", "Collector "+name+" did not complete", msg)
 	}
 	for _, w := range cur.Warnings {
@@ -887,7 +891,7 @@ func Evaluate(prev *State, cur State) []Finding {
 					stateBy(unitOwner(u), "persistence", "unit-exec:"+unitOwner(u)+"|"+u.Path+":"+x, "high", "Service running from an unusual directory", x+"\nin "+u.Path)
 				}
 			}
-			if knownUnits != nil && !knownUnits.has(u.Path) {
+			if knownUnits != nil && !knownUnits.has(u.Path) && !sensorOwnUnit(u) {
 				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, "medium", "New systemd service", u.Path+"\n"+strings.Join(u.Exec, "\n"))
 			}
 		}
@@ -910,7 +914,8 @@ func Evaluate(prev *State, cur State) []Finding {
 	if rt := cur.Realtime; rt != nil && len(rt.Unwatched) > 0 {
 		// Anyone able to create directories can push the watches past their bounds: places left
 		// without one are an alert, one per class, high for the system, the homes and the uploads,
-		// medium for the scratch directories, which anyone fills.
+		// low for the scratch directories, which anyone fills and caches and private /tmp
+		// directories fill on every server.
 		byClass := map[string][]string{}
 		for _, u := range rt.Unwatched {
 			class, msg, ok := strings.Cut(u, ": ")
@@ -924,7 +929,7 @@ func Evaluate(prev *State, cur State) []Finding {
 		for class, list := range byClass {
 			sev := "high"
 			if class == watch.ClassScratch {
-				sev = "medium"
+				sev = "low"
 			}
 			state("sensor", "unwatched:"+class, sev, "Places left without real-time watch: "+class,
 				"The real-time watcher could not cover every watched place of this class; changes there show only in snapshots. Someone filling a watched tree with directories causes this.\n"+strings.Join(list, "\n"))
@@ -1589,6 +1594,32 @@ func vendorPreload(exe, preload string) bool {
 func vendorConfig(p string) bool {
 	parts := strings.Split(p, "/")
 	return len(parts) > 4 && parts[1] == "opt" && parts[3] == "etc"
+}
+
+// stoppedMidway reports a collector error that only says the sensor was stopping, for an update
+// or a shutdown, while it collected: the stop itself is reported by the sensor's own events.
+func stoppedMidway(msg string) bool {
+	return strings.Contains(msg, context.Canceled.Error())
+}
+
+// sensorOwnUnit reports the transient unit the sensor runs a signed update or removal in: named
+// for it, running the installed sensor with nothing but the flags it passes.
+func sensorOwnUnit(u system.Unit) bool {
+	if u.Path != "/run/systemd/transient/tripwatch-sensor-update.service" && u.Path != "/run/systemd/transient/tripwatch-sensor-uninstall.service" {
+		return false
+	}
+	for _, x := range u.Exec {
+		key, cmd, _ := strings.Cut(x, "=")
+		args := strings.Fields(strings.ReplaceAll(cmd, `"`, ""))
+		if key == "ExecStart" && len(args) == 0 {
+			continue // the reset systemd writes before the command
+		}
+		if key != "ExecStart" || len(args) != 6 || path.Base(args[0]) != "tripwatch-sensor" || !standardBinDir(args[0]) ||
+			args[1] != "-apply-update" && args[1] != "-apply-uninstall" || args[2] != "-bundle" || args[4] != "-state-dir" {
+			return false
+		}
+	}
+	return len(u.Exec) > 0
 }
 
 // snapData reports a root-owned file in a snap's data directory: snapd creates those for root

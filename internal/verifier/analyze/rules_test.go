@@ -777,3 +777,27 @@ func TestPrivilegedFilesInSnapData(t *testing.T) {
 		t.Errorf("title %q", got)
 	}
 }
+
+// A collector cut short by the sensor stopping, for an update, is not a collector failing; the
+// transient unit a signed update runs in is the sensor's own, and only that one.
+func TestSensorUpdateLeavesNoAlerts(t *testing.T) {
+	exec := []string{"ExecStart=", `ExecStart="/usr/bin/tripwatch-sensor" "-apply-update" "-bundle" "/etc/tripwatch/bundle.json" "-state-dir" "/var/lib/tripwatch"`}
+	prev := State{Services: &system.ServicesResult{}}
+	cur := State{
+		Errors: map[string]string{"kernel": "kernel: context canceled after 15m0s", "web": "web: context deadline exceeded after 15m0s"},
+		Services: &system.ServicesResult{Units: []system.Unit{
+			{File: collector.File{Path: "/run/systemd/transient/tripwatch-sensor-update.service"}, Exec: exec},
+			{File: collector.File{Path: "/run/systemd/transient/tripwatch-sensor-uninstall.service"}, Exec: []string{`ExecStart="/tmp/tripwatch-sensor" "-apply-uninstall" "-bundle" "/b" "-state-dir" "/s"`}},
+			{File: collector.File{Path: "/run/systemd/transient/run-x.service"}, Exec: exec},
+		}},
+	}
+	got := fingerprints(Evaluate(&prev, cur))
+	want := []string{
+		"medium persistence-change:unit:root|/run/systemd/transient/run-x.service",
+		"medium persistence-change:unit:root|/run/systemd/transient/tripwatch-sensor-uninstall.service",
+		"medium sensor:error:web",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("findings = %v, want %v", got, want)
+	}
+}

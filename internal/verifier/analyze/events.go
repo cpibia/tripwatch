@@ -182,7 +182,7 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 			"Code here runs at each login, boot or authentication, as whoever triggers it.")
 
 	case watch.ClassService:
-		if !loadable(e.Path) {
+		if !loadable(e.Path) || netplanOutput(e.Path) {
 			return Finding{}, false
 		}
 		return systemChange(e, "service", "high", "Service added or changed",
@@ -217,6 +217,16 @@ func loadable(p string) bool {
 		return path.Ext(p) == ".conf"
 	}
 	return slices.Contains(unitTypes, path.Ext(p))
+}
+
+// netplanOutput reports a unit netplan's generator writes to /run at every systemd reload: the
+// generator is what persists, and a new one is reported by the snapshots.
+func netplanOutput(p string) bool {
+	if !strings.HasPrefix(p, "/run/systemd/system/") {
+		return false
+	}
+	base := path.Base(p)
+	return strings.HasPrefix(base, "netplan-") || strings.HasPrefix(base, "10-netplan") && path.Ext(base) == ".conf"
 }
 
 func systemChange(e watch.Event, rule, severity, title, why string) (Finding, bool) {

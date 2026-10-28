@@ -265,6 +265,7 @@ const failingSnapshots = 3
 // persistentErrors returns the collectors that failed in cur and in the snapshots just before it.
 func (a *Analyzer) persistentErrors(ctx context.Context, cur State, prevSnap *store.Snapshot) map[string]string {
 	failing := maps.Clone(cur.Errors)
+	maps.DeleteFunc(failing, func(_, msg string) bool { return stoppedMidway(msg) })
 	for range failingSnapshots - 1 {
 		if len(failing) == 0 || prevSnap == nil {
 			return nil
