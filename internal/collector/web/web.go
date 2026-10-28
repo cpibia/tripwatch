@@ -904,8 +904,12 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	before := s.budget.codeLeft
 	defer func() { s.budget.spent(name, info, before-s.budget.codeLeft) }()
 	buf := make([]byte, dataScanChunk)
+	var head []byte
 	for !c.exhausted() {
 		n, err := io.ReadFull(r, buf)
+		if head == nil {
+			head = slices.Clone(buf[:min(n, 16)])
+		}
 		last := err != nil
 		c.feed(buf[:n], last)
 		if last {
@@ -916,13 +920,32 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
 		s.budget.unsearched(name)
 	}
-	return c.signatures()
+	return strongInDocuments(head, c.signatures())
+}
+
+// documentMagic are the first bytes of the documents and archives uploaded every day: PDF,
+// ZIP (and the Office and OpenDocument formats inside), gzip, old Office, 7-Zip and RAR.
+var documentMagic = [][]byte{[]byte("%PDF-"), []byte("PK\x03\x04"), []byte("\x1f\x8b"), []byte("\xd0\xcf\x11\xe0"), []byte("7z\xbc\xaf"), []byte("Rar!")}
+
+// weakCodeSignals are the signals of a block that random bytes produce too: a backtick, a word
+// like exec(.
+var weakCodeSignals = []string{"backtick_exec", "dangerous_call"}
+
+// strongInDocuments keeps only the named signatures of a file that starts like a document or an
+// archive: their compressed streams hold an open tag and a backtick by chance every few
+// megabytes, in text PHP would compile, while code planted to run is named by a signature.
+func strongInDocuments(head []byte, sigs []string) []string {
+	if !slices.ContainsFunc(documentMagic, func(m []byte) bool { return bytes.HasPrefix(head, m) }) {
+		return sigs
+	}
+	return slices.DeleteFunc(sigs, func(s string) bool { return slices.Contains(weakCodeSignals, s) })
 }
 
 // codeInData searches data for code within the run's budget, and says when it ran out.
 func (s *scanner) codeInData(name string, e fs.DirEntry, content []byte) []string {
 	before := s.budget.codeLeft
 	sigs, exhausted := codeInData(content, &s.budget.codeLeft)
+	sigs = strongInDocuments(content, sigs)
 	if info, err := e.Info(); err == nil {
 		s.budget.spent(name, info, before-s.budget.codeLeft)
 	}

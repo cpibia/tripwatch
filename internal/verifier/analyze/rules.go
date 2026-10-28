@@ -1008,7 +1008,9 @@ func Evaluate(prev *State, cur State) []Finding {
 
 	if p := cur.Packages; p != nil {
 		for _, m := range p.Modified {
-			if !m.Config {
+			// /var holds what programs rewrite as they run, a channel registry or a cache, even
+			// when a package installed its first copy.
+			if !m.Config && !strings.HasPrefix(m.Path, "/var/") {
 				state("packages", "modified:"+m.Path, "high", "System file modified: "+m.Path, "It no longer matches package "+m.Package+".")
 			}
 		}

@@ -493,7 +493,9 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("host enrolled with a token", "host", host, "token_by", by)
-	s.raise(r.Context(), store.Alert{HostID: host, Fingerprint: "enroll:done:" + serial, Severity: "high", Kind: "sensor-event",
+	// Medium: shown, not mailed. Who just enrolled a server knows it; a stolen token enrolls a
+	// server the operator does not recognise here.
+	s.raise(r.Context(), store.Alert{HostID: host, Fingerprint: "enroll:done:" + serial, Severity: "medium", Kind: "sensor-event",
 		Title:  "Server enrolled",
 		Detail: "The server enrolled with the token made by " + by + ". If you did not just install it, someone else used the token.",
 	}, now)
@@ -607,7 +609,14 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 	}
 	known := run.BootID != "" && boot != ""
 	stopped := !run.StoppedAt.IsZero()
+	enrolled := time.Time{}
+	if h, err := s.Store.Host(ctx, host); err == nil {
+		enrolled = h.EnrolledAt
+	}
 	switch {
+	case run.BootID == "" && run.Version == "" && !enrolled.IsZero() && now.Sub(enrolled) < time.Hour:
+		a.Severity, a.Title = "low", "Sensor started for the first time"
+		a.Detail = fmt.Sprintf("The sensor started for the first time since the server was enrolled at %s (version %s, system boot %s).", enrolled.Format(time.RFC3339), version, boot)
 	case known && boot != run.BootID && stopped && run.Shutdown:
 		a.Severity, a.Title = "low", "Server was off"
 		a.Detail = fmt.Sprintf("The sensor stopped at %s while the system was shutting down, and started again at %s after a new system boot (version %s, system boot %s): the server was shut down or rebooted. If nobody did, check who could.", run.StoppedAt.Format(time.RFC3339), now.Format(time.RFC3339), version, boot)

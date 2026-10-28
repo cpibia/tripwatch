@@ -189,6 +189,26 @@ func TestClassifyExec(t *testing.T) {
 			t.Errorf("%+v: %q %q, want %q %q", c.p, got, script, c.want, c.script)
 		}
 	}
+	// Where the web server's user also runs scheduled jobs, what cron starts is not a webshell's;
+	// a framework's command-line entry point run from its application is not unusual.
+	shared := ctx
+	shared.webUsers = map[int]bool{33: true, 1000: true}
+	for _, c := range []struct {
+		p    system.Process
+		want string
+	}{
+		{system.Process{UID: 1000, PPID: 77, Exe: "/usr/bin/dash", Cmdline: "/bin/sh -c /home/ubuntu/applications/send_email.sh"}, ""},
+		{system.Process{UID: 1000, PPID: 77, Exe: "/usr/bin/curl", Cmdline: "curl -s https://example.com/send"}, ""},
+		{system.Process{UID: 1000, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c id"}, ReasonWebShell},
+		{system.Process{UID: 1001, Exe: "/usr/bin/php8.3", Cmdline: "php /var/www/protocol/artisan schedule:run"}, ""},
+		{system.Process{UID: 1001, Exe: "/usr/bin/php8.3", Cmdline: "php /var/www/shop/bin/magento cron:run"}, ""},
+		{system.Process{UID: 1001, Exe: "/usr/bin/php8.3", Cmdline: "php /var/www/protocol/x.php"}, ReasonUnusualPath},
+		{system.Process{UID: 1000, Exe: "/usr/bin/php8.3", Cmdline: "php /home/ubuntu/applications/site/public/uploads/artisan"}, ReasonUnusualPath},
+	} {
+		if got, _ := classifyExec(c.p, shared); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.p, got, c.want)
+		}
+	}
 	if !privileged(system.Process{Exe: "/tmp/su"}, 1000, 0) || privileged(system.Process{Exe: "/usr/bin/sudo"}, 1000, 0) || privileged(system.Process{Exe: "/tmp/x"}, 0, 0) {
 		t.Error("privileged")
 	}

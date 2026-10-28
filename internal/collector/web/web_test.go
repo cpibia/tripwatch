@@ -1005,3 +1005,22 @@ func TestCodeSearchBudgetSpentByDecoys(t *testing.T) {
 		t.Error("a run within its budget reports a code search")
 	}
 }
+
+// A PDF or an archive in a data directory keeps only the named signatures: its compressed
+// streams hold an open tag and a backtick by chance, while planted code is named.
+func TestCodeInDocuments(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/blog/wp-includes/version.php", "<?php $wp_version = '6.6';")
+	tr.file("var/www/blog/wp-content/uploads/2026/offer.pdf", "%PDF-1.7\n<? Ej4`x9 ?>\nendobj")
+	tr.file("var/www/blog/wp-content/uploads/2026/planted.pdf", "%PDF-1.7\n<?php system($_GET['c']); ?>")
+	tr.file("var/www/blog/wp-content/uploads/2026/notes.txt", "log <? `id` ?>")
+	got := findingsOf(tr.scan())
+	for _, want := range []string{KindCodeInUploads + " /var/www/blog/wp-content/uploads/2026/planted.pdf", KindCodeInData + " /var/www/blog/wp-content/uploads/2026/notes.txt"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+	if slices.Contains(got, KindCodeInData+" /var/www/blog/wp-content/uploads/2026/offer.pdf") {
+		t.Errorf("a backtick in a PDF is code: %v", got)
+	}
+}

@@ -543,3 +543,21 @@ func TestFactsKeepServedAppsFirst(t *testing.T) {
 		t.Errorf("apps = %d, first %+v", len(f.Apps), f.Apps[0])
 	}
 }
+
+// A collector that an updated sensor brings has nothing to compare with in the snapshots of the
+// older version: that is no lost baseline.
+func TestNewCollectorAfterAnUpdate(t *testing.T) {
+	h := newHarness(t)
+	old := `{"environment":{"system":{"sensor_version":"0.1.13"}},"snapshot":{"results":{}}}`
+	for range maxBaseWalk + 1 {
+		h.clock = h.clock.Add(10 * time.Minute)
+		h.deliver(protocol.KindSnapshot, gz(t, old))
+		h.analyse()
+	}
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, gz(t, `{"environment":{"system":{"sensor_version":"0.1.14"}},"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0}]}}}}`))
+	h.analyse()
+	if _, ok := h.open()["sensor:baseline-lost:accounts"]; ok {
+		t.Fatalf("a collector new with the sensor's version raised a lost baseline: %v", h.open())
+	}
+}

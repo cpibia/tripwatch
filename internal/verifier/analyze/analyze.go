@@ -209,11 +209,22 @@ const maxBaseWalk = 50
 // in that window become the reference with no alert.
 // It also names the collectors cur has that no snapshot within maxBaseWalk has: their changes
 // cannot be compared.
+func sensorVersion(s State) string {
+	if s.Environment.System == nil {
+		return ""
+	}
+	return s.Environment.System.SensorVersion
+}
+
 func (a *Analyzer) base(ctx context.Context, cur State, prevSnap *store.Snapshot) (*State, []string) {
 	var out *State
 	walked := 0
+	// A collector a newer sensor brings has nothing to compare with in snapshots of the older
+	// one: that is not a loss.
+	upgraded := false
 	for ; prevSnap != nil && walked < maxBaseWalk; walked++ {
 		if p, err := Decode(prevSnap.Payload); err == nil {
+			upgraded = upgraded || sensorVersion(p) != sensorVersion(cur)
 			if out == nil {
 				out = &p
 			} else {
@@ -229,7 +240,7 @@ func (a *Analyzer) base(ctx context.Context, cur State, prevSnap *store.Snapshot
 		}
 		prevSnap = &older
 	}
-	if out == nil || walked < maxBaseWalk {
+	if out == nil || walked < maxBaseWalk || upgraded {
 		return out, nil
 	}
 	var lost []string

@@ -145,12 +145,26 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 	switch {
 	case p.ExeDeleted:
 		return ReasonDeleted, script
-	case c.webUsers[p.UID] && slices.Contains(webTools, tool):
+	// Where the web server's user also runs scheduled jobs, what cron starts is those jobs; a
+	// crontab the web user planted is reported by the schedule rules.
+	case c.webUsers[p.UID] && slices.Contains(webTools, tool) && (c.fromCron == nil || !c.fromCron(p)):
 		return ReasonWebShell, script
-	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.packageScript(p, script)):
+	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.packageScript(p, script) && !c.frameworkCLI(script)):
 		return ReasonUnusualPath, script
 	}
 	return "", script
+}
+
+// frameworkCLI reports whether a script is a framework's command-line entry point, which
+// schedulers and queue workers run from the application all day (php artisan schedule:run,
+// bin/console, bin/magento), outside every upload directory. A changed entry point is reported
+// by the application's code manifest.
+func (c execContext) frameworkCLI(script string) bool {
+	base, dir := path.Base(script), path.Base(path.Dir(script))
+	if base != "artisan" && (dir != "bin" || base != "console" && base != "magento") {
+		return false
+	}
+	return !slices.ContainsFunc(c.uploads, func(u string) bool { return strings.HasPrefix(script, strings.TrimSuffix(u, "/")+"/") })
 }
 
 // ownCronJob reports whether a program from an unusual place is an account's own scheduled job:

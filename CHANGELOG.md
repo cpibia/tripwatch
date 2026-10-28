@@ -6,6 +6,31 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier, then the sensors.
+
+### Sensor
+
+- A shell or a network tool the web server's user starts is no longer taken for a webshell's when
+  cron started it, where that account also runs scheduled jobs; a crontab it planted is reported
+  by the schedule rules.
+- A framework's command-line entry point run from its application (`artisan`, `bin/console`,
+  `bin/magento`) outside the upload directories is not a program from an unusual place.
+- A process of a service systemd sandboxes, in a mount namespace of its own over the host's
+  root, whose deleted executable a package upgrade replaced, is "still runs a replaced binary"
+  (low), as in the host's namespace.
+- In a data file that starts like a PDF, a ZIP, gzip, old Office, 7-Zip or RAR, only named code
+  signatures count: the weak ones (`backtick_exec`, `dangerous_call`) appear in their compressed
+  streams by chance.
+
+### Verifier
+
+- A collector a newer sensor brings no longer raises "has nothing to compare with" after the
+  update.
+- The first start of a sensor within an hour of its enrollment is low ("Sensor started for the
+  first time"); "Server enrolled" is medium.
+- Package files under `/var` rewritten by the programs that use them (a PEAR channel registry)
+  no longer raise "System file modified".
+
 ## [0.1.17] - 2026-10-28
 
 Update the verifier, then the sensors once more by hand (`tripwatch-sensor -update`): from this

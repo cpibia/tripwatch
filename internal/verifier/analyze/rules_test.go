@@ -712,3 +712,14 @@ func TestWeblogAttemptsDaily(t *testing.T) {
 		t.Errorf("weblog findings = %v, want %v", got, want)
 	}
 }
+
+// Files under /var that a package installed are rewritten by the programs that use them; files
+// elsewhere are not.
+func TestModifiedPackageFilesUnderVar(t *testing.T) {
+	cur := baseState()
+	cur.Packages = &system.PackagesResult{Modified: []system.ModifiedFile{{Path: "/var/lib/pear/.channels/pecl.php.net.reg", Package: "php-pear"}, {Path: "/usr/bin/ls", Package: "coreutils"}}}
+	got := fingerprints(Evaluate(nil, cur))
+	if !slices.Contains(got, "high packages:modified:/usr/bin/ls") || slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "pear") }) {
+		t.Errorf("findings = %v", got)
+	}
+}

@@ -287,7 +287,7 @@ func TestEnrollWithToken(t *testing.T) {
 	for _, al := range alerts {
 		titles[al.Title] = al.Severity
 	}
-	if titles["Server enrolled"] != "high" || titles["Enrollment token used twice"] != "critical" {
+	if titles["Server enrolled"] != "medium" || titles["Enrollment token used twice"] != "critical" {
 		t.Fatalf("alerts = %v", titles)
 	}
 
@@ -425,6 +425,8 @@ func TestRequestsCheckedBeforeTheBody(t *testing.T) {
 	}
 }
 
+// The first start right after enrollment is expected and low; a start with no history long
+// after the enrollment stays high.
 func TestSensorStartRaisesAnAlert(t *testing.T) {
 	h := newHarness(t)
 	c, _ := h.sensor("web-01")
@@ -432,8 +434,18 @@ func TestSensorStartRaisesAnAlert(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := h.alerts()
-	if len(a) != 1 || a[0].Title != "Sensor started" || a[0].Severity != "high" || !strings.Contains(a[0].Detail, "1.2.0") {
+	if len(a) != 1 || a[0].Title != "Sensor started for the first time" || a[0].Severity != "low" || !strings.Contains(a[0].Detail, "1.2.0") {
 		t.Fatalf("alerts = %+v", a)
+	}
+
+	late, _ := h.sensor("web-02")
+	h.clock = now.Add(2 * time.Hour)
+	if err := late.Send(context.Background(), protocol.KindEvent, []byte(`{"event":"sensor_started","version":"1.2.0","boot_id":"b1"}`), h.clock); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := h.store.Alerts(context.Background(), store.AlertFilter{HostID: "web-02"})
+	if len(b) != 1 || b[0].Title != "Sensor started" || b[0].Severity != "high" {
+		t.Fatalf("start long after enrollment: %+v", b)
 	}
 }
 

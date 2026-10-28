@@ -250,3 +250,21 @@ func TestContainerListsKeepPowersFirst(t *testing.T) {
 		t.Errorf("powers = %q", got)
 	}
 }
+
+// A service systemd sandboxes sees the host's root through a mount namespace of its own; a
+// container sees another filesystem as "/".
+func TestSameRootAsTheHost(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/1/mountinfo": text("22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw\n23 22 0:21 / /proc rw - proc proc rw\n"),
+		"proc/700/mountinfo": text("500 499 8:1 / / ro,relatime master:1 - ext4 /dev/vda1 rw\n501 500 0:21 / /proc rw - proc proc rw\n" +
+			"502 500 8:1 /var/lib/private/x /var/lib/x rw - ext4 /dev/vda1 rw\n"),
+		"proc/800/mountinfo": text("600 599 0:52 / / rw - overlay overlay rw,lowerdir=/var/lib/docker/overlay2/l/A\n"),
+		"proc/900/mountinfo": text("700 699 8:1 /srv/chroot / rw - ext4 /dev/vda1 rw\n"),
+	}
+	h := &rootOf{}
+	for pid, want := range map[int]bool{700: true, 800: false, 900: false, 1000: false} {
+		if got := h.sameAs(fsys, pid); got != want {
+			t.Errorf("pid %d: %v, want %v", pid, got, want)
+		}
+	}
+}

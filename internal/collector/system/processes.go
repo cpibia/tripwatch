@@ -86,6 +86,7 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 	// The host's mount namespace: a path is looked up in the observed root, which is that
 	// namespace's view, never a container's.
 	hostMnt, _ := fs.ReadLink(src.FS, "proc/1/ns/mnt")
+	hostRoot := &rootOf{}
 	// dpkg's file lists, read at most once per snapshot and only when a process needs them.
 	var owned map[string]bool
 	packaged := func(p string) bool {
@@ -116,8 +117,10 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 		}
 		p.Mapped = mappedCode(src.FS, pid, p.Exe)
 		// Replaced only where the path means the same file for the process and for the sensor,
-		// and only by a file of root nobody else can write: anyone could put a file there.
-		if p.ExeDeleted && strings.HasPrefix(p.Exe, "/") && hostMnt != "" && p.MntNS == hostMnt {
+		// and only by a file of root nobody else can write: anyone could put a file there. A
+		// service systemd sandboxes has a mount namespace of its own over the host's root, where
+		// the path means the same; a container's root is another filesystem.
+		if p.ExeDeleted && strings.HasPrefix(p.Exe, "/") && hostMnt != "" && (p.MntNS == hostMnt || hostRoot.sameAs(src.FS, pid)) {
 			if info, err := fs.Lstat(src.FS, collector.Rel(p.Exe)); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o022 == 0 {
 				if uid, ok := collector.Owner(info); ok && uid == 0 {
 					p.ExeReplaced = true
@@ -426,4 +429,36 @@ func isKernelThread(fsys fs.FS, dir string, ppid, pid int) bool {
 		}
 	}
 	return pid == 2 || ppid == 2
+}
+
+// rootOf caches the mount the host's init sees as "/".
+type rootOf struct {
+	read  bool
+	entry mountEntry
+	ok    bool
+}
+
+// sameAs reports whether process pid sees as "/" the same part of the same filesystem as the
+// host's init.
+func (h *rootOf) sameAs(fsys fs.FS, pid int) bool {
+	if !h.read {
+		h.entry, h.ok = rootMount(fsys, "proc/1/mountinfo")
+		h.read = true
+	}
+	e, ok := rootMount(fsys, "proc/"+strconv.Itoa(pid)+"/mountinfo")
+	return h.ok && ok && e.dev == h.entry.dev && e.root == h.entry.root
+}
+
+// rootMount is the mount at "/" in a mount table: the last one, which covers those before.
+func rootMount(fsys fs.FS, name string) (mountEntry, bool) {
+	entries, err := readMountEntries(fsys, name)
+	if err != nil {
+		return mountEntry{}, false
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].point == "/" {
+			return entries[i], true
+		}
+	}
+	return mountEntry{}, false
 }
