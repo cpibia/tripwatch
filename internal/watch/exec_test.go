@@ -64,12 +64,18 @@ func TestRepeatedStartsAreReportedOnceAWindow(t *testing.T) {
 
 // apt runs each package's debconf configuration script from /tmp before installing it; only
 // that script, run by root through dpkg-preconfigure from a root-owned file, is left out.
-func TestDebconfScriptsFromTmp(t *testing.T) {
+func TestPackageScriptsFromTmp(t *testing.T) {
+	parents := map[int]system.Process{
+		88: {Exe: "/usr/bin/perl", Cmdline: "/usr/bin/perl -w /usr/sbin/dpkg-preconfigure --apt"},
+		89: {Exe: "/usr/bin/rpm", Cmdline: "rpm -U /tmp/tripwatch-sensor.rpm"},
+	}
 	ctx := execContext{
-		// PPID 88 is dpkg-preconfigure.
-		fromPreconfigure: func(p system.Process) bool { return p.PPID == 88 },
+		parent: func(p system.Process) (system.Process, bool) {
+			parent, ok := parents[p.PPID]
+			return parent, ok
+		},
 		owner: func(f string) (int, bool) {
-			if strings.Contains(f, "user-owned") {
+			if strings.Contains(f, "user-owned") || strings.HasSuffix(f, ".UsrOwn") {
 				return 1000, true
 			}
 			return 0, true
@@ -90,6 +96,10 @@ func TestDebconfScriptsFromTmp(t *testing.T) {
 		{"subdirectory", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /tmp/x/nginx-common.config.HSv41h"}, ReasonUnusualPath},
 		{"shared memory", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /dev/shm/nginx-common.config.HSv41h"}, ReasonUnusualPath},
 		{"program itself in tmp", system.Process{PPID: 88, Exe: config, Cmdline: config + " configure"}, ReasonUnusualPath},
+		{"rpm scriptlet", system.Process{PPID: 89, Exe: "/usr/bin/bash", Cmdline: "/bin/sh /var/tmp/rpm-tmp.3udd1L 0"}, ""},
+		{"rpm scriptlet from dpkg-preconfigure", system.Process{PPID: 88, Exe: "/usr/bin/bash", Cmdline: "/bin/sh /var/tmp/rpm-tmp.3udd1L 0"}, ReasonUnusualPath},
+		{"debconf script from rpm", system.Process{PPID: 89, Exe: "/usr/bin/dash", Cmdline: "/bin/sh " + config}, ReasonUnusualPath},
+		{"rpm scriptlet of another user", system.Process{PPID: 89, Exe: "/usr/bin/bash", Cmdline: "/bin/sh /var/tmp/rpm-tmp.UsrOwn 0"}, ReasonUnusualPath},
 	} {
 		if got, _ := classifyExec(c.p, ctx); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
@@ -111,6 +121,26 @@ func TestDebconfScriptsFromTmp(t *testing.T) {
 	} {
 		if got := preconfigure(c.parent); got != c.want {
 			t.Errorf("parent %s: %v", c.name, got)
+		}
+	}
+
+	for _, c := range []struct {
+		name   string
+		parent system.Process
+		want   bool
+	}{
+		{"rpm", system.Process{Exe: "/usr/bin/rpm", Cmdline: "rpm -Uvh x.rpm"}, true},
+		{"dnf5", system.Process{Exe: "/usr/bin/dnf5", Cmdline: "dnf upgrade"}, true},
+		{"dnf", system.Process{Exe: "/usr/bin/python3.9", Cmdline: "/usr/bin/python3 /usr/bin/dnf -y upgrade"}, true},
+		{"yum on RHEL 8", system.Process{Exe: "/usr/libexec/platform-python3.6", Cmdline: "/usr/libexec/platform-python -s /usr/bin/yum update"}, true},
+		{"python running another script", system.Process{Exe: "/usr/bin/python3", Cmdline: "python3 /tmp/dnf /usr/bin/dnf"}, false},
+		{"python inline", system.Process{Exe: "/usr/bin/python3", Cmdline: "python3 -c /usr/bin/dnf"}, false},
+		{"rpm elsewhere", system.Process{Exe: "/tmp/rpm", Cmdline: "rpm -U x.rpm"}, false},
+		{"deleted rpm", system.Process{Exe: "/usr/bin/rpm", ExeDeleted: true}, false},
+		{"not root", system.Process{UID: 1000, EUID: 1000, Exe: "/usr/bin/rpm"}, false},
+	} {
+		if got := rpmInstaller(c.parent); got != c.want {
+			t.Errorf("rpm parent %s: %v", c.name, got)
 		}
 	}
 }

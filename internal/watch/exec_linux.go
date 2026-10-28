@@ -211,7 +211,7 @@ func (x *Execs) message(m []byte) bool {
 			return true
 		}
 		x.mu.Lock()
-		reason, script := classifyExec(p, execContext{webUsers: x.webUsers, homes: x.homes, uploads: x.uploads, fromCron: x.fromCron, owner: x.owner, fromPreconfigure: x.fromPreconfigure})
+		reason, script := classifyExec(p, execContext{webUsers: x.webUsers, homes: x.homes, uploads: x.uploads, fromCron: x.fromCron, owner: x.owner, parent: x.parent})
 		x.mu.Unlock()
 		if reason != "" {
 			e := x.event(reason, p)
@@ -275,13 +275,12 @@ func (x *Execs) fromCron(p system.Process) bool {
 	return false
 }
 
-// fromPreconfigure reports whether the direct parent of a process is apt's dpkg-preconfigure.
-func (x *Execs) fromPreconfigure(p system.Process) bool {
+// parent reads the process that started p.
+func (x *Execs) parent(p system.Process) (system.Process, bool) {
 	if p.PPID <= 1 {
-		return false
+		return system.Process{}, false
 	}
-	parent, ok := system.ReadProcess(x.src.FS, p.PPID)
-	return ok && preconfigure(parent)
+	return system.ReadProcess(x.src.FS, p.PPID)
 }
 
 // owner returns the owner of a file, without following a final link.

@@ -6,6 +6,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Sensor:
+
+- The scriptlets rpm writes to `/var/tmp` as `rpm-tmp.XXXXXX` and runs while installing or
+  upgrading a package no longer raise "A program started from /var/tmp", under the same
+  conditions as apt's debconf scripts: root, a root-owned file, started by rpm or a package
+  manager built on it, known by its executable, UID and command line.
+
 ## [0.1.12] - 2026-10-28
 
 Update the verifier, then the sensors (`tripwatch-sensor -update`). This release fixes how

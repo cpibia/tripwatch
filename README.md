@@ -323,9 +323,12 @@ what changes there within two seconds, in signed event envelopes of the same cha
   the thousands a busy server makes. A shell, an interpreter or a network tool started by the web
   server's user; a program or a script run from `/tmp`, `/dev/shm`, a home or a web root; a
   program whose file was deleted after it started; root gained through a set-user-ID program
-  outside the system's binary directories. The configuration scripts apt extracts to `/tmp` and
-  runs before an installation are left out only when root runs a root-owned
-  `<package>.config.XXXXXX` started by the system's perl running `/usr/sbin/dpkg-preconfigure`. A start identical to one reported in the last hour
+  outside the system's binary directories. The scripts a package manager writes to `/tmp` or
+  `/var/tmp` and runs during an installation are left out only when root runs a root-owned file
+  named the way the package manager names it, started by the package manager's own executable:
+  `<package>.config.XXXXXX` from the system's perl running `/usr/sbin/dpkg-preconfigure`,
+  `rpm-tmp.XXXXXX` from rpm, dnf5, microdnf, PackageKit or the system's Python running
+  dnf or yum. A start identical to one reported in the last hour
   is counted instead of sent again, so a job that runs every minute does not fill the budget.
 
 The verifier keeps the events for seven days (at most 20,000 a server in 24 hours for uploads

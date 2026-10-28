@@ -128,8 +128,8 @@ type execContext struct {
 	// fromCron reports whether a process descends from cron; owner returns a file's owner.
 	fromCron func(p system.Process) bool
 	owner    func(path string) (int, bool)
-	// fromPreconfigure reports whether a process was started by apt's dpkg-preconfigure.
-	fromPreconfigure func(p system.Process) bool
+	// parent returns the process that started p.
+	parent func(p system.Process) (system.Process, bool)
 }
 
 // classifyExec says why a process that just started matters, or "" when it does not, and the
@@ -147,7 +147,7 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 		return ReasonDeleted, script
 	case c.webUsers[p.UID] && slices.Contains(webTools, tool):
 		return ReasonWebShell, script
-	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.debconfScript(p, script)):
+	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.packageScript(p, script)):
 		return ReasonUnusualPath, script
 	}
 	return "", script
@@ -181,41 +181,65 @@ func (c execContext) ownCronJob(p system.Process, file string) bool {
 // extracts for dpkg-preconfigure: the package name, ".config." and mkstemp's six characters.
 var debconfConfig = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]{0,99}\.config\.[A-Za-z0-9]{6}$`)
 
-// debconfScript reports whether a script run from a scratch directory is a package's debconf
-// configuration script, which apt extracts there and runs as root before every installation
-// or upgrade that asks questions: run by root, as root, from a root-owned file named the way
-// apt-extracttemplates names it, started by dpkg-preconfigure itself. The parent is known by
-// its executable, UID and command line, not by its process name, which anyone can set.
-func (c execContext) debconfScript(p system.Process, script string) bool {
-	if p.UID != 0 || p.EUID != 0 || c.owner == nil || c.fromPreconfigure == nil {
+// rpmScriptlet is the name rpm gives a package's install or removal scriptlet it writes to
+// %_tmppath and runs with the shell.
+var rpmScriptlet = regexp.MustCompile(`^rpm-tmp\.[A-Za-z0-9]{6}$`)
+
+// packageScript reports whether a script run from a scratch directory is one the package
+// manager wrote there and runs as root during an installation or upgrade: apt's debconf
+// configuration scripts, rpm's scriptlets. Run by root, as root, from a root-owned file named
+// the way the package manager names it, started by the package manager itself. The parent is
+// known by its executable, UID and command line, not by its process name, which anyone can set.
+func (c execContext) packageScript(p system.Process, script string) bool {
+	if p.UID != 0 || p.EUID != 0 || c.owner == nil || c.parent == nil {
 		return false
 	}
 	if dir := path.Dir(script); dir != "/tmp" && dir != "/var/tmp" {
 		return false
 	}
-	if !debconfConfig.MatchString(path.Base(script)) {
+	name := path.Base(script)
+	debconf, rpm := debconfConfig.MatchString(name), rpmScriptlet.MatchString(name)
+	if !debconf && !rpm {
 		return false
 	}
 	if uid, ok := c.owner(script); !ok || uid != 0 {
 		return false
 	}
-	return c.fromPreconfigure(p)
+	parent, ok := c.parent(p)
+	return ok && (debconf && preconfigure(parent) || rpm && rpmInstaller(parent))
 }
 
 // preconfigure reports whether a parent process is apt's dpkg-preconfigure: the system's perl,
 // as root, running /usr/sbin/dpkg-preconfigure.
 func preconfigure(parent system.Process) bool {
-	if parent.UID != 0 || parent.EUID != 0 || parent.ExeDeleted || (parent.Exe != "/usr/bin/perl" && parent.Exe != "/bin/perl") {
+	if !rootProgram(parent) || (parent.Exe != "/usr/bin/perl" && parent.Exe != "/bin/perl") {
 		return false
 	}
-	// The script perl runs is its first argument that is not an option (perl -w script ...).
-	args := strings.Fields(parent.Cmdline)
-	for _, a := range args[min(1, len(args)):] {
-		if !strings.HasPrefix(a, "-") {
-			return a == "/usr/sbin/dpkg-preconfigure"
-		}
+	return scriptArg(parent.Cmdline) == "/usr/sbin/dpkg-preconfigure"
+}
+
+// rpmPrograms run rpm's scriptlets themselves; rpmPythonTools are the Python front ends that
+// load librpm into the interpreter.
+var (
+	rpmPrograms    = []string{"/usr/bin/rpm", "/bin/rpm", "/usr/bin/dnf5", "/usr/bin/microdnf", "/usr/libexec/packagekitd"}
+	rpmPythonTools = []string{"/usr/bin/dnf", "/usr/bin/dnf-3", "/usr/bin/yum", "/usr/bin/dnf-automatic", "/bin/dnf", "/bin/yum"}
+	systemPython   = regexp.MustCompile(`^/usr/(bin/python[0-9.]*|libexec/platform-python[0-9.]*)$`)
+)
+
+// rpmInstaller reports whether a parent process is rpm or a package manager built on librpm,
+// as root, from the system's own executable.
+func rpmInstaller(parent system.Process) bool {
+	if !rootProgram(parent) {
+		return false
 	}
-	return false
+	if slices.Contains(rpmPrograms, parent.Exe) {
+		return true
+	}
+	return systemPython.MatchString(parent.Exe) && slices.Contains(rpmPythonTools, scriptArg(parent.Cmdline))
+}
+
+func rootProgram(p system.Process) bool {
+	return p.UID == 0 && p.EUID == 0 && !p.ExeDeleted
 }
 
 func unusual(p string) bool {
