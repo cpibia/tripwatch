@@ -140,6 +140,7 @@ func TestFilesDoNotFollowLinks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
 	if err := os.Symlink(filepath.Join(root, "secret"), filepath.Join(root, "srv/up/l.php")); err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +209,7 @@ func TestFilesReportGapsAndSkipDevices(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
 	if err := os.Mkdir(filepath.Join(root, "srv/u/a/b/c/x"), 0o750); err != nil {
 		t.Fatal(err)
 	}
