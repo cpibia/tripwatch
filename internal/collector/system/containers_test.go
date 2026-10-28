@@ -332,3 +332,44 @@ func TestManyStoppedContainersDoNotHideAPrivilegedOne(t *testing.T) {
 		t.Errorf("truncated %v, privileged container read %v", res.Truncated, slices.ContainsFunc(res.Containers, func(c Container) bool { return c.Name == "escape" }))
 	}
 }
+
+// Docker keeps its containers elsewhere with userns-remap, as a snap, or with --data-root on
+// its command line; k3s keeps its tasks under its own run directory. All are read.
+func TestContainersInOtherDockerLayouts(t *testing.T) {
+	cfg := func(id, name string) *fstest.MapFile {
+		return text(`{"ID": "` + id + `", "Name": "/` + name + `"}`)
+	}
+	id := strings.Repeat("a", 64)
+	for name, fsys := range map[string]fstest.MapFS{
+		"userns-remap": {"var/lib/docker/100000.100000/containers/" + id + "/config.v2.json": cfg(id, "remapped")},
+		"snap":         {"var/snap/docker/common/var-lib-docker/containers/" + id + "/config.v2.json": cfg(id, "snapped")},
+		"command line": {
+			"proc/42/comm":    text("dockerd\n"),
+			"proc/42/cmdline": text("/usr/bin/dockerd\x00--data-root\x00/data/docker\x00"),
+			"data/docker/containers/" + id + "/config.v2.json": cfg(id, "moved"),
+		},
+		"k3s": {"run/k3s/containerd/io.containerd.runtime.v2.task/k8s.io/" + id + "/config.json": text(`{"hostname": "pod", "annotations": {"io.kubernetes.cri.container-name": "app"}}`)},
+	} {
+		if res := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys}); len(res.Containers) != 1 {
+			t.Errorf("%s: %d containers", name, len(res.Containers))
+		}
+	}
+}
+
+// A runtime running whose state is nowhere it is read from is said; one with an empty state is
+// a host without containers.
+func TestRuntimeRunningWithoutState(t *testing.T) {
+	running := func(extra fstest.MapFS) ContainersResult {
+		fsys := fstest.MapFS{"proc/7/comm": text("containerd\n")}
+		for k, v := range extra {
+			fsys[k] = v
+		}
+		return collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys})
+	}
+	if res := running(nil); !slices.ContainsFunc(res.Issues, func(i string) bool { return strings.HasPrefix(i, RuntimeUnread+"containerd") }) {
+		t.Errorf("issues = %v", res.Issues)
+	}
+	if res := running(fstest.MapFS{"run/containerd/containerd.toml": text("")}); len(res.Issues) != 0 {
+		t.Errorf("empty state: issues = %v", res.Issues)
+	}
+}

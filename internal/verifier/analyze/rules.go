@@ -910,6 +910,14 @@ func Evaluate(prev *State, cur State) []Finding {
 
 	out = append(out, kernelFindings(prev, cur)...)
 	out = append(out, containerFindings(prev, cur)...)
+	if c := cur.Containers; c != nil {
+		for _, issue := range c.Issues {
+			if strings.HasPrefix(issue, system.RuntimeUnread) {
+				state("containers", "unread", "medium", "Containers not read",
+					"A container runtime runs on the server but the sensor found none of its containers where that runtime keeps them: its containers, and any power they have over the host, are not checked.\n"+issue)
+			}
+		}
+	}
 	if c := cur.Containers; c != nil && c.Truncated {
 		// Thousands of containers created to push one out of the list leave it unread.
 		state("containers", "truncated", "high", "Containers not all read",

@@ -75,3 +75,15 @@ func TestTruncatedContainersRaiseAnAlert(t *testing.T) {
 	}
 	t.Error("no alert for a truncated container list")
 }
+
+// A runtime the sensor could not read is an alert: an empty list is not a host without
+// containers.
+func TestUnreadRuntimeRaisesAnAlert(t *testing.T) {
+	cur := State{Containers: &system.ContainersResult{Issues: []string{system.RuntimeUnread + "dockerd"}}}
+	for _, f := range Evaluate(nil, cur) {
+		if f.Fingerprint == "containers:unread" && f.Severity == "medium" {
+			return
+		}
+	}
+	t.Error("no alert for a runtime whose containers were not found")
+}

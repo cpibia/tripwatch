@@ -118,7 +118,54 @@ func (Containers) Collect(ctx context.Context, src collector.Source) (any, error
 	if !strings.HasPrefix(res.Runtime, "docker") && dockerFound(src.FS) {
 		res.Runtime = strings.TrimSuffix("docker,"+res.Runtime, ",")
 	}
+	// A runtime running whose state was found nowhere means its containers are not read: an
+	// empty list must not pass for a host without containers.
+	if res.Runtime == "" {
+		if name := runningRuntime(src.FS); name != "" {
+			res.Issues = append(res.Issues, RuntimeUnread+name)
+		}
+	}
 	return res, nil
+}
+
+// RuntimeUnread starts the issue of a container runtime that runs while none of its state was
+// found.
+const RuntimeUnread = "container runtime running, its containers not found: "
+
+// runtimeState is where each runtime daemon keeps the state of its containers.
+var runtimeState = map[string][]string{
+	"dockerd":    {"var/lib/docker", "var/snap/docker/common/var-lib-docker"},
+	"containerd": {"run/containerd", "run/k3s/containerd", "var/snap/microk8s/common/run/containerd"},
+	"crio":       {"run/containers/storage"},
+	"k3s-server": {"run/k3s/containerd"},
+	"k3s-agent":  {"run/k3s/containerd"},
+}
+
+// runningRuntime returns the name of a container runtime daemon running on the host whose state
+// is in none of the places it is read from.
+func runningRuntime(fsys fs.FS) string {
+	entries, err := fs.ReadDir(fsys, "proc")
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		comm, _ := fs.ReadFile(fsys, "proc/"+e.Name()+"/comm")
+		name := strings.TrimSpace(string(comm))
+		dirs, ok := runtimeState[name]
+		if !ok {
+			continue
+		}
+		if name == "dockerd" && dockerdDataRoot(fsys) != "" {
+			continue
+		}
+		if !slices.ContainsFunc(dirs, func(d string) bool { _, err := fs.Stat(fsys, d); return err == nil }) {
+			return name
+		}
+	}
+	return ""
 }
 
 // ContainerRef is where a runtime keeps one container: Docker's directory of it, or the OCI
@@ -133,12 +180,17 @@ type ContainerRef struct {
 // last change of their configuration, which the daemon rewrites when it starts one, so stopped
 // containers created by the thousand cannot push a running one out of the list.
 func ContainerRefs(fsys fs.FS, issues *collector.Issues) (refs []ContainerRef, truncated bool) {
-	dir := path.Join(dockerRoot(fsys, issues), "containers")
-	entries, _ := fs.ReadDir(fsys, dir)
+	// With userns-remap the daemon keeps its state in a <uid>.<gid> directory of the data root.
+	root := dockerRoot(fsys, issues)
+	remapped, _ := fs.Glob(fsys, path.Join(root, "*.*", "containers"))
+	dirs := append([]string{path.Join(root, "containers")}, remapped...)
 	var docker []ContainerRef
-	for _, e := range entries {
-		if e.IsDir() {
-			docker = append(docker, ContainerRef{Runtime: "docker", Path: path.Join(dir, e.Name())})
+	for _, dir := range dirs {
+		entries, _ := fs.ReadDir(fsys, dir)
+		for _, e := range entries {
+			if e.IsDir() {
+				docker = append(docker, ContainerRef{Runtime: "docker", Path: path.Join(dir, e.Name())})
+			}
 		}
 	}
 	if len(docker) > maxContainers {
@@ -224,23 +276,62 @@ func dockerFound(fsys fs.FS) bool {
 
 // dockerRoot is the daemon's data root, relative to the observed root.
 func dockerRoot(fsys fs.FS, issues *collector.Issues) string {
-	root := "var/lib/docker"
-	data, err := fs.ReadFile(fsys, "etc/docker/daemon.json")
-	if err != nil {
-		return root
+	// Docker installed as a snap keeps its configuration and its state under the snap's
+	// directories.
+	root, config := "var/lib/docker", "etc/docker/daemon.json"
+	if _, err := fs.Stat(fsys, "var/snap/docker/common/var-lib-docker"); err == nil {
+		root, config = "var/snap/docker/common/var-lib-docker", "var/snap/docker/current/config/daemon.json"
 	}
-	var cfg struct {
-		DataRoot string `json:"data-root"`
-		Graph    string `json:"graph"`
+	if data, err := fs.ReadFile(fsys, config); err == nil {
+		var cfg struct {
+			DataRoot string `json:"data-root"`
+			Graph    string `json:"graph"`
+		}
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			issues.Add(err)
+		} else if p := cmp.Or(cfg.DataRoot, cfg.Graph); path.IsAbs(p) {
+			return collector.Rel(p)
+		}
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		issues.Add(err)
-		return root
-	}
-	if p := cmp.Or(cfg.DataRoot, cfg.Graph); path.IsAbs(p) {
-		return collector.Rel(p)
+	// The data root can also be given on dockerd's command line, in its unit.
+	if _, err := fs.Stat(fsys, path.Join(root, "containers")); err != nil {
+		if p := dockerdDataRoot(fsys); p != "" {
+			return p
+		}
 	}
 	return root
+}
+
+// dockerdDataRoot reads --data-root (or the old -g/--graph) from a running dockerd's command line.
+func dockerdDataRoot(fsys fs.FS) string {
+	entries, err := fs.ReadDir(fsys, "proc")
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		comm, _ := fs.ReadFile(fsys, "proc/"+e.Name()+"/comm")
+		if strings.TrimSpace(string(comm)) != "dockerd" {
+			continue
+		}
+		cmdline, _ := fs.ReadFile(fsys, "proc/"+e.Name()+"/cmdline")
+		args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+		for i, a := range args {
+			var v string
+			switch {
+			case strings.HasPrefix(a, "--data-root="), strings.HasPrefix(a, "--graph="):
+				_, v, _ = strings.Cut(a, "=")
+			case (a == "--data-root" || a == "--graph" || a == "-g") && i+1 < len(args):
+				v = args[i+1]
+			}
+			if path.IsAbs(v) {
+				return collector.Rel(v)
+			}
+		}
+	}
+	return ""
 }
 
 // dockerConfig and dockerHostConfig hold the fields read from config.v2.json and hostconfig.json;
@@ -491,6 +582,8 @@ func shortID(id string) string {
 // read from the daemon instead), and the containers of Podman and CRI-O.
 var ociBundles = []struct{ runtime, glob string }{
 	{"containerd", "run/containerd/io.containerd.runtime.v2.task/*/*/config.json"},
+	{"containerd", "run/k3s/containerd/io.containerd.runtime.v2.task/*/*/config.json"},
+	{"containerd", "var/snap/microk8s/common/run/containerd/io.containerd.runtime.v2.task/*/*/config.json"},
 	{"podman", "var/lib/containers/storage/overlay-containers/*/userdata/config.json"},
 	{"cri-o", "run/containers/storage/overlay-containers/*/userdata/config.json"},
 }

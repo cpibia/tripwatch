@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- Containers are read where Docker keeps them with `userns-remap`, as a snap or with
+  `--data-root` on its command line, and where k3s and MicroK8s keep their tasks; a runtime
+  running whose state is found nowhere is said in the issues (SEC-188).
+
+### Verifier
+
+- A container runtime the sensor could not read raises a medium alert (SEC-188).
+
 ## [0.1.25] - 2026-10-29
 
 Update the verifier, then the sensors.
