@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-28
+
+Update the verifier, then the sensors (`tripwatch-sensor -update`). This release fixes how
+0.1.10 and 0.1.11 lowered the alerts around a stopped sensor; until the sensors are updated,
+their stops are judged as stops on a running system.
+
 ### Sensor
 
 - The debconf configuration script apt extracts to `/tmp` and runs before installing a package
@@ -88,6 +94,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - The scratch directories (`/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock`) are watched for executable files: a
   dropper written, run and deleted lives too briefly for its process to be read, but its file
   is seen. Only executables, and the removal of those, are reported.
+- The stop event says whether systemd was shutting the system down (`systemctl
+  is-system-running` answering `stopping`) and whether the stop is for an update: the package's
+  post-installation script and `-update` leave a marker before restarting the sensor.
+
+- Events on files outside the uploads carry the content the sensor last knew them to have
+  (`prev_sha256`), read from the keys files when the watch starts.
 
 ### Verifier
 
@@ -143,24 +155,6 @@ verifier, so it is clear which of the two needs updating. Versions follow
   medium otherwise (builds and installers); one that appears and is removed within 15 minutes is
   critical for root and the web server's user, high otherwise. Each account's drops are a group
   of their own, so one user's noise never folds another's alerts into an aggregate. The benchmark's dropper run and deleted between two checks is caught.
-
-## [0.1.12] - 2026-10-23
-
-Update the verifier, then the sensors (`tripwatch-sensor -update`). This release fixes how
-0.1.10 and 0.1.11 lowered the alerts around a stopped sensor; until the sensors are updated,
-their stops are judged as stops on a running system.
-
-### Sensor
-
-- The stop event says whether systemd was shutting the system down (`systemctl
-  is-system-running` answering `stopping`) and whether the stop is for an update: the package's
-  post-installation script and `-update` leave a marker before restarting the sensor.
-
-- Events on files outside the uploads carry the content the sensor last knew them to have
-  (`prev_sha256`), read from the keys files when the watch starts.
-
-### Verifier
-
 - An SSH keys file that existed long before, changed and put back within 15 minutes, is the
   critical "SSH keys changed and put back" it should be; before, the original content had to be
   within the window. Transient alerts are distinct by the time they appeared, so the same key
