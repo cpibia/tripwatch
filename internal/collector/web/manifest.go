@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,8 +28,11 @@ const (
 	// maxChanges bounds the changes listed for one application in a snapshot; ChangeCount has
 	// them all.
 	maxChanges = 200
-	// maxSkimmerChanges is how many files may change at once for each to be read for skimmers.
+	// maxSkimmerChanges is how many scripts and templates may change at once for each to be read
+	// for skimmers; past it the change is a deploy's, and the bundles it rebuilds are left out.
 	maxSkimmerChanges = 50
+	// maxSkimmerCandidates bounds the changed files outside generated bundles read for skimmers.
+	maxSkimmerCandidates = 2000
 	// maxManifestLine bounds one line read back: a quoted path of the longest length and a hash.
 	maxManifestLine = 64 << 10
 )
@@ -178,23 +183,54 @@ func (r *manifestReader) advance() {
 	r.path, r.sum = p, line[i+1:]
 }
 
+// skimmerCandidates are the scripts and templates added or changed, kept apart from the list of
+// changes so that changes of other files cannot push them out: those in bundles a deploy
+// generates, and the others.
+type skimmerCandidates struct {
+	generated, others []FileChange
+	count, dropped    int
+}
+
+// generatedBundles are where frameworks write the scripts a deploy builds, merged with every
+// library and payment module: judged only when few files changed at once.
+var generatedBundles = []string{"/pub/static/", "/var/view_preprocessed/", "/wp-content/cache/"}
+
+func (k *skimmerCandidates) add(c FileChange) {
+	if c.Change == ChangeRemoved || !slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(c.Path))) {
+		return
+	}
+	k.count++
+	switch {
+	case slices.ContainsFunc(generatedBundles, func(d string) bool { return strings.Contains(c.Path, d) }):
+		if len(k.generated) <= maxSkimmerChanges {
+			k.generated = append(k.generated, c)
+		}
+	case len(k.others) < maxSkimmerCandidates:
+		k.others = append(k.others, c)
+	default:
+		k.dropped++
+	}
+}
+
 // diffManifests compares the previous manifest with the new one, both in walk order, and returns
-// at most maxChanges changes and how many there were.
-func diffManifests(prev, cur string) ([]FileChange, int, error) {
+// at most maxChanges changes, how many there were, and the changed scripts and templates.
+func diffManifests(prev, cur string) ([]FileChange, int, skimmerCandidates, error) {
+	var candidates skimmerCandidates
 	pf, err := os.Open(prev) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, candidates, err
 	}
 	defer func() { _ = pf.Close() }()
 	cf, err := os.Open(cur) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, candidates, err
 	}
 	defer func() { _ = cf.Close() }()
 	old, now := newManifestReader(pf), newManifestReader(cf)
 	var out []FileChange
 	count := 0
 	emit := func(c FileChange) {
+		candidates.add(c)
 		count++
 		if len(out) < maxChanges {
 			out = append(out, c)
@@ -220,9 +256,9 @@ func diffManifests(prev, cur string) ([]FileChange, int, error) {
 		}
 	}
 	if err := errors.Join(old.err, now.err); err != nil {
-		return nil, 0, err
+		return nil, 0, candidates, err
 	}
-	return out, count, nil
+	return out, count, candidates, nil
 }
 
 func cmpReaders(old, now *manifestReader) int {
@@ -263,16 +299,12 @@ func (s *scanner) finishManifest(stateDir string) string {
 	}
 	prev := manifestPath(stateDir, s.report.Path)
 	if _, err := os.Stat(prev); err == nil {
-		changes, count, err := diffManifests(prev, m.next)
+		changes, count, candidates, err := diffManifests(prev, m.next)
 		if err != nil {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
 			s.report.Changes, s.report.ChangeCount = changes, count
-			// A deploy rebuilds bundles that hold payment code and every library's eval at once:
-			// only the few files changed outside one are judged.
-			if count <= maxSkimmerChanges {
-				s.inspectChanged(changes)
-			}
+			s.inspectCandidates(candidates)
 		}
 	}
 	return m.next

@@ -117,7 +117,7 @@ func TestDiffComparesUnhashedFiles(t *testing.T) {
 	sum := strings.Repeat("a", 64)
 	prev := write("prev", `"a/big.php" unhashed:size:9:ctime:1:id:1`, `"a/mixed.php" `+sum, `"a/same.php" unhashed:size:9:ctime:1:id:2`)
 	cur := write("cur", `"a/big.php" unhashed:size:9:ctime:2:id:1`, `"a/mixed.php" unhashed:size:9:ctime:1:id:3`, `"a/same.php" unhashed:size:9:ctime:1:id:2`)
-	changes, n, err := diffManifests(prev, cur)
+	changes, n, _, err := diffManifests(prev, cur)
 	if err != nil || n != 1 || changes[0].Path != "/a/big.php" || changes[0].Change != ChangeModified || changes[0].SHA256 != "" {
 		t.Errorf("changes %+v (%d), err %v", changes, n, err)
 	}

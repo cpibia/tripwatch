@@ -271,12 +271,20 @@ naming why, not a silent stop. Files too large to hash (or reached once the hash
 are compared by their fingerprint of size, change time and inode when both runs have one, and
 named as modified without a hash. Manifests no run has rewritten for seven days (an application
 that is gone, a `.next` of a run that never finished) are removed. The scripts,
-templates and SVG images among the changes, when no more than 50 files changed (a deploy rebuilds
-bundles that hold payment code and every library's `eval` at once), are read for a card
-skimmer (`payment_skimmer`, critical): payment fields together with an exit to another host or
-with obfuscation, or a live secret payment key. A harvest of every form field is reported with
-them but is not enough alone: editor and file manager bundles hold it with exits and `eval`. The
-families are checked on a corpus of clean JavaScript with no match. SVG images in upload
+templates and SVG images among the changes are kept apart from the other changes in the diff, so
+that changed files of other kinds cannot push them out, and read for a card skimmer
+(`payment_skimmer`, critical): payment fields together with an exit to another host or with
+obfuscation, or a live secret payment key. Field names hidden in `atob` literals and runs of
+`\x`/`\u00` escapes are decoded first, and a file is read in 1 MB pieces with the families
+gathered across them, so padding cannot separate the fields from the exit. When more than 50
+scripts and templates changed at once, generated bundles (`pub/static`, `var/view_preprocessed`,
+`wp-content/cache`) and packages with more than 10 changed scripts (`plugins/<name>`,
+`vendor/<a>/<b>`, `app/code/<a>/<b>`...) are a deploy or an update and are left out, named in the
+issues; files changed elsewhere are still read. A harvest of every form field is reported with
+them but is not enough alone: editor and file manager bundles hold it with exits and `eval`, and
+on a corpus of WordPress, WooCommerce, its payment gateways, Elementor and Contact Form 7 that
+combination matches dozens of admin bundles. The same corpus shows 31 Elementor admin bundles
+holding payment field names with exits or obfuscation: read only when changed on their own. SVG images in upload
 directories that run script are `active_svg_in_upload_dir`, critical when the script is hidden. Data directories
 are read as a stream and not hashed; a code directory with more entries than the limit is
 inspected the same way. Inside uploads, symlinks are reported and never followed; the only link

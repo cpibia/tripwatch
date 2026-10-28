@@ -55,6 +55,11 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   the version file under `vendor/` is missing, as when dependencies live in an image.
 - Log rules on Magento's REST and customer routes also match them behind the front controller
   (`/index.php/rest/...`), and `<?` followed by a blank counts as PHP in a request.
+- Skimmer search: changed scripts are counted and kept apart from other changed files; past 50
+  at once only generated bundles and packages updated as a whole (more than 10 scripts) are left
+  out, and named in the issues, instead of every file; field names hidden in `atob` literals or
+  escapes are decoded; files over 4 MB are read in pieces instead of skipped; an SVG `script`
+  element with a namespace prefix counts.
 - New log rules: a cart item added through the REST API and then a fetch from
   `media/custom_options` by the same address (`cart_upload_then_fetch`, high on success), a
   `file_info` parameter on a cart item (`cart_item_file_upload`), a shipping estimate for a

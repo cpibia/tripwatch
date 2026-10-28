@@ -2,10 +2,14 @@ package web
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -30,31 +34,84 @@ var (
 	obfuscation   = regexp.MustCompile(`(?i)\batob\s*\(|String\.fromCharCode|new\s+Function\s*\(|\beval\s*\(|\bunescape\s*\(|(?:\\x[0-9a-f]{2}){8}|['"][A-Za-z0-9+/]{400,}={0,2}['"]`)
 	formHarvest   = regexp.MustCompile(`(?i)querySelectorAll\s*\(\s*['"](?:input|form|select)|\.elements\b|new\s+FormData\s*\(`)
 	secretKey     = regexp.MustCompile(`\bsk_live_[0-9A-Za-z]{16,}`)
-	activeSVG     = regexp.MustCompile(`(?i)<script\b|\bon[a-z]{3,20}\s*=|javascript:`)
+	// sends is any way out, to a host named in the code or one put together at run time.
+	sends = regexp.MustCompile(`(?i)new\s+Image\s*\(|\.sendBeacon\s*\(|new\s+WebSocket\s*\(|\bfetch\s*\(|new\s+XMLHttpRequest\b`)
+	// The browser runs an SVG script element whatever namespace prefix names it.
+	activeSVG = regexp.MustCompile(`(?i)<(?:[a-z0-9_.-]+:)?script\b|\bon[a-z]{3,20}\s*=|javascript:`)
+
+	atobLiteral = regexp.MustCompile(`\batob\s*\(\s*['"]([A-Za-z0-9+/=]{4,1000})['"]`)
+	escapeRun   = regexp.MustCompile(`(?i)(?:\\x[0-9a-f]{2}|\\u00[0-9a-f]{2}){4,}`)
 )
 
-// skimmerSignals returns the families of a skimmer found in content: payment fields with an exit
-// to another host or with obfuscation, or a secret payment key. One family alone is what payment
-// libraries and analytics do. A harvest of every form field is reported with them but is not
-// enough: large editor, file manager and admin bundles hold a harvest, exits and eval together.
-func skimmerSignals(content []byte) []string {
-	var got []string
-	has := func(re *regexp.Regexp, name string) bool {
-		if re.Match(content) {
-			got = append(got, name)
-			return true
+// maxDecoded bounds the literals decoded from one file.
+const maxDecoded = 256
+
+// decoded is the text hidden in a file's base64 literals passed to atob and its runs of escapes:
+// skimmers keep the names of the payment fields there, out of sight of a plain search.
+func decoded(content []byte) []byte {
+	var out []byte
+	for _, m := range atobLiteral.FindAllSubmatch(content, maxDecoded) {
+		if b, err := base64.StdEncoding.DecodeString(string(m[1])); err == nil {
+			out = append(append(out, ' '), b...)
 		}
-		return false
 	}
-	fields := has(paymentFields, "payment_fields")
-	has(formHarvest, "form_harvest")
-	exits := has(exfiltration, "exfiltration")
-	hidden := has(obfuscation, "obfuscation")
-	key := has(secretKey, "secret_payment_key")
-	if key || (fields && (exits || hidden)) {
-		return got
+	for _, run := range escapeRun.FindAll(content, maxDecoded) {
+		out = append(out, ' ')
+		for i := 0; i+3 < len(run); {
+			n := 4
+			if run[i+1] == 'u' || run[i+1] == 'U' {
+				n = 6
+			}
+			if v, err := strconv.ParseUint(string(run[i+n-2:i+n]), 16, 8); err == nil {
+				out = append(out, byte(v))
+			}
+			i += n
+		}
 	}
-	return nil
+	return out
+}
+
+// skimmerFamilies are the families of a skimmer seen in a file, gathered across its pieces.
+type skimmerFamilies struct{ fields, harvest, exits, sends, hidden, key bool }
+
+func (f *skimmerFamilies) scan(content []byte) {
+	text := content
+	if extra := decoded(content); len(extra) > 0 {
+		text = append(slices.Clip(content), extra...)
+	}
+	f.fields = f.fields || paymentFields.Match(text)
+	f.harvest = f.harvest || formHarvest.Match(text)
+	f.exits = f.exits || exfiltration.Match(text)
+	f.sends = f.sends || sends.Match(text)
+	f.hidden = f.hidden || obfuscation.Match(content)
+	f.key = f.key || secretKey.Match(text)
+}
+
+// verdict names the families of a skimmer: payment fields with an exit to another host or with
+// obfuscation, or a secret payment key. One family alone is what payment libraries and analytics
+// do, and a harvest of every form field with exits and eval is what editor, file manager and
+// admin bundles hold: on a corpus of clean plugins it matches dozens of them.
+func (f skimmerFamilies) verdict() []string {
+	if skimmer := f.key || f.fields && (f.exits || f.hidden); !skimmer {
+		return nil
+	}
+	var got []string
+	for _, fam := range []struct {
+		on   bool
+		name string
+	}{{f.fields, "payment_fields"}, {f.harvest, "form_harvest"}, {f.exits, "exfiltration"}, {f.hidden, "obfuscation"}, {f.key, "secret_payment_key"}} {
+		if fam.on {
+			got = append(got, fam.name)
+		}
+	}
+	return got
+}
+
+// skimmerSignals returns the families of a skimmer found in content, or nil.
+func skimmerSignals(content []byte) []string {
+	var f skimmerFamilies
+	f.scan(content)
+	return f.verdict()
 }
 
 // svgSignals reports an SVG that runs script when shown, and whether that script is hidden.
@@ -69,35 +126,111 @@ func svgSignals(content []byte) []string {
 	return out
 }
 
-// inspectChanged looks for skimmers in the scripts and templates the manifest found changed.
+// inspectCandidates looks for skimmers in the scripts and templates the manifest found changed.
 // Only changed files: payment libraries and bundles hold every one of these families somewhere,
-// and what matters is what someone added.
-func (s *scanner) inspectChanged(changes []FileChange) {
-	for _, c := range changes {
-		if c.Change == ChangeRemoved || !slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(c.Path))) {
-			continue
+// and what matters is what someone added. When many change at once, a deploy or an update
+// rebuilds bundles and replaces whole packages whose admin scripts hold payment field names
+// with exits and eval: generated bundles and packages with many changed files are left out
+// then, and the files changed elsewhere, a few at a time, are still read.
+func (s *scanner) inspectCandidates(k skimmerCandidates) {
+	files := k.others
+	if k.count <= maxSkimmerChanges {
+		files = append(files, k.generated...)
+	} else {
+		if skipped := k.count - len(k.others) - k.dropped; skipped > 0 {
+			s.issues = append(s.issues, fmt.Sprintf("%s: %d scripts changed in generated bundles not read for skimmers: %d scripts and templates changed at once, a deploy",
+				s.report.Path, skipped, k.count))
 		}
-		name := strings.TrimPrefix(c.Path, "/")
-		info, err := fs.Stat(s.src.FS, name)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > maxInMemory || s.budget.dataLeft < info.Size() {
-			continue
+		perPackage := map[string]int{}
+		for _, c := range k.others {
+			perPackage[packageOf(c.Path)]++
 		}
-		s.budget.dataLeft -= info.Size()
-		content, err := fs.ReadFile(s.src.FS, name)
-		if err != nil {
-			continue
-		}
-		sigs := skimmerSignals(content)
-		if strings.EqualFold(path.Ext(name), ".svg") {
-			if svg := svgSignals(content); svg != nil {
-				sigs = append(sigs, svg...)
+		var updated []string
+		files = slices.DeleteFunc(slices.Clone(files), func(c FileChange) bool { return perPackage[packageOf(c.Path)] > maxPackageChanges })
+		for pkg, n := range perPackage {
+			if n > maxPackageChanges {
+				updated = append(updated, pkg)
 			}
 		}
-		if len(sigs) > 0 {
-			s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs)
+		if len(updated) > 0 {
+			slices.Sort(updated)
+			s.issues = append(s.issues, fmt.Sprintf("%s: packages updated as a whole not read for skimmers: %s", s.report.Path, strings.Join(updated[:min(len(updated), 20)], ", ")))
 		}
 	}
+	if k.dropped > 0 {
+		s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers past the first %d", s.report.Path, k.dropped, maxSkimmerCandidates))
+	}
+	for _, c := range files {
+		s.inspectChanged(c)
+	}
 }
+
+// maxPackageChanges is how many scripts of one package may change at once, in a change too large
+// to read whole, for them to be read: more is the package being updated.
+const maxPackageChanges = 10
+
+// packageDirs are the directories whose children are packages installed and updated as a whole;
+// vendor and app/code hold them two levels down (vendor/acme/module).
+var packageDirs = map[string]int{"plugins": 1, "themes": 1, "mu-plugins": 1, "modules": 1, "extensions": 1, "node_modules": 1, "design": 2, "vendor": 2, "code": 2}
+
+// packageOf is the package a changed file belongs to, or its directory when it is in none.
+func packageOf(p string) string {
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		if depth, ok := packageDirs[part]; ok && i+depth < len(parts)-1 {
+			return strings.Join(parts[:i+depth+1], "/")
+		}
+	}
+	return path.Dir(p)
+}
+
+// inspectChanged reads one changed script or template for a skimmer, piece after piece when it
+// is large, gathering the families across the pieces: padding cannot push them apart.
+func (s *scanner) inspectChanged(c FileChange) {
+	name := strings.TrimPrefix(c.Path, "/")
+	info, err := fs.Stat(s.src.FS, name)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	if s.budget.dataLeft < info.Size() {
+		s.issues = append(s.issues, fmt.Sprintf("%s: not read for skimmers, budget of %d bytes a run spent", c.Path, MaxDataScanBytesPerRun))
+		return
+	}
+	s.budget.dataLeft -= info.Size()
+	f, err := s.src.FS.Open(name)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	var fam skimmerFamilies
+	var svg []string
+	r := io.LimitReader(f, info.Size())
+	buf := make([]byte, skimmerChunk+skimmerOverlap)
+	kept := 0
+	for {
+		n, err := io.ReadFull(r, buf[kept:])
+		piece := buf[:kept+n]
+		fam.scan(piece)
+		if strings.EqualFold(path.Ext(name), ".svg") && svg == nil {
+			svg = svgSignals(piece)
+		}
+		if err != nil {
+			break
+		}
+		// The end of a piece is read again with the next, so a pattern cut in two is whole once.
+		kept = copy(buf, piece[len(piece)-skimmerOverlap:])
+	}
+	sigs := append(fam.verdict(), svg...)
+	if len(sigs) > 0 {
+		s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs)
+	}
+}
+
+// Pieces in which a large script is read for skimmers.
+const (
+	skimmerChunk   = 1 << 20
+	skimmerOverlap = 8 << 10
+)
 
 // isSVG reports an SVG by name or by content: uploads keep whatever name the visitor gave.
 func isSVG(base string, content []byte) bool {

