@@ -5,6 +5,7 @@ package web
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -141,7 +142,32 @@ type Result struct {
 	Inventory discovery.Inventory `json:"inventory"`
 	Apps      []AppReport         `json:"apps"`
 	Issues    collector.Issues    `json:"issues,omitempty"`
+	// CodeSearch is present when data files were left not fully searched for code because a
+	// budget of the run was spent.
+	CodeSearch *CodeSearch `json:"code_search,omitempty"`
 }
+
+// CodeSearch says which data files a run could not search through for code, and which files
+// spent the most of its budget: files that fill it on purpose are named, so hiding a payload
+// behind decoys points at the decoys.
+type CodeSearch struct {
+	Unsearched     []string       `json:"unsearched"`
+	UnsearchedMore int            `json:"unsearched_more,omitempty"`
+	Heaviest       []CodeConsumer `json:"heaviest,omitempty"`
+}
+
+// CodeConsumer is a data file and the bytes of code in it that were matched.
+type CodeConsumer struct {
+	Path      string `json:"path"`
+	CodeBytes int64  `json:"code_bytes"`
+	UID       int    `json:"uid"`
+}
+
+// Bounds of what CodeSearch lists.
+const (
+	maxUnsearched = 20
+	maxHeaviest   = 5
+)
 
 // Collector inventories the web stack and scans every application found. With a StateDir it
 // keeps a manifest of each application's code files there, to name the files that changed.
@@ -194,6 +220,9 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 		res.Issues = append(res.Issues, s.issues...)
 	}
 	c.pending.set(manifests)
+	if len(budget.search.Unsearched) > 0 {
+		res.CodeSearch = &budget.search
+	}
 	return res, nil
 }
 
@@ -203,6 +232,32 @@ type hashBudget struct {
 	exhausted bool
 	dataLeft  int64
 	codeLeft  int64
+	search    CodeSearch
+}
+
+// unsearched records a data file not fully searched for code.
+func (b *hashBudget) unsearched(name string) {
+	if len(b.search.Unsearched) == maxUnsearched {
+		b.search.UnsearchedMore++
+		return
+	}
+	b.search.Unsearched = append(b.search.Unsearched, "/"+name)
+}
+
+// spent records the code of a data file matched against the signatures, keeping the heaviest.
+func (b *hashBudget) spent(name string, info fs.FileInfo, codeBytes int64) {
+	h := b.search.Heaviest
+	if codeBytes <= 0 || (len(h) == maxHeaviest && codeBytes <= h[len(h)-1].CodeBytes) {
+		return
+	}
+	uid := -1
+	if u, ok := collector.Owner(info); ok {
+		uid = int(u)
+	}
+	c := CodeConsumer{Path: "/" + name, CodeBytes: codeBytes, UID: uid}
+	i, _ := slices.BinarySearchFunc(h, c, func(a, b CodeConsumer) int { return cmp.Compare(b.CodeBytes, a.CodeBytes) })
+	h = slices.Insert(h, i, c)
+	b.search.Heaviest = h[:min(len(h), maxHeaviest)]
 }
 
 func (b *hashBudget) take(n int64) bool {
@@ -687,7 +742,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	case inUploads && !script && containsCode(content):
 		s.add(KindCodeInUploads, name, e, matchSignatures(content, false))
 	case inData && !script && !image:
-		if sigs := s.codeInData(name, content); len(sigs) > 0 {
+		if sigs := s.codeInData(name, e, content); len(sigs) > 0 {
 			s.add(KindCodeInData, name, e, sigs)
 		}
 	case script:
@@ -790,6 +845,7 @@ const dataScanChunk = 1 << 20
 func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	if s.budget.dataLeft < info.Size() {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: %d bytes, read for code at its edges only: budget of %d bytes a run spent", name, info.Size(), MaxDataScanBytesPerRun))
+		s.budget.unsearched(name)
 		return nil
 	}
 	s.budget.dataLeft -= info.Size()
@@ -802,6 +858,8 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	// What the file had when listed: a log written meanwhile does not keep the scan going.
 	r := io.LimitReader(f, info.Size())
 	c := &codeSearch{codeLeft: &s.budget.codeLeft}
+	before := s.budget.codeLeft
+	defer func() { s.budget.spent(name, info, before-s.budget.codeLeft) }()
 	buf := make([]byte, dataScanChunk)
 	for !c.exhausted {
 		n, err := io.ReadFull(r, buf)
@@ -813,15 +871,21 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	}
 	if c.exhausted {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
+		s.budget.unsearched(name)
 	}
 	return c.sigs
 }
 
 // codeInData searches data for code within the run's budget, and says when it ran out.
-func (s *scanner) codeInData(name string, content []byte) []string {
+func (s *scanner) codeInData(name string, e fs.DirEntry, content []byte) []string {
+	before := s.budget.codeLeft
 	sigs, exhausted := codeInData(content, &s.budget.codeLeft)
+	if info, err := e.Info(); err == nil {
+		s.budget.spent(name, info, before-s.budget.codeLeft)
+	}
 	if exhausted {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
+		s.budget.unsearched(name)
 	}
 	return sigs
 }

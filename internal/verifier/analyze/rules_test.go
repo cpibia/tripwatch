@@ -133,6 +133,26 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 	}
 }
 
+// A run that could not search every data file for code says so, with the files that spent the
+// budget.
+func TestCodeSearchIncomplete(t *testing.T) {
+	cur := baseState()
+	cur.Web = &web.Result{CodeSearch: &web.CodeSearch{
+		Unsearched: []string{"/var/www/shop/var/report/z"}, UnsearchedMore: 3,
+		Heaviest: []web.CodeConsumer{{Path: "/var/www/shop/var/report/a0", CodeBytes: 40 << 20, UID: 33}},
+	}}
+	for _, f := range Evaluate(nil, cur) {
+		if f.Fingerprint == "web:code-search-incomplete" {
+			if f.Severity != "high" || !strings.Contains(f.Detail, "/var/www/shop/var/report/z") || !strings.Contains(f.Detail, "and 3 more") ||
+				!strings.Contains(f.Detail, "a0: 41943040 bytes of code, owner UID 33") {
+				t.Errorf("finding = %+v", f)
+			}
+			return
+		}
+	}
+	t.Error("no finding for an incomplete code search")
+}
+
 // Comparing two large snapshots stays linear: 80,000 sudo rules, all different between the two,
 // took 18 seconds with the list scans this replaced.
 func TestEvaluateIsLinear(t *testing.T) {

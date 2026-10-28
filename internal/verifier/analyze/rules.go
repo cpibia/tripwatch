@@ -1114,6 +1114,25 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, cfg := range w.Inventory.StaleConfig {
 			state("web", "stale-config:"+cfg, "medium", "Web server configuration changed after it started", cfg)
 		}
+		// Files stuffed with code can spend the run's budget so a payload behind them is never
+		// searched: the gap is an alert, and it names the files that caused it.
+		if cs := w.CodeSearch; cs != nil && len(cs.Unsearched) > 0 {
+			var b strings.Builder
+			b.WriteString("The budget for searching data files for code ran out: these files were not searched through, and code in them may raise no alert.")
+			for _, p := range cs.Unsearched {
+				b.WriteString("\n  " + p)
+			}
+			if cs.UnsearchedMore > 0 {
+				fmt.Fprintf(&b, "\n  and %d more", cs.UnsearchedMore)
+			}
+			if len(cs.Heaviest) > 0 {
+				b.WriteString("\nThe files that spent the most of it:")
+				for _, c := range cs.Heaviest {
+					fmt.Fprintf(&b, "\n  %s: %d bytes of code, owner UID %d", c.Path, c.CodeBytes, c.UID)
+				}
+			}
+			state("web", "code-search-incomplete", "high", "Data files not searched for code", b.String())
+		}
 	}
 
 	if l := cur.Weblog; l != nil {

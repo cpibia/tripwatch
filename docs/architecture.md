@@ -222,7 +222,10 @@ nothing after it: binary data appended to a payload cannot hide it. The
 lexer (`phplex.go`) keeps its state from one piece of a file to the next: data files over 4 MB
 are read through 1 MB at a time, within 4 GB a run, and code is judged with its block however far
 from its tag; the code matched is bounded to 64 MB a run, since hostile code is matched at a few
-megabytes a second. Past either budget an issue names the file. Obfuscated function
+megabytes a second. Past either budget an issue names the file, and the result's `code_search`
+lists the files left unsearched (20 at most, then a count) with the five that spent the most code
+and their owners: the verifier raises "Data files not searched for code" (high), so files stuffed
+with code to hide a payload behind them point at themselves. Obfuscated function
 names are found by one hand-written pass over each script, without regular expressions: chains
 of quoted literals and `chr()` calls joined by `.` or `^` are decoded as PHP would and compared
 with the names a webshell calls (decoders only next to an `eval`).

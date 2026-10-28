@@ -13,6 +13,9 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 - Each log event names whether the script it requested exists in the document roots of the nginx
   sites writing that log (`on_disk`: `present` or `missing`), left open when nginx may proxy the
   request, a root holds a variable, or the server is not nginx.
+- When the budget for searching data files for code runs out, the web result names the files
+  left unsearched and the five that spent the most of it, with their owners
+  (`code_search`), instead of only an issue line.
 
 ### Verifier
 
@@ -20,6 +23,9 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
   404, `/tmp/phpinfo.php` answered 502) no longer raises "Log: script in upload path" or the
   other log alerts: no code ran. A script that exists stays serious whatever its status, and
   the alert says it exists. Until the sensors are updated nothing changes.
+- "Data files not searched for code" (high): files stuffed with code that spend the run's budget
+  can no longer hide a payload behind them in silence; the alert lists the unsearched files and
+  the ones that spent the budget.
 
 ## [0.1.13] - 2026-10-28
 

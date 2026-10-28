@@ -933,3 +933,34 @@ func TestCodeInDataFarFromItsTag(t *testing.T) {
 	}
 	t.Error("code 700 KB from its tag in a large log is not found")
 }
+
+// Decoys that spend the code budget of a run do not hide the file behind them in silence: the
+// result names what was left unsearched and the files that spent the budget.
+func TestCodeSearchBudgetSpentByDecoys(t *testing.T) {
+	saved := MaxDataCodeBytesPerRun
+	MaxDataCodeBytesPerRun = 64 << 10
+	defer func() { MaxDataCodeBytesPerRun = saved }()
+
+	fsys := compromisedShop()
+	decoy := "<?php " + strings.Repeat("$a = 1; ", 4<<10)
+	for i := range 4 {
+		fsys[fmt.Sprintf("var/www/commerce/var/report/a%d", i)] = text(decoy)
+	}
+	fsys["var/www/commerce/var/report/z"] = text("<?php system($_GET['c']);")
+	res := run(t, fsys)
+	cs := res.CodeSearch
+	if cs == nil || !slices.Contains(cs.Unsearched, "/var/www/commerce/var/report/z") {
+		t.Fatalf("code search = %+v", cs)
+	}
+	if len(cs.Heaviest) == 0 || !strings.HasPrefix(cs.Heaviest[0].Path, "/var/www/commerce/var/report/a") || cs.Heaviest[0].CodeBytes < 16<<10 {
+		t.Errorf("heaviest = %+v", cs.Heaviest)
+	}
+	for i := 1; i < len(cs.Heaviest); i++ {
+		if cs.Heaviest[i].CodeBytes > cs.Heaviest[i-1].CodeBytes {
+			t.Errorf("heaviest not in order: %+v", cs.Heaviest)
+		}
+	}
+	if run(t, compromisedShop()).CodeSearch != nil {
+		t.Error("a run within its budget reports a code search")
+	}
+}
