@@ -1,15 +1,19 @@
 package transport
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -173,5 +177,51 @@ func TestEnrollAndRenew(t *testing.T) {
 	other.CA = "AAAA"
 	if _, err := Enroll(t.Context(), other); err == nil {
 		t.Fatal("enrolled with a verifier whose CA is not the token's")
+	}
+}
+
+// A keep-alive connection the verifier closes just as the next envelope goes out fails before
+// any answer: the envelope is sent again on a new connection instead of waiting for the next
+// send, which would show as a missed heartbeat.
+func TestEnvelopeResentWhenTheIdleConnectionCloses(t *testing.T) {
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	var seen atomic.Int32
+	go func() {
+		for first := true; ; first = false {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn, first bool) {
+				defer func() { _ = conn.Close() }()
+				br := bufio.NewReader(conn)
+				for {
+					req, err := http.ReadRequest(br)
+					if err != nil {
+						return
+					}
+					_, _ = io.Copy(io.Discard, req.Body)
+					// The second request on the first connection meets the idle timeout.
+					if first && req.Header.Get("Tripwatch-Kind") != "" && seen.Add(1) == 2 {
+						return
+					}
+					_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+				}
+			}(conn, first)
+		}
+	}()
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	c, err := New("http://"+ln.Addr().String(), &http.Client{Transport: &http.Transport{}}, t.TempDir(), "web-01", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		if err := c.Send(t.Context(), protocol.KindHeartbeat, nil, time.Now()); err != nil {
+			t.Fatalf("heartbeat %d: %v", i+1, err)
+		}
 	}
 }

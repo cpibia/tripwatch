@@ -6,7 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- An envelope sent on a kept-alive connection the verifier had just closed is sent again on a
+  new connection at once. Before, it waited for the next send, and the verifier raised "Missed
+  heartbeats" every few minutes on every host.
+
 ### Verifier
+
+- Idle ingest connections stay open three minutes, longer than the heartbeat interval, so
+  sensors up to 0.1.19 no longer lose a heartbeat to a connection closed under them.
 
 - The sensor version shown for a host is the one of its latest start: an updated sensor shows
   its new version right away instead of after its first snapshot, which can take minutes.

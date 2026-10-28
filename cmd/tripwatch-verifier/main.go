@@ -129,8 +129,10 @@ func serve(log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       2 * time.Minute,
 		// Over TLS the write deadline runs from the start of the request, so it outlasts the read.
-		WriteTimeout:   3 * time.Minute,
-		IdleTimeout:    time.Minute,
+		WriteTimeout: 3 * time.Minute,
+		// Longer than the sensors' heartbeat interval: a connection closed for idling just as
+		// the next heartbeat reuses it loses that heartbeat on sensors that do not resend it.
+		IdleTimeout:    3 * time.Minute,
 		MaxHeaderBytes: 16 << 10,
 		// Sensors speak HTTP/1.1 only: HTTP/2 would be surface nobody uses.
 		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},

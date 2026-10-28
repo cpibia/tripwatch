@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -121,6 +122,10 @@ func (c *Client) deliver(ctx context.Context, e protocol.Envelope) error {
 	req.Header.Set("Content-Type", "application/json")
 	// Declared ahead of the body so the verifier can apply the kind's limits before reading it.
 	req.Header.Set("Tripwatch-Kind", string(e.Kind))
+	// Marks the POST as safe to repeat, so net/http sends it again on a new connection when a
+	// kept-alive one turns out closed by the verifier: a resent envelope is acknowledged as the
+	// same one, and without this the beat would be lost until the next send.
+	req.Header.Set("Idempotency-Key", strconv.FormatUint(e.Sequence, 10))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
