@@ -14,6 +14,15 @@ var networkFilesystems = []string{
 	"fuse.davfs", "fuse.sshfs", "fuse.s3fs", "fuse.rclone", "fuse.goofys", "fuse.gcsfuse", "fuse.mountpoint-s3", "fuse.glusterfs", "fuse.cephfs",
 }
 
+// networkMount reports a network filesystem by its type or, for FUSE, which does not always
+// name its subtype (davfs2 mounts plain "fuse"), by a source that is a URL.
+func networkMount(fstype, source string) bool {
+	if slices.Contains(networkFilesystems, fstype) {
+		return true
+	}
+	return (fstype == "fuse" || strings.HasPrefix(fstype, "fuse.")) && strings.Contains(source, "://")
+}
+
 // Mount is a mount point of the observed host, without its leading slash, with its type and
 // whether it disables setuid and file capabilities.
 type Mount struct {
@@ -33,7 +42,7 @@ func NetworkMounts(src Source) ([]Mount, error) {
 	for _, line := range lines {
 		left, right, ok := strings.Cut(line, " - ")
 		fields, tail := strings.Fields(left), strings.Fields(right)
-		if !ok || len(fields) < 6 || len(tail) < 1 || !slices.Contains(networkFilesystems, tail[0]) {
+		if !ok || len(fields) < 6 || len(tail) < 2 || !networkMount(tail[0], tail[1]) {
 			continue
 		}
 		point := strings.Trim(UnescapeMount(fields[4]), "/")

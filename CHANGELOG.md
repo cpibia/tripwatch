@@ -6,6 +6,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A directory of an application without a profile that is, or holds, another application (a CMS
+  in `web/` of a Composer project) is not taken for a data directory because the web server owns
+  it: it raised code-in-data and hidden-file alerts for the whole CMS.
+- A container whose filesystem refuses `openat2` is read with the userspace resolver alone; it no
+  longer switched the whole sensor to it ("Sensor guarantees reduced").
+- A FUSE mount whose source is a URL (davfs2 mounts plain `fuse`) is a network filesystem.
+
 ### Verifier
 
 - Heartbeats lost while the verifier itself restarts no longer raise "Missed heartbeats" on

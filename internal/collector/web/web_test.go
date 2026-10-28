@@ -545,8 +545,12 @@ func TestWorldWritableDirectoryOfAnUnknownApplication(t *testing.T) {
 	tr.file("var/www/site/index.php", "<?php echo 1;")
 	tr.file("var/www/site/template/page.php", "<?php echo 2;")
 	tr.file("var/www/site/captcha/x.php", "<?php echo 3;")
-	if err := os.Chmod(filepath.Join(tr.root, "var/www/site/captcha"), 0o777); err != nil { //nolint:gosec // world-writable on purpose
-		t.Fatal(err)
+	tr.file("var/www/site/web/core/lib/Drupal.php", "<?php const VERSION = '11.3.0';")
+	tr.file("var/www/site/web/index.php", "<?php")
+	for _, d := range []string{"captcha", "web"} {
+		if err := os.Chmod(filepath.Join(tr.root, "var/www/site", d), 0o777); err != nil { //nolint:gosec // world-writable on purpose
+			t.Fatal(err)
+		}
 	}
 
 	res := tr.scan()
@@ -554,8 +558,10 @@ func TestWorldWritableDirectoryOfAnUnknownApplication(t *testing.T) {
 	if !slices.Contains(got, KindScriptInUploads+" /var/www/site/captcha/x.php") || slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "template") }) {
 		t.Errorf("findings = %v", got)
 	}
-	if !slices.Contains(res.Apps[0].UploadDirs, "/var/www/site/captcha") {
-		t.Errorf("upload directories = %v", res.Apps[0].UploadDirs)
+	// The CMS nested in web/ is an application of its own, not an upload directory.
+	if !slices.Contains(res.Apps[0].UploadDirs, "/var/www/site/captcha") || slices.Contains(res.Apps[0].UploadDirs, "/var/www/site/web") ||
+		slices.ContainsFunc(got, func(f string) bool { return strings.HasPrefix(f, KindAppInData) }) {
+		t.Errorf("upload directories = %v, findings %v", res.Apps[0].UploadDirs, got)
 	}
 }
 

@@ -364,7 +364,9 @@ func TestPrivilegedSkipsNetworkFilesystems(t *testing.T) {
 	src := collector.Source{FS: fstest.MapFS{
 		"proc/1/mountinfo": text("22 1 259:1 / / rw,relatime shared:1 - ext4 /dev/root rw\n" +
 			"90 22 0:50 / /home/ci/share\\040files rw,nosuid,nodev,noexec,relatime shared:60 - fuse.davfs https://dav.example.com rw,user_id=0\n" +
-			"91 22 0:51 / /mnt/nfs rw,relatime shared:61 - nfs4 server:/export rw\n"),
+			"91 22 0:51 / /mnt/nfs rw,relatime shared:61 - nfs4 server:/export rw\n" +
+			"92 22 0:52 / /srv/dav rw,nosuid,nodev,relatime shared:62 - fuse https://dav.example.com/remote.php/webdav rw,user_id=0\n"),
+		"srv/dav/tool":             setuid,
 		"usr/bin/passwd":           setuid,
 		"home/ci/share files/tool": setuid,
 		"mnt/nfs/bin/tool":         setuid,

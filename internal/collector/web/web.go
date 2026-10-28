@@ -394,6 +394,11 @@ func (s *scanner) writableDirs() {
 			continue
 		}
 		name := path.Join(s.root, e.Name())
+		// An application of its own inside (a CMS in web/ of a Composer project) is scanned
+		// with its own profile: the web server owning its tree does not make it data.
+		if slices.ContainsFunc(s.nested, func(n string) bool { return n == name || strings.HasPrefix(n, name+"/") }) {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue

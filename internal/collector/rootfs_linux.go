@@ -92,6 +92,11 @@ func openPath(dir, name string) (*os.File, error) {
 		case err == nil:
 			return f, nil
 		case errors.Is(err, syscall.ENOSYS), errors.Is(err, syscall.EPERM):
+			// A container's root can refuse openat2 where the host's does not (a sandboxed
+			// runtime's filesystem): that container is read the userspace way, the host is not.
+			if containerRoot.MatchString(dir) {
+				return openPathByDescriptors(dir, name)
+			}
 			degrade(fmt.Sprintf("openat2 unavailable (%v)", err))
 		default:
 			return nil, err
