@@ -490,10 +490,12 @@ files or to endpoints that only serve files, access to sensitive files (`.env`, 
 path traversal, SQL injection, injection probes, known scanners, brute force on public logins and
 known exploit chains, correlated by IP. The severity of a script in uploads does not depend on the
 HTTP status, which the script itself decides. For each requested script the sensor also says
-whether it exists in the document roots of the nginx sites writing that log: a request that
-failed for a script found in none of them ran no code, and raises no alert (scanners probe
-thousands of such paths). When nginx may hand the request to a proxy, a root holds a variable,
-or the server is not nginx, the answer is left open and the request is judged as before. A web
+whether it exists in the document roots of the nginx or Apache sites writing that log (with
+nginx's location roots and aliases, Apache's `Alias`): a request that failed for a script found
+in none of them ran no code, and raises no alert (scanners probe thousands of such paths). When
+the request may reach a proxy (`proxy_pass`, `ProxyPass`, a rewrite with the `P` flag), a root
+holds a variable, a mapping is not modelled (`AliasMatch`), or the server is Caddy, the answer is
+left open and the request is judged as before. A web
 shell used and deleted between two snapshots looks missing: its creation is seen by the
 real-time watch of the upload directories.
 

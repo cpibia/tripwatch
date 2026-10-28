@@ -262,10 +262,12 @@ per-IP state to correlate chains. The verifier will use the same code on raw log
 
 At the end of a run the collector looks up the script each event names (`weblog.ScriptPath`) in
 the sites that write the event's log (`discovery.Site.ScriptFiles`): every root of the nginx
-site, both as root and as alias of its location, so naming too many places can only make a file
-look present. The answer (`on_disk`: `present`, `missing`, or empty) is left open for a server
-other than nginx, a request its location or a named fallback location may proxy, a root with a
-variable or relative, an event seen in more than one log, an error other than "does not exist",
+site, both as root and as alias of its location, or Apache's `DocumentRoot` and the `Alias`
+directives matching the request, so naming too many places can only make a file look present.
+The answer (`on_disk`: `present`, `missing`, or empty) is left open for Caddy, a request its
+location or a named fallback location may proxy, an Apache site with any proxy (`ProxyPass`,
+`ProxyPassMatch`, a `RewriteRule` with the `P` flag) or an `AliasMatch`, a root with a variable
+or relative, an event seen in more than one log, an error other than "does not exist",
 or past 4,096 lookups a run. The verifier drops events for a missing script that did not
 succeed (status outside 2xx), and adds to the detail when a requested script exists.
 

@@ -11,8 +11,9 @@ Update the verifier, then the sensors (`tripwatch-sensor -update`).
 ### Sensor
 
 - Each log event names whether the script it requested exists in the document roots of the nginx
-  sites writing that log (`on_disk`: `present` or `missing`), left open when nginx may proxy the
-  request, a root holds a variable, or the server is not nginx.
+  or Apache sites writing that log (`on_disk`: `present` or `missing`), left open when the
+  request may reach a proxy, a root holds a variable, a mapping is not modelled, or the server
+  is Caddy.
 - When the budget for searching data files for code runs out, the web result names the files
   left unsearched and the five that spent the most of it, with their owners
   (`code_search`), instead of only an issue line.

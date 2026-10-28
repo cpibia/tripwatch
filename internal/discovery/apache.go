@@ -190,6 +190,20 @@ func (p *apacheParser) directive(line, file string, depth int) {
 		if len(args) > 1 && !slices.Contains(site.Upstreams, args[1]) {
 			site.Upstreams = append(site.Upstreams, args[1])
 		}
+	case "alias", "scriptalias":
+		if len(args) > 1 {
+			site.aliases = append(site.aliases, alias{url: args[0], dir: absolute(args[1], p.root)})
+		}
+	case "aliasmatch", "scriptaliasmatch", "proxypassmatch":
+		site.opaque = true
+	case "rewriterule":
+		// A rewrite with the P flag hands the request to a proxy.
+		if len(args) == 0 {
+			break
+		}
+		if flags := strings.ToUpper(args[len(args)-1]); strings.HasPrefix(flags, "[") && slices.Contains(strings.FieldsFunc(strings.Trim(flags, "[]"), func(r rune) bool { return r == ',' }), "P") {
+			site.opaque = true
+		}
 	}
 	p.detectPHP(line)
 }

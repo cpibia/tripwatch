@@ -178,8 +178,37 @@ func TestNginxScriptFiles(t *testing.T) {
 			t.Errorf("%s: %v %v, want %v", c.name, got, ok, c.want)
 		}
 	}
-	if _, ok := (&Site{Server: ServerApache, Root: "/var/www"}).ScriptFiles("/x.php"); ok {
-		t.Error("an Apache site's files are told")
+	if _, ok := (&Site{Server: ServerCaddy, Root: "/var/www"}).ScriptFiles("/x.php"); ok {
+		t.Error("a Caddy site's files are told")
+	}
+}
+
+// On Apache the files are told from DocumentRoot and the Alias directives; a proxy or a mapping
+// that is not modelled leaves the question open.
+func TestApacheScriptFiles(t *testing.T) {
+	site := func(vhost string) Site {
+		sites, _, _ := ApacheSites(fstest.MapFS{"etc/apache2/apache2.conf": text("<VirtualHost *:80>\n" + vhost + "\n</VirtualHost>\n")})
+		if len(sites) == 0 {
+			t.Fatalf("no site in %q", vhost)
+		}
+		return sites[len(sites)-1]
+	}
+	for _, c := range []struct {
+		name, vhost, uri string
+		want             []string
+	}{
+		{"root", "DocumentRoot /var/www/site", "/uploads/x.php", []string{"/var/www/site/uploads/x.php"}},
+		{"alias", "DocumentRoot /var/www/site\nAlias /files /srv/files", "/files/x.php", []string{"/srv/files/x.php", "/var/www/site/files/x.php"}},
+		{"alias elsewhere", "DocumentRoot /var/www/site\nAlias /files /srv/files", "/filesx/x.php", []string{"/var/www/site/filesx/x.php"}},
+		{"proxy", "DocumentRoot /var/www/site\nProxyPass /api http://127.0.0.1:8080/", "/uploads/x.php", nil},
+		{"rewrite to a proxy", "DocumentRoot /var/www/site\nRewriteRule ^/(.*)$ http://app:8080/$1 [L,P]", "/uploads/x.php", nil},
+		{"alias match", "DocumentRoot /var/www/site\nAliasMatch ^/f/(.*) /srv/$1", "/uploads/x.php", nil},
+	} {
+		s := site(c.vhost)
+		got, ok := s.ScriptFiles(c.uri)
+		if ok != (c.want != nil) || !slices.Equal(got, c.want) {
+			t.Errorf("%s: %v %v, want %v", c.name, got, ok, c.want)
+		}
 	}
 }
 

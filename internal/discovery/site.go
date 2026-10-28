@@ -29,7 +29,15 @@ type Site struct {
 	// file with one of ScriptExtensions to the interpreter.
 	Locations        []Location `json:"locations,omitempty"`
 	ScriptExtensions []string   `json:"script_extensions,omitempty"`
+
+	// aliases map URL prefixes to other directories (Apache's Alias); opaque says the
+	// configuration maps URLs in ways not modelled (AliasMatch, a rewrite to a proxy), so the
+	// files a request reaches cannot be told. Both only serve ScriptFiles, in the sensor.
+	aliases []alias
+	opaque  bool
 }
+
+type alias struct{ url, dir string }
 
 // Location is an nginx location block.
 type Location struct {
@@ -135,6 +143,9 @@ const maxScriptFiles = 64
 // than the bound. Every root of the site is tried, both as root and as alias of its location, so a file
 // served from any of them is found: naming too many places only makes a file look present.
 func (s *Site) ScriptFiles(uri string) ([]string, bool) {
+	if s.Server == ServerApache {
+		return s.apacheScriptFiles(uri)
+	}
 	if s.Server != ServerNginx || s.Root == "" {
 		return nil, false
 	}
@@ -161,6 +172,29 @@ func (s *Site) ScriptFiles(uri string) ([]string, bool) {
 	}
 	walk(s.Locations)
 	if !ok || len(files) > maxScriptFiles {
+		return nil, false
+	}
+	slices.Sort(files)
+	return slices.Compact(files), true
+}
+
+// apacheScriptFiles names the files a request could reach on an Apache site: under its
+// DocumentRoot, and under the directory of each Alias whose prefix the request starts with.
+// Any proxy in the site, or a mapping not modelled, leaves the question open.
+func (s *Site) apacheScriptFiles(uri string) ([]string, bool) {
+	if s.Root == "" || s.opaque || len(s.Upstreams) > 0 || strings.Contains(s.Root, "$") {
+		return nil, false
+	}
+	files := []string{path.Join(s.Root, uri)}
+	for _, a := range s.aliases {
+		if !path.IsAbs(a.dir) || strings.Contains(a.dir, "$") {
+			return nil, false
+		}
+		if rest, ok := strings.CutPrefix(uri, strings.TrimSuffix(a.url, "/")); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+			files = append(files, path.Join(a.dir, rest))
+		}
+	}
+	if len(files) > maxScriptFiles {
 		return nil, false
 	}
 	slices.Sort(files)
