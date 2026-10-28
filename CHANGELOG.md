@@ -6,6 +6,21 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+Update the verifier, then the sensors.
+
+### Sensor
+
+- Drupal's compiled Twig templates under `sites/*/files/php/twig/` are not scripts in an upload
+  directory (a file there with another shape still is, and signatures still apply);
+  `.ht.router.php`, `.phpstan-baseline.php` and hidden files in Drupal's `core/` test fixtures
+  are not hidden scripts.
+
+### Verifier
+
+- A process preloading only libraries of the system or of its own vendor's `/opt` tree (an
+  agent's bundled jemalloc) no longer raises "Process with LD_PRELOAD"; files under
+  `/opt/<vendor>/etc` changed since installation are configuration, not "System file modified".
+
 ## [0.1.18] - 2026-10-28
 
 Update the verifier, then the sensors.

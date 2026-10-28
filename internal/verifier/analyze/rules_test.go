@@ -723,3 +723,26 @@ func TestModifiedPackageFilesUnderVar(t *testing.T) {
 		t.Errorf("findings = %v", got)
 	}
 }
+
+// A program preloading its vendor's own allocator, or a library of the system, is not hiding;
+// a preload from anywhere else is.
+func TestVendorPreload(t *testing.T) {
+	for _, c := range []struct {
+		exe, preload string
+		want         bool
+	}{
+		{"/opt/unified-monitoring-agent/embedded/bin/ruby", "/opt/unified-monitoring-agent/embedded/lib/libjemalloc.so", true},
+		{"/usr/bin/redis-server", "/usr/lib/x86_64-linux-gnu/libjemalloc.so.2", true},
+		{"/opt/agent/bin/a", "/opt/other/lib/x.so", false},
+		{"/usr/sbin/sshd", "/tmp/.x/libhide.so", false},
+		{"/opt/agent/bin/a", "/opt/agent/lib/x.so:/dev/shm/y.so", false},
+		{"/usr/bin/x", "/usr/lib/../../tmp/y.so", false},
+	} {
+		if got := vendorPreload(c.exe, c.preload); got != c.want {
+			t.Errorf("%s with %s: %v, want %v", c.exe, c.preload, got, c.want)
+		}
+	}
+	if !vendorConfig("/opt/unified-monitoring-agent/etc/systemd/unit.conf") || vendorConfig("/opt/agent/bin/agent") || vendorConfig("/etc/opt/x") {
+		t.Error("vendorConfig")
+	}
+}

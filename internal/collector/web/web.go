@@ -90,6 +90,7 @@ var overrideNames = []string{".htaccess", ".user.ini", "web.config"}
 var allowedHidden = []string{
 	".htaccess", ".user.ini", ".gitignore", ".gitkeep", ".keep", ".gitattributes", ".well-known",
 	".php-cs-fixer.php", ".php-cs-fixer.dist.php", ".php_cs", ".php_cs.dist", ".php_cs.php", ".php_cs.dist.php", ".phpstorm.meta.php",
+	".ht.router.php", ".phpstan-baseline.php",
 	".DS_Store", ".regenerate.lock", ".maintenance.flag", ".maintenance.ip",
 }
 
@@ -780,6 +781,13 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	case script && inUploads && complete && isPlaceholder(content):
 		// The names pass reported it; the content shows an empty placeholder.
 		s.withdraw(KindScriptInUploads, name)
+	case script && inUploads && complete && compiledTwig(name, content):
+		// Drupal writes the templates it compiles under its public files; a webshell given that
+		// header is still matched against the signatures.
+		s.withdraw(KindScriptInUploads, name)
+		if sigs := matchSignatures(content, php); len(sigs) > 0 && !slices.Equal(sigs, []string{"encoded_blob"}) {
+			s.add(KindSignature, name, e, sigs)
+		}
 	case script && inUploads:
 		s.add(KindScriptInUploads, name, e, matchSignatures(content, php))
 	case inUploads && !script && containsCode(content):
@@ -1108,7 +1116,8 @@ func (s *scanner) markReachable(name string) {
 func inDependencyTests(name string) bool {
 	parts := strings.Split(name, "/")
 	for i, p := range parts {
-		if !slices.Contains(thirdPartyDirs, p) {
+		// Drupal ships its own test fixtures under core/, like a dependency.
+		if !slices.Contains(thirdPartyDirs, p) && p != "core" {
 			continue
 		}
 		return slices.ContainsFunc(parts[i+1:len(parts)-1], func(d string) bool {
@@ -1116,6 +1125,16 @@ func inDependencyTests(name string) bool {
 		})
 	}
 	return false
+}
+
+// drupalTwigCache is where Drupal keeps the PHP it compiles from Twig templates.
+var drupalTwigCache = regexp.MustCompile(`/sites/[^/]+/files/php/twig/[^/]+/[^/]+\.php$`)
+
+// compiledTwig reports a file of Drupal's Twig cache: at its place, and with the header Twig
+// gives the classes it generates.
+func compiledTwig(name string, content []byte) bool {
+	head := content[:min(len(content), 512)]
+	return drupalTwigCache.MatchString("/"+name) && bytes.HasPrefix(head, []byte("<?php")) && bytes.Contains(head, []byte("use Twig\\"))
 }
 
 func isSuspiciousHidden(name string) bool {

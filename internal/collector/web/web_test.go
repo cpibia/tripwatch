@@ -1024,3 +1024,27 @@ func TestCodeInDocuments(t *testing.T) {
 		t.Errorf("a backtick in a PDF is code: %v", got)
 	}
 }
+
+// Drupal compiles its Twig templates into PHP under its public files and ships hidden PHP of its
+// own: neither is a finding, a script of another shape at the same place is.
+func TestDrupalGeneratedAndShippedFiles(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/site/web/core/lib/Drupal.php", "<?php class Drupal { const VERSION = '10.3.1'; }")
+	tr.file("var/www/site/web/.ht.router.php", "<?php // router for the built-in server")
+	tr.file("var/www/site/web/core/.phpstan-baseline.php", "<?php return [];")
+	tr.file("var/www/site/web/core/tests/Drupal/fixtures/assets/.hidden.php", "<?php")
+	twig := "<?php\n\nuse Twig\\Environment;\nuse Twig\\Source;\n\nclass __TwigTemplate_3f extends Template {}"
+	tr.file("var/www/site/web/sites/default/files/php/twig/69f05ec6897ae_node.html.twig_x/abc.php", twig)
+	tr.file("var/www/site/web/sites/default/files/php/twig/69f05ec6897ae_node.html.twig_x/shell.php", `<?php system($_GET['c']);`)
+	got := findingsOf(tr.scan())
+	want := []string{KindScriptInUploads + " /var/www/site/web/sites/default/files/php/twig/69f05ec6897ae_node.html.twig_x/shell.php"}
+	var scripts []string
+	for _, f := range got {
+		if strings.HasPrefix(f, KindScriptInUploads) || strings.HasPrefix(f, KindHiddenScript) {
+			scripts = append(scripts, f)
+		}
+	}
+	if !slices.Equal(scripts, want) {
+		t.Errorf("findings = %v, want %v", scripts, want)
+	}
+}

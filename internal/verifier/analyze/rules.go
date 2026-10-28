@@ -978,7 +978,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				state("processes", "kthread-name:"+pr.Exe+":"+pr.ExeSHA256, "critical", "Process disguised as a kernel thread: "+pr.Comm,
 					fmt.Sprintf("PID %d calls itself %q (command line %q) but runs %s as UID %d, parent %d. Kernel threads have no executable and the sensor counts them apart; a program that takes their name is hiding in ps, as miners and backdoors do.", pr.PID, pr.Comm, pr.Cmdline, pr.Exe, pr.UID, pr.PPID))
 			}
-			if pr.Preload != "" {
+			if pr.Preload != "" && !vendorPreload(pr.Exe, pr.Preload) {
 				state("processes", "ld-preload:"+pr.Comm+":"+pr.Preload, "high", "Process with LD_PRELOAD", fmt.Sprintf("PID %d (%s) loads %s.", pr.PID, pr.Comm, pr.Preload))
 			}
 		}
@@ -1010,7 +1010,7 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, m := range p.Modified {
 			// /var holds what programs rewrite as they run, a channel registry or a cache, even
 			// when a package installed its first copy.
-			if !m.Config && !strings.HasPrefix(m.Path, "/var/") {
+			if !m.Config && !strings.HasPrefix(m.Path, "/var/") && !vendorConfig(m.Path) {
 				state("packages", "modified:"+m.Path, "high", "System file modified: "+m.Path, "It no longer matches package "+m.Package+".")
 			}
 		}
@@ -1559,6 +1559,30 @@ func packagedPath(p string, pkgs *system.PackagesResult) bool {
 		return false
 	}
 	return true
+}
+
+// vendorPreload reports a preload every library of which comes from the system's library
+// directories or from the /opt tree of the vendor whose program it is, as agents that bundle
+// their own allocator do (an embedded ruby preloading its jemalloc).
+func vendorPreload(exe, preload string) bool {
+	vendor := ""
+	if parts := strings.SplitN(exe, "/", 4); len(parts) == 4 && parts[1] == "opt" && parts[2] != "" {
+		vendor = "/opt/" + parts[2] + "/"
+	}
+	for _, lib := range strings.FieldsFunc(preload, func(r rune) bool { return r == ':' || r == ' ' }) {
+		system := slices.ContainsFunc([]string{"/usr/lib/", "/usr/lib64/", "/lib/", "/lib64/"}, func(d string) bool { return strings.HasPrefix(lib, d) })
+		if !system && (vendor == "" || !strings.HasPrefix(lib, vendor)) || strings.Contains(lib, "/../") {
+			return false
+		}
+	}
+	return true
+}
+
+// vendorConfig reports a file of a package's configuration under /opt/<vendor>/etc, which the
+// vendor's agent rewrites like a file of /etc.
+func vendorConfig(p string) bool {
+	parts := strings.Split(p, "/")
+	return len(parts) > 4 && parts[1] == "opt" && parts[3] == "etc"
 }
 
 func standardBinDir(p string) bool {
