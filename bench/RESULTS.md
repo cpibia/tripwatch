@@ -1,6 +1,6 @@
 # Detection benchmark
 
-Commit `b2ba475`, 2026-10-24, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 6.17.0-1022-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+Commit `6aafbed`, 2026-10-28, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
 with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
 ## Method
@@ -63,6 +63,7 @@ The control scenario, with no attack, produces no differences for any tool.
 | Process with LD_PRELOAD in its environment | ✅ | ❌ | ❌ | ❌ |
 | Backdoor waiting on a packet socket, no port open | ✅ | ✅ | ❌ | ❌ |
 | Fileless implant run from memory (memfd) | ✅ | ❌ | ❌ | ❌ |
+| Program running under a kernel thread's name | ✅ | ❌ | ❌ | ❌ |
 
 ### Web applications
 
@@ -72,6 +73,10 @@ The control scenario, with no attack, produces no differences for any tool.
 | GIF image with PHP code appended | ✅ | ✅ | ❌ | ❌ |
 | Backdoor injected into an existing PHP file | ✅ | ✅ | ❌ | ❌ |
 | .htaccess that runs images as PHP | ✅ | ✅ | ❌ | ❌ |
+| PHP saved by the application in a cache file, to be included later | ✅ | ✅ | ❌ | ❌ |
+| Card skimmer added to the site's JavaScript | ✅ | ✅ | ❌ | ❌ |
+| Backdoor in the web root with its function name split and escaped | ✅ | ✅ | ❌ | ❌ |
+| Core file changed to include remote code when a cookie is set | ✅ | ✅ | ❌ | ❌ |
 
 ### Limits: attacks between two checks, and traps
 
@@ -87,7 +92,7 @@ Measured on the control scenario, in the same container.
 
 | Tool | Time | Peak memory |
 |---|--:|--:|
-| tripwatch | 1.3 s | 29 MB |
-| AIDE | 48.8 s | 35 MB |
-| rkhunter | 130.0 s | 11 MB |
-| debsums | 1.0 s | 13 MB |
+| tripwatch | 1.3 s | 28 MB |
+| AIDE | 49.5 s | 39 MB |
+| rkhunter | 151.1 s | 11 MB |
+| debsums | 1.1 s | 13 MB |

@@ -516,20 +516,20 @@ Positions advance only after the snapshot has been delivered.
 ## Detection compared
 
 <!-- bench:start -->
-Across 31 attack scenarios reproduced in a Debian container (commit `b2ba475`), how many each
+Across 36 attack scenarios reproduced in a Debian container (commit `6aafbed`), how many each
 tool detects with its default configuration:
 
-![Scenarios detected out of 31: tripwatch 31, AIDE 25, rkhunter 4, debsums 1](bench/detection.svg)
+![Scenarios detected out of 36: tripwatch 36, AIDE 29, rkhunter 4, debsums 1](bench/detection.svg)
 
 | Category | Scenarios | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Persistence | 10 | 10 | 10 | 2 | 0 |
 | Privileges | 4 | 4 | 4 | 0 | 0 |
 | System integrity | 5 | 5 | 5 | 1 | 1 |
-| Processes and network | 5 | 5 | 1 | 1 | 0 |
-| Web applications | 4 | 4 | 4 | 0 | 0 |
+| Processes and network | 6 | 6 | 1 | 1 | 0 |
+| Web applications | 8 | 8 | 8 | 0 | 0 |
 | Limits: attacks between two checks, and traps | 3 | 3 | 1 | 0 | 0 |
-| **Total** | **31** | **31** | **25** | **4** | **1** |
+| **Total** | **36** | **36** | **29** | **4** | **1** |
 
 Detects means the data about the attack appears in the output of the tool; for tripwatch the
 judgement stays with the verifier: its real-time rules run on what the watchers of the sensor saw while the
