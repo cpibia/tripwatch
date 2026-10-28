@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -239,12 +240,19 @@ const maxDataOnly = 4 << 20
 // anything: a parenthesis after anything but "array", a variable used as a function, a
 // backtick, an interpolated string or any other word, and it is code.
 func dataOnly(content []byte) bool {
+	ok, _ := dataOnlyWhy(content)
+	return ok
+}
+
+// dataOnlyWhy is dataOnly with, when it fails, what made the file code: the word, the byte or
+// the construct, and its offset in the code, for the issue that explains the finding.
+func dataOnlyWhy(content []byte) (bool, string) {
 	if len(content) > maxDataOnly {
-		return false
+		return false, "too large to check"
 	}
 	src := bytes.TrimSpace(bytes.TrimPrefix(content, []byte("\xef\xbb\xbf")))
 	if !bytes.HasPrefix(src, []byte("<?php")) {
-		return false
+		return false, "no <?php at the start"
 	}
 	src = bytes.TrimSuffix(src[len("<?php"):], []byte("?>"))
 	src = stripPHPComments(src)
@@ -259,15 +267,17 @@ func dataOnly(content []byte) bool {
 		case c == '\'' || c == '"':
 			j := i + 1
 			for ; j < len(src) && src[j] != c; j++ {
-				if c == '"' && (src[j] == '$' || src[j] == '{') {
-					return false
+				// Inside double quotes only "$name" and "{$" interpolate: a price such as
+				// "$10" or a brace is text.
+				if c == '"' && j+1 < len(src) && (src[j] == '$' && (src[j+1] == '_' || src[j+1] == '{' || isLetter(src[j+1])) || src[j] == '{' && src[j+1] == '$') {
+					return false, fmt.Sprintf("interpolated string at %d", j)
 				}
 				if src[j] == '\\' {
 					j++
 				}
 			}
 			if j >= len(src) {
-				return false
+				return false, "unclosed string"
 			}
 			i, word = j, ""
 		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '$':
@@ -277,12 +287,12 @@ func dataOnly(content []byte) bool {
 			}
 			word = strings.ToLower(string(src[i:j]))
 			if !strings.HasPrefix(word, "$") && !slices.Contains([]string{"return", "array", "true", "false", "null"}, word) {
-				return false
+				return false, fmt.Sprintf("word %.32q at %d", word, i)
 			}
 			i = j - 1
 		case c == '(':
 			if word != "array" {
-				return false
+				return false, fmt.Sprintf("call after %.32q at %d", word, i)
 			}
 			word = ""
 		case c >= '0' && c <= '9', c == '.', c == '-', c == '+':
@@ -291,11 +301,13 @@ func dataOnly(content []byte) bool {
 				word = ""
 			}
 		default:
-			return false
+			return false, fmt.Sprintf("byte %q at %d", c, i)
 		}
 	}
-	return true
+	return true, ""
 }
+
+func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80 }
 
 // exitGuard is the code a plugin puts in front of a log it keeps under a .php name.
 var exitGuard = regexp.MustCompile(`(?is)^\s*(?:defined\s*\(\s*['"]\w+['"]\s*\)\s*(?:or|\|\|)\s*)?(?:exit|die)\s*(?:\(\s*(?:'[^']*'|"[^"]*"|\d*)\s*\))?\s*;?\s*$`)

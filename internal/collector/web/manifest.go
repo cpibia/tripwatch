@@ -248,7 +248,10 @@ func diffManifests(prev, cur string) ([]FileChange, int, skimmerCandidates, erro
 			// A file hashed in one run and only fingerprinted in the other (the hash budget ran
 			// out) cannot be compared; two fingerprints can, since a rewrite changes the change
 			// time or the inode.
-			if old.sum != now.sum && strings.HasPrefix(old.sum, "unhashed:") == strings.HasPrefix(now.sum, "unhashed:") {
+			// A link to a release's shared file is hashed with its content since that file is
+			// inspected: the first run that does is not a change.
+			firstContent := strings.HasPrefix(old.sum, "link:") && strings.HasPrefix(now.sum, old.sum+":")
+			if old.sum != now.sum && !firstContent && strings.HasPrefix(old.sum, "unhashed:") == strings.HasPrefix(now.sum, "unhashed:") {
 				emit(FileChange{Path: "/" + now.path, Change: ChangeModified, SHA256: contentHash(now.sum)})
 			}
 			old.advance()

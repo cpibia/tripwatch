@@ -8,6 +8,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The first run that hashes the content behind a release's shared link no longer reports that
+  file as changed.
+- A `$` or a brace in a double-quoted string is text unless it interpolates (`"$10"`), so a data
+  file holding prices stays data; for the first three PHP files of the uploads found to be code,
+  an issue says what made them so.
 - The code manifest of an application found in the run is never removed as stale: after a week
   without reaching the verifier, the changes made meanwhile are still named (SEC-200).
 - A web server started by systemd with `PrivateTmp=` or `ProtectSystem=` counts for stale

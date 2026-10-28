@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +203,27 @@ func TestManifestNamesAChangedSharedFile(t *testing.T) {
 	tr.file("var/www/deploy/shared/wp-config.php", "<?php define('DB_NAME', 'site'); @include '/tmp/.sess_x';")
 	if r := collect(); r.ChangeCount != 1 || r.Changes[0].Path != "/var/www/deploy/releases/5/wp-config.php" || r.Changes[0].Change != "modified" {
 		t.Fatalf("changes = %+v", r.Changes)
+	}
+}
+
+// The run that first hashes the content behind a shared link is not a change of it; a later
+// change of that content is.
+func TestManifestFirstHashOfASharedLink(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, sum string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(strconv.Quote("var/www/site/wp-config.php")+" "+sum+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	before := write("before", "link:../../shared/wp-config.php")
+	first := write("first", "link:../../shared/wp-config.php:"+strings.Repeat("a", 64))
+	changed := write("changed", "link:../../shared/wp-config.php:"+strings.Repeat("b", 64))
+	if _, n, _, err := diffManifests(before, first); err != nil || n != 0 {
+		t.Errorf("first hash: %d changes, %v", n, err)
+	}
+	if _, n, _, err := diffManifests(first, changed); err != nil || n != 1 {
+		t.Errorf("changed content: %d changes, %v", n, err)
 	}
 }

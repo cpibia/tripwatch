@@ -264,12 +264,14 @@ type hashBudget struct {
 	listed map[string]bool
 	// network maps the mount points of network filesystems to their type: their content is
 	// another machine's, and one slow read there would stall the whole run.
-	network   map[string]string
-	left      int64
-	exhausted bool
-	dataLeft  int64
-	codeLeft  int64
-	search    CodeSearch
+	network map[string]string
+	// dataOnlyNotes counts the issues explaining why a PHP file of the uploads is code.
+	dataOnlyNotes int
+	left          int64
+	exhausted     bool
+	dataLeft      int64
+	codeLeft      int64
+	search        CodeSearch
 }
 
 // unsearched records a data file not fully searched for code.
@@ -900,7 +902,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	switch {
 	case image && polyglot(content, php):
 		s.add(KindPolyglotImage, name, e, nil)
-	case script && inUploads && complete && php && (exitGuarded(content) || dataOnly(content)):
+	case script && inUploads && complete && php && (exitGuarded(content) || s.dataOnly(name, content)):
 		// A plugin's log kept under a .php name with an exit in front, so that requesting it
 		// shows nothing, or a theme's layouts kept as a returned array: nothing in either runs.
 		s.withdraw(KindScriptInUploads, name)
@@ -1082,6 +1084,21 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 		s.budget.unsearched(name)
 	}
 	return strongInDocuments(head, c.signatures())
+}
+
+// maxDataOnlyNotes bounds the issues saying why a PHP file in the uploads is code.
+const maxDataOnlyNotes = 3
+
+// dataOnly reports a PHP file of the uploads that holds data alone; for the first few that do
+// not, an issue says what made them code, so a stack that keeps data that way can be told
+// from a script.
+func (s *scanner) dataOnly(name string, content []byte) bool {
+	ok, why := dataOnlyWhy(content)
+	if !ok && s.budget.dataOnlyNotes < maxDataOnlyNotes {
+		s.budget.dataOnlyNotes++
+		s.issues = append(s.issues, fmt.Sprintf("/%s: PHP in an upload directory is code: %s", name, why))
+	}
+	return ok
 }
 
 // mediaMagic are the first bytes of the images, videos and sounds uploaded every day.
