@@ -107,7 +107,7 @@ not try to prevent this, it makes it visible:
 `internal/watch` runs next to the snapshots. Files are watched with inotify on directories, never
 on files, so a file replaced by a rename is still seen: each target names a directory, a class
 (accounts, ssh, privilege, schedule, service, hook, upload) and optionally the entry names it
-keeps. Upload directories are watched recursively down to four levels, including directories
+keeps. Upload directories are watched recursively down to eight levels, including directories
 created later, whose contents are listed at once since a file can land there before the watch
 exists. Watches are capped at 8,192, use `IN_DONT_FOLLOW` and `IN_ONLYDIR`, and the file behind an
 event is described through the same confined view the collectors use, with `lstat` and no

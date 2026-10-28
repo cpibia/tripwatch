@@ -1069,9 +1069,13 @@ func Evaluate(prev *State, cur State) []Finding {
 			switch {
 			case f.Immutable || f.AppendOnly:
 				state("privileged", "attr:"+f.Path, "high", "File protected with chattr: "+f.Path, "The immutable and append-only attributes are rare on servers and are used to make access persistent.")
-			case suspiciousPath(f.Path) || !standardBinDir(f.Path):
+			case suspiciousPath(f.Path) || !standardBinDir(f.Path) && !snapData(f):
 				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
-				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", "setuid/setgid binary in an unusual directory: "+f.Path, "Mode "+f.Mode+", owner "+owner+", hash "+f.SHA256+".")
+				title, how := "setuid/setgid binary in an unusual directory: ", "Mode "+f.Mode
+				if !setID(f.Mode) {
+					title, how = "Binary with file capabilities in an unusual directory: ", "File capabilities, mode "+f.Mode
+				}
+				stateBy(owner, "privileged", "setid:"+owner+"|"+f.Path, "critical", title+f.Path, how+", owner "+owner+", hash "+f.SHA256+".")
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
 				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
@@ -1484,6 +1488,8 @@ var packetTools = []string{
 	"dhclient", "dhcpcd", "udhcpc", "dhcpd", "kea-dhcp4", "dnsmasq", "NetworkManager", "systemd-networkd", "wpa_supplicant",
 	"tcpdump", "tshark", "dumpcap", "wireshark", "lldpd", "keepalived", "arping", "ping", "ping6", "suricata", "snort", "zeek",
 	"iftop", "nethogs", "vnstatd", "pmacctd", "fprobe", "ladvd", "ntopng", "nmap", "traceroute", "mtr-packet",
+	// A cloud provider's agent that watches for the console's connection requests.
+	"droplet-agent",
 }
 
 // rawSocketFinding judges a packet or raw socket: it receives traffic before any port does, so a
@@ -1583,6 +1589,19 @@ func vendorPreload(exe, preload string) bool {
 func vendorConfig(p string) bool {
 	parts := strings.Split(p, "/")
 	return len(parts) > 4 && parts[1] == "opt" && parts[3] == "etc"
+}
+
+// snapData reports a root-owned file in a snap's data directory: snapd creates those for root
+// only, and cloud agents shipped as snaps keep the plugins they download there. A new or changed
+// one is still reported as a new privileged file.
+func snapData(f fileT) bool {
+	return strings.HasPrefix(f.Path, "/var/snap/") && f.UID != nil && *f.UID == 0
+}
+
+// setID reports whether a mode as printed by Go has the setuid or setgid bit: they show as the
+// letters u and g before the permissions.
+func setID(mode string) bool {
+	return len(mode) > 9 && strings.ContainsAny(mode[:len(mode)-9], "ug")
 }
 
 func standardBinDir(p string) bool {

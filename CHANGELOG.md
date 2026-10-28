@@ -11,9 +11,22 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - An envelope sent on a kept-alive connection the verifier had just closed is sent again on a
   new connection at once. Before, it waited for the next send, and the verifier raised "Missed
   heartbeats" every few minutes on every host.
+- Network filesystems (NFS, SMB, WebDAV, S3 and the like) are no longer walked by `privileged`
+  or scanned by `web`. A WebDAV share mounted in a home kept both from finishing within their
+  15 minutes. One mounted without `nosuid` is listed in the issues.
+- PHP's `mail()` running sendmail through `sh -c`, and a framework scheduler or worker running
+  its own commands through the shell, are no longer reported as the web server's user starting
+  a shell.
+- Upload directories are watched eight levels deep instead of four: the image styles of a CMS
+  sit deeper than four and were reported as places left without a watch.
+- The issue for an upload link not followed names where the link resolves.
 
 ### Verifier
 
+- A root-owned binary in a snap's data directory (`/var/snap/<snap>/`), where cloud agents
+  shipped as snaps keep their plugins, is not reported as setuid in an unusual directory; a new
+  or changed one still is. A file with capabilities and no setuid bit is named for what it has.
+- A cloud provider's droplet agent holding a raw socket is not reported.
 - Idle ingest connections stay open three minutes, longer than the heartbeat interval, so
   sensors up to 0.1.19 no longer lose a heartbeat to a connection closed under them.
 

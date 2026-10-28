@@ -182,6 +182,26 @@ func TestFilesSkipGapsOnlyRootCanReach(t *testing.T) {
 	}
 }
 
+// A CMS's image derivatives sit deeper in the upload tree than the system places: they are
+// watched, not reported as a gap.
+func TestFilesWatchDeepUploadTrees(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv/app/files/styles/medium/public/thumbnails/2026-10"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	f, err := NewFiles(root, collector.NewSource(root), make(chan Event, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, []string{"/srv/app/files"}))
+	for _, issue := range f.Issues() {
+		if strings.Contains(issue, "/srv/app/files") {
+			t.Errorf("gap in the uploads: %s", issue)
+		}
+	}
+}
+
 // What the bounds leave unwatched is said, not silently skipped; a terminal reached through a
 // link in the uploads is never opened.
 func TestFilesReportGapsAndSkipDevices(t *testing.T) {

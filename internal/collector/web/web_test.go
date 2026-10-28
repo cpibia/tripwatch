@@ -504,6 +504,29 @@ func TestApplicationInsideUploads(t *testing.T) {
 	}
 }
 
+// A network share mounted in an application, in its code or as its uploads, is another
+// machine's and can stall the run: it is left out and said, the rest is scanned.
+func TestNetworkMountsAreNotScanned(t *testing.T) {
+	tr := newTree(t)
+	tr.file("proc/1/mountinfo", "22 1 259:1 / / rw - ext4 /dev/root rw\n"+
+		"90 22 0:50 / /var/www/site/resources/drive rw,nosuid - fuse.davfs https://dav.example.com rw\n"+
+		"91 22 0:51 / /var/www/site/uploads rw,nosuid - nfs4 server:/export rw\n")
+	tr.file("var/www/site/index.php", "<?php echo 1;")
+	tr.file("var/www/site/x.php", `<?php system($_GET['c']);`)
+	tr.file("var/www/site/resources/drive/a.php", `<?php system($_GET['c']);`)
+	tr.file("var/www/site/uploads/b.php", `<?php system($_GET['c']);`)
+
+	res := tr.scan()
+	if got := findingsOf(res); len(got) != 1 || !strings.HasSuffix(got[0], " /var/www/site/x.php") {
+		t.Errorf("findings = %v, want only the local script", got)
+	}
+	for _, want := range []string{"/var/www/site/resources/drive: fuse.davfs network filesystem, not scanned", "/var/www/site/uploads: nfs4 network filesystem, not scanned"} {
+		if !slices.Contains(res.Issues, want) {
+			t.Errorf("missing issue %q in %v", want, res.Issues)
+		}
+	}
+}
+
 // An upload directory that is a symlink to a shared directory is scanned through the link,
 // and the link itself, the usual layout of release-based deploys, is not a finding.
 func TestSymlinkedUploadDirectoryIsScanned(t *testing.T) {

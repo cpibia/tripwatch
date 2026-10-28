@@ -357,6 +357,30 @@ func TestPrivileged(t *testing.T) {
 	}
 }
 
+// A network share is another machine's and can be slow enough to stall the walk: it is not
+// walked, and one mounted without nosuid, where a setuid file would work, is said.
+func TestPrivilegedSkipsNetworkFilesystems(t *testing.T) {
+	setuid := &fstest.MapFile{Data: []byte("x"), Mode: fs.ModeSetuid | 0o755}
+	src := collector.Source{FS: fstest.MapFS{
+		"proc/1/mountinfo": text("22 1 259:1 / / rw,relatime shared:1 - ext4 /dev/root rw\n" +
+			"90 22 0:50 / /home/ci/share\\040files rw,nosuid,nodev,noexec,relatime shared:60 - fuse.davfs https://dav.example.com rw,user_id=0\n" +
+			"91 22 0:51 / /mnt/nfs rw,relatime shared:61 - nfs4 server:/export rw\n"),
+		"usr/bin/passwd":           setuid,
+		"home/ci/share files/tool": setuid,
+		"mnt/nfs/bin/tool":         setuid,
+	}}
+	res := collect[PrivilegedResult](t, Privileged{Skip: DefaultSkip}, src)
+	if got := paths(res.Files); !slices.Equal(got, []string{"/usr/bin/passwd"}) {
+		t.Errorf("files = %v, want only the local one", got)
+	}
+	if !slices.ContainsFunc(res.Issues, func(i string) bool {
+		return strings.Contains(i, "/mnt/nfs: nfs4 network filesystem mounted without nosuid")
+	}) ||
+		slices.ContainsFunc(res.Issues, func(i string) bool { return strings.Contains(i, "share") }) {
+		t.Errorf("issues = %v", res.Issues)
+	}
+}
+
 func TestPrivilegedStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -467,8 +491,8 @@ func TestGroupShadow(t *testing.T) {
 // mode are the user's choice. Root's own mounts are not marked.
 func TestPrivilegedMarksUserMounts(t *testing.T) {
 	fsys := fstest.MapFS{
-		"proc/1/mountinfo": text("36 25 0:32 / /var/www/m rw,nosuid,nodev - fuse.sshfs sshfs rw,user_id=33,group_id=33\n" +
-			"37 25 0:33 / /mnt/backup rw - fuse.sshfs sshfs rw,user_id=0,group_id=0\n"),
+		"proc/1/mountinfo": text("36 25 0:32 / /var/www/m rw,nosuid,nodev - fuse.bindfs bindfs rw,user_id=33,group_id=33\n" +
+			"37 25 0:33 / /mnt/backup rw - fuse.bindfs bindfs rw,user_id=0,group_id=0\n"),
 		"var/www/m/x":   &fstest.MapFile{Mode: fs.ModeSetuid | 0o755, Data: []byte("x")},
 		"mnt/backup/y":  &fstest.MapFile{Mode: fs.ModeSetuid | 0o755, Data: []byte("y")},
 		"var/www/other": &fstest.MapFile{Mode: fs.ModeSetuid | 0o755, Data: []byte("z")},
@@ -478,7 +502,7 @@ func TestPrivilegedMarksUserMounts(t *testing.T) {
 	for _, f := range res.Files {
 		got[f.Path] = f.Mount
 	}
-	if got["/var/www/m/x"] != "fuse.sshfs uid 33" || got["/mnt/backup/y"] != "" || got["/var/www/other"] != "" {
+	if got["/var/www/m/x"] != "fuse.bindfs uid 33" || got["/mnt/backup/y"] != "" || got["/var/www/other"] != "" {
 		t.Fatalf("mounts = %v", got)
 	}
 }

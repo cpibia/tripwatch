@@ -191,6 +191,13 @@ func (c *Collector) Commit() error { return c.pending.commit() }
 func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.Inspect(src.FS)}
 	budget := newHashBudget()
+	mounts, err := collector.NetworkMounts(src)
+	if err != nil {
+		res.Issues.Add(err)
+	}
+	for _, m := range mounts {
+		budget.network[m.Point] = m.Type
+	}
 	scanners := make([]*scanner, 0, len(res.Inventory.Applications))
 	for _, app := range res.Inventory.Applications {
 		s := newScanner(src, app, res.Inventory.Sites, res.Inventory.Applications)
@@ -241,7 +248,7 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 
 func newHashBudget() *hashBudget {
 	return &hashBudget{left: MaxHashBytesPerRun, dataLeft: MaxDataScanBytesPerRun, codeLeft: MaxDataCodeBytesPerRun,
-		followed: map[string]bool{}, listed: map[string]bool{}}
+		followed: map[string]bool{}, listed: map[string]bool{}, network: map[string]string{}}
 }
 
 // hashBudget is shared by the scanners of one run.
@@ -250,7 +257,10 @@ type hashBudget struct {
 	// so is a directory that several applications link to.
 	followed map[string]bool
 	// listed holds the upload directories whose names were listed this run.
-	listed    map[string]bool
+	listed map[string]bool
+	// network maps the mount points of network filesystems to their type: their content is
+	// another machine's, and one slow read there would stall the whole run.
+	network   map[string]string
 	left      int64
 	exhausted bool
 	dataLeft  int64
@@ -413,7 +423,7 @@ func (s *scanner) namesPass(ctx context.Context) {
 const maxNamesDepth = 64
 
 func (s *scanner) listNames(ctx context.Context, dir string, depth int, verify bool) {
-	if depth > maxNamesDepth || s.expired(ctx) || (verify && !s.unchanged(dir)) {
+	if depth > maxNamesDepth || s.expired(ctx) || s.onNetwork(dir) || (verify && !s.unchanged(dir)) {
 		return
 	}
 	f, err := s.src.FS.Open(dir)
@@ -459,6 +469,17 @@ func (s *scanner) webRoot() string {
 	return s.profile.WebRoot
 }
 
+// onNetwork reports whether dir is a network filesystem's mount point, which is not scanned,
+// and says so the first time.
+func (s *scanner) onNetwork(dir string) bool {
+	t, ok := s.budget.network[dir]
+	if ok && t != "" {
+		s.issues = append(s.issues, fmt.Sprintf("/%s: %s network filesystem, not scanned", dir, t))
+		s.budget.network[dir] = ""
+	}
+	return ok
+}
+
 func (s *scanner) expired(ctx context.Context) bool {
 	if ctx.Err() != nil {
 		s.stopped = true
@@ -470,7 +491,7 @@ func (s *scanner) expired(ctx context.Context) bool {
 // every file. Data directories are handed to walkData: they are inspected but left out of the
 // hash, since their content changes at runtime; the hash covers code only.
 func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, inThirdParty bool) string {
-	if s.expired(ctx) {
+	if s.expired(ctx) || s.onNetwork(dir) {
 		return ""
 	}
 	entries, err := fs.ReadDir(s.src.FS, dir)
@@ -556,7 +577,11 @@ func (s *scanner) enterData(ctx context.Context, name string, e fs.DirEntry, inU
 		}
 		if !ok {
 			record(name)
-			s.issues = append(s.issues, fmt.Sprintf("/%s -> %s not followed: target outside the application and its deploy directory", name, target))
+			where := target
+			if resolved != "" && "/"+resolved != target {
+				where += " (resolved to /" + resolved + ")"
+			}
+			s.issues = append(s.issues, fmt.Sprintf("/%s -> %s not followed: target outside the application and its deploy directory", name, where))
 			return
 		}
 		if err != nil || !info.IsDir() {
@@ -615,7 +640,7 @@ func (s *scanner) unchanged(dir string) bool {
 // walkData inspects a data directory without hashing it. Entries are streamed in batches, so a
 // directory with millions of uploads is scanned in full without holding its listing.
 func (s *scanner) walkData(ctx context.Context, dir string, inUploads, verify bool) {
-	if s.expired(ctx) || (verify && !s.unchanged(dir)) {
+	if s.expired(ctx) || s.onNetwork(dir) || (verify && !s.unchanged(dir)) {
 		return
 	}
 	f, err := s.src.FS.Open(dir)

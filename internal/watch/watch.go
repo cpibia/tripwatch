@@ -118,6 +118,9 @@ const (
 	// The uploads get at most MaxUploadWatches, leaving the rest to the system and the homes.
 	MaxUploadWatches = 6144
 	ScratchDepth     = 2
+	// UploadDepth reaches the derivatives CMSs keep deep in their file trees (Drupal's
+	// styles/<style>/public/<dir>/...): MaxUploadWatches, not the depth, bounds what they cost.
+	UploadDepth = 8
 )
 
 // ErrUnsupported is returned where the kernel interfaces the watcher needs do not exist.
@@ -182,7 +185,7 @@ func Targets(homes []Home, uploads []string) []Target {
 			continue
 		}
 		seen[dir] = true
-		t = append(t, Target{Dir: dir, Class: ClassUpload, Recursive: true})
+		t = append(t, Target{Dir: dir, Class: ClassUpload, Recursive: true, Depth: UploadDepth})
 	}
 	// Last, and with a small budget of their own: anyone can fill these with directories, which
 	// must never take the watches of the places above.

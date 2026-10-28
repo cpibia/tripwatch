@@ -746,3 +746,34 @@ func TestVendorPreload(t *testing.T) {
 		t.Error("vendorConfig")
 	}
 }
+
+// A root-owned binary in a snap's data directory is a cloud agent's plugin, reported only when it
+// appears or changes; elsewhere one with file capabilities is named for what it has.
+func TestPrivilegedFilesInSnapData(t *testing.T) {
+	uid0, uid33 := uint32(0), uint32(33)
+	cur := State{Privileged: &system.PrivilegedResult{Files: []collector.File{
+		{Path: "/var/snap/cloud-agent/common/plugin", Mode: "-rwxr-xr-x", UID: &uid0, GID: &uid0, SHA256: "aa", Attrs: collector.Attrs{Capabilities: true}},
+		{Path: "/var/snap/cloud-agent/common/mine", Mode: "urwxr-xr-x", UID: &uid33, GID: &uid33, SHA256: "bb"},
+		{Path: "/srv/tool", Mode: "-rwxr-xr-x", UID: &uid0, GID: &uid0, SHA256: "cc", Attrs: collector.Attrs{Capabilities: true}},
+	}}}
+	prev := State{Privileged: &system.PrivilegedResult{}}
+	titles := map[string]string{}
+	for _, f := range Evaluate(&prev, cur) {
+		titles[f.Severity+" "+f.Fingerprint] = f.Title
+	}
+	for _, want := range []string{
+		"high privileged-change:new:root|/var/snap/cloud-agent/common/plugin:aa",
+		"critical privileged:setid:uid 33|/var/snap/cloud-agent/common/mine",
+		"critical privileged:setid:root|/srv/tool",
+	} {
+		if _, ok := titles[want]; !ok {
+			t.Errorf("missing %s in %v", want, titles)
+		}
+	}
+	if _, ok := titles["critical privileged:setid:root|/var/snap/cloud-agent/common/plugin"]; ok {
+		t.Error("a root-owned file in snap data is reported as unusual")
+	}
+	if got := titles["critical privileged:setid:root|/srv/tool"]; got != "Binary with file capabilities in an unusual directory: /srv/tool" {
+		t.Errorf("title %q", got)
+	}
+}

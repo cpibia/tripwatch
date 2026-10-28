@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"strconv"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -44,6 +43,19 @@ func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, err
 	skip := map[string]bool{}
 	for _, s := range p.Skip {
 		skip[s] = true
+	}
+	// Network filesystems are not walked: their content is another machine's, and a slow share
+	// would keep the walk from reaching the rest of this one. One mounted without nosuid is
+	// said, since a setuid file on it would work here.
+	remote, err := collector.NetworkMounts(src)
+	if err != nil {
+		res.Issues.Add(fmt.Errorf("mount table not read, network filesystems not told apart: %w", err))
+	}
+	for _, m := range remote {
+		skip[m.Point] = true
+		if !m.NoSUID {
+			res.Issues = append(res.Issues, fmt.Sprintf("/%s: %s network filesystem mounted without nosuid, not walked", m.Point, m.Type))
+		}
 	}
 
 	walk := func(name string, d fs.DirEntry, err error) error {
@@ -127,7 +139,7 @@ func readMounts(src collector.Source, issues *collector.Issues) mountTable {
 		if !ok || len(fields) < 5 || len(tail) < 3 {
 			continue
 		}
-		point, fstype, kind := unescapeMount(fields[4]), tail[0], ""
+		point, fstype, kind := collector.UnescapeMount(fields[4]), tail[0], ""
 		if fstype == "fuseblk" || fstype == "fuse" || strings.HasPrefix(fstype, "fuse.") {
 			for _, opt := range strings.Split(tail[2], ",") {
 				if v, ok := strings.CutPrefix(opt, "user_id="); ok && v != "0" {
@@ -138,22 +150,6 @@ func readMounts(src collector.Source, issues *collector.Issues) mountTable {
 		out[point] = kind
 	}
 	return out
-}
-
-// unescapeMount decodes the octal escapes mountinfo uses for spaces and the like.
-func unescapeMount(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\\' && i+3 < len(s) {
-			if n, err := strconv.ParseUint(s[i+1:i+4], 8, 8); err == nil {
-				b.WriteByte(byte(n))
-				i += 3
-				continue
-			}
-		}
-		b.WriteByte(s[i])
-	}
-	return b.String()
 }
 
 // userMount returns the user mount a path lies on, by its deepest mount, or "".

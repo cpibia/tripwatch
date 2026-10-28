@@ -62,6 +62,7 @@ func TestRawSocketFindings(t *testing.T) {
 	}{
 		{system.Socket{Proto: "packet", PID: 700, Process: "dhclient", Exe: "/usr/sbin/dhclient"}, ""},
 		{system.Socket{Proto: "packet", PID: 701, Process: "dhclient", Exe: "/var/tmp/.d/dhclient"}, "critical"},
+		{system.Socket{Proto: "raw", PID: 702, Process: "droplet-agent", Exe: "/opt/digitalocean/bin/droplet-agent"}, ""},
 		{system.Socket{Proto: "packet", PID: 702, Process: "udevd", Exe: "/usr/sbin/udevd (deleted)"}, "critical"},
 		{system.Socket{Proto: "raw", PID: 703, Process: "agent", Exe: "/opt/agent/agent"}, "high"},
 		{system.Socket{Proto: "raw6"}, "medium"},

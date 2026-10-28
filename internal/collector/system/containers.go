@@ -732,7 +732,7 @@ func readMountEntries(fsys fs.FS, name string) ([]mountEntry, error) {
 		if len(out) == maxMountEntries {
 			return out, fmt.Errorf("%s: more than %d mounts", name, maxMountEntries)
 		}
-		out = append(out, mountEntry{dev: fields[2], root: unescapeMount(fields[3]), point: unescapeMount(fields[4]), fstype: tail[0],
+		out = append(out, mountEntry{dev: fields[2], root: collector.UnescapeMount(fields[3]), point: collector.UnescapeMount(fields[4]), fstype: tail[0],
 			rw: slices.Contains(strings.Split(fields[5], ","), "rw")})
 	}
 	return out, nil

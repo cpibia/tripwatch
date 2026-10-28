@@ -147,12 +147,48 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 		return ReasonDeleted, script
 	// Where the web server's user also runs scheduled jobs, what cron starts is those jobs; a
 	// crontab the web user planted is reported by the schedule rules.
-	case c.webUsers[p.UID] && slices.Contains(webTools, tool) && (c.fromCron == nil || !c.fromCron(p)):
+	case c.webUsers[p.UID] && slices.Contains(webTools, tool) && (c.fromCron == nil || !c.fromCron(p)) && !c.routineShell(p, tool):
 		return ReasonWebShell, script
 	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.packageScript(p, script) && !c.frameworkCLI(script)):
 		return ReasonUnusualPath, script
 	}
 	return "", script
+}
+
+// sendmailCommand is the command PHP's mail() hands to sh -c: the configured sendmail with its
+// options and nothing a shell would interpret.
+var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Za-z][^\s;&|$` + "`" + `<>()'"\\]*)*$`)
+
+// routineShell reports a shell the web server's user starts for its own work, which a webshell
+// cannot pass for: PHP's mail() running the configured sendmail, and a framework's scheduler or
+// queue worker running one of its commands. The scheduler is the parent, not something named in
+// the command: the shells a webshell starts have the PHP pool as their parent.
+func (c execContext) routineShell(p system.Process, tool string) bool {
+	if !slices.Contains([]string{"sh", "bash", "dash"}, tool) {
+		return false
+	}
+	_, command, ok := strings.Cut(p.Cmdline, " -c ")
+	if !ok {
+		return false
+	}
+	if sendmailCommand.MatchString(command) {
+		return true
+	}
+	if c.parent == nil || !c.frameworkCommand(command) {
+		return false
+	}
+	parent, ok := c.parent(p)
+	return ok && parent.UID == p.UID && c.frameworkCommand(parent.Cmdline)
+}
+
+// frameworkCommand reports whether a command line runs PHP on a framework's command-line entry
+// point outside every upload directory, the way schedulers start each of their commands.
+func (c execContext) frameworkCommand(cmdline string) bool {
+	fields := strings.Fields(cmdline)
+	if len(fields) < 2 || !strings.HasPrefix(path.Base(fields[0]), "php") {
+		return false
+	}
+	return c.frameworkCLI(path.Clean(fields[1]))
 }
 
 // frameworkCLI reports whether a script is a framework's command-line entry point, which
