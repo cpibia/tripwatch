@@ -8,6 +8,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The debconf configuration script apt extracts to `/tmp` and runs before installing a package
+  (`/tmp/nginx-common.config.HSv41h`) no longer raises "A program started from /tmp": only when
+  root runs a root-owned file of that name, started by the system's perl running
+  `/usr/sbin/dpkg-preconfigure`, known by executable, UID and command line, not by process name.
 - A script linked to its copy at the same path in the deploy's shared directory
   (`releases/5/wp-config.php -> ../../shared/wp-config.php`, the linked files of Capistrano or
   Deployer) is no longer a suspicious link, when the copy is a regular file outside the upload

@@ -62,6 +62,59 @@ func TestRepeatedStartsAreReportedOnceAWindow(t *testing.T) {
 	}
 }
 
+// apt runs each package's debconf configuration script from /tmp before installing it; only
+// that script, run by root through dpkg-preconfigure from a root-owned file, is left out.
+func TestDebconfScriptsFromTmp(t *testing.T) {
+	ctx := execContext{
+		// PPID 88 is dpkg-preconfigure.
+		fromPreconfigure: func(p system.Process) bool { return p.PPID == 88 },
+		owner: func(f string) (int, bool) {
+			if strings.Contains(f, "user-owned") {
+				return 1000, true
+			}
+			return 0, true
+		},
+	}
+	const config = "/tmp/nginx-common.config.HSv41h"
+	for _, c := range []struct {
+		name string
+		p    system.Process
+		want string
+	}{
+		{"apt", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh " + config + " configure 1.18.0-6ubuntu14.21"}, ""},
+		{"var tmp", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /var/tmp/libc6.config.Ab12Cd configure"}, ""},
+		{"not from dpkg-preconfigure", system.Process{PPID: 5, Exe: "/usr/bin/dash", Cmdline: "/bin/sh " + config}, ReasonUnusualPath},
+		{"not root", system.Process{UID: 1000, EUID: 1000, PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh " + config}, ReasonUnusualPath},
+		{"file of another user", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /tmp/user-owned.config.HSv41h"}, ReasonUnusualPath},
+		{"other name", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /tmp/payload.sh"}, ReasonUnusualPath},
+		{"subdirectory", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /tmp/x/nginx-common.config.HSv41h"}, ReasonUnusualPath},
+		{"shared memory", system.Process{PPID: 88, Exe: "/usr/bin/dash", Cmdline: "/bin/sh /dev/shm/nginx-common.config.HSv41h"}, ReasonUnusualPath},
+		{"program itself in tmp", system.Process{PPID: 88, Exe: config, Cmdline: config + " configure"}, ReasonUnusualPath},
+	} {
+		if got, _ := classifyExec(c.p, ctx); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	for _, c := range []struct {
+		name   string
+		parent system.Process
+		want   bool
+	}{
+		{"apt", system.Process{Exe: "/usr/bin/perl", Comm: "dpkg-preconfigu", Cmdline: "/usr/bin/perl -w /usr/sbin/dpkg-preconfigure --apt"}, true},
+		{"named like it", system.Process{Exe: "/usr/bin/python3", Comm: "dpkg-preconfigu", Cmdline: "/usr/sbin/dpkg-preconfigure --apt"}, false},
+		{"perl elsewhere", system.Process{Exe: "/tmp/perl", Cmdline: "perl -w /usr/sbin/dpkg-preconfigure"}, false},
+		{"deleted perl", system.Process{Exe: "/usr/bin/perl", ExeDeleted: true, Cmdline: "perl -w /usr/sbin/dpkg-preconfigure"}, false},
+		{"not root", system.Process{UID: 1000, EUID: 1000, Exe: "/usr/bin/perl", Cmdline: "perl -w /usr/sbin/dpkg-preconfigure"}, false},
+		{"another script", system.Process{Exe: "/usr/bin/perl", Cmdline: "perl /tmp/x.pl /usr/sbin/dpkg-preconfigure"}, false},
+		{"empty", system.Process{Exe: "/usr/bin/perl"}, false},
+	} {
+		if got := preconfigure(c.parent); got != c.want {
+			t.Errorf("parent %s: %v", c.name, got)
+		}
+	}
+}
+
 func TestClassifyExec(t *testing.T) {
 	ctx := execContext{
 		webUsers: map[int]bool{33: true},

@@ -3,6 +3,7 @@ package watch
 import (
 	"crypto/sha256"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -127,6 +128,8 @@ type execContext struct {
 	// fromCron reports whether a process descends from cron; owner returns a file's owner.
 	fromCron func(p system.Process) bool
 	owner    func(path string) (int, bool)
+	// fromPreconfigure reports whether a process was started by apt's dpkg-preconfigure.
+	fromPreconfigure func(p system.Process) bool
 }
 
 // classifyExec says why a process that just started matters, or "" when it does not, and the
@@ -144,7 +147,7 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 		return ReasonDeleted, script
 	case c.webUsers[p.UID] && slices.Contains(webTools, tool):
 		return ReasonWebShell, script
-	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script)):
+	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.debconfScript(p, script)):
 		return ReasonUnusualPath, script
 	}
 	return "", script
@@ -172,6 +175,47 @@ func (c execContext) ownCronJob(p system.Process, file string) bool {
 		return false
 	}
 	return c.fromCron(p)
+}
+
+// debconfConfig is the name apt-extracttemplates gives the configuration script of a package it
+// extracts for dpkg-preconfigure: the package name, ".config." and mkstemp's six characters.
+var debconfConfig = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]{0,99}\.config\.[A-Za-z0-9]{6}$`)
+
+// debconfScript reports whether a script run from a scratch directory is a package's debconf
+// configuration script, which apt extracts there and runs as root before every installation
+// or upgrade that asks questions: run by root, as root, from a root-owned file named the way
+// apt-extracttemplates names it, started by dpkg-preconfigure itself. The parent is known by
+// its executable, UID and command line, not by its process name, which anyone can set.
+func (c execContext) debconfScript(p system.Process, script string) bool {
+	if p.UID != 0 || p.EUID != 0 || c.owner == nil || c.fromPreconfigure == nil {
+		return false
+	}
+	if dir := path.Dir(script); dir != "/tmp" && dir != "/var/tmp" {
+		return false
+	}
+	if !debconfConfig.MatchString(path.Base(script)) {
+		return false
+	}
+	if uid, ok := c.owner(script); !ok || uid != 0 {
+		return false
+	}
+	return c.fromPreconfigure(p)
+}
+
+// preconfigure reports whether a parent process is apt's dpkg-preconfigure: the system's perl,
+// as root, running /usr/sbin/dpkg-preconfigure.
+func preconfigure(parent system.Process) bool {
+	if parent.UID != 0 || parent.EUID != 0 || parent.ExeDeleted || (parent.Exe != "/usr/bin/perl" && parent.Exe != "/bin/perl") {
+		return false
+	}
+	// The script perl runs is its first argument that is not an option (perl -w script ...).
+	args := strings.Fields(parent.Cmdline)
+	for _, a := range args[min(1, len(args)):] {
+		if !strings.HasPrefix(a, "-") {
+			return a == "/usr/sbin/dpkg-preconfigure"
+		}
+	}
+	return false
 }
 
 func unusual(p string) bool {
