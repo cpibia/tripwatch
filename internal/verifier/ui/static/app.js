@@ -73,3 +73,41 @@
     save(keys.slice(-50));
   });
 })();
+
+// "/" moves to the search box at the top, unless the operator is already typing somewhere.
+(function () {
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+    var active = document.activeElement;
+    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" || active.isContentEditable)) return;
+    var box = document.getElementById("gs");
+    if (!box) return;
+    event.preventDefault();
+    box.focus();
+    box.select();
+  });
+})();
+
+// Filter forms apply a choice as soon as it is made: the button stays for keyboards and for
+// browsers without this script.
+(function () {
+  document.addEventListener("change", function (event) {
+    var form = event.target.closest && event.target.closest("form[data-autosubmit]");
+    if (!form || event.target.type === "search") return;
+    form.requestSubmit ? form.requestSubmit() : form.submit();
+  });
+})();
+
+// A filter box above a table hides the rows that do not contain what is typed.
+(function () {
+  document.addEventListener("input", function (event) {
+    var box = event.target;
+    if (!box.dataset || !box.dataset.filter) return;
+    var table = document.getElementById(box.dataset.filter);
+    if (!table) return;
+    var text = box.value.trim().toLowerCase();
+    table.querySelectorAll("tbody tr").forEach(function (row) {
+      row.hidden = text !== "" && row.textContent.toLowerCase().indexOf(text) < 0;
+    });
+  });
+})();

@@ -5,7 +5,7 @@
 <nav class="tabs" aria-label="Alert status">
   {{range $d.Views}}<a href="{{$q.With .Key}}"{{if eq .Key $d.View}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
 </nav>
-<form class="filters" method="get" action="/alerts" role="search" aria-label="Filter the alerts">
+<form class="filters" data-autosubmit method="get" action="/alerts" role="search" aria-label="Filter the alerts">
   {{if ne $d.View "open"}}<input type="hidden" name="view" value="{{$d.View}}">{{end}}
   <div class="f-search">
     <label for="f-q">Search</label>

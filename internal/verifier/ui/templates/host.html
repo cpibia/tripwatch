@@ -12,6 +12,30 @@
   <div><dt>Messages received</dt><dd>{{$h.Chain.Sequence}}</dd></div>
 </dl>
 
+<section aria-labelledby="alerts-h">
+  <div class="section-head"><h2 id="alerts-h">Alerts</h2><p class="aside">critical, high and medium, {{if $d.ShowResolved}}every status{{else}}open and acknowledged{{end}}, the most severe on top{{if $d.Resolved}} · <a href="/hosts/{{$h.ID}}?resolved=1#alerts-h">show {{$d.Resolved}} resolved</a>{{else if $d.ShowResolved}} · <a href="/hosts/{{$h.ID}}#alerts-h">hide the resolved</a>{{end}}</p></div>
+  {{if $d.Alerts}}{{template "alerttable" (hosttable $d.Alerts .CSRF .Path)}}
+  {{else}}<p class="empty">{{if $d.Resolved}}Nothing open on this server.{{else}}No alerts for this server.{{end}}</p>{{end}}
+</section>
+
+{{with $d.Apps}}
+<section class="panel" aria-labelledby="apps-h">
+  <div class="panel-head"><h2 id="apps-h">Web applications</h2><p class="panel-note">{{len .}} on this server: the site first, then what runs it and where it lives; those with open alerts on top</p></div>
+  {{if gt (len .) 8}}<p class="table-filter"><label for="apps-q" class="sr">Filter the applications</label><input id="apps-q" type="search" data-filter="apps-t" placeholder="Filter by site, technology or directory" autocomplete="off" spellcheck="false"></p>{{end}}
+  <table class="grid apps" id="apps-t">
+    <thead><tr><th scope="col"><span class="sr">State</span></th><th scope="col">Site</th><th scope="col">Runs</th><th scope="col">Directory</th><th scope="col" class="num">Open alerts</th></tr></thead>
+    <tbody>{{range .}}
+    <tr class="{{if .Open}}has-alerts{{end}}">
+      <td class="m">{{with .Worst}}{{shape . ""}}<span class="sr">{{sev .}}</span>{{end}}</td>
+      <td class="site">{{if .Site}}<span class="mono">{{.Site}}</span>{{if .Others}} <span class="quiet">+{{.Others}}</span>{{end}}{{else}}<span class="quiet">no site points here</span>{{end}}</td>
+      <td><span class="kind-tag">{{.Framework}}{{with .Version}} {{.}}{{end}}</span></td>
+      <td class="mono path"><span class="quiet">{{.Dir}}</span>{{.Base}}</td>
+      <td class="num">{{if .Open}}<span class="sev sev-{{.Worst}}">{{.Open}}</span>{{else}}<span class="quiet">none</span>{{end}}</td>
+    </tr>{{end}}</tbody>
+  </table>
+</section>
+{{end}}
+
 {{with $d.Facts}}
 <section class="panel sysinfo" aria-labelledby="sys-h">
   <div class="panel-head"><h2 id="sys-h">System</h2><p class="aside">as the sensor read it at {{clock .SeenAt}}: data from the server</p></div>
@@ -29,15 +53,9 @@
     <div><dt>Connects from</dt><dd class="mono">{{with $d.Row.PeerAddr}}{{.}}{{else}}-{{end}}</dd></div>
     <div><dt>Interface addresses</dt><dd class="mono">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{else}}-{{end}}</dd></div>
   </dl>
-  {{with .SortedApps}}<div class="apps-list"><h3>Web applications</h3><ul>{{range .}}<li><span>{{.Framework}}{{with .Version}} {{.}}{{end}}</span> <span class="mono quiet">{{.Path}}</span>{{range .Sites}} <span class="mono">{{.}}</span>{{end}}</li>{{end}}</ul></div>{{end}}
 </section>
 {{end}}
 
-<section aria-labelledby="alerts-h">
-  <div class="section-head"><h2 id="alerts-h">Alerts</h2><p class="aside">critical, high and medium, every status, the most severe on top</p></div>
-  {{if $d.Alerts}}{{template "alerttable" (hosttable $d.Alerts .CSRF .Path)}}
-  {{else}}<p class="empty">No alerts for this server.</p>{{end}}
-</section>
 
 {{if $d.Notes}}
 <section aria-labelledby="notes-h">

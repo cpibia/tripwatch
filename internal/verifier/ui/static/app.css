@@ -633,3 +633,14 @@ td.host .host-tag { overflow: hidden; text-overflow: ellipsis; white-space: nowr
   .filters { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .filters label.toggle { flex: 1 1 auto; justify-content: center; }
 }
+
+/* A server's web applications: the site leads, the directory's last part stands out from its
+   parents, and the applications with open alerts come first. */
+.table-filter { margin: 0; }
+.table-filter input { width: min(100%, 24rem); min-height: 36px; padding: 7px 11px; font: 400 var(--fs-md)/1.3 var(--sans); color: var(--ink); background: var(--raised); border: var(--hair) solid var(--rule-strong); border-radius: var(--radius-sm); }
+.table-filter input::placeholder { color: var(--muted); }
+table.apps td.site { white-space: nowrap; }
+table.apps td.path { overflow-wrap: anywhere; }
+table.apps tr.has-alerts td { background: var(--red-wash); }
+table.apps tr.has-alerts td.site .mono { font-weight: 500; color: var(--ink); }
+table.apps tbody tr:hover td { background: var(--teal-wash); }

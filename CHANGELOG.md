@@ -14,6 +14,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   which competed with the severities.
 - The menu groups operations and configuration, with icons, and a search box at the top of every
   page looks across servers, alerts and real-time events at once (`/search`).
+- A server's page shows its alerts right after its heading, open and acknowledged ones only
+  (the resolved ones one click away), then its web applications as a table: the site first,
+  then what runs it and its directory, those with open alerts on top with their count, and a
+  filter above when there are more than eight.
+- Alert filters apply as soon as a choice is made, and `/` moves to the search box. Who handled an
+  alert is shown only while it is acknowledged or resolved, not on an alert open again.
 
 ## [0.1.34] - 2026-10-29
 

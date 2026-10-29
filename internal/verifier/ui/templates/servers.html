@@ -8,7 +8,7 @@
 
 {{$q := $d.Query}}
 {{if $d.Enrolled}}
-<form class="filters filters-servers" method="get" action="/hosts" role="search" aria-label="Filter the servers">
+<form class="filters filters-servers" data-autosubmit method="get" action="/hosts" role="search" aria-label="Filter the servers">
   <div class="f-search">
     <label for="s-q">Search</label>
     <input id="s-q" type="search" name="q" value="{{$q.Text}}" maxlength="200" placeholder="name, address, system, technology, domain" autocomplete="off" spellcheck="false">

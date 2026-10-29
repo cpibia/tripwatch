@@ -13,7 +13,7 @@
   <td class="what">{{template "kindtag" .Kind}}<a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{headline .Title}}</a>{{with subject .}}<span class="subject mono">{{.}}</span>{{end}}</td>
   <td class="num start"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
   <td class="num count">{{if gt .Occurrences 1}}{{.Occurrences}}×{{end}}</td>
-  <td class="state">{{status .Status}}{{if .AckedBy}}<span class="by">{{.AckedBy}}</span>{{end}}</td>
+  <td class="state">{{status .Status}}{{if and .AckedBy (ne .Status "open")}}<span class="by">{{.AckedBy}}</span>{{end}}</td>
   {{if not $t.NoActions}}<td class="act">{{template "actions" (actx . $t.CSRF $t.Back)}}</td>{{end}}
 </tr>
 {{end}}{{end}}

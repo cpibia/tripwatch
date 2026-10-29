@@ -676,6 +676,10 @@ type hostData struct {
 	Outdated  bool
 	Release   string
 	Events    []eventRow
+	Apps      []hostApp
+	// Resolved counts the resolved alerts left out of the list; ShowResolved puts them back.
+	Resolved     int
+	ShowResolved bool
 }
 
 func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
@@ -722,9 +726,11 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 	}
 	sum, has := summarize(alerts)
 	d := hostData{Events: eventRows(events), Accepted: accepted, Release: s.release(), Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Snapshots: snaps,
-		Silences: silences(marks, h.EnrolledAt, now, store.ActivityRetention, s.SilenceAfter)}
+		Silences: silences(marks, h.EnrolledAt, now, store.ActivityRetention, s.SilenceAfter), ShowResolved: r.URL.Query().Get("resolved") == "1"}
 	for _, a := range alerts {
 		switch {
+		case a.Severity != "low" && a.Status == store.StatusResolved && !d.ShowResolved:
+			d.Resolved++
 		case a.Severity != "low":
 			d.Alerts = append(d.Alerts, a)
 		case a.Kind == "sensor-event":
@@ -736,6 +742,7 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 	if f, ok := facts[h.ID]; ok {
 		d.Facts = &f
 		d.Outdated = outdated(f.SensorVersion, s.release())
+		d.Apps = hostApps(f, alerts)
 	}
 	if h.Revoked && len(d.Silences) > 0 && d.Silences[0].Ongoing {
 		d.Silences = d.Silences[1:]
