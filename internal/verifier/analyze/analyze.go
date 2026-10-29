@@ -157,6 +157,7 @@ func Decode(payload []byte) (State, error) {
 			fail(res.name, "undecodable result: "+err.Error())
 		}
 	}
+	CleanHostText(&st)
 	return st, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cpibia/tripwatch/internal/verifier/analyze"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 	"github.com/cpibia/tripwatch/internal/watch"
 )
@@ -69,6 +70,8 @@ func eventRows(events []store.Event) []eventRow {
 			}
 		}
 		row.Detail = strings.Join(parts, " · ")
+		// Events stored before the verifier cleaned them on arrival still hold the raw text.
+		analyze.CleanHostText(&row)
 		out = append(out, row)
 	}
 	return out

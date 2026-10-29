@@ -38,3 +38,12 @@ func TestHostPageListsEvents(t *testing.T) {
 		t.Error("events not newest first")
 	}
 }
+
+// Events stored raw keep a right-to-left override or a line break out of the page.
+func TestEventRowsEscapeHostText(t *testing.T) {
+	rows := eventRows([]store.Event{{Class: "exec", Op: "exec", Path: "/srv/x\u202egnp.php",
+		Data: []byte(`{"class":"exec","reason":"webshell","cmdline":"sh -c id\nAll clear"}`)}})
+	if rows[0].Subject != `/srv/x\u202egnp.php` || !strings.Contains(rows[0].Detail, `id\x0aAll clear`) {
+		t.Errorf("subject %q, detail %q", rows[0].Subject, rows[0].Detail)
+	}
+}

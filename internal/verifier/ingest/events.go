@@ -37,6 +37,7 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 		if json.Unmarshal(raw, &ev) != nil || ev.Class == "" {
 			continue
 		}
+		analyze.CleanHostText(&ev)
 		// The sensor's clock dates the event; one far off is dated by its arrival instead.
 		if ev.At.IsZero() || ev.At.After(now.Add(time.Hour)) || ev.At.Before(now.Add(-store.EventRetention)) {
 			ev.At = now
@@ -90,6 +91,7 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 			}
 			var ev watch.Event
 			if json.Unmarshal(p.Data, &ev) == nil {
+				analyze.CleanHostText(&ev)
 				ev.At = p.At
 				out = append(out, ev)
 			}

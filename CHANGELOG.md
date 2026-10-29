@@ -21,6 +21,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   10,000 processes, with 4 MB of command lines in all. Over those bounds what the rules read
   comes first, root's next, and what is left out is counted by owner in the result's issues.
 
+### Verifier
+
+- Text from the monitored host reaches alerts and emails with its line breaks, control
+  characters and invisible formatting characters shown as escapes, as titles already did: a
+  file name holding a line break can no longer add a line to an alert email that reads as the
+  verifier's own, and a right-to-left override can no longer show `x.php` as `xphp.png`. The
+  same goes for the real-time events listed on the host page, including the ones stored before.
+
 ## [0.1.39] - 2026-10-29
 
 Update the verifier, then the sensors: the verifier has no changes of its own, but sensors are

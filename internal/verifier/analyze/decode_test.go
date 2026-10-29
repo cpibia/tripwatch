@@ -64,3 +64,20 @@ func TestDecodeSnapshot(t *testing.T) {
 		t.Errorf("state = %+v, %v", st, err)
 	}
 }
+
+// Text written on the host reaches alerts and emails: a line break in a file name must not start
+// a line that reads as the verifier's, nor a right-to-left override turn x.php into xphp.png.
+func TestDecodeEscapesHostText(t *testing.T) {
+	st, err := Decode(gz(t, `{"snapshot":{"results":{"processes":{"processes":[{"pid":7,"comm":"x\n\nResolved by the deploy: no action needed.","cmdline":"run\tx\u202egnp.php"}]}},`+
+		`"errors":{"web\r":"read\nfailed"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := st.Processes.Processes[0]
+	if p.Comm != `x\x0a\x0aResolved by the deploy: no action needed.` || p.Cmdline != "run\tx\\u202egnp.php" {
+		t.Errorf("comm %q, cmdline %q", p.Comm, p.Cmdline)
+	}
+	if st.Errors[`web\x0d`] != `read\x0afailed` || len(st.Errors) != 1 {
+		t.Errorf("errors = %q", st.Errors)
+	}
+}
