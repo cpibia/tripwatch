@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.28] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Verifier
 
 - A directory of the code tree where, by the complete list of changed files, only data files
@@ -944,7 +948,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.27...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.28...HEAD
+[0.1.28]: https://github.com/cpibia/tripwatch/compare/v0.1.27...v0.1.28
 [0.1.27]: https://github.com/cpibia/tripwatch/compare/v0.1.26...v0.1.27
 [0.1.26]: https://github.com/cpibia/tripwatch/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/cpibia/tripwatch/compare/v0.1.24...v0.1.25
