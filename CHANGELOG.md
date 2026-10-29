@@ -15,6 +15,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   with `TRIPWATCH_KEEP_SNAPSHOTS_DAYS`, `TRIPWATCH_KEEP_EVENTS_DAYS`,
   `TRIPWATCH_KEEP_RESOLVED_DAYS` and `TRIPWATCH_KEEP_RESOLVED_MINOR_DAYS`; the defaults are
   unchanged (30, 7, 90 and 7), and the console states the retention of events as configured.
+- `GET /metrics`, for an API token, in Prometheus' text format: servers by state, alerts not
+  resolved by status and severity, the analysis queue and its oldest wait, the database's size,
+  and the sensors' requests by kind and answer.
 
 ## [0.1.40] - 2026-10-29
 

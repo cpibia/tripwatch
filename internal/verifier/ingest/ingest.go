@@ -183,6 +183,7 @@ type Server struct {
 	enrolling  chan struct{}
 	slow       sync.Map // host -> time.Time until which its snapshots wait
 	enrollOnce sync.Once
+	counts     counters
 }
 
 // acquire takes a one-slot semaphore, or gives up when the request ends.
@@ -202,7 +203,9 @@ func (s *Server) lock(ctx context.Context, host string) (func(), bool) {
 	return acquire(ctx, m.(chan struct{}))
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	w := &statusWriter{ResponseWriter: rw}
+	defer func() { s.counts.add(requestKind(r), w.status) }()
 	if r.Method != http.MethodPost || (r.URL.Path != Path && r.URL.Path != RenewPath && r.URL.Path != EnrollPath) {
 		http.NotFound(w, r)
 		return

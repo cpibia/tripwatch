@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,6 +59,9 @@ func TestEventsLostToBudgetApart(t *testing.T) {
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("alerts %v, want %v", got, want)
+	}
+	if c := h.ingest.Counts(); !slices.Contains(c, Count{Kind: "event", Status: http.StatusOK, N: 2}) {
+		t.Errorf("counts = %+v", c)
 	}
 }
 

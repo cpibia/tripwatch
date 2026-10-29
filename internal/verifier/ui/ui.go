@@ -34,6 +34,7 @@ import (
 
 	"github.com/cpibia/tripwatch/internal/protocol"
 	"github.com/cpibia/tripwatch/internal/selfupdate"
+	"github.com/cpibia/tripwatch/internal/verifier/ingest"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
@@ -96,8 +97,10 @@ type Config struct {
 	// with a timeout.
 	Releases string
 	Fetch    *http.Client
-	Now      func() time.Time
-	Log      *slog.Logger
+	// Envelopes returns the sensors' requests counted by the ingest server, for the metrics.
+	Envelopes func() []ingest.Count
+	Now       func() time.Time
+	Log       *slog.Logger
 }
 
 type server struct {
@@ -185,6 +188,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /api/v1/alerts", s.api(false, s.apiAlerts))
 	mux.HandleFunc("GET /api/v1/alerts/{id}", s.api(false, s.apiAlert))
 	mux.HandleFunc("GET /api/v1/hosts", s.api(false, s.apiHosts))
+	mux.HandleFunc("GET /metrics", s.api(false, s.metrics))
 	mux.HandleFunc("POST /api/v1/alerts/{id}/{action}", s.api(true, s.apiTransition))
 	mux.HandleFunc("GET /invite", s.inviteForm)
 	mux.HandleFunc("POST /invite", s.acceptInvite)
