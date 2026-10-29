@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A `.php` file in the uploads without any PHP tag ("Silence is golden.") is text PHP sends as it
+  is, not a script.
 - Each application's web root is watched in real time, without its subdirectories and for scripts
   only (SEC-173, web root part).
 

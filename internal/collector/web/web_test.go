@@ -519,6 +519,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	tr.file("var/www/blog/.redirects.php", "<?php\n$redirects = array(\n  '/old' => '/new',\n);\n")
 	tr.file(up+"backup/site-dump", "-- MySQL dump 10.13\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `date`; ?>');\n")
 	tr.file(up+"layouts/prices.php", "<?php return array('price' => \"From $10 {per night}\", 'css' => \".a{color:red}\");")
+	tr.file(up+"plugin/index.php", "Silence is golden.")
 	tr.file(up+"layouts/call.php", "<?php return array('a' => system($_GET['c']));")
 	tr.file(up+"layouts/variable.php", "<?php $f = 'system'; $f($_GET['c']);")
 	tr.file(up+"layouts/interpolated.php", "<?php return array('a' => \"{$_GET['c']}\");")
@@ -550,7 +551,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, name := range []string{"debug-log.php", "dance.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
+	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
 		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
 			t.Errorf("%s reported: %v", name, got)
 		}

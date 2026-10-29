@@ -908,6 +908,10 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	switch {
 	case image && polyglot(content, php):
 		s.add(KindPolyglotImage, name, e, nil)
+	case script && inUploads && complete && php && !bytes.Contains(content, []byte("<?")):
+		// No open tag at all: PHP sends the file as it is ("Silence is golden.") and runs
+		// nothing.
+		s.withdraw(KindScriptInUploads, name)
 	case script && inUploads && complete && php && (exitGuarded(content) || s.dataOnly(name, content)):
 		// A plugin's log kept under a .php name with an exit in front, so that requesting it
 		// shows nothing, or a theme's layouts kept as a returned array: nothing in either runs.
