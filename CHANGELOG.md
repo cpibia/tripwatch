@@ -11,6 +11,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Apache's configuration is judged stale against its oldest worker, as nginx's: the graceful
   reload log rotation runs every night rereads it in a master started long before, and every
   file changed since that start was reported as not loaded.
+- A container's health checks and `docker exec`, started by the container runtime (runc, crun,
+  containerd's shim, conmon), are not taken for a web shell when they run as the web server's
+  user.
+- Framework commands run through BusyBox's shell (Alpine), with `exec` in front (queue
+  supervisors) or in Laravel's background form are recognised as the scheduler's work; a
+  framework command with anything a shell interprets besides the redirection to `/dev/null`
+  no longer is.
 - The shell an error reporter starts from the PHP pool to read the project's git root (Flare and
   Ignition in Laravel, `echo $(git rev-parse --show-toplevel)`, matched whole) is not a web shell.
 

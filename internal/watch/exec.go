@@ -125,9 +125,11 @@ type execContext struct {
 	// homes maps UIDs to their home directories, uploads lists the upload directories.
 	homes   map[int]string
 	uploads []string
-	// fromCron reports whether a process descends from cron; owner returns a file's owner.
-	fromCron func(p system.Process) bool
-	owner    func(path string) (int, bool)
+	// fromCron reports whether a process descends from cron, fromRuntime whether a container
+	// runtime started it; owner returns a file's owner.
+	fromCron    func(p system.Process) bool
+	fromRuntime func(p system.Process) bool
+	owner       func(path string) (int, bool)
 	// parent returns the process that started p.
 	parent func(p system.Process) (system.Process, bool)
 }
@@ -147,7 +149,8 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 		return ReasonDeleted, script
 	// Where the web server's user also runs scheduled jobs, what cron starts is those jobs; a
 	// crontab the web user planted is reported by the schedule rules.
-	case c.webUsers[p.UID] && slices.Contains(webTools, tool) && (c.fromCron == nil || !c.fromCron(p)) && !c.routineShell(p, tool):
+	case c.webUsers[p.UID] && slices.Contains(webTools, tool) && (c.fromCron == nil || !c.fromCron(p)) &&
+		(c.fromRuntime == nil || !c.fromRuntime(p)) && !c.routineShell(p, tool):
 		return ReasonWebShell, script
 	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.packageScript(p, script) && !c.frameworkCLI(script)):
 		return ReasonUnusualPath, script
@@ -164,13 +167,28 @@ var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Z
 // print a directory, and anything appended makes them a shell command like any other.
 var errorReporterCommands = []string{"echo $(git rev-parse --show-toplevel)"}
 
+// backgroundTask is how Laravel's scheduler starts a task in the background: the task, then
+// schedule:finish with the task's mutex name and exit status, both silenced. Only the task, in
+// the first group, is then judged like any other command.
+var backgroundTask = regexp.MustCompile(`^\(([^;&|$` + "`" + `<>()]+?) > '?/dev/null'? 2>&1 ; ([^;&|$` + "`" + `<>()]+) schedule:finish "?[A-Za-z0-9/_-]+"? "?\$\?"?\) > '?/dev/null'? 2>&1 ?&?$`)
+
+// silenced is the redirection schedulers put after a command; plainCommand allows it, and
+// nothing else a shell would interpret.
+var silenced = regexp.MustCompile(` > '?/dev/null'? 2>&1$`)
+
+func plainCommand(command string) (string, bool) {
+	command = silenced.ReplaceAllString(command, "")
+	return command, !strings.ContainsAny(command, ";&|$`<>()\n")
+}
+
 // routineShell reports a shell the web server's user starts for its own work, which a webshell
 // cannot pass for: PHP's mail() running the configured sendmail, an error reporter reading the
 // project's git root, and a framework's scheduler or
 // queue worker running one of its commands. The scheduler is the parent, not something named in
 // the command: the shells a webshell starts have the PHP pool as their parent.
 func (c execContext) routineShell(p system.Process, tool string) bool {
-	if !slices.Contains([]string{"sh", "bash", "dash"}, tool) {
+	// Alpine's sh is BusyBox.
+	if !slices.Contains([]string{"sh", "bash", "dash", "ash", "busybox"}, tool) {
 		return false
 	}
 	_, command, ok := strings.Cut(p.Cmdline, " -c ")
@@ -179,10 +197,20 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	// Symfony's mailer ends the shell's options with "--" before the command.
 	command = strings.TrimPrefix(command, "-- ")
+	// Laravel's scheduler runs a task in the background as a subshell that reports its end.
+	if m := backgroundTask.FindStringSubmatch(command); m != nil {
+		if !c.frameworkCommand(m[2]) {
+			return false
+		}
+		command = m[1]
+	}
+	// Queue supervisors replace the shell with the worker.
+	command = strings.TrimPrefix(command, "exec ")
 	if sendmailCommand.MatchString(command) || slices.Contains(errorReporterCommands, command) {
 		return true
 	}
-	if c.parent == nil || !c.frameworkCommand(command) {
+	command, plain := plainCommand(command)
+	if !plain || c.parent == nil || !c.frameworkCommand(command) {
 		return false
 	}
 	parent, ok := c.parent(p)

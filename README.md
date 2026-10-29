@@ -343,10 +343,15 @@ what changes there within two seconds, in signed event envelopes of the same cha
   named the way the package manager names it, started by the package manager's own executable:
   `<package>.config.XXXXXX` from the system's perl running `/usr/sbin/dpkg-preconfigure`,
   `rpm-tmp.XXXXXX` from rpm, dnf5, microdnf, PackageKit or the system's Python running
-  dnf or yum. Two shells of the web server's user are its own work: `sh -c` running sendmail
-  with options only (PHP's `mail()`), and a framework command (`php artisan ...`,
-  `bin/console`, `bin/magento`) whose parent is that framework's scheduler or worker, not the
-  PHP pool. A start identical to one reported in the last hour
+  dnf or yum. Some shells of the web server's user are its own work: `sh -c` running sendmail
+  with options only (PHP's `mail()`); an error reporter reading the project's git root (Flare
+  and Ignition, `echo $(git rev-parse --show-toplevel)`, matched whole); and a framework
+  command (`php artisan ...`, `bin/console`, `bin/magento`) whose parent is that framework's
+  scheduler or worker, not the PHP pool, with nothing a shell interprets but the redirection to
+  `/dev/null` (`exec` in front and Laravel's background form included, BusyBox's `sh` too).
+  What a container runtime starts (runc, crun, containerd's shim or conmon, from the system's
+  directories and as root), directly or through shells, is a health check or a `docker exec`,
+  never a request to the web server inside the container. A start identical to one reported in the last hour
   is counted instead of sent again, so a job that runs every minute does not fill the budget.
 - **Containers**, by listing the state of Docker, containerd, Podman and CRI-O every second: a
   container that appears with power over the host (privileged mode, an administrative

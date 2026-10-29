@@ -211,7 +211,7 @@ func (x *Execs) message(m []byte) bool {
 			return true
 		}
 		x.mu.Lock()
-		reason, script := classifyExec(p, execContext{webUsers: x.webUsers, homes: x.homes, uploads: x.uploads, fromCron: x.fromCron, owner: x.owner, parent: x.parent})
+		reason, script := classifyExec(p, execContext{webUsers: x.webUsers, homes: x.homes, uploads: x.uploads, fromCron: x.fromCron, fromRuntime: x.fromRuntime, owner: x.owner, parent: x.parent})
 		x.mu.Unlock()
 		if reason != "" {
 			e := x.event(reason, p)
@@ -271,6 +271,44 @@ func (x *Execs) fromCron(p system.Process) bool {
 			return false
 		}
 		ppid = parent.PPID
+	}
+	return false
+}
+
+// runtimeNames are the executable names of the container runtimes that start a container's
+// health checks and the commands of docker exec: what they start comes from whoever controls
+// the container, root, not from a request to the web server inside it.
+var runtimeNames = []string{"runc", "crun", "youki", "containerd-shim", "containerd-shim-runc-v2", "conmon"}
+
+// fromRuntime walks up to four ancestors of a process, through shells only, looking for a
+// container runtime, known like cron by its executable in the system's directories and by
+// running as root. runc exits once the command runs: a parent already gone is looked for again
+// in the process's current parent, the shim that adopts it.
+func (x *Execs) fromRuntime(p system.Process) bool {
+	ppid := p.PPID
+	for range 4 {
+		if ppid <= 1 {
+			return false
+		}
+		parent, ok := system.ReadProcess(x.src.FS, ppid)
+		if !ok {
+			again, ok := system.ReadProcess(x.src.FS, p.PID)
+			if !ok || again.PPID == ppid {
+				return false
+			}
+			ppid = again.PPID
+			if parent, ok = system.ReadProcess(x.src.FS, ppid); !ok {
+				return false
+			}
+		}
+		if parent.UID == 0 && !parent.ExeDeleted && slices.Contains(runtimeNames, path.Base(parent.Exe)) &&
+			slices.ContainsFunc(systemBinDirs, func(d string) bool { return strings.HasPrefix(parent.Exe, d) }) {
+			return true
+		}
+		if !slices.Contains(shells, path.Base(parent.Exe)) {
+			return false
+		}
+		p, ppid = parent, parent.PPID
 	}
 	return false
 }
