@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -76,11 +77,16 @@ func inspectSites(fsys fs.FS) Inventory {
 		{ApacheSites, []string{"apache2", "httpd"}, true},
 		{CaddySites, []string{"caddy"}, false},
 	}
+	clock := bootClockSane(fsys)
+	if !clock {
+		inv.Issues = append(inv.Issues, "the kernel reports a boot before it was built: process start times are wrong on this machine, so changes to the web server configuration after it started are not judged")
+	}
 	for _, srv := range servers {
 		sites, files, issues := srv.parse(fsys)
 		inv.Sites = append(inv.Sites, sites...)
 		inv.Issues = append(inv.Issues, issues...)
 		started, running := configLoaded(fsys, srv.processes, srv.reloadsWorkers)
+		running = running && clock
 		for _, name := range files {
 			f, err := collector.Describe(collector.Source{FS: fsys}, name)
 			inv.Issues.Add(err)
@@ -88,7 +94,7 @@ func inspectSites(fsys fs.FS) Inventory {
 				continue
 			}
 			inv.ConfigFiles = append(inv.ConfigFiles, f)
-			if changed, ok := changedAt(fsys, name); running && ok && changed.After(started) {
+			if changed, ok := changedAt(fsys, name); running && ok && changed.After(started.Add(startSlack)) {
 				inv.StaleConfig = append(inv.StaleConfig, f.Path)
 				inv.StaleTimes = append(inv.StaleTimes, StaleFile{Path: f.Path, Changed: changed.UTC(), Loaded: started.UTC()})
 				inv.Issues = append(inv.Issues, fmt.Sprintf("%s changed after the web server started: the running configuration may differ", f.Path))
@@ -270,6 +276,42 @@ func processUID(fsys fs.FS, dir string) int {
 		}
 	}
 	return -1
+}
+
+// startSlack absorbs the rounding of a process's start: the kernel gives the boot time in whole
+// seconds, so a start computed from it can be up to a second early, and a file touched as the
+// server started would look changed after it.
+const startSlack = 2 * time.Second
+
+// kernelBuildDate is the build date at the end of the kernel's version string
+// ("#50-Ubuntu SMP Fri Sep 23 21:02:22 UTC 2022").
+var kernelBuildDate = regexp.MustCompile(`(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} \d\d:\d\d:\d\d(?: [A-Z]{2,5})? \d{4}`)
+
+// bootClockSane reports whether the boot time can be trusted: virtual machines that ran for
+// years across live migrations can count more time since boot than passed, which puts the boot,
+// and every process start computed from it, before the running kernel was even built. Without
+// a readable build date the boot time is taken as it is.
+func bootClockSane(fsys fs.FS) bool {
+	boot, ok := bootTime(fsys)
+	if !ok {
+		return true
+	}
+	version, err := fs.ReadFile(fsys, "proc/sys/kernel/version")
+	if err != nil {
+		return true
+	}
+	m := kernelBuildDate.FindAllString(string(version), -1)
+	if len(m) == 0 {
+		return true
+	}
+	last := m[len(m)-1]
+	for _, layout := range []string{"Mon Jan _2 15:04:05 MST 2006", "Mon Jan _2 15:04:05 2006"} {
+		if built, err := time.Parse(layout, strings.Join(strings.Fields(last), " ")); err == nil {
+			// A day of margin for the time zone the build named.
+			return !boot.Before(built.Add(-24 * time.Hour))
+		}
+	}
+	return true
 }
 
 func bootTime(fsys fs.FS) (time.Time, bool) {

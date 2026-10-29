@@ -598,6 +598,26 @@ func TestStaleConfig(t *testing.T) {
 	if len(inv.StaleTimes) != 1 || !inv.StaleTimes[0].Loaded.Equal(boot.Add(time.Hour)) || !inv.StaleTimes[0].Changed.Equal(boot.Add(90*time.Minute)) {
 		t.Errorf("stale times = %+v", inv.StaleTimes)
 	}
+
+	// A file touched in the second the server started is not stale: the boot time is in whole
+	// seconds, so the start computed from it can be early by up to one.
+	fsys["etc/nginx/sites/a"] = &fstest.MapFile{Data: []byte("server { root /srv; }"), ModTime: boot.Add(time.Hour + 800*time.Millisecond)}
+	if inv := Inspect(fsys); len(inv.StaleConfig) != 0 {
+		t.Errorf("stale within the rounding of the start = %v", inv.StaleConfig)
+	}
+
+	// A boot before the running kernel was built means the clock since boot is wrong: nothing
+	// is judged, and the issue says why.
+	fsys["etc/nginx/sites/a"] = &fstest.MapFile{Data: []byte("server { root /srv; }"), ModTime: boot.Add(90 * time.Minute)}
+	fsys["proc/sys/kernel/version"] = text("#50-Ubuntu SMP Fri Sep 23 21:02:22 UTC 2024\n")
+	inv = Inspect(fsys)
+	if len(inv.StaleConfig) != 0 || !slices.ContainsFunc(inv.Issues, func(i string) bool { return strings.Contains(i, "boot before it was built") }) {
+		t.Errorf("with a boot before the kernel's build: stale %v, issues %v", inv.StaleConfig, inv.Issues)
+	}
+	fsys["proc/sys/kernel/version"] = text("#50-Ubuntu SMP Fri Sep 23 21:02:22 UTC 2022\n")
+	if inv := Inspect(fsys); len(inv.StaleConfig) != 1 {
+		t.Errorf("with a kernel built before the boot: stale %v", inv.StaleConfig)
+	}
 }
 
 // Apache's graceful reload rereads the configuration in a master started long before and starts

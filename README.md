@@ -492,7 +492,10 @@ For each application the `web` collector produces:
 `reachable` tells whether a file would be executed according to the configuration on disk. It is
 a hint, never a reason to lower a finding's severity: whoever controls the configuration can
 change it. Configurations modified after the web server started are flagged, because the running
-one may differ.
+one may differ: the file's inode change time, which no one sets back, against the start of the
+server's newest workers, with two seconds for the rounding of the boot time. On a machine whose
+kernel reports a boot before the kernel was built (virtual machines that count more uptime than
+passed), process start times are wrong and nothing is judged; an issue says so.
 
 The collector has been run on real applications of different stacks, up to more than 170,000
 files per application. The remaining false positives are library files that really contain those

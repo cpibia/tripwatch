@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A web server configuration file touched in the second the server started is no longer taken
+  for one changed after: the boot time the kernel gives is in whole seconds, so the start
+  computed from it can be early by up to one. Two seconds of slack absorb it.
+- Where the kernel reports a boot before its own build date, as virtual machines that count
+  more uptime than passed do, process start times are wrong: configuration changes after the
+  web server started are then not judged, and an issue says why, instead of every
+  configuration file being reported.
+
 ## [0.1.36] - 2026-10-29
 
 Update the verifier, then the sensors.
