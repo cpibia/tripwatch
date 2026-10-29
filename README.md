@@ -551,8 +551,10 @@ nginx's location roots and aliases, Apache's `Alias`): a request that failed for
 in none of them ran no code, and raises no alert (scanners probe thousands of such paths). Nor
 does a failed request on an nginx site that answers every request itself (`return`, the redirect
 to HTTPS) or hands that path to a proxy: the backend's own log, read when it is on the host,
-judges what ran there. The same probe often lands in several logs (http and https logged apart):
-it raises nothing only when every site writing any of them ran no code. The alert names the
+judges what ran there. The same probe often lands in several logs (http and https logged apart, a
+proxy and the site behind it each logging it): the logs of sites that only answer or pass
+requests on are left aside, and the script is looked up in the roots of the others, so a failed
+probe for a script found in none of them raises nothing. The alert names the
 file on the host the script would be (behind a proxy, in the site answering the same domain,
 often a container's) and says whether it is there. When the request may reach a proxy otherwise (`ProxyPass`, a rewrite with
 the `P` flag, a named location a fallback leads to), a root

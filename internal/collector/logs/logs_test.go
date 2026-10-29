@@ -608,8 +608,8 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		logLine("203.0.113.11", "GET", "/files/about.php", 404))
 	write("var/log/nginx/other.access.log", logLine("203.0.113.9", "GET", "/media/z.php", 404))
 	write("var/log/nginx/redirect.log", logLine("203.0.113.10", "GET", "/tmp/phpinfo.php", 301))
-	// The same probe over http and https, logged by two proxies, and one also logged by a site
-	// that runs scripts.
+	// The same probe over http and https, logged by two proxies, and one also logged by the site
+	// behind a proxy, which runs scripts: that site's roots tell.
 	write("var/log/nginx/d.log", logLine("203.0.113.11", "GET", "/images/about.php", 404)+
 		logLine("203.0.113.11", "GET", "/files/about.php", 404))
 	write("var/log/nginx/c.log", logLine("203.0.113.8", "GET", "/media/y.php", 404)+
@@ -628,7 +628,7 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		"/tmp/phpinfo.php":              "elsewhere",
 		"/media/z.php":                  "",
 		"/images/about.php":             "elsewhere",
-		"/files/about.php":              "",
+		"/files/about.php":              "missing",
 	} {
 		if v, ok := got[uri]; !ok || v != want {
 			t.Errorf("%s: on disk %q (event %v), want %q", uri, v, ok, want)

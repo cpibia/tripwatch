@@ -11,6 +11,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A snapshot cut short by the sensor's own stop (an update, a reboot) is no longer sealed and
   sent by the next start: it listed the scripts in upload directories found by name before
   their content was checked, raising alerts the whole snapshot withdraws.
+- A failed probe logged both by a proxy and by the site behind it (often in a container) is
+  looked up in that site's roots instead of being left open: when the script is not there, it
+  raises nothing.
 
 ## [0.1.31] - 2026-10-29
 

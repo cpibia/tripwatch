@@ -978,30 +978,31 @@ func (r *runState) onDisk(e *Event) string {
 	if !weblog.IsScript(script) || e.moreLogs {
 		return ""
 	}
-	// Scanners try http and https alike, and a proxy often logs each scheme apart: requests
-	// from several logs are a probe only if every site writing any of them ran no code.
-	elsewhere := true
+	// The same request is often in several logs: scanners try http and https, which a proxy
+	// logs apart, and a proxy and the site behind it each log what passed through. A log whose
+	// sites only answer or pass requests on says nothing of the file; the others are looked
+	// up, and none left means the request ran no code here.
+	var files []string
+	judged := false
 	for _, log := range append([]string{strings.TrimPrefix(e.Log, "/")}, e.logs...) {
 		sites := r.sites[log]
 		if len(sites) == 0 {
 			return ""
 		}
-		elsewhere = elsewhere && !slices.ContainsFunc(sites, func(s discovery.Site) bool { return !s.RunsNothing(script) })
-	}
-	if elsewhere {
-		return "elsewhere"
-	}
-	if len(e.logs) > 0 {
-		return ""
-	}
-	sites := r.sites[strings.TrimPrefix(e.Log, "/")]
-	var files []string
-	for i := range sites {
-		f, ok := sites[i].ScriptFiles(script)
-		if !ok {
-			return ""
+		if !slices.ContainsFunc(sites, func(s discovery.Site) bool { return !s.RunsNothing(script) }) {
+			continue
 		}
-		files = append(files, f...)
+		judged = true
+		for i := range sites {
+			f, ok := sites[i].ScriptFiles(script)
+			if !ok {
+				return ""
+			}
+			files = append(files, f...)
+		}
+	}
+	if !judged {
+		return "elsewhere"
 	}
 	switch found, ok := r.lookUp(e, files); {
 	case !ok:
