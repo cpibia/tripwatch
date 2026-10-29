@@ -936,7 +936,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	case inUploads && !script && containsCode(content):
 		// An archive or a document holding PHP (a plugin backed up as a zip) runs nothing; one
 		// named by a signature is still reported.
-		if sigs := matchSignatures(content, false); !documentLike(content) || len(strongInDocuments(content, sigs)) > 0 {
+		if sigs := matchSignatures(content, false); !documentLike(name, content) || len(strongInDocuments(true, sigs)) > 0 {
 			s.add(KindCodeInUploads, name, e, sigs)
 		}
 	case inData && !script && !image:
@@ -1086,11 +1086,13 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) (sigs []string
 	defer func() { s.budget.spent(name, info, before-s.budget.codeLeft) }()
 	buf := make([]byte, dataScanChunk)
 	var head []byte
+	document := false
 	for c == nil || !c.exhausted() {
 		n, err := io.ReadFull(r, buf)
 		if head == nil {
 			head = slices.Clone(buf[:min(n, documentHead)])
-			c = newDataSearch(&s.budget.codeLeft, documentLike(head))
+			document = documentLike(name, head)
+			c = newDataSearch(&s.budget.codeLeft, document)
 		}
 		last := err != nil
 		c.feed(buf[:n], last)
@@ -1101,9 +1103,9 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) (sigs []string
 	if c.exhausted() {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
 		s.budget.unsearched(name)
-		return strongInDocuments(head, c.signatures())
+		return strongInDocuments(document, c.signatures())
 	}
-	if sigs = strongInDocuments(head, c.signatures()); len(sigs) == 0 {
+	if sigs = strongInDocuments(document, c.signatures()); len(sigs) == 0 {
 		s.budget.searched.add(name, info)
 	}
 	return sigs
@@ -1165,10 +1167,15 @@ const documentHead = 4096
 // documentLike reports a document, an archive or a database dump, where only the signatures
 // that name planted code count. A dump is told by its content when its first bytes do not say:
 // a statement on a backticked table in its head, before any open tag (posts quoting code come
-// after their INSERT).
-func documentLike(head []byte) bool {
+// after their INSERT). Only a name a dump can have is told this way: none of the extensions of
+// other kinds of file, so that a .txt or a .ico starting with one such line is still searched
+// in full.
+func documentLike(name string, head []byte) bool {
 	if mediaOrDocument(head) {
 		return true
+	}
+	if !dumpName(name) {
+		return false
 	}
 	head = head[:min(len(head), documentHead)]
 	loc := sqlStatement.FindIndex(head)
@@ -1177,6 +1184,16 @@ func documentLike(head []byte) bool {
 	}
 	tag := bytes.Index(head, []byte("<?"))
 	return tag < 0 || loc[0] < tag
+}
+
+// dumpExtensions are what dump tools name their files; many name them by date alone.
+var dumpExtensions = []string{".sql", ".dump", ".mysql", ".bak", ".backup"}
+
+// dumpName reports a name a database dump can have: one of dumpExtensions, or no extension but
+// digits, as in mysql_2022-03-21 or db.20220321.
+func dumpName(name string) bool {
+	ext := strings.ToLower(path.Ext(path.Base(name)))
+	return ext == "" || slices.Contains(dumpExtensions, ext) || strings.Trim(ext[1:], "0123456789") == ""
 }
 
 // sqlStatement is a dump's statement on a table, at the start of a line.
@@ -1210,8 +1227,8 @@ var weakCodeSignals = []string{"backtick_exec", "dangerous_call"}
 // strongInDocuments keeps only the named signatures of a file that starts like a document or an
 // archive: their compressed streams hold an open tag and a backtick by chance every few
 // megabytes, in text PHP would compile, while code planted to run is named by a signature.
-func strongInDocuments(head []byte, sigs []string) []string {
-	if !documentLike(head) {
+func strongInDocuments(document bool, sigs []string) []string {
+	if !document {
 		return sigs
 	}
 	return slices.DeleteFunc(sigs, func(s string) bool { return slices.Contains(weakCodeSignals, s) })
@@ -1226,8 +1243,9 @@ func (s *scanner) codeInData(name string, e fs.DirEntry, content []byte, complet
 		return nil
 	}
 	before := s.budget.codeLeft
-	sigs, exhausted := codeInData(content, &s.budget.codeLeft)
-	sigs = strongInDocuments(content, sigs)
+	document := documentLike(name, content)
+	sigs, exhausted := codeInData(content, &s.budget.codeLeft, document)
+	sigs = strongInDocuments(document, sigs)
 	if err == nil {
 		s.budget.spent(name, info, before-s.budget.codeLeft)
 		if complete && !exhausted && len(sigs) == 0 {

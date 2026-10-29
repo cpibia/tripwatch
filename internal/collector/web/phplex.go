@@ -84,9 +84,10 @@ const (
 )
 
 // codeInData returns the signatures of the PHP content would run if included, and whether the
-// budget of code ran out before the end.
-func codeInData(content []byte, codeLeft *int64) (sigs []string, exhausted bool) {
-	d := newDataSearch(codeLeft, documentLike(content))
+// budget of code ran out before the end. document says content is a document, an archive or a
+// dump, as documentLike tells.
+func codeInData(content []byte, codeLeft *int64, document bool) (sigs []string, exhausted bool) {
+	d := newDataSearch(codeLeft, document)
 	d.feed(content, true)
 	return d.signatures(), d.exhausted()
 }

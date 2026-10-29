@@ -1023,7 +1023,7 @@ func BenchmarkCodeInData(b *testing.B) {
 	log := []byte(strings.Repeat("[2026-10-24T08:13:02Z] main.WARNING: Blocked search q=<?php+system($_GET[c]); <?= 1 ?> [] []\n", 40000))
 	b.SetBytes(int64(len(log)))
 	for b.Loop() {
-		codeInData(log, nil)
+		searchData(log, nil)
 	}
 }
 
@@ -1078,7 +1078,7 @@ func TestCodeInDataBypasses(t *testing.T) {
 		"[2026-10-24] main.INFO: q=<?php+system($_GET[c]); [] []":                    "",
 		"[2026-10-24] main.INFO: template <?php echo $block->getTitle() ?> rendered": "",
 	} {
-		if got := strings.Join(first(codeInData([]byte(in), nil)), ","); !strings.Contains(got, want) || (want == "" && got != "") {
+		if got := strings.Join(first(searchData([]byte(in), nil)), ","); !strings.Contains(got, want) || (want == "" && got != "") {
 			t.Errorf("%.60q: %q, want %q", in, got, want)
 		}
 	}
@@ -1106,7 +1106,7 @@ func BenchmarkCodeInDataHostile(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			b.SetBytes(int64(len(src)))
 			for b.Loop() {
-				codeInData(src, nil)
+				searchData(src, nil)
 			}
 		})
 	}
@@ -1118,7 +1118,7 @@ func first[T, U any](t T, _ U) T { return t }
 func TestCodeInDataBudget(t *testing.T) {
 	left := int64(1000)
 	in := []byte(strings.Repeat("<?php $a = 1; ?>", 10) + "<?php " + strings.Repeat("$x; ", 1000) + "system($_GET[c]);")
-	if _, exhausted := codeInData(in, &left); !exhausted || left < 0 {
+	if _, exhausted := searchData(in, &left); !exhausted || left < 0 {
 		t.Fatalf("budget not enforced: left %d", left)
 	}
 }

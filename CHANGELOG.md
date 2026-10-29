@@ -26,6 +26,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   these budgets are counted apart and raise their own medium alert, "Real-time events over
   budget in temporary or upload directories", instead of the high "Real-time events lost",
   which now counts only what a sensor that fell behind lost.
+- A database dump is told by its statements only under a name a dump can have: a `.sql`,
+  `.dump` or `.bak` file, or one named by date with no other extension. A `.txt` or `.ico`
+  in the uploads that starts with a `LOCK TABLES` line is searched for code in full.
 
 ### Verifier
 

@@ -25,7 +25,7 @@ func TestCodeInDataHeredoc(t *testing.T) {
 		"log <?php $x=<<<'EOT'\r?>\rEOT;\rsystem($_GET['c']);": "exec_request_input",
 		"log <?$x=<<<EOT\r\x01\rEOT;\rsystem($_GET['c']);":     "exec_request_input",
 	} {
-		got := strings.Join(first(codeInData([]byte(in), nil)), ",")
+		got := strings.Join(first(searchData([]byte(in), nil)), ",")
 		if !strings.Contains(got, want) || (want == "" && got != "") {
 			t.Errorf("%q: %q, want %q", in, got, want)
 		}
@@ -41,7 +41,7 @@ func TestCodeSearchPieces(t *testing.T) {
 		"<?xml version=\"1.0\"?><a>system($_GET)</a> <?php+system($_GET[c]);",
 	}
 	for n, in := range inputs {
-		whole := first(codeInData([]byte(in), nil))
+		whole := first(searchData([]byte(in), nil))
 		if (n < 2) != (len(whole) > 0) {
 			t.Fatalf("whole %.40q: %v", in, whole)
 		}
@@ -65,7 +65,7 @@ func TestShortTagPieces(t *testing.T) {
 		"log <?php" + strings.Repeat("x", openTagLook) + ":system($_GET['c']);",
 		"q=<?php+system($_GET[c]); <?xml version=\"1.0\"?>",
 	} {
-		whole := first(codeInData([]byte(in), nil))
+		whole := first(searchData([]byte(in), nil))
 		for _, size := range []int{1, 2, 3, 7, 64} {
 			d := newDataSearch(nil, mediaOrDocument([]byte(in)))
 			for i := 0; i < len(in); i += size {
@@ -86,7 +86,7 @@ func TestCodeInDataBinary(t *testing.T) {
 	for seed := range uint64(3) {
 		r := rand.NewChaCha8([32]byte{byte(seed)})
 		_, _ = r.Read(noise)
-		if got := first(codeInData(noise, nil)); len(got) > 0 {
+		if got := first(searchData(noise, nil)); len(got) > 0 {
 			t.Errorf("random file %d: %v", seed, got)
 		}
 	}
@@ -105,7 +105,7 @@ func TestCodeInDataBinary(t *testing.T) {
 		"<?php echo `$c`; A\\__halt_compiler(); \x01 ?>":         "",
 		"<?php echo `$c`; $x = '\x01'; /* \x02 */ // \x03\n ?>":  "backtick_exec",
 	} {
-		got := strings.Join(first(codeInData([]byte(in), nil)), ",")
+		got := strings.Join(first(searchData([]byte(in), nil)), ",")
 		if !strings.Contains(got, want) || (want == "" && got != "") {
 			t.Errorf("%.60q: %q, want %q", in, got, want)
 		}
@@ -160,7 +160,7 @@ func TestCodeInDataInterpolation(t *testing.T) {
 		"<?mso-application progid=\"Excel.Sheet\"?><x/>": "",
 		deep: "nested_interpolation",
 	} {
-		whole := strings.Join(first(codeInData([]byte(in), nil)), ",")
+		whole := strings.Join(first(searchData([]byte(in), nil)), ",")
 		if !strings.Contains(whole, want) || (want == "" && whole != "") {
 			t.Errorf("%.60q: %q, want %q", in, whole, want)
 		}
@@ -181,17 +181,17 @@ func TestCodeInDataInterpolation(t *testing.T) {
 func TestDocumentsSkipShortBlocks(t *testing.T) {
 	noise := "%PDF-1.7\n" + strings.Repeat("<? "+strings.Repeat("a", 200)+" ?>", 50)
 	left := int64(1000)
-	if _, exhausted := codeInData([]byte(noise), &left); exhausted || left != 1000 {
+	if _, exhausted := searchData([]byte(noise), &left); exhausted || left != 1000 {
 		t.Errorf("short blocks of a document spent the budget: %d left, exhausted %v", left, exhausted)
 	}
 	text := strings.TrimPrefix(noise, "%PDF-1.7\n")
 	left = 1000
-	if _, exhausted := codeInData([]byte(text), &left); !exhausted {
+	if _, exhausted := searchData([]byte(text), &left); !exhausted {
 		t.Error("the same short blocks outside a document spent nothing")
 	}
 	left = 1 << 20
 	planted := "%PDF-1.7\n" + noise + "<?php system($_GET['c']); ?>"
-	if sigs, _ := codeInData([]byte(planted), &left); len(strongInDocuments([]byte(planted), sigs)) == 0 {
+	if sigs, _ := searchData([]byte(planted), &left); len(strongInDocuments(documentLike("data", []byte(planted)), sigs)) == 0 {
 		t.Errorf("code planted in a document with a full tag: %v", sigs)
 	}
 }
@@ -205,12 +205,12 @@ func TestDocumentBlocksAreCut(t *testing.T) {
 	}
 	pdf := append([]byte("%PDF-1.7\n<?= "), noise...)
 	left := int64(16 << 20)
-	if _, exhausted := codeInData(pdf, &left); exhausted || 16<<20-left > documentBlockCode+4096 {
+	if _, exhausted := searchData(pdf, &left); exhausted || 16<<20-left > documentBlockCode+4096 {
 		t.Errorf("an unclosed block of a document spent %d bytes", 16<<20-left)
 	}
 	left = 16 << 20
 	planted := append(append([]byte("%PDF-1.7\n"), noise[:1<<20]...), "<?= system($_GET['c']); ?>"...)
-	if sigs, _ := codeInData(planted, &left); len(strongInDocuments(planted, sigs)) == 0 {
+	if sigs, _ := searchData(planted, &left); len(strongInDocuments(documentLike("data", planted), sigs)) == 0 {
 		t.Errorf("a short block planted in a document: %v", sigs)
 	}
 }
@@ -219,13 +219,24 @@ func TestDocumentBlocksAreCut(t *testing.T) {
 // tables; text that opens a PHP block before them is not.
 func TestDumpToldByItsStatements(t *testing.T) {
 	dump := []byte("# Dump of database shop\n# ------------------------\n\nDROP TABLE IF EXISTS `wp_posts`;\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `ls -la`; ?>');\n")
-	if !documentLike(dump) {
+	if !documentLike("backup/mysql_2022-03-21", dump) {
 		t.Error("a dump with a tool's header is not told")
 	}
-	if sigs, _ := codeInData(dump, nil); len(strongInDocuments(dump, sigs)) != 0 {
+	if sigs, _ := searchData(dump, nil); len(strongInDocuments(documentLike("data", dump), sigs)) != 0 {
 		t.Errorf("a dump's quoted code reported: %v", sigs)
 	}
-	if documentLike([]byte("<?php `id`; ?>\nINSERT INTO `x` VALUES (1);\n")) {
+	if documentLike("backup/mysql_2022-03-21", []byte("<?php `id`; ?>\nINSERT INTO `x` VALUES (1);\n")) {
 		t.Error("a PHP file with a statement taken for a dump")
 	}
+	// One statement line heads any file its writer chooses: only a name a dump can have counts.
+	for name, want := range map[string]bool{"backup/db.sql": true, "backup/db.20220321": true, "uploads/x.txt": false, "uploads/favicon.ico": false, "var/x.php": false} {
+		if got := documentLike(name, dump); got != want {
+			t.Errorf("%s told a dump: %v, want %v", name, got, want)
+		}
+	}
+}
+
+// searchData is codeInData on content told a document or not as a data file named "data" is.
+func searchData(content []byte, codeLeft *int64) ([]string, bool) {
+	return codeInData(content, codeLeft, documentLike("data", content))
 }
