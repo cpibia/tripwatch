@@ -616,6 +616,15 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 	enrolled := time.Time{}
 	if h, err := s.Store.Host(ctx, host); err == nil {
 		enrolled = h.EnrolledAt
+		// The start explains the silence from the signed stop on, not a pause before it: a
+		// sensor frozen for minutes, then stopped cleanly by a reboot or an update.
+		if last := h.LastHeartbeat; stopped && !last.IsZero() && !last.Before(s.Started) && run.StoppedAt.Sub(last) > HeartbeatGap {
+			s.raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:gap:" + strconv.FormatInt(run.StoppedAt.Unix(), 10), Severity: "medium", Kind: "sensor-event",
+				Title: "Missed heartbeats",
+				Detail: fmt.Sprintf("No heartbeat between %s and %s (%s), before the sensor said it was stopping. A sensor suspended for a while, then stopped by a reboot or an update, looks like this: check what happened in that interval.",
+					last.Format("15:04:05"), run.StoppedAt.Format("15:04:05"), run.StoppedAt.Sub(last).Round(time.Second)),
+			}, now)
+		}
 	}
 	switch {
 	case run.BootID == "" && run.Version == "" && !enrolled.IsZero() && now.Sub(enrolled) < time.Hour:

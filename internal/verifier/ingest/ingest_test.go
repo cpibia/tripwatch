@@ -912,3 +912,36 @@ func TestHeartbeatGapAcrossAVerifierRestart(t *testing.T) {
 		t.Fatalf("alerts = %+v", a)
 	}
 }
+
+// A sensor frozen for minutes and then stopped cleanly by a reboot leaves the pause before its
+// stop on record: the start explains the silence after the stop, not before it.
+func TestHeartbeatGapBeforeASignedStop(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	send := func(kind protocol.Kind, payload string, at time.Duration) {
+		t.Helper()
+		h.clock = now.Add(at)
+		var body []byte
+		if payload != "" {
+			body = []byte(payload)
+		}
+		if err := c.Send(ctx, kind, body, h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(protocol.KindEvent, `{"event":"sensor_started","version":"1.2.0","boot_id":"aaaaaaaa-1"}`, 0)
+	send(protocol.KindHeartbeat, "", time.Minute)
+	send(protocol.KindEvent, `{"event":"sensor_stopping","version":"1.2.0","reason":"stopped","shutdown":true}`, 4*time.Minute)
+	send(protocol.KindEvent, `{"event":"sensor_started","version":"1.2.0","boot_id":"bbbbbbbb-2"}`, 6*time.Minute)
+	send(protocol.KindHeartbeat, "", 6*time.Minute+time.Second)
+	var gaps []string
+	for _, a := range h.alerts() {
+		if a.Title == "Missed heartbeats" {
+			gaps = append(gaps, a.Detail)
+		}
+	}
+	if len(gaps) != 1 || !strings.Contains(gaps[0], "before the sensor said it was stopping") {
+		t.Fatalf("gaps = %v", gaps)
+	}
+}

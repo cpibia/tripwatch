@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- A pause of the heartbeats before a signed stop (a sensor frozen, then stopped by a reboot or an
+  update) raises "Missed heartbeats": the start explains only the silence after the stop
+  (SEC-194).
+
 ### Sensor
 
 - The private `/tmp` systemd and snapd give services and snaps is watched as a scratch directory
