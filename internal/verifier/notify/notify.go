@@ -1,4 +1,4 @@
-// Package notify sends new alerts by email.
+// Package notify sends new alerts by email, Telegram and webhook.
 package notify
 
 import (
@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"mime/quotedprintable"
 	"net"
+	"net/http"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -15,9 +16,6 @@ import (
 
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
-
-// Severities sent by email; lower ones are visible in the interface only.
-var Severities = []string{"critical", "high"}
 
 // Mailer holds the SMTP settings. With no Host, notifications are disabled.
 type Mailer struct {
@@ -33,41 +31,94 @@ type Mailer struct {
 
 func (m Mailer) Enabled() bool { return m.Host != "" && m.From != "" && len(m.To) > 0 }
 
-// Notifier sends the alerts not yet notified, grouped in one message per round.
+// Notifier sends the alerts not yet notified, grouped in one message per channel and round: to
+// the email configured in the environment, and to the channels set up in the interface.
 type Notifier struct {
 	Store  *store.Store
 	Mailer Mailer
 	Now    func() time.Time
 	Log    *slog.Logger
 	send   func(m Mailer, subject, body string) error
+	post   func(ctx context.Context, url string, body []byte, header http.Header) error
 }
 
+// envChannel stands for the email configured in the environment: it receives critical and high
+// alerts, as it always has.
+const envChannel = 0
+
+// channels lists where to send: the environment's email, then the enabled channels.
+func (n *Notifier) channels(ctx context.Context) []store.Channel {
+	var out []store.Channel
+	if n.Mailer.Enabled() {
+		out = append(out, store.Channel{ID: envChannel, Kind: store.ChannelEmail, Name: "email from the environment", MinSeverity: "high", Enabled: true,
+			Settings: store.ChannelSettings{SMTPHost: n.Mailer.Host, SMTPPort: n.Mailer.Port, SMTPUser: n.Mailer.User, Password: n.Mailer.Password, From: n.Mailer.From, To: n.Mailer.To}})
+	}
+	stored, err := n.Store.Channels(ctx)
+	if err != nil {
+		n.Log.Error("load notification channels", "err", err)
+	}
+	for _, c := range stored {
+		if c.Enabled {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Round sends what was raised since the last round to every channel that wants it. A channel
+// gets the alerts at or above its severity raised after it was set up, so a new channel does not
+// receive the whole history. The alerts are marked as sent once at least one channel took them:
+// a channel that keeps failing raises its own alert instead of making the others repeat.
 func (n *Notifier) Round(ctx context.Context) {
-	if !n.Mailer.Enabled() {
+	channels := n.channels(ctx)
+	if len(channels) == 0 {
 		return
 	}
-	alerts, err := n.Store.Unnotified(ctx, Severities, perMessage)
+	floor := "critical"
+	for _, c := range channels {
+		if rank(c.MinSeverity) > rank(floor) {
+			floor = c.MinSeverity
+		}
+	}
+	alerts, err := n.Store.Unnotified(ctx, severitiesFrom(floor), perMessage)
 	if err != nil || len(alerts) == 0 {
 		if err != nil {
 			n.Log.Error("load alerts to notify", "err", err)
 		}
 		return
 	}
-	send := n.send
-	if send == nil {
-		send = sendSMTP
-	}
-	subject, body := Compose(alerts, n.Mailer.BaseURL)
-	if err := send(n.Mailer, subject, body); err != nil {
-		n.Log.Error("send notification", "err", err)
-		// Shown in the interface: notifications failing silently would leave alerts unseen.
-		if _, rerr := n.Store.Raise(ctx, store.Alert{HostID: "verifier", Fingerprint: "notify:smtp", Severity: "medium", Kind: "verifier",
-			Title: "Alert emails are not being sent", Detail: err.Error()}, n.Now()); rerr != nil {
-			n.Log.Error("raise notification alert", "err", rerr)
+	delivered, failed := 0, 0
+	var failing []string
+	for _, c := range channels {
+		var pick []store.Alert
+		for _, a := range alerts {
+			if rank(a.Severity) <= rank(c.MinSeverity) && !a.CreatedAt.Before(c.CreatedAt) {
+				pick = append(pick, a)
+			}
 		}
+		if len(pick) == 0 {
+			continue
+		}
+		subject, body := Compose(pick, n.Mailer.BaseURL)
+		err := n.deliver(ctx, c, subject, body, pick)
+		n.record(ctx, c, err)
+		if err != nil {
+			failed++
+			failing = append(failing, failureFingerprint(c))
+			n.Log.Error("send notification", "channel", c.Name, "err", err)
+			// Shown in the interface: notifications failing silently would leave alerts unseen.
+			if _, rerr := n.Store.Raise(ctx, store.Alert{HostID: "verifier", Fingerprint: failureFingerprint(c), Severity: "medium", Kind: "verifier",
+				Title: "Alert notifications are not being sent: " + c.Name, Detail: err.Error()}, n.Now()); rerr != nil {
+				n.Log.Error("raise notification alert", "err", rerr)
+			}
+			continue
+		}
+		delivered++
+	}
+	if delivered == 0 && failed > 0 {
 		return
 	}
-	if err := n.Store.ResolveGone(ctx, "verifier", "verifier", nil, n.Now()); err != nil {
+	if err := n.Store.ResolveGone(ctx, "verifier", "verifier", failing, n.Now()); err != nil {
 		n.Log.Error("resolve notification alert", "err", err)
 	}
 	ids := make([]int64, len(alerts))
@@ -77,6 +128,58 @@ func (n *Notifier) Round(ctx context.Context) {
 	if err := n.Store.MarkNotified(ctx, ids, n.Now()); err != nil {
 		n.Log.Error("mark notified", "err", err)
 	}
+}
+
+// Test sends a test message through a channel and records the outcome.
+func (n *Notifier) Test(ctx context.Context, c store.Channel) error {
+	subject := "[tripwatch] test message"
+	body := "This is a test from the tripwatch verifier: alerts at or above " + c.MinSeverity + " will arrive here.\n"
+	err := n.deliver(ctx, c, subject, body, nil)
+	n.record(ctx, c, err)
+	return err
+}
+
+func (n *Notifier) record(ctx context.Context, c store.Channel, err error) {
+	if c.ID == envChannel {
+		return
+	}
+	failure := ""
+	if err != nil {
+		failure = err.Error()
+	}
+	if rerr := n.Store.ChannelResult(ctx, c.ID, failure, n.Now()); rerr != nil {
+		n.Log.Error("record channel result", "err", rerr)
+	}
+}
+
+func failureFingerprint(c store.Channel) string {
+	if c.ID == envChannel {
+		return "notify:smtp"
+	}
+	return "notify:channel:" + strconv.FormatInt(c.ID, 10)
+}
+
+func rank(severity string) int {
+	switch severity {
+	case "critical":
+		return 0
+	case "high":
+		return 1
+	case "medium":
+		return 2
+	}
+	return 3
+}
+
+// severitiesFrom lists the severities at or above floor.
+func severitiesFrom(floor string) []string {
+	var out []string
+	for _, s := range []string{"critical", "high", "medium", "low"} {
+		if rank(s) <= rank(floor) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // perMessage bounds one email: the rest go in the next rounds, a minute apart, so a host raising

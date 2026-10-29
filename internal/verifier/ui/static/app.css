@@ -654,3 +654,16 @@ table.apps tbody tr:hover td { background: var(--teal-wash); }
    ones that keep coming back. */
 .new-tag { display: inline-block; margin-left: 6px; padding: 0 7px; font-size: var(--fs-xs); font-weight: 600; line-height: 18px; color: var(--teal-ink); background: var(--teal); border-radius: 999px; vertical-align: 1px; }
 td.latest { color: var(--ink-2); font-size: var(--fs-sm); }
+
+/* Notifications: channels in a table, each kind added from a panel that opens. */
+.add-channels { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: 16px; align-items: start; }
+details.add > summary { list-style: none; cursor: pointer; }
+details.add > summary::-webkit-details-marker { display: none; }
+details.add > summary h2 { display: inline; }
+details.add > summary::after { content: " +"; color: var(--teal); font-weight: 600; }
+details.add[open] > summary::after { content: " \2212"; }
+details.add[open] > summary { padding-bottom: 10px; border-bottom: var(--hair) solid var(--rule); margin-bottom: 4px; }
+.notice.ok { border-color: var(--teal); background: var(--teal-wash); }
+table.channels td .sub { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
+a.notify.off { text-decoration: none; }
+a.notify.off:hover { outline: var(--hair) solid var(--amber); }

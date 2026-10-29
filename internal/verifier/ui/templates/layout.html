@@ -23,10 +23,11 @@
   </ul>
   <p class="nav-group" id="nav-conf">Configuration</p>
   <ul class="nav" aria-labelledby="nav-conf">
+    <li><a href="/notifications"{{if eq .Nav "notifications"}} aria-current="page"{{end}}>{{template "icon" "notifications"}}<span>Notifications</span></a></li>
     <li><a href="/enroll"{{if eq .Nav "enroll"}} aria-current="page"{{end}}>{{template "icon" "enroll"}}<span>Enroll a server</span></a></li>
   </ul>
   <div class="rail-foot">
-    {{if not .Notify}}<p class="notify off" title="Critical and high alerts are not sent by email: set TRIPWATCH_SMTP_HOST">{{shape "high" ""}}<span>Email <span class="long">not configured</span><span class="short">off</span></span></p>{{end}}
+    {{if not .Notify}}<a class="notify off" href="/notifications" title="Alerts are not sent anywhere: add a channel">{{shape "high" ""}}<span>Notifications <span class="long">not set up</span><span class="short">off</span></span></a>{{end}}
     <p class="who" title="{{.User}}">{{.User}}</p>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -57,4 +58,4 @@
 </body>
 </html>{{end}}
 
-{{define "icon"}}{{if eq . "overview"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="2" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="2" y="10.5" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="10.5" width="5.5" height="5.5" rx="1.5"/></svg>{{else if eq . "alerts"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2 16.5 15h-15Z"/><path d="M9 7v3.5M9 12.6v.1"/></svg>{{else if eq . "servers"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="2.5" y="2.5" width="13" height="5" rx="1.5"/><rect x="2.5" y="10.5" width="13" height="5" rx="1.5"/><path d="M5.5 5h.1M5.5 13h.1"/></svg>{{else if eq . "enroll"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 3.5v11M3.5 9h11"/></svg>{{else if eq . "search"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><circle cx="8" cy="8" r="5"/><path d="m12 12 4 4"/></svg>{{end}}{{end}}
+{{define "icon"}}{{if eq . "overview"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="2" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="2" y="10.5" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="10.5" width="5.5" height="5.5" rx="1.5"/></svg>{{else if eq . "alerts"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2 16.5 15h-15Z"/><path d="M9 7v3.5M9 12.6v.1"/></svg>{{else if eq . "servers"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="2.5" y="2.5" width="13" height="5" rx="1.5"/><rect x="2.5" y="10.5" width="13" height="5" rx="1.5"/><path d="M5.5 5h.1M5.5 13h.1"/></svg>{{else if eq . "enroll"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 3.5v11M3.5 9h11"/></svg>{{else if eq . "notifications"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 12.5V8a4.5 4.5 0 0 1 9 0v4.5l1.5 1.5H3Z"/><path d="M7.5 16h3"/></svg>{{else if eq . "search"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><circle cx="8" cy="8" r="5"/><path d="m12 12 4 4"/></svg>{{end}}{{end}}

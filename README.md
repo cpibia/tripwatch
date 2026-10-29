@@ -820,6 +820,12 @@ is needed too, which closes them all.
   broken chains, sensor events and the verifier's own alerts cannot be accepted. Every alert
   page also has **Copy for an AI assistant**, which copies the alert as Markdown to paste into
   an AI chat, with the collected detail marked as data.
+- **Notifications.** Where alerts are sent as they are raised: email (SMTP with TLS), Telegram
+  chats and webhooks (a JSON body with a `text` field for chat tools and the alerts, signed with
+  HMAC-SHA256 of the body in the `X-Tripwatch-Signature` header as `sha256=<hex>`). Each channel
+  receives the alerts at or above its severity raised after it was added, can be tested, turned
+  off and removed, and shows its latest send or the error; a channel that fails raises an alert.
+  The email configured with `TRIPWATCH_SMTP_*` keeps working and is listed read-only.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 

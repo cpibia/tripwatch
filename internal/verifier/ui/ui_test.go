@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -56,6 +57,13 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute, LoginBackoff: 10 * time.Millisecond,
+		// A channel named "broken" fails its test, as a refused send would.
+		TestChannel: func(ctx context.Context, c store.Channel) error {
+			if !strings.Contains(c.Name, "broken") {
+				return st.ChannelResult(ctx, c.ID, "", now)
+			}
+			return errors.Join(st.ChannelResult(ctx, c.ID, "refused by the server", now), errors.New("refused by the server"))
+		},
 		Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)

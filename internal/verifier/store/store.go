@@ -166,6 +166,18 @@ CREATE TABLE IF NOT EXISTS sessions (
 	email      TEXT NOT NULL REFERENCES users(email),
 	expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS channels (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	kind         TEXT NOT NULL,
+	name         TEXT NOT NULL,
+	settings     TEXT NOT NULL,
+	min_severity TEXT NOT NULL,
+	enabled      INTEGER NOT NULL DEFAULT 1,
+	created_at   INTEGER NOT NULL,
+	last_ok      INTEGER NOT NULL DEFAULT 0,
+	last_error   TEXT NOT NULL DEFAULT '',
+	last_try     INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS update_order (
 	id         INTEGER PRIMARY KEY CHECK (id = 1),
 	version    TEXT NOT NULL,

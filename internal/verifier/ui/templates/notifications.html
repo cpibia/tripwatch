@@ -1,0 +1,85 @@
+{{define "content"}}{{$d := .Data}}{{$csrf := .CSRF}}
+<header class="head">
+  <h1>Notifications</h1>
+  <p class="aside">Where alerts are sent as they are raised. Each channel receives the alerts at or above its severity raised after it was added; one that keeps failing raises an alert of its own.</p>
+</header>
+
+{{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+{{if eq $d.Tested "ok"}}<p class="notice ok" role="status">Test message sent: check that it arrived.</p>{{else if eq $d.Tested "failed"}}<p class="error" role="alert">The test message could not be sent: the reason is on the channel's row.</p>{{end}}
+
+<section class="panel" aria-labelledby="ch-h">
+  <div class="panel-head"><h2 id="ch-h">Channels</h2><p class="panel-note">critical and high arrive at once; a channel set to medium receives those too</p></div>
+  {{if or $d.Channels $d.Env}}
+  <table class="grid channels">
+    <thead><tr><th scope="col">Channel</th><th scope="col">Kind</th><th scope="col">Receives</th><th scope="col">Latest send</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+    <tbody>
+    {{if $d.Env}}<tr><td>Email set in the environment</td><td><span class="kind-tag">email</span></td><td>critical and high</td><td class="quiet">configured with TRIPWATCH_SMTP_*</td><td></td></tr>{{end}}
+    {{range $d.Channels}}
+    <tr class="{{if not .Enabled}}row-resolved{{end}}">
+      <td>{{.Name}}{{if not .Enabled}} <span class="quiet">(off)</span>{{end}}<span class="sub mono">{{if eq .Kind "email"}}{{range $i, $to := .Settings.To}}{{if $i}}, {{end}}{{$to}}{{end}}{{else if eq .Kind "telegram"}}chat {{.Settings.ChatID}}{{else}}{{.Settings.URL}}{{end}}</span></td>
+      <td><span class="kind-tag">{{.Kind}}</span></td>
+      <td>{{sev .MinSeverity}} and above</td>
+      <td class="state">{{if .LastError}}<span class="sev sev-high">failed {{clock .LastTry}}</span><span class="by">{{.LastError}}</span>{{else if not .LastOK.IsZero}}sent {{clock .LastOK}}{{else}}<span class="quiet">nothing sent yet</span>{{end}}</td>
+      <td class="act"><div class="actions">
+        <form method="post" action="/notifications/{{.ID}}/test"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit">Send a test<span class="sr">: {{.Name}}</span></button></form>
+        <form method="post" action="/notifications/{{.ID}}/{{if .Enabled}}disable{{else}}enable{{end}}"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit">{{if .Enabled}}Turn off{{else}}Turn on{{end}}<span class="sr">: {{.Name}}</span></button></form>
+        <details class="confirm"><summary>Remove<span class="sr">: {{.Name}}</span></summary>
+          <form method="post" action="/notifications/{{.ID}}/delete"><input type="hidden" name="csrf" value="{{$csrf}}"><p>Alerts stop going to {{.Name}}.</p><button type="submit" class="danger">Remove the channel</button></form>
+        </details>
+      </div></td>
+    </tr>{{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="empty">No channel yet: alerts are only in this console. Add one below.</p>{{end}}
+</section>
+
+<div class="add-channels">
+<details class="panel add"{{if eq ($d.Form.Get "kind") "telegram"}} open{{end}}>
+  <summary><h2>Add a Telegram chat</h2></summary>
+  <form method="post" action="/notifications" class="form">
+    <input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="kind" value="telegram">
+    <label for="tg-name">Name</label><input id="tg-name" name="name" type="text" required maxlength="80" value="{{if eq ($d.Form.Get "kind") "telegram"}}{{$d.Form.Get "name"}}{{end}}" placeholder="Ops chat">
+    <label for="tg-token">Bot token</label><input id="tg-token" name="bot_token" type="password" required autocomplete="off">
+    <p class="help">Create a bot with @BotFather, add it to the chat, and paste the token it gives.</p>
+    <label for="tg-chat">Chat</label><input id="tg-chat" name="chat_id" type="text" required class="mono" value="{{if eq ($d.Form.Get "kind") "telegram"}}{{$d.Form.Get "chat_id"}}{{end}}" placeholder="-1001234567890">
+    <p class="help">The chat's number (a group's starts with -100) or a @channel name.</p>
+    {{template "minsev" (minsevx $d "telegram")}}
+    <button class="primary" type="submit">Add the chat</button>
+  </form>
+</details>
+
+<details class="panel add"{{if eq ($d.Form.Get "kind") "email"}} open{{end}}>
+  <summary><h2>Add an email channel</h2></summary>
+  <form method="post" action="/notifications" class="form">
+    <input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="kind" value="email">
+    <label for="em-name">Name</label><input id="em-name" name="name" type="text" required maxlength="80" value="{{if eq ($d.Form.Get "kind") "email"}}{{$d.Form.Get "name"}}{{end}}" placeholder="Ops mailbox">
+    <label for="em-to">Recipients</label><input id="em-to" name="to" type="text" required value="{{if eq ($d.Form.Get "kind") "email"}}{{$d.Form.Get "to"}}{{end}}" placeholder="ops@example.com, oncall@example.com">
+    <label for="em-from">Sender</label><input id="em-from" name="from" type="text" required value="{{if eq ($d.Form.Get "kind") "email"}}{{$d.Form.Get "from"}}{{end}}" placeholder="tripwatch@example.com">
+    <label for="em-host">SMTP server</label><input id="em-host" name="smtp_host" type="text" required class="mono" value="{{if eq ($d.Form.Get "kind") "email"}}{{$d.Form.Get "smtp_host"}}{{end}}" placeholder="smtp.example.com">
+    <label for="em-port">Port</label><input id="em-port" name="smtp_port" type="text" class="mono" value="{{if eq ($d.Form.Get "kind") "email"}}{{$d.Form.Get "smtp_port"}}{{else}}587{{end}}">
+    <p class="help">465 for TLS from the start; any other port must offer STARTTLS, or nothing is sent.</p>
+    <label for="em-user">User</label><input id="em-user" name="smtp_user" type="text" autocomplete="off" value="{{if eq ($d.Form.Get "kind") "email"}}{{$d.Form.Get "smtp_user"}}{{end}}">
+    <label for="em-pass">Password</label><input id="em-pass" name="password" type="password" autocomplete="off">
+    {{template "minsev" (minsevx $d "email")}}
+    <button class="primary" type="submit">Add the email channel</button>
+  </form>
+</details>
+
+<details class="panel add"{{if eq ($d.Form.Get "kind") "webhook"}} open{{end}}>
+  <summary><h2>Add a webhook</h2></summary>
+  <form method="post" action="/notifications" class="form">
+    <input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="kind" value="webhook">
+    <label for="wh-name">Name</label><input id="wh-name" name="name" type="text" required maxlength="80" value="{{if eq ($d.Form.Get "kind") "webhook"}}{{$d.Form.Get "name"}}{{end}}" placeholder="SIEM">
+    <label for="wh-url">Address</label><input id="wh-url" name="url" type="text" required class="mono" value="{{if eq ($d.Form.Get "kind") "webhook"}}{{$d.Form.Get "url"}}{{end}}" placeholder="https://hooks.example.com/tripwatch">
+    <label for="wh-secret">Secret</label><input id="wh-secret" name="secret" type="password" required minlength="16" autocomplete="off">
+    <p class="help">Each POST carries a JSON body with "text" (what Slack, Mattermost and similar tools show) and "alerts", signed in the X-Tripwatch-Signature header as sha256=HMAC of the body under this secret.</p>
+    {{template "minsev" (minsevx $d "webhook")}}
+    <button class="primary" type="submit">Add the webhook</button>
+  </form>
+</details>
+</div>
+{{end}}
+
+{{define "minsev"}}<fieldset class="choice"><legend>Receives</legend>
+{{range .Severities}}<label class="check"><input type="radio" name="min" value="{{.}}"{{if eq . $.Selected}} checked{{end}}>{{if eq . "critical"}}critical only{{else if eq . "high"}}critical and high{{else}}critical, high and medium{{end}}</label>{{end}}
+</fieldset>{{end}}

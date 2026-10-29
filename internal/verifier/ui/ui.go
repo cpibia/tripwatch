@@ -77,8 +77,10 @@ type Config struct {
 	// Release is the verifier's version: the enrollment command installs the sensor of the same
 	// release.
 	Release string
-	// Notify reports whether alerts are also sent by email.
+	// Notify reports whether alerts are also sent by the email set in the environment.
 	Notify bool
+	// TestChannel sends a test message through a notification channel; nil disables the test.
+	TestChannel func(ctx context.Context, c store.Channel) error
 	// SecureCookies marks cookies HTTPS-only; on whenever the interface is reached over HTTPS.
 	SecureCookies bool
 	SilenceAfter  time.Duration
@@ -111,8 +113,8 @@ func New(c Config) (http.Handler, error) {
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
-	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications"} {
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -145,6 +147,9 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("POST /alerts/{id}/resolve", s.authed(s.resolve))
 	mux.HandleFunc("POST /alerts/{id}/accept", s.authed(s.accept))
 	mux.HandleFunc("POST /bulk/{action}", s.authed(s.bulk))
+	mux.HandleFunc("GET /notifications", s.authed(s.notifications))
+	mux.HandleFunc("POST /notifications", s.authed(s.addChannel))
+	mux.HandleFunc("POST /notifications/{id}/{action}", s.authed(s.channelAction))
 	mux.HandleFunc("GET /enroll", s.authed(s.enrollForm))
 	mux.HandleFunc("POST /enroll", s.authed(s.enroll))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +250,9 @@ type page struct {
 
 func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name string, p page) {
 	p.Notify = s.Notify
+	if !p.Notify && p.User != "" {
+		p.Notify = s.anyChannel(r.Context())
+	}
 	p.Path = r.URL.RequestURI()
 	if r.URL.Path == "/search" {
 		p.Search = r.URL.Query().Get("q")

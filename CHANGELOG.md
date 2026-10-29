@@ -18,6 +18,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   (the resolved ones one click away), then its web applications as a table: the site first,
   then what runs it and its directory, those with open alerts on top with their count, and a
   filter above when there are more than eight.
+- Notification channels set up from the console (Configuration, Notifications): email (SMTP, TLS
+  required), Telegram chats and webhooks (JSON with a `text` field chat tools show and the
+  alerts, signed with HMAC-SHA256 in `X-Tripwatch-Signature`). Each receives the alerts at or
+  above its severity (critical, high or medium) raised after it was added, has a test button and
+  shows its latest send or error; one that fails raises an alert of its own, and alerts are
+  marked sent once any channel took them, so the others are not repeated. The email set in the
+  environment keeps working as before, listed read-only. The menu warning now says when alerts
+  go nowhere and links to the page.
 - Alert lists show when each alert was first seen and its latest activity, and tag "new" the
   ones that first appeared in the last day, so new deviations stand out from recurring ones.
 - Alert filters apply as soon as a choice is made, and `/` moves to the search box. Who handled an
