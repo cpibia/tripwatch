@@ -6,6 +6,17 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A process's command line and `LD_PRELOAD` are reported up to 4 KB (the sensor still judges the
+  whole command): any user could start processes with megabytes of arguments and make the
+  snapshot too large for the verifier.
+- A snapshot's results are bounded to 30 MB together, the largest left out first and named in
+  the snapshot's errors, so the snapshot always fits what the verifier accepts.
+- An envelope the verifier refuses for its size (413) is dropped and the chain taken back to
+  before it, instead of staying pending and holding back every heartbeat, event and snapshot
+  after it, even across restarts.
+
 ## [0.1.33] - 2026-10-29
 
 Update the verifier, then the sensors.

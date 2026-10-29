@@ -2,6 +2,7 @@
 package protocol
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
@@ -95,6 +96,19 @@ func (s *Sealer) Seal(kind Kind, payload []byte, now time.Time) Envelope {
 	e.Signature = ed25519.Sign(s.key, digest)
 	s.state = ChainState{Sequence: e.Sequence, LastDigest: digest}
 	return e
+}
+
+// Rewind takes the chain back to before e, when e is the last envelope sealed and the verifier
+// refused it without recording it: the next envelope takes its sequence number. It reports
+// whether it did.
+func (s *Sealer) Rewind(e Envelope) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e.Sequence == 0 || s.state.Sequence != e.Sequence || !bytes.Equal(s.state.LastDigest, e.Digest()) {
+		return false
+	}
+	s.state = ChainState{Sequence: e.Sequence - 1, LastDigest: e.PrevHash}
+	return true
 }
 
 // State returns the current chain position, to be persisted after each send.

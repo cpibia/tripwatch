@@ -617,6 +617,11 @@ func TestRedactedCommandsKeepTheirDifference(t *testing.T) {
 		fsys[dir+"status"] = text("PPid:\t1\nUid:\t33\t33\t33\t33\n")
 		fsys[dir+"cmdline"] = text(cmd + "\x00")
 	}
+	fsys["proc/13/status"] = text("PPid:\t1\nUid:\t65534\t65534\t65534\t65534\n")
+	fsys["proc/13/cmdline"] = text("sleep\x00" + strings.Repeat("x", 2<<20) + "\x00")
+	if long, _ := ReadProcess(fsys, 13); len(long.Cmdline) > maxProcessText+len("…") || long.CommandSum == "" || len(long.Args) != 2 {
+		t.Errorf("a 2 MB command line: %d bytes reported, sum %q, %d args kept for the sensor", len(long.Cmdline), long.CommandSum, len(long.Args))
+	}
 	a, _ := ReadProcess(fsys, 10)
 	b, _ := ReadProcess(fsys, 11)
 	c, _ := ReadProcess(fsys, 12)

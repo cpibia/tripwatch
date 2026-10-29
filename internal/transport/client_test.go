@@ -90,6 +90,55 @@ func TestPendingEnvelopeIsResentFirst(t *testing.T) {
 	}
 }
 
+// An envelope refused for its size, including one left pending on disk by an older sensor, is
+// dropped and the chain taken back to before it: the next envelope takes its sequence and links
+// to what the verifier last recorded, and nothing stays held behind it.
+func TestTooLargeIsDroppedAndTheChainRewound(t *testing.T) {
+	var got []protocol.Envelope
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var e protocol.Envelope
+		_ = json.NewDecoder(r.Body).Decode(&e)
+		if string(e.Payload) == "huge" {
+			http.Error(w, "envelope too large or unreadable", http.StatusRequestEntityTooLarge)
+			return
+		}
+		got = append(got, e)
+	}))
+	defer srv.Close()
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	c, _ := New(srv.URL, srv.Client(), dir, "web-01", key)
+	if err := c.Send(t.Context(), protocol.KindHeartbeat, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Send(t.Context(), protocol.KindSnapshot, []byte("huge"), time.Now()); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("too large: %v", err)
+	}
+	if c.pending != nil {
+		t.Fatal("the refused envelope stays pending")
+	}
+	if err := c.Send(t.Context(), protocol.KindHeartbeat, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].Sequence != 2 || string(got[1].PrevHash) != string(got[0].Digest()) {
+		t.Fatalf("after the refusal: %+v", got)
+	}
+
+	// An older sensor left one pending, sealed and saved, before stopping.
+	old := c.sealer.Seal(protocol.KindSnapshot, []byte("huge"), time.Now())
+	c.pending = &old
+	if err := c.save(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, _ := New(srv.URL, srv.Client(), dir, "web-01", key)
+	if err := restarted.Send(t.Context(), protocol.KindHeartbeat, nil, time.Now()); err != nil {
+		t.Fatalf("behind a pending envelope too large: %v", err)
+	}
+	if len(got) != 3 || got[2].Sequence != 3 || string(got[2].PrevHash) != string(got[1].Digest()) {
+		t.Fatalf("after the pending one was dropped: %+v", got)
+	}
+}
+
 func TestRejectionIsFinal(t *testing.T) {
 	for _, code := range []int{http.StatusConflict, http.StatusForbidden} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", code) }))

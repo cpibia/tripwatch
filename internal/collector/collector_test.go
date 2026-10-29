@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"math"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -141,4 +142,17 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// Results past the bound are left out largest first, each named in the errors.
+func TestSnapshotBound(t *testing.T) {
+	s := Snapshot{Results: map[string]json.RawMessage{
+		"accounts":  json.RawMessage(strings.Repeat("a", 100)),
+		"processes": json.RawMessage(strings.Repeat("p", 900)),
+		"sockets":   json.RawMessage(strings.Repeat("s", 300)),
+	}}
+	s.Bound(500)
+	if _, ok := s.Results["processes"]; ok || len(s.Results) != 2 || !strings.Contains(s.Errors["processes"], "900 bytes") {
+		t.Errorf("results %v, errors %v", len(s.Results), s.Errors)
+	}
 }

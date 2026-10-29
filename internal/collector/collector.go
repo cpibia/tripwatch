@@ -31,6 +31,34 @@ type Snapshot struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
+// MaxResultsSize bounds the results of a snapshot together: the verifier refuses a snapshot past
+// 32 MB uncompressed, and the transport an envelope past its own limit, which would stay pending
+// and hold back every envelope after it.
+const MaxResultsSize = 30 << 20
+
+// Bound drops the largest results until the rest fit in limit bytes, each named in Errors: what
+// a user inflated (processes, files in a home) costs that result, never the whole snapshot.
+func (s *Snapshot) Bound(limit int) {
+	total := 0
+	for _, r := range s.Results {
+		total += len(r)
+	}
+	for total > limit && len(s.Results) > 0 {
+		name, size := "", -1
+		for n, r := range s.Results {
+			if len(r) > size || (len(r) == size && n < name) {
+				name, size = n, len(r)
+			}
+		}
+		delete(s.Results, name)
+		total -= size
+		if s.Errors == nil {
+			s.Errors = map[string]string{}
+		}
+		s.Errors[name] = fmt.Sprintf("result left out of the snapshot: %d bytes, past the %d all results may take together", size, limit)
+	}
+}
+
 // Run executes every collector against src. A failing collector is recorded in Errors and
 // does not stop the others.
 func Run(ctx context.Context, src Source, collectors []Collector, now time.Time) Snapshot {

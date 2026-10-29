@@ -29,6 +29,10 @@ const stateFile = "transport-state.json"
 // sending it again will not help, the host has to be enrolled again.
 var ErrRejected = errors.New("transport: envelope rejected by the verifier")
 
+// ErrTooLarge means the verifier refused the envelope for its size without recording it: it is
+// dropped and the chain taken back to before it, so it never holds back the envelopes after it.
+var ErrTooLarge = errors.New("transport: envelope too large for the verifier")
+
 // ErrNotSealed means the payload was not sealed because an earlier envelope is still
 // undelivered: the caller keeps it and sends it again later. Any other error from Send leaves
 // the payload sealed and pending, to go out before the next one.
@@ -89,7 +93,10 @@ func (c *Client) Send(ctx context.Context, kind protocol.Kind, payload []byte, n
 	defer c.mu.Unlock()
 
 	if c.pending != nil {
-		if err := c.deliver(ctx, *c.pending); err != nil {
+		err := c.deliver(ctx, *c.pending)
+		switch {
+		case errors.Is(err, ErrTooLarge) && c.sealer.Rewind(*c.pending):
+		case err != nil:
 			return fmt.Errorf("%w: resending sequence %d: %w", ErrNotSealed, c.pending.Sequence, err)
 		}
 		c.pending = nil
@@ -104,6 +111,10 @@ func (c *Client) Send(ctx context.Context, kind protocol.Kind, payload []byte, n
 		return err
 	}
 	if err := c.deliver(ctx, e); err != nil {
+		if errors.Is(err, ErrTooLarge) && c.sealer.Rewind(e) {
+			c.pending = nil
+			return errors.Join(err, c.save())
+		}
 		return err
 	}
 	c.pending = nil
@@ -138,6 +149,8 @@ func (c *Client) deliver(ctx context.Context, e protocol.Envelope) error {
 			c.OnUpdate(order, resp.Header.Get(protocol.UpdateSignatureHeader))
 		}
 		return nil
+	case http.StatusRequestEntityTooLarge:
+		return fmt.Errorf("%w: sequence %d, %d bytes: %s", ErrTooLarge, e.Sequence, len(body), bytes.TrimSpace(msg))
 	case http.StatusConflict, http.StatusForbidden:
 		if order := resp.Header.Get(protocol.UninstallHeader); order != "" && c.OnUninstall != nil {
 			c.OnUninstall(order, resp.Header.Get(protocol.UninstallSignatureHeader))

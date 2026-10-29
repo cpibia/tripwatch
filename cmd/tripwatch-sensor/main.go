@@ -473,6 +473,7 @@ func (s sensor) sendSnapshot(ctx context.Context, client *transport.Client) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	r.Snapshot.Bound(collector.MaxResultsSize)
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	if err := json.NewEncoder(zw).Encode(r); err != nil {

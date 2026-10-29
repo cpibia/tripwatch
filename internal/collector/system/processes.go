@@ -290,7 +290,7 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 
 	cmdline, _ := fs.ReadFile(fsys, dir+"cmdline")
 	p.Args = strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
-	p.Cmdline = redactCmdline(p.Args)
+	p.Cmdline = clip(redactCmdline(p.Args), maxProcessText)
 	if raw := strings.ReplaceAll(strings.TrimRight(string(cmdline), "\x00"), "\x00", " "); raw != p.Cmdline {
 		sum := sha256.Sum256(cmdline)
 		p.CommandSum = hex.EncodeToString(sum[:6])
@@ -310,7 +310,7 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 	if environ, err := fs.ReadFile(fsys, dir+"environ"); err == nil {
 		for _, kv := range bytes.Split(environ, []byte{0}) {
 			if v, ok := bytes.CutPrefix(kv, []byte("LD_PRELOAD=")); ok {
-				p.Preload = string(v)
+				p.Preload = clip(string(v), maxProcessText)
 			}
 		}
 	}
@@ -335,6 +335,19 @@ var secretNextArg = map[string][]string{
 	"curl":      {"-u", "--user", "--proxy-user", "--oauth2-bearer"},
 	"openssl":   {"-pass", "-passin", "-passout", "-k"},
 	"wget":      {"--password", "--http-password", "--ftp-password", "--proxy-password"},
+}
+
+// maxProcessText bounds the command line and LD_PRELOAD reported for a process: any user can
+// start processes with megabytes of arguments, and a snapshot past what the verifier accepts
+// is lost whole. CommandSum still tells apart command lines the cut made identical.
+const maxProcessText = 4096
+
+// clip cuts s to at most n bytes on a character boundary, marking the cut.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "…"
 }
 
 // redactCmdline joins the arguments of a process after removing the secrets commonly passed
