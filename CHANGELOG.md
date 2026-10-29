@@ -20,6 +20,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   raw sockets and suspicious processes. The sensor now reports at most 20,000 sockets and
   10,000 processes, with 4 MB of command lines in all. Over those bounds what the rules read
   comes first, root's next, and what is left out is counted by owner in the result's issues.
+- In the temporary directories each account spends its own share of the events of a second
+  before the common budget, and a program within its owner's share spends none of it: junk one
+  account writes by the thousand no longer hides another account's dropper. Events let go over
+  these budgets are counted apart and raise their own medium alert, "Real-time events over
+  budget in temporary or upload directories", instead of the high "Real-time events lost",
+  which now counts only what a sensor that fell behind lost.
 
 ### Verifier
 

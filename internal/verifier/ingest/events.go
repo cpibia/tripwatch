@@ -112,10 +112,19 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 		s.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}, now)
 	}
 
-	if b.Dropped > 0 {
+	// Losses over the budget of the places anyone writes in have an alert of their own: a busy
+	// /tmp keeps one open every day, and a sensor falling behind must not hide behind it.
+	budget := min(max(b.DroppedBudget, 0), max(b.Dropped, 0))
+	if lost := b.Dropped - budget; lost > 0 {
 		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost:" + now.UTC().Format("2006-01-02"), Severity: "high", Kind: "sensor",
 			Title:  "Real-time events lost",
-			Detail: fmt.Sprintf("The sensor lost %d events: they came faster than it could read or send them. Flooding the watched directories is a way to hide one change among many; the next snapshot still shows the state they left.", b.Dropped),
+			Detail: fmt.Sprintf("The sensor lost %d events: they came faster than it could read or send them. Flooding the watched directories is a way to hide one change among many; the next snapshot still shows the state they left.", lost),
+		}, now)
+	}
+	if budget > 0 {
+		s.raise(ctx, store.Alert{HostID: host, Fingerprint: "events:lost-budget:" + now.UTC().Format("2006-01-02"), Severity: "medium", Kind: "sensor",
+			Title:  "Real-time events over budget in temporary or upload directories",
+			Detail: fmt.Sprintf("The sensor let %d events go in the temporary or upload directories, past what each account may spend there in a second. Each account has its own share, so one account's flood does not hide another's files; programs written within an account's share are still reported. The next snapshot shows what the files left.", budget),
 		}, now)
 	}
 	if b.DroppedSystem > 0 {

@@ -33,6 +33,10 @@ type Batch struct {
 	// privilege, services, scheduled tasks, start-up scripts) the queue had to let go: everything
 	// else goes first, so these are lost only when root itself floods the queue.
 	DroppedSystem int64 `json:"dropped_system,omitempty"`
+	// DroppedBudget counts, among the dropped, the events let go over the per-second budget of
+	// the places anyone writes in (the scratch directories, the uploads), each account's share
+	// first: a busy /tmp, not a sensor that falls behind.
+	DroppedBudget int64 `json:"dropped_budget,omitempty"`
 	// PackageManager is set when a package manager was running as the batch was sent: what it
 	// installs touches the same places an intruder does.
 	PackageManager bool `json:"package_manager,omitempty"`
@@ -66,6 +70,8 @@ type Batcher struct {
 	Lost func() (dropped, skipped int64)
 	// LostSystem returns how many of root's system events the sources have lost so far.
 	LostSystem func() int64
+	// LostBudget returns how many events the sources have let go over their budget so far.
+	LostBudget func() int64
 	// PackageManager reports whether a package manager is running.
 	PackageManager func() bool
 	Now            func() time.Time
@@ -81,8 +87,10 @@ type Batcher struct {
 	pending          []queued // the queue without the batch being sent
 	dropped, skipped int64
 	droppedSystem    int64
+	droppedBudget    int64
 	seenD, seenS     int64
 	seenSystem       int64
+	seenBudget       int64
 	failures         int
 	retryAt          time.Time
 	homes            atomic.Pointer[map[string]string]
@@ -409,6 +417,11 @@ func (b *Batcher) Flush(ctx context.Context) {
 		b.droppedSystem += d - b.seenSystem
 		b.seenSystem = d
 	}
+	if b.LostBudget != nil {
+		d := b.LostBudget()
+		b.droppedBudget += d - b.seenBudget
+		b.seenBudget = d
+	}
 	now := b.Now()
 	if now.Before(b.retryAt) {
 		return
@@ -435,7 +448,7 @@ func (b *Batcher) Flush(ctx context.Context) {
 				b.perOwner[q.owner]++
 			}
 		}
-		b.dropped, b.skipped, b.droppedSystem = 0, 0, 0
+		b.dropped, b.skipped, b.droppedSystem, b.droppedBudget = 0, 0, 0, 0
 	}
 	if b.live == 0 {
 		b.reset(nil)
@@ -445,7 +458,8 @@ func (b *Batcher) Flush(ctx context.Context) {
 // next builds the next batch, the system events first; pending holds the queue without them
 // until the batch is sent.
 func (b *Batcher) next() Batch {
-	batch := Batch{Event: BatchEvent, Events: []json.RawMessage{}, Dropped: b.dropped, Skipped: b.skipped, DroppedSystem: b.droppedSystem}
+	batch := Batch{Event: BatchEvent, Events: []json.RawMessage{}, Dropped: b.dropped, Skipped: b.skipped, DroppedSystem: b.droppedSystem,
+		DroppedBudget: b.droppedBudget}
 	// Root's system events first, then whatever has waited MaxWait, then each rank in turn, each
 	// in the order it came: a change to root's keys must not wait behind a flood in the uploads
 	// or in a user's home, and a webshell must not wait behind a flood forever.

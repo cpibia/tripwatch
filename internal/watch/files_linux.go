@@ -95,9 +95,11 @@ type Files struct {
 	hashed   [2]int64
 	hashedAt time.Time
 	// Dropped counts events lost because the consumer did not keep up; DroppedSystem those of
-	// them that were root's.
+	// them that were root's; DroppedBudget those let go over the per-second budget of the places
+	// anyone writes in, the scratch directories and the uploads.
 	Dropped       atomic.Int64
 	DroppedSystem atomic.Int64
+	DroppedBudget atomic.Int64
 	// Urgent, when set before Run, takes the events IsRootEvent says are root's, so that a flood
 	// another account makes in its home or the uploads never fills their way.
 	Urgent      chan<- Event
@@ -698,8 +700,27 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 			continue
 		}
 		classes[t.Class] = true
-		if t.Class == ClassScratch && !isDir && f.deferRepeat(op, full) {
-			continue
+		// A scratch file is looked at once, for its owner and its mode: each account spends its
+		// own share of the second first, so the junk one account writes by the thousand cannot
+		// use up what another account's program needs, and a program spends no common budget.
+		ownBudget := false
+		if t.Class == ClassScratch && !isDir {
+			var info fs.FileInfo
+			if op != OpDelete {
+				info, _ = fs.Lstat(f.src.FS, collector.Rel(full))
+			}
+			if f.deferRepeat(op, full, info) {
+				continue
+			}
+			if info != nil {
+				if uid, ok := collector.Owner(info); ok {
+					f.rollSecond()
+					if !f.scratchOwnerBudget(uid) {
+						continue
+					}
+					ownBudget = info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+				}
+			}
 		}
 		// In the uploads only scripts and server configuration files are judged: images and
 		// junk written by the thousand must not spend the budget a script then lacks.
@@ -709,7 +730,7 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 		if t.Class == ClassWebRoot && isDir {
 			continue
 		}
-		if (t.Class == ClassScratch || t.Class == ClassUpload || t.Class == ClassWebRoot) && !f.classEventBudget(t.Class) {
+		if (t.Class == ClassScratch || t.Class == ClassUpload || t.Class == ClassWebRoot) && !ownBudget && !f.classEventBudget(t.Class) {
 			if isDir && op == OpCreate {
 				f.mu.Lock()
 				f.gap(t.Class, fmt.Sprintf("watch: %s was created while events of class %s were over budget: not watched", full, t.Class))
@@ -802,7 +823,7 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 	}
 	e.Size = info.Size()
 	// Most of what is written in /tmp is not executable and is dropped: no need to read it.
-	if class == ClassScratch && (!Executable(e.Mode) || (e.UID != nil && !f.scratchOwnerBudget(*e.UID))) {
+	if class == ClassScratch && !Executable(e.Mode) {
 		e.Mode = ""
 		return e
 	}
@@ -898,13 +919,13 @@ const (
 )
 
 // classEventBudget takes one event from this second's budget of a class anyone can write in,
-// the scratch directories or the uploads. It bounds the work before a file is even looked at;
-// the share of each owner, applied once the owner is known, comes first in practice, being
-// smaller.
+// the scratch directories or the uploads. In the scratch directories each owner's share is
+// taken first, and a program of an owner within its share spends none of it.
 func (f *Files) classEventBudget(class string) bool {
 	f.rollSecond()
 	if f.classEvents[class] >= maxClassEvents {
 		f.Dropped.Add(1)
+		f.DroppedBudget.Add(1)
 		return false
 	}
 	f.classEvents[class]++
@@ -929,18 +950,16 @@ const maxDeferred = 4096
 // and would otherwise spend the budget every other account's files share. The file is looked
 // at once a second later, in the state it is then. With no room left the event goes through
 // the budget as usual.
-func (f *Files) deferRepeat(op, full string) bool {
+func (f *Files) deferRepeat(op, full string, info fs.FileInfo) bool {
 	f.rollSecond()
 	// A repeat is the same operation on the same file: a name warmed up with a harmless file
 	// must not hide the program written under it next within the second, which is another
 	// inode or another mode.
 	key, file := op+"\x00"+full, ""
-	if op != OpDelete {
-		if info, err := fs.Lstat(f.src.FS, collector.Rel(full)); err == nil {
-			file = info.Mode().String()
-			if st, ok := info.Sys().(*syscall.Stat_t); ok {
-				file += ":" + strconv.FormatUint(st.Ino, 10)
-			}
+	if info != nil {
+		file = info.Mode().String()
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			file += ":" + strconv.FormatUint(st.Ino, 10)
 		}
 	}
 	if seen, ok := f.scratchRepeats[key]; !ok || seen != file {
@@ -975,10 +994,12 @@ func (f *Files) flushDeferred() {
 	}
 }
 
-// scratchOwnerBudget takes one event from this second's share of the file's owner.
+// scratchOwnerBudget takes one event from this second's share of the file's owner. The number of
+// owners is bounded by the accounts the system has: only root makes files of another UID.
 func (f *Files) scratchOwnerBudget(uid uint32) bool {
 	if f.scratchByUID[uid] >= maxScratchPerUID {
 		f.Dropped.Add(1)
+		f.DroppedBudget.Add(1)
 		return false
 	}
 	f.scratchByUID[uid]++

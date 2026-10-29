@@ -408,7 +408,10 @@ The watchers are bounded against the users they guard against: files are hashed 
 and 16 MB a second (root's files with a budget of their own, which other users cannot spend),
 larger ones are reported with their metadata; when the queue is full, noise
 in the uploads is dropped before any change to a system path, and losing one of those is an
-alert of its own; directories left unwatched by the depth or count limits are listed in the
+alert of its own; in the temporary directories each account has its own share of events a
+second, taken before the common one, and a program within its owner's share spends none of the
+common one, so another account's junk cannot hide it; events let go over these budgets are a
+medium alert of their own, apart from events lost by a sensor that fell behind; directories left unwatched by the depth or count limits are listed in the
 snapshot; and what is queued when the sensor stops is sent before its stop event. A watch
 follows the inode, not the path, so every few seconds the sensor checks that each watched root
 is still the directory at its path: one moved away, replaced under its name (an ancestor moved

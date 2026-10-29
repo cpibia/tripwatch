@@ -14,6 +14,7 @@ import (
 type Files struct {
 	Dropped       atomic.Int64
 	DroppedSystem atomic.Int64
+	DroppedBudget atomic.Int64
 	Urgent        chan<- Event
 	IsRootEvent   func(Event) bool
 }

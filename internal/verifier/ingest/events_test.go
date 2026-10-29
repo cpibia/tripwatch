@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +28,36 @@ func batch(t *testing.T, packageManager bool, dropped int64, events ...watch.Eve
 		t.Fatal(err)
 	}
 	return p
+}
+
+// Events let go over the budget of the scratch and upload directories are an alert of their
+// own, so that a busy /tmp does not hide a sensor falling behind.
+func TestEventsLostToBudgetApart(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	for i, b := range []watch.Batch{{Dropped: 500, DroppedBudget: 500}, {Dropped: 7, DroppedBudget: 5}} {
+		b.Event = watch.BatchEvent
+		p, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.clock = now.Add(time.Duration(i) * time.Minute)
+		if err := c.Send(ctx, protocol.KindEvent, p, h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]string{}
+	for _, a := range h.alerts() {
+		got[a.Fingerprint] = a.Severity + " " + strings.Join(strings.Fields(a.Detail)[:5], " ")
+	}
+	want := map[string]string{
+		"events:lost-budget:2026-10-22": "medium The sensor let 5 events",
+		"events:lost:2026-10-22":        "high The sensor lost 2 events:",
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("alerts %v, want %v", got, want)
+	}
 }
 
 // A script dropped in the uploads and removed two batches later is stored, raises one alert

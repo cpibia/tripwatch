@@ -715,7 +715,7 @@ func TestOverflowDoesNotPostponeReplan(t *testing.T) {
 	}
 }
 
-// A scratch file rewritten in a loop spends the budget once a second: the repeats are put off
+// A scratch file rewritten in a loop spends its owner's budget once a second: the repeats are put off
 // and the file is looked at again a second later, as it is then.
 func TestScratchRepeatsAreDeferred(t *testing.T) {
 	root := t.TempDir()
@@ -742,8 +742,8 @@ func TestScratchRepeatsAreDeferred(t *testing.T) {
 	for range 50 {
 		f.event(wd, unix.IN_CLOSE_WRITE, 0, "x")
 	}
-	if n := f.classEvents[ClassScratch]; n != 1 || len(f.deferred) != 1 || len(ch) != 1 {
-		t.Fatalf("budget spent %d, deferred %d, sent %d", n, len(f.deferred), len(ch))
+	if n := f.scratchByUID[uint32(os.Getuid())]; n != 1 || len(f.deferred) != 1 || len(ch) != 1 { //nolint:gosec // UIDs fit in 32 bits
+		t.Fatalf("owner's budget spent %d, deferred %d, sent %d", n, len(f.deferred), len(ch))
 	}
 	f.flushDeferred()
 	if len(ch) != 1 {
@@ -792,6 +792,46 @@ func TestScratchRepeatOfAnotherFileIsNotDeferred(t *testing.T) {
 	f.event(wd, unix.IN_CLOSE_WRITE, 0, "x")
 	if len(ch) != sent+1 {
 		t.Errorf("the executable written under a warmed-up name was deferred: sent %d, before %d", len(ch), sent)
+	}
+}
+
+// Each account spends its own share of the scratch budget first, and a program within its
+// owner's share spends none of the common one: another account's junk cannot hide it, and what
+// is let go is counted as lost to the budget.
+func TestScratchBudgetPerOwnerFirst(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, mode := range map[string]os.FileMode{"dropper": 0o700, "junk": 0o600} {
+		if err := os.WriteFile(filepath.Join(root, "tmp", name), []byte("x"), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set([]Target{{Dir: "/tmp", Class: ClassScratch}})
+	wd := f.byDir["/tmp"]
+	f.rollSecond()
+	// Other accounts' junk spent the whole second.
+	f.classEvents[ClassScratch] = maxClassEvents
+	f.event(wd, unix.IN_CLOSE_WRITE, 0, "junk")
+	f.event(wd, unix.IN_CLOSE_WRITE, 0, "dropper")
+	if len(ch) != 1 || (<-ch).Path != "/tmp/dropper" {
+		t.Fatal("the program was let go with the common budget spent")
+	}
+	if f.DroppedBudget.Load() != 1 || f.Dropped.Load() != 1 {
+		t.Errorf("dropped %d, over budget %d", f.Dropped.Load(), f.DroppedBudget.Load())
+	}
+	// Its own account's share spent, the program waits like the rest.
+	f.scratchByUID[uint32(os.Getuid())] = maxScratchPerUID //nolint:gosec // UIDs fit in 32 bits
+	f.event(wd, unix.IN_ATTRIB, 0, "dropper")
+	if len(ch) != 0 || f.DroppedBudget.Load() != 2 {
+		t.Errorf("events %d, over budget %d", len(ch), f.DroppedBudget.Load())
 	}
 }
 

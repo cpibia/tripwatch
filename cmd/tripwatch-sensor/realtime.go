@@ -43,6 +43,7 @@ func (s sensor) startRealtime(ctx context.Context, log *slog.Logger, send func(c
 		Send:           send,
 		Lost:           r.lost,
 		LostSystem:     r.lostSystem,
+		LostBudget:     r.lostBudget,
 		PackageManager: func() bool { return watch.PackageManagerRunning(src.FS) },
 		Done:           make(chan struct{}),
 	}
@@ -151,6 +152,16 @@ func (r *realtime) lostSystem() int64 {
 		n += r.containers.Dropped.Load()
 	}
 	return n
+}
+
+// lostBudget returns how many events the file watcher has let go over its budget so far.
+func (r *realtime) lostBudget() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.files == nil {
+		return 0
+	}
+	return r.files.DroppedBudget.Load()
 }
 
 // update points the watchers at what the latest snapshot found: the accounts' homes, the web

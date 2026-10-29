@@ -27,7 +27,7 @@ func TestBatcherKeepsEventsUntilSealed(t *testing.T) {
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	var sent [][]byte
 	fail := true
-	lostD, lostS := int64(0), int64(0)
+	lostD, lostS, lostB := int64(0), int64(0), int64(0)
 	b := &Batcher{
 		Send: func(_ context.Context, p []byte) error {
 			if fail {
@@ -37,11 +37,12 @@ func TestBatcherKeepsEventsUntilSealed(t *testing.T) {
 			return nil
 		},
 		Lost:           func() (int64, int64) { return lostD, lostS },
+		LostBudget:     func() int64 { return lostB },
 		PackageManager: func() bool { return true },
 		Now:            func() time.Time { return now },
 	}
 	b.add(Event{Class: ClassSSH, Op: OpCreate, Path: "/root/.ssh/authorized_keys"})
-	lostD, lostS = 2, 1
+	lostD, lostS, lostB = 2, 1, 1
 	b.Flush(context.Background())
 	if len(sent) != 0 || len(b.queue) != 1 {
 		t.Fatalf("sent %d, queued %d after a failure", len(sent), len(b.queue))
@@ -59,7 +60,7 @@ func TestBatcherKeepsEventsUntilSealed(t *testing.T) {
 		t.Fatalf("sent %d batches, want 1", len(sent))
 	}
 	got := decodeBatch(t, sent[0])
-	if got.Event != BatchEvent || len(got.Events) != 2 || got.Dropped != 2 || got.Skipped != 1 || !got.PackageManager {
+	if got.Event != BatchEvent || len(got.Events) != 2 || got.Dropped != 2 || got.DroppedBudget != 1 || got.Skipped != 1 || !got.PackageManager {
 		t.Fatalf("batch %+v", got)
 	}
 
@@ -67,9 +68,9 @@ func TestBatcherKeepsEventsUntilSealed(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatal("an empty batch was sent")
 	}
-	lostD = 5
+	lostD, lostB = 5, 3
 	b.Flush(context.Background())
-	if len(sent) != 2 || decodeBatch(t, sent[1]).Dropped != 3 {
+	if len(sent) != 2 || decodeBatch(t, sent[1]).Dropped != 3 || decodeBatch(t, sent[1]).DroppedBudget != 2 {
 		t.Fatalf("losses alone are not reported: %d batches", len(sent))
 	}
 }
