@@ -34,10 +34,14 @@ type codeSearch struct {
 	// call says a dangerous call was seen in the block, broken that it cannot compile.
 	call   bool
 	broken bool
-	// glued says the block was opened by "<?" glued to a word, which only short_open_tag opens:
-	// a "<?" quoted in a log (an XML processing instruction) does that and runs to the end of the
-	// file, through stack traces full of call_user_func_array(, so only named signatures count.
+	// glued says the block was opened by "<?" glued to a name PHP does not go on from, such as
+	// an XML processing instruction quoted in a log ("<?mso-application"): it runs to the end of
+	// the file, through stack traces full of call_user_func_array(, so only named signatures
+	// count.
 	glued bool
+	// loose says the block was opened by "<?" alone or glued as above, as SQL dumps and logs
+	// quote it: there a backtick around a bare word is how SQL quotes a name.
+	loose bool
 	carry []byte
 	sigs  []string
 	// codeLeft, when set, is the budget of code matched; exhausted says it ran out.
@@ -150,8 +154,8 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 			return 0
 		}
 		if i+1 < len(d) && d[i+1] == '?' {
-			if n, ok := openTagLen(d[i+2:], c.shortTags); ok {
-				c.mode, c.glued = lexCode, n == 0
+			if n, kind := openTagLen(d[i+2:], c.shortTags); kind != tagNone {
+				c.mode, c.glued, c.loose = lexCode, kind == tagGlued, kind == tagGlued || kind == tagShort
 				return 2 + n
 			}
 		}
@@ -161,7 +165,7 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 	case lexSingle, lexDouble, lexBacktick:
 		quote := map[int]byte{lexSingle: '\'', lexDouble: '"', lexBacktick: '`'}[c.mode]
 		// A backtick around a bare word is how SQL quotes a name (a dump's `wp_posts`); one that
-		// runs a command worth planting passes it input or arguments.
+		// runs a command worth planting there passes it input or arguments.
 		if c.mode == lexBacktick && b != '`' && !identByte(b) {
 			c.backtick = true
 		}
@@ -251,6 +255,11 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		}
 	case '\'', '"', '`':
 		c.mode = map[byte]int{'\'': lexSingle, '"': lexDouble, '`': lexBacktick}[b]
+		// In a block a real open tag started, any backtick runs a command: one word is enough
+		// after putenv() has pointed PATH at the attacker's directory.
+		if b == '`' && !c.loose {
+			c.backtick = true
+		}
 	case '/':
 		if !more(2) {
 			return 0
@@ -392,40 +401,66 @@ func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 	return 0 + c.stepHeredoc(d, i, final)
 }
 
-// openTagLen returns the length of what follows "<?" in an open tag PHP runs: "php" and a blank,
-// or "=". With short_open_tag off a blank alone is text, and a block opened there would let a
-// comment after it swallow the real "<?php" block that follows. With short tags "<?" opens a
-// block whatever follows, so a name glued to it is code: a constant ("<?PHP_EOL;"), a function,
-// a namespaced class ("<?php\x::class;"). Only "php" and "xml" alone stay text, as PHP fails on
-// them first: "<?xml version" makes PHP refuse the file, "<?php+" runs as the undefined
-// constant php and stops there. Followed by ":" (a goto label, "::class"), "(" or a comment,
-// blanks included, they run what follows too.
-func openTagLen(t []byte, short bool) (int, bool) {
+// Kinds of open tag, for how much of the block's content counts.
+const (
+	tagNone = iota
+	// tagFull is "<?php" and a blank, or "<?=": PHP runs the block whatever its settings.
+	tagFull
+	// tagShort is "<?" and a blank, which only short_open_tag opens.
+	tagShort
+	// tagName is a name glued to "<?" that PHP goes on from: a constant ("<?PHP_EOL;"), a call,
+	// a namespaced class ("<?php\\x::class;"), a goto label ("<?phpinfo:").
+	tagName
+	// tagGlued is anything else glued to "<?", as XML processing instructions are
+	// ("<?mso-application", "<?xml-stylesheet"): PHP stops on it, so the block counts only for
+	// named signatures.
+	tagGlued
+)
+
+// openTagLen returns the length of what follows "<?" in an open tag, and its kind. With
+// short_open_tag off only "<?php" and a blank and "<?=" open a block: a blank alone is text, and
+// a block opened there would let a comment after it swallow the real "<?php" block that follows.
+// With short tags "<?" opens a block whatever follows, except "php" and "xml" alone, on which
+// PHP fails first ("<?xml version" makes it refuse the file, "<?php+" runs as the undefined
+// constant php and stops there) unless a label, a call or a comment follows them.
+func openTagLen(t []byte, short bool) (int, int) {
 	blank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 	word := func(w string) bool { return len(t) >= len(w) && bytes.EqualFold(t[:len(w)], []byte(w)) }
 	switch {
 	case word("php") && len(t) > 3 && blank(t[3]):
-		return 4, true
+		return 4, tagFull
 	case len(t) > 0 && t[0] == '=':
-		return 1, true
+		return 1, tagFull
 	case !short:
-		return 0, false
+		return 0, tagNone
 	case len(t) > 0 && blank(t[0]):
-		return 1, true
-	case word("xml") || word("php"):
-		if len(t) > 3 && (identByte(t[3]) || t[3] == '\\') {
-			return 0, true
-		}
-		j := 3
-		for j < len(t) && blank(t[j]) {
-			if j == openTagLook {
-				return 0, true
-			}
-			j++
-		}
-		return 0, j < len(t) && strings.IndexByte(":(/#", t[j]) >= 0
+		return 1, tagShort
 	}
-	return 0, true
+	j := 0
+	for j < len(t) && (identByte(t[j]) || t[j] == '\\') {
+		if j == openTagLook {
+			return 0, tagName
+		}
+		j++
+	}
+	exact := j == 3 && (word("php") || word("xml"))
+	k := j
+	for k < len(t) && blank(t[k]) {
+		if k == openTagLook {
+			return 0, tagName
+		}
+		k++
+	}
+	goesOn := j > 0 && k < len(t) && strings.IndexByte(":(/#;\\", t[k]) >= 0
+	switch {
+	case exact && goesOn && t[k] != ';':
+		return 0, tagName
+	case exact:
+		return 0, tagNone
+	case goesOn:
+		return 0, tagName
+	}
+	return 0, tagGlued
 }
 
 // openTagLook bounds how far after "<?" the short pass reads to judge a word glued to the tag.
@@ -499,7 +534,7 @@ func (c *codeSearch) endBlock() {
 			}
 		}
 	}
-	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken, c.glued = lexText, c.code[:0], false, nil, false, false, false
+	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken, c.glued, c.loose = lexText, c.code[:0], false, nil, false, false, false, false
 	c.nested, c.nowdoc = c.nested[:0], false
 }
 

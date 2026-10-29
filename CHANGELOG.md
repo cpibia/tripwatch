@@ -16,6 +16,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - An envelope the verifier refuses for its size (413) is dropped and the chain taken back to
   before it, instead of staying pending and holding back every heartbeat, event and snapshot
   after it, even across restarts.
+- In data files, a block opened by a name glued to `<?` that PHP goes on from (`<?PHP_EOL;`,
+  a call, a label) counts like any block, weak signals included; only names PHP stops on, such
+  as XML processing instructions, count for named signatures alone. A backtick around a bare word
+  is ignored only in blocks opened by `<?` alone or by such a name, as SQL dumps quote names;
+  in a `<?php` block any backtick runs a command. `putenv`, `mail`, `mb_send_mail` and
+  `error_log` count as dangerous calls.
 - Laravel's scheduler quoting its binary and script (`'/usr/bin/php8.3' 'artisan' ...`) is
   recognised again: judging the command as it runs made the quotes visible.
 

@@ -357,12 +357,13 @@ func exitGuarded(content []byte) bool {
 }
 
 // dangerousCall is what PHP code planted in a data file does: run commands, evaluate or include
-// something, write files, read the request or its headers. A data file holds no code at all, so
+// something, write files, read the request or its headers, change the environment a command
+// then runs in (putenv), or start a process through mail(). A data file holds no code at all, so
 // any of these in a block after a real open tag is enough.
 var dangerousCall = regexp.MustCompile("(?i)\\b(?:eval|assert|system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|" +
 	"file_put_contents|fwrite|move_uploaded_file|fsockopen|base64_decode|gzinflate|gzuncompress|str_rot13|" +
 	"create_function|call_user_func|call_user_func_array|include|include_once|require|require_once|" +
-	"getallheaders|apache_request_headers)\\s*\\(" +
+	"getallheaders|apache_request_headers|putenv|mail|mb_send_mail|error_log)\\s*\\(" +
 	"|\\b(?:include|require)(?:_once)?\\s*['\"$]|\\$_(?:GET|POST|REQUEST|COOKIE|SERVER|FILES)\\b")
 
 // Function names a webshell builds so that no search finds them written out. Decoders count
