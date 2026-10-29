@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A data file may hand its own functions to WordPress hooks (`add_filter('hook', 'its_function')`
+  with literal arguments), as a theme registers the page layouts it keeps in the uploads; a hook
+  given any other function stays code.
+
 ## [0.1.29] - 2026-10-29
 
 Update the verifier, then the sensors.

@@ -261,6 +261,7 @@ func dataOnlyWhy(content []byte) (bool, string) {
 		src = src[m[1]:]
 	}
 	word, depth := "", 0
+	defined := map[string]bool{}
 	for i := 0; i < len(src); i++ {
 		c := src[i]
 		switch {
@@ -292,11 +293,20 @@ func dataOnlyWhy(content []byte) (bool, string) {
 			// A function whose body is data, as a theme wraps a page layout, defines
 			// something and runs nothing; any call in the file stays code.
 			if word == "function" && depth == 0 {
-				if m := functionHead.Find(src[i:]); m != nil {
-					i, word, depth = i+len(m)-1, "", 1
+				if m := functionHead.FindSubmatch(src[i:]); m != nil {
+					defined[strings.ToLower(string(m[1]))] = true
+					i, word, depth = i+len(m[0])-1, "", 1
 					continue
 				}
 				return false, fmt.Sprintf("function head %.48q at %d", src[i:min(len(src), i+48)], i)
+			}
+			// WordPress hands such a function to a filter by name: that registers it and runs
+			// nothing, as long as the function is one of this file's.
+			if (word == "add_filter" || word == "add_action") && depth == 0 {
+				if m := hookCall.FindSubmatch(src[i:]); m != nil && defined[strings.ToLower(string(m[1]))] {
+					i, word = i+len(m[0])-1, ""
+					continue
+				}
 			}
 			if !strings.HasPrefix(word, "$") && !slices.Contains([]string{"return", "array", "true", "false", "null"}, word) {
 				return false, fmt.Sprintf("word %.32q at %d", word, i)
@@ -324,7 +334,11 @@ func dataOnlyWhy(content []byte) (bool, string) {
 
 // functionHead is the head of a function, up to its opening brace. Its parameters run nothing
 // while it is only defined: their defaults are constant expressions.
-var functionHead = regexp.MustCompile(`^function\s+&?\w+\s*\([^{};]*\)\s*(?::\s*\??\w+\s*)?\{`)
+var functionHead = regexp.MustCompile(`^function\s+&?(\w+)\s*\([^{};]*\)\s*(?::\s*\??\w+\s*)?\{`)
+
+// hookCall is a WordPress hook registration with literal arguments: the hook, the callback's
+// name, and at most a priority and an argument count.
+var hookCall = regexp.MustCompile(`^add_(?:filter|action)\s*\(\s*['"][\w./-]+['"]\s*,\s*['"](\w+)['"]\s*(?:,\s*\d+\s*){0,2}\)\s*;`)
 
 func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80 }
 
