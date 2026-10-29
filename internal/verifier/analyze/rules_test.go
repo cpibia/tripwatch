@@ -909,3 +909,27 @@ func TestLoaderCacheDirs(t *testing.T) {
 		t.Errorf("truncated: %v", got)
 	}
 }
+
+// Container runtimes add a scope and its limits for every container, and Docker's resolver a
+// port on 127.0.0.11 at every start: neither is a new service or a new listener. A program
+// listening there that is not Docker's is.
+func TestContainerChurnIsNotNew(t *testing.T) {
+	prev := baseState()
+	prev.Services = &system.ServicesResult{}
+	prev.Sockets = &system.SocketsResult{}
+	cur := baseState()
+	cur.Services = &system.ServicesResult{Units: []system.Unit{
+		{File: collector.File{Path: "/run/systemd/transient/docker-3389.scope"}},
+		{File: collector.File{Path: "/run/systemd/transient/docker-3389.scope.d/50-MemoryMax.conf"}},
+		{File: collector.File{Path: "/etc/systemd/system/sync.service"}},
+	}}
+	cur.Sockets = &system.SocketsResult{Sockets: []system.Socket{
+		{Proto: "tcp", Local: "127.0.0.11:33439", State: "listen", Process: "dockerd", UID: 0},
+		{Proto: "tcp", Local: "127.0.0.11:4444", State: "listen", Process: "nc", UID: 33},
+	}}
+	got := fingerprints(Evaluate(&prev, cur))
+	want := []string{"medium network-change:listen:tcp:127.0.0.11:4444", "medium persistence-change:unit:root|/etc/systemd/system/sync.service"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}

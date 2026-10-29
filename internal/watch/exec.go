@@ -245,10 +245,21 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 // point outside every upload directory, the way schedulers start each of their commands.
 func (c execContext) frameworkCommand(cmdline string) bool {
 	fields := strings.Fields(cmdline)
-	if len(fields) < 2 || !strings.HasPrefix(path.Base(fields[0]), "php") {
+	if len(fields) < 2 {
 		return false
 	}
-	return c.frameworkCLI(path.Clean(fields[1]))
+	// Laravel's scheduler quotes the binary and the script ('/usr/bin/php8.3' 'artisan'): a
+	// single-quoted word is literal to the shell.
+	php, script := unquote(fields[0]), unquote(fields[1])
+	return strings.HasPrefix(path.Base(php), "php") && c.frameworkCLI(path.Clean(script))
+}
+
+// unquote strips the single quotes around a word that holds no other quote.
+func unquote(w string) string {
+	if len(w) >= 2 && w[0] == '\'' && w[len(w)-1] == '\'' && !strings.ContainsAny(w[1:len(w)-1], "'\"") {
+		return w[1 : len(w)-1]
+	}
+	return w
 }
 
 // frameworkCLI reports whether a script is a framework's command-line entry point, which

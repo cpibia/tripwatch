@@ -709,6 +709,19 @@ func unconfiguredLoaderDirs(l *system.LoaderPaths) []string {
 	return out
 }
 
+// scopeUnit reports a scope or a drop-in of one: a scope groups processes something else
+// started (a container, a login session) and runs nothing itself, and container runtimes create
+// one, with its resource limits as drop-ins, for every container they start.
+func scopeUnit(p string) bool {
+	return path.Ext(p) == ".scope" || strings.HasSuffix(path.Dir(p), ".scope.d")
+}
+
+// dockerDNS reports the resolver Docker runs for each user-defined network inside the
+// container's namespace, on 127.0.0.11 and a port drawn at every container start.
+func dockerDNS(so system.Socket) bool {
+	return strings.HasPrefix(so.Local, "127.0.0.11:") && so.Process == "dockerd" && so.UID == 0
+}
+
 // unjudgedHooks are collected with the hooks but not judged by hookChanges: ld.so.preload has
 // its own rule on what it loads, and the resolver files are rewritten by DHCP clients and
 // container runtimes without running anything.
@@ -1003,7 +1016,7 @@ func Evaluate(prev *State, cur State) []Finding {
 					stateBy(unitOwner(u), "persistence", "unit-exec:"+unitOwner(u)+"|"+u.Path+":"+x, "high", "Service running from an unusual directory", x+"\nin "+u.Path)
 				}
 			}
-			if knownUnits != nil && !knownUnits.has(u.Path) && !sensorOwnUnit(u) {
+			if knownUnits != nil && !knownUnits.has(u.Path) && !sensorOwnUnit(u) && !scopeUnit(u.Path) {
 				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, "medium", "New systemd service", u.Path+"\n"+strings.Join(u.Exec, "\n"))
 			}
 		}
@@ -1139,7 +1152,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 		}
 		for _, so := range s.Sockets {
-			if so.State == "listen" && !known.has(so.Proto+"\x00"+so.Local) {
+			if so.State == "listen" && !known.has(so.Proto+"\x00"+so.Local) && !dockerDNS(so) {
 				change("network-change", "listen:"+so.Proto+":"+so.Local, "medium", "New listening port: "+so.Local, fmt.Sprintf("%s %s, process %s (PID %d).", so.Proto, so.Local, so.Process, so.PID))
 			}
 		}

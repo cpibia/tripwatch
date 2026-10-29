@@ -16,6 +16,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - An envelope the verifier refuses for its size (413) is dropped and the chain taken back to
   before it, instead of staying pending and holding back every heartbeat, event and snapshot
   after it, even across restarts.
+- Laravel's scheduler quoting its binary and script (`'/usr/bin/php8.3' 'artisan' ...`) is
+  recognised again: judging the command as it runs made the quotes visible.
+
+### Verifier
+
+- Systemd scopes and their drop-ins (one per container a runtime starts, with its resource
+  limits) are not reported as new services: a scope runs nothing itself.
+- Docker's resolver for user-defined networks (dockerd on `127.0.0.11`, a new port at every
+  container start) is not a new listening port; anything else listening there still is.
 
 ## [0.1.33] - 2026-10-29
 
