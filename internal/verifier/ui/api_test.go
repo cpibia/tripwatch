@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,5 +109,52 @@ func TestAPI(t *testing.T) {
 	}
 	if code, _ := h.api("GET", "/api/v1/hosts", read); code != http.StatusUnauthorized {
 		t.Errorf("revoked token: %d", code)
+	}
+}
+
+// A program reads every alert once by following the cursor: oldest first, a next cursor while
+// a page is full, and the total of what the filters match.
+func TestAPIAlertCursor(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 5 {
+		if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: "f" + itoa(int64(i)), Severity: "high", Kind: "web", Title: "t"}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	token, err := h.store.CreateAPIToken(ctx, "siem", email, false, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen []int64
+	after := "0"
+	for range 5 {
+		code, body := h.api("GET", "/api/v1/alerts?limit=2&after="+after, token)
+		var page struct {
+			Alerts []struct {
+				ID int64 `json:"id"`
+			} `json:"alerts"`
+			Total int    `json:"total"`
+			Next  *int64 `json:"next"`
+		}
+		if code != http.StatusOK || json.Unmarshal([]byte(body), &page) != nil || page.Total != 5 {
+			t.Fatalf("page after %s: %d %s", after, code, body)
+		}
+		for _, a := range page.Alerts {
+			seen = append(seen, a.ID)
+		}
+		if page.Next == nil {
+			break
+		}
+		after = itoa(*page.Next)
+	}
+	if len(seen) != 5 || !slices.IsSorted(seen) || len(slices.Compact(slices.Clone(seen))) != 5 {
+		t.Fatalf("read %v", seen)
+	}
+	if code, _ := h.api("GET", "/api/v1/alerts?after=x", token); code != http.StatusBadRequest {
+		t.Errorf("a cursor that is no ID: %d", code)
 	}
 }

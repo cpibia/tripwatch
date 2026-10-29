@@ -8,7 +8,7 @@
   <div class="panel-head"><h2 id="new-h">Token {{$d.NewName}}</h2><p class="panel-note">shown only now: only its hash is kept</p></div>
   <pre class="datum command" id="new-token">{{.}}</pre>
   <div class="actions"><button type="button" data-copy="new-token">Copy the token</button></div>
-  <p class="note">Send it as <span class="mono">Authorization: Bearer &lt;token&gt;</span> to <span class="mono">/api/v1/alerts</span>, <span class="mono">/api/v1/alerts/{id}</span>, <span class="mono">/api/v1/hosts</span>; with write access also <span class="mono">POST /api/v1/alerts/{id}/ack</span> and <span class="mono">/resolve</span>.</p>
+  <p class="note">Send it as <span class="mono">Authorization: Bearer &lt;token&gt;</span> to <span class="mono">/api/v1/alerts</span> (<span class="mono">?after=&lt;id&gt;</span> pages through every alert once, following <span class="mono">next</span>), <span class="mono">/api/v1/alerts/{id}</span>, <span class="mono">/api/v1/hosts</span>; with write access also <span class="mono">POST /api/v1/alerts/{id}/ack</span> and <span class="mono">/resolve</span>.</p>
 </section>{{end}}
 
 <section class="panel" aria-labelledby="tok-h">

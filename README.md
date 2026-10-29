@@ -854,7 +854,9 @@ is needed too, which closes them all.
   keeps who did what in the console, newest first.
 - **API.** Administrators make tokens (Settings, API tokens) that programs send as
   `Authorization: Bearer twk_...`: `GET /api/v1/alerts` (filters `status`, `severity`, `host`,
-  `limit`), `GET /api/v1/alerts/{id}`, `GET /api/v1/hosts`, and with write access
+  `limit`; `total` counts every match; with `after=<id>` alerts come in the order they were
+  raised from the one after it, and `next` is the cursor of the following page, so a program
+  reads every alert once), `GET /api/v1/alerts/{id}`, `GET /api/v1/hosts`, and with write access
   `POST /api/v1/alerts/{id}/ack` and `/resolve`. A token acts as the person who made it, the
   servers they may see included, is shown once, expires, and can be revoked.
 - **Account.** Each user can set up a second factor (an authenticator app, with ten single-use

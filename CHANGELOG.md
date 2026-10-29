@@ -6,6 +6,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- `GET /api/v1/alerts` answers with `total`, the count of every alert the filters match, and
+  takes a cursor: with `after=<id>` alerts come in the order they were raised from the one
+  after that ID, and `next` gives the cursor of the following page while pages are full. A
+  program reads every alert once instead of guessing from the newest 500.
+
 ### Sensor
 
 - WP Migrate manifests written as serialized PHP arrays, as the plugin did before it moved to

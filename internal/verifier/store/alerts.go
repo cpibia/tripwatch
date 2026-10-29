@@ -339,6 +339,9 @@ type AlertFilter struct {
 	Sort string
 	// Offset skips that many alerts of the order, for the pages after the first.
 	Offset int
+	// AfterID keeps the alerts with a higher ID: a cursor for programs that read every alert
+	// once, in the order they were raised (Sort SortID).
+	AfterID int64
 }
 
 // Orders of an alert list besides the default.
@@ -347,6 +350,8 @@ const (
 	SortNewest      = "newest"
 	SortOccurrences = "occurrences"
 	SortHost        = "host"
+	// SortID is the order alerts were raised in, the one AfterID pages through.
+	SortID = "id"
 )
 
 // maxQueryLen bounds the text searched in alerts.
@@ -411,6 +416,10 @@ func alertWhere(ctx context.Context, f AlertFilter) (string, []any) {
 		q += ` AND host_id = ?`
 		args = append(args, f.HostID)
 	}
+	if f.AfterID > 0 {
+		q += ` AND id > ?`
+		args = append(args, f.AfterID)
+	}
 	if len(f.Severities) > 0 {
 		q += ` AND severity IN (?` + repeat(",?", len(f.Severities)-1) + `)` //nolint:gosec // placeholders only; values are bound
 		for _, sev := range f.Severities {
@@ -453,6 +462,8 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 	q := `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at, occurrences,
 		COALESCE(acked_by, ''), notified_at FROM alerts` + where
 	switch {
+	case f.Sort == SortID:
+		q += ` ORDER BY id`
 	case f.Sort == SortNewest:
 		q += ` ORDER BY created_at DESC, id DESC`
 	case f.Sort == SortOldest:

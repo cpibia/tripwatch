@@ -90,7 +90,9 @@ func toAPIAlert(a store.Alert) apiAlert {
 		CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, Occurrences: a.Occurrences}
 }
 
-// apiAlerts lists alerts: status, severity and host narrow them, limit bounds them.
+// apiAlerts lists alerts: status, severity and host narrow them, limit bounds them. With after,
+// a cursor, they come in the order they were raised, from the one after that ID, and next is the
+// cursor of the following page when there may be one; total counts every alert the filters match.
 func (s *server) apiAlerts(w http.ResponseWriter, r *http.Request, _ apiCaller) {
 	q := r.URL.Query()
 	f := store.AlertFilter{Current: true, HostID: q.Get("host"), Limit: 100}
@@ -107,6 +109,20 @@ func (s *server) apiAlerts(w http.ResponseWriter, r *http.Request, _ apiCaller) 
 	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 {
 		f.Limit = min(n, maxAPIAlerts)
 	}
+	total, err := s.Store.CountAlerts(r.Context(), f)
+	if err != nil {
+		s.Log.Error("api alerts", "err", err)
+		apiError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if raw := q.Get("after"); raw != "" {
+		after, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || after < 0 {
+			apiError(w, http.StatusBadRequest, "after is the ID of the last alert read")
+			return
+		}
+		f.AfterID, f.Sort = after, store.SortID
+	}
 	alerts, err := s.Store.Alerts(r.Context(), f)
 	if err != nil {
 		s.Log.Error("api alerts", "err", err)
@@ -117,7 +133,11 @@ func (s *server) apiAlerts(w http.ResponseWriter, r *http.Request, _ apiCaller) 
 	for _, a := range alerts {
 		out = append(out, toAPIAlert(a))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"alerts": out})
+	resp := map[string]any{"alerts": out, "total": total}
+	if f.Sort == store.SortID && len(alerts) == f.Limit {
+		resp["next"] = alerts[len(alerts)-1].ID
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *server) apiAlert(w http.ResponseWriter, r *http.Request, _ apiCaller) {
