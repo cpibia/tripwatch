@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- Apache's configuration is judged stale against its oldest worker, as nginx's: the graceful
+  reload log rotation runs every night rereads it in a master started long before, and every
+  file changed since that start was reported as not loaded.
 - The shell an error reporter starts from the PHP pool to read the project's git root (Flare and
   Ignition in Laravel, `echo $(git rev-parse --show-toplevel)`, matched whole) is not a web shell.
 

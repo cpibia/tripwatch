@@ -53,13 +53,16 @@ func inspectSites(fsys fs.FS) Inventory {
 	servers := []struct {
 		parse     func(fs.FS) ([]Site, []string, collector.Issues)
 		processes []string
-		// reloadsWorkers: a reload starts new workers and nothing else does, so the newest
-		// process tells when the configuration was read. Apache's children come and go all the
-		// time and Caddy reloads in place: for them only the oldest process counts.
+		// reloadsWorkers: a reload starts new workers, so the oldest worker started after the
+		// configuration was last read. Apache's graceful reload, which log rotation runs every
+		// night, rereads it in a master that never restarts: the master's start says nothing.
+		// Its workers also come and go on their own, which only makes a change look older than
+		// the reload: a file changed after the oldest worker is stale either way. Caddy reloads
+		// in place: only the oldest process counts.
 		reloadsWorkers bool
 	}{
 		{NginxSites, []string{"nginx"}, true},
-		{ApacheSites, []string{"apache2", "httpd"}, false},
+		{ApacheSites, []string{"apache2", "httpd"}, true},
 		{CaddySites, []string{"caddy"}, false},
 	}
 	for _, srv := range servers {

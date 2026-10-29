@@ -596,6 +596,33 @@ func TestStaleConfig(t *testing.T) {
 	}
 }
 
+// Apache's graceful reload rereads the configuration in a master started long before and starts
+// new workers: a file changed after the master but before the reload is the one running.
+func TestStaleConfigAfterApacheGracefulReload(t *testing.T) {
+	boot := time.Unix(1_700_000_000, 0)
+	stat := func(pid, ppid string, ticks int) *fstest.MapFile {
+		return text(pid + " (apache2) S " + ppid + " 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 " + strconv.Itoa(ticks) + " 0 0")
+	}
+	fsys := fstest.MapFS{
+		"proc/stat":                text("cpu 1 2 3\nbtime 1700000000\n"),
+		"proc/10/exe":              &fstest.MapFile{Data: []byte("/usr/sbin/apache2"), Mode: fs.ModeSymlink},
+		"proc/10/status":           text("Uid:\t0\t0\t0\t0\n"),
+		"proc/10/stat":             stat("10", "1", 360000),
+		"proc/11/exe":              &fstest.MapFile{Data: []byte("/usr/sbin/apache2"), Mode: fs.ModeSymlink},
+		"proc/11/status":           text("Uid:\t33\t33\t33\t33\n"),
+		"proc/11/stat":             stat("11", "10", 7200000),
+		"etc/apache2/apache2.conf": &fstest.MapFile{Data: []byte("DocumentRoot /srv\n"), ModTime: boot.Add(10 * time.Hour)},
+	}
+	// The master started an hour after boot, the worker after a reload at twenty hours.
+	if inv := Inspect(fsys); len(inv.StaleConfig) != 0 {
+		t.Errorf("stale after a graceful reload = %v", inv.StaleConfig)
+	}
+	fsys["etc/apache2/apache2.conf"].ModTime = boot.Add(30 * time.Hour)
+	if inv := Inspect(fsys); !slices.Equal(inv.StaleConfig, []string{"/etc/apache2/apache2.conf"}) {
+		t.Errorf("stale = %v", inv.StaleConfig)
+	}
+}
+
 func TestCaddyImport(t *testing.T) {
 	fsys := fstest.MapFS{
 		"etc/caddy/Caddyfile":        text("(common) {\n\theader -Server\n}\nimport sites/*.caddy\n"),
