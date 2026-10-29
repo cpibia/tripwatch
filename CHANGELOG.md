@@ -6,15 +6,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
-### Verifier
+## [0.1.38] - 2026-10-29
 
-- `tripwatch-verifier backup` copies the database (VACUUM INTO, consistent and compacted) and
-  the certificate authority to a new directory under `/data/backups` while the verifier runs:
-  an upgrade no longer needs a stop to keep a way back.
-- `GET /api/v1/alerts` answers with `total`, the count of every alert the filters match, and
-  takes a cursor: with `after=<id>` alerts come in the order they were raised from the one
-  after that ID, and `next` gives the cursor of the following page while pages are full. A
-  program reads every alert once instead of guessing from the newest 500.
+Update the verifier, then the sensors.
 
 ### Sensor
 
@@ -25,6 +19,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
   removed.
 - WP Migrate manifests written as serialized PHP arrays, as the plugin did before it moved to
   JSON in 2024, are recognised like the JSON ones instead of reported as hidden files.
+
+### Verifier
+
+- `tripwatch-verifier backup` copies the database (VACUUM INTO, consistent and compacted) and
+  the certificate authority to a new directory under `/data/backups` while the verifier runs:
+  an upgrade no longer needs a stop to keep a way back.
+- `GET /api/v1/alerts` answers with `total`, the count of every alert the filters match, and
+  takes a cursor: with `after=<id>` alerts come in the order they were raised from the one
+  after that ID, and `next` gives the cursor of the following page while pages are full. A
+  program reads every alert once instead of guessing from the newest 500.
 
 ## [0.1.37] - 2026-10-29
 
@@ -1269,7 +1273,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.37...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.38...HEAD
+[0.1.38]: https://github.com/cpibia/tripwatch/compare/v0.1.37...v0.1.38
 [0.1.37]: https://github.com/cpibia/tripwatch/compare/v0.1.36...v0.1.37
 [0.1.36]: https://github.com/cpibia/tripwatch/compare/v0.1.35...v0.1.36
 [0.1.35]: https://github.com/cpibia/tripwatch/compare/v0.1.34...v0.1.35
