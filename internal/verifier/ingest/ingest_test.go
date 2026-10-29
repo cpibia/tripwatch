@@ -512,6 +512,43 @@ func TestSensorStopsAndStarts(t *testing.T) {
 	}
 }
 
+// An update this console ordered goes to the audit log instead of raising an alert per server;
+// one to another version, or before the order, is still an alert.
+func TestOrderedUpdateIsAudited(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	send := func(payload string) {
+		t.Helper()
+		h.clock = h.clock.Add(time.Hour)
+		if err := c.Send(ctx, protocol.KindEvent, []byte(payload), h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(`{"event":"sensor_started","version":"1.2.0","boot_id":"aaaaaaaa-1"}`)
+	if err := h.store.SetUpdateOrder(ctx, store.UpdateOrder{Version: "v1.2.1", OrderedBy: "admin@example.com", OrderedAt: h.clock}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(h.alerts())
+	send(`{"event":"sensor_stopping","version":"1.2.0","reason":"updating","shutdown":false}`)
+	send(`{"event":"sensor_started","version":"1.2.1","boot_id":"aaaaaaaa-1"}`)
+	if n := len(h.alerts()); n != before {
+		t.Fatalf("an ordered update raised %d alerts", n-before)
+	}
+	log, err := h.store.AuditLog(ctx, 5)
+	if err != nil || len(log) == 0 || log[0].Action != "sensor updated as ordered" || log[0].Target != "web-01" {
+		t.Fatalf("audit log %+v, %v", log, err)
+	}
+	if run, _ := h.store.Run(ctx, "web-01"); run.Version != "1.2.1" {
+		t.Errorf("run version %q", run.Version)
+	}
+	send(`{"event":"sensor_stopping","version":"1.2.1","reason":"updating","shutdown":false}`)
+	send(`{"event":"sensor_started","version":"1.2.2","boot_id":"aaaaaaaa-1"}`)
+	if n := len(h.alerts()); n != before+1 {
+		t.Fatalf("an update to a version nobody ordered raised %d alerts", n-before)
+	}
+}
+
 func TestClientCertificateRenewal(t *testing.T) {
 	h := newHarness(t)
 	_, b := h.sensor("web-01")

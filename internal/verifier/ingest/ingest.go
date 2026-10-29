@@ -642,6 +642,17 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 	case known && stopped && run.StopReason == "updating" && newerVersion(version, run.Version):
 		a.Severity, a.Title = "low", "Sensor updated"
 		a.Detail = fmt.Sprintf("The sensor was restarted by its update and runs a new version: %s, before %s (system boot %s).", version, run.Version, boot)
+		// An update this console ordered is the operator's own doing: one line in the audit
+		// log says it happened, instead of an alert per server.
+		if o, ok, err := s.Store.CurrentUpdateOrder(ctx); err == nil && ok && sameRelease(o.Version, version) && !run.StoppedAt.Before(o.OrderedAt) {
+			if err := s.Store.Audit(ctx, "sensor", "sensor updated as ordered", host, fmt.Sprintf("%s, before %s; ordered by %s", version, run.Version, o.OrderedBy), now); err != nil {
+				s.Log.Error("audit", "err", err)
+			}
+			if err := s.Store.Started(ctx, host, boot, version, now); err != nil {
+				s.Log.Error("record sensor start", "host", host, "err", err)
+			}
+			return
+		}
 	case known && version != run.Version && run.Version != "":
 		a.Title = "Sensor replaced without an update"
 		a.Detail = fmt.Sprintf("The sensor started again on the same system boot with another version, %s, before %s (system boot %s), but it did not stop for an update of its package: someone replaced the binary. Check where it came from.", version, run.Version, boot)
@@ -678,6 +689,13 @@ func (s *Server) stopping(ctx context.Context, host string, e protocol.Envelope,
 		Title:  "Sensor removed",
 		Detail: fmt.Sprintf("The sensor package (version %s) was removed from the server and the sensor stopped: nothing on it is watched any more. If no administrator uninstalled it, someone with root did, and the server should be checked from outside.", clipVersion(ev.Version)),
 	}, now)
+}
+
+// sameRelease reports whether two versions name the same release, with or without the "v".
+func sameRelease(a, b string) bool {
+	pa, okA := releaseParts(a)
+	pb, okB := releaseParts(b)
+	return okA && okB && slices.Equal(pa, pb)
 }
 
 // newerVersion reports whether a is a later release than b: a downgrade is no update.

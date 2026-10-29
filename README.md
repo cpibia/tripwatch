@@ -671,7 +671,8 @@ not pretend otherwise, but aims to make both visible. Already today:
   against how the previous run ended, from what the sensor signed as it stopped: only a stop made
   while systemd was shutting the system down, followed by a new boot, is one low "Server was off"
   event (a server switched off every night raises no more), and only a stop for an update of the
-  package, followed by a new version, is a low "Sensor updated". A service stopped on a running
+  package, followed by a new version, is a low "Sensor updated", or only a line in the audit
+  log when it is the version the console ordered. A service stopped on a running
   system stays critical while silent and high when it comes back, even after a later reboot, so
   stopping the sensor, working and then rebooting is not quiet; so do a crash or a killed sensor
   before a reboot, and another version without an update. The silence after a signed shutdown is

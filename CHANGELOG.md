@@ -44,6 +44,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A kind of database objects that one snapshot could not read (a query that failed or timed
   out, as a table locked while a row is added to it can make it) is compared with the last
   snapshot that read it, so what was added in between is still reported.
+- A sensor updated to the version the console ordered is recorded in the audit log as
+  "sensor updated as ordered" instead of raising a low "Sensor updated" alert on every server.
+  An update to any other version still raises it.
 
 ## [0.1.39] - 2026-10-29
 
