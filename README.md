@@ -914,6 +914,9 @@ what the server reported) and the newest 50,000 real-time events (path, command)
 at most five seconds, on read-only connections of its own, so it never holds up what the
 servers send.
 
+Keys: `/` jumps to the search box; `j` and `k` move down and up the rows of an alert list, and
+Enter opens the alert or the group under the cursor.
+
 A dark operations console in the colours of the logo, a fingerprint with one broken ridge: teal
 for what can be used or is selected, coral and amber only for the severities. The menu groups
 operations (overview, alerts, servers) and configuration (enrolling a server). It refreshes by

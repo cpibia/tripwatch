@@ -26,6 +26,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - The overview's open alerts start with a lane of those raised in the last 24 hours, counted in
   full, set apart from those open for longer: what is new is the first question of a morning
   look.
+- `j` and `k` move down and up the rows of the alert lists; Enter opens the alert or the group.
 
 ## [0.1.40] - 2026-10-29
 

@@ -88,6 +88,25 @@
   });
 })();
 
+// "j" and "k" move down and up the rows of the alert lists, to each row's alert or group
+// control; Enter then does what it does, open the alert or the group.
+(function () {
+  document.addEventListener("keydown", function (event) {
+    if ((event.key !== "j" && event.key !== "k") || event.ctrlKey || event.metaKey || event.altKey) return;
+    var active = document.activeElement;
+    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" || active.isContentEditable)) return;
+    var rows = Array.prototype.filter.call(document.querySelectorAll("td.what > a, td.what > button.disclose"), function (el) {
+      return el.offsetParent !== null;
+    });
+    if (rows.length === 0) return;
+    event.preventDefault();
+    var at = rows.indexOf(active);
+    var next = at < 0 ? 0 : Math.min(Math.max(at + (event.key === "j" ? 1 : -1), 0), rows.length - 1);
+    rows[next].focus();
+    rows[next].scrollIntoView({ block: "nearest" });
+  });
+})();
+
 // Filter forms apply a choice as soon as it is made: the button stays for keyboards and for
 // browsers without this script.
 (function () {
