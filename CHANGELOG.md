@@ -20,6 +20,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Web requests passing PHP-CGI options in the query string (`-d allow_url_include=1 -d
   auto_prepend_file=php://input`, with a soft hyphen for CVE-2024-4577) are reported as such,
   high, instead of as path traversal.
+- ClamAV run by an upload plugin with its errors sent to a file named `1` (`2> 1`, as some
+  plugins write it) is recognised like the `2>&1` form; any other target still alerts.
 - A command fed a here-document carries the sum of the raw text before the `<<` only, so the
   verifier can key its alert on what the command does rather than on the script it is fed.
 

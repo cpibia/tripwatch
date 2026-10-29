@@ -228,6 +228,8 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary '/tmp/x' $(id)"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /tmp/clamdscan /var/www/x"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /var/www/site/uploads/forms/12/a.jpg 2>&1"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /var/www/site/uploads/forms/12/a.jpg 2> 1"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /var/www/site/uploads/forms/12/a.jpg 2> 1.php"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /tmp/x 2>&1; id"}, ReasonWebShell},
 		// Symfony's Console asks for the terminal's size; anything more is a shell command.
 		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "stty -a"}, ""},

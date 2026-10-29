@@ -193,8 +193,9 @@ var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Z
 
 // virusScanCommand is ClamAV run on one uploaded file, as the upload plugins of CMSs do: the
 // scanner from the system's directories, options only, and one file, single-quoted (where the
-// shell expands nothing) or plain, its errors sent to the output the plugin reads.
-var virusScanCommand = regexp.MustCompile(`^/usr/(?:local/)?bin/clamd?scan(?: +--?[a-z][a-z-]*(?:=[A-Za-z0-9_./-]+)?)* +(?:'[^']*'|[^\s;&|$` + "`" + `<>()'"\\]+)(?: 2>&1)?$`)
+// shell expands nothing) or plain, its errors sent to the output the plugin reads (or, as some
+// plugins write it, to a file named 1).
+var virusScanCommand = regexp.MustCompile(`^/usr/(?:local/)?bin/clamd?scan(?: +--?[a-z][a-z-]*(?:=[A-Za-z0-9_./-]+)?)* +(?:'[^']*'|[^\s;&|$` + "`" + `<>()'"\\]+)(?: 2>&1| 2> ?1)?$`)
 
 // terminalQuery is a console library asking for the terminal's size or settings, as Symfony's
 // Console does (under Laravel's artisan, Composer, Drush and Magento's CLI) at every command:
