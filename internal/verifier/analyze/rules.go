@@ -17,6 +17,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector/apps"
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
+	"github.com/cpibia/tripwatch/internal/discovery"
 	"github.com/cpibia/tripwatch/internal/watch"
 	"github.com/cpibia/tripwatch/internal/weblog"
 )
@@ -1279,7 +1280,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 		}
 		for _, cfg := range w.Inventory.StaleConfig {
-			state("web", "stale-config:"+cfg, "medium", "Web server configuration changed after it started", cfg)
+			state("web", "stale-config:"+cfg, "medium", "Web server configuration changed after it started", staleDetail(w.Inventory, cfg))
 		}
 		// Files stuffed with code can spend the run's budget so a payload behind them is never
 		// searched: the gap is an alert, and it names the files that caused it.
@@ -1520,6 +1521,27 @@ func scriptChanges(app web.AppReport) []Finding {
 // codeExtensions are the files a change of the code tree is about: what the server or the
 // browser runs, and what tells the server how.
 var codeExtensions = []string{".js", ".mjs", ".html", ".htm", ".svg", ".twig", ".tpl", ".inc", ".module", ".py", ".rb", ".pl", ".cgi", ".sh", ".jsp", ".asp", ".aspx"}
+
+// staleDetail explains a stale configuration file with its times, when the sensor sent them: an
+// edit not reloaded changes the content, while a change of owner or mode, or a backup tool
+// restoring access times, moves only the inode change time.
+func staleDetail(inv discovery.Inventory, cfg string) string {
+	i := slices.IndexFunc(inv.StaleTimes, func(s discovery.StaleFile) bool { return s.Path == cfg })
+	if i < 0 {
+		return cfg
+	}
+	st := inv.StaleTimes[i]
+	detail := fmt.Sprintf("%s\nInode changed %s; the web server last read its configuration %s.", cfg, st.Changed.UTC().Format(time.RFC3339), st.Loaded.UTC().Format(time.RFC3339))
+	if j := slices.IndexFunc(inv.ConfigFiles, func(f collector.File) bool { return f.Path == cfg }); j >= 0 {
+		mtime := inv.ConfigFiles[j].ModTime
+		detail += fmt.Sprintf(" Content last modified %s", mtime.UTC().Format(time.RFC3339))
+		if mtime.Before(st.Loaded) {
+			detail += ", before the server read it: if the content is what the server read, only the owner, the mode or the links changed since, or the modification time was set back"
+		}
+		detail += "."
+	}
+	return detail + " Reload the web server once the change is checked, and the alert resolves."
+}
 
 // onlyDataChanged reports a directory of the code tree where, by the complete list of the
 // files changed, none is code: a custom application writing its own data files next to its

@@ -591,8 +591,12 @@ func TestStaleConfig(t *testing.T) {
 	fsys["proc/99/exe"] = link("/tmp/nginx")
 	fsys["proc/99/status"] = text("Uid:\t33\t33\t33\t33\n")
 	fsys["proc/99/stat"] = stat("99", "1", 900000)
-	if inv := Inspect(fsys); !slices.Equal(inv.StaleConfig, []string{"/etc/nginx/sites/a"}) {
+	inv := Inspect(fsys)
+	if !slices.Equal(inv.StaleConfig, []string{"/etc/nginx/sites/a"}) {
 		t.Errorf("stale = %v", inv.StaleConfig)
+	}
+	if len(inv.StaleTimes) != 1 || !inv.StaleTimes[0].Loaded.Equal(boot.Add(time.Hour)) || !inv.StaleTimes[0].Changed.Equal(boot.Add(90*time.Minute)) {
+		t.Errorf("stale times = %+v", inv.StaleTimes)
 	}
 }
 

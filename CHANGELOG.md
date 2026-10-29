@@ -22,6 +22,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   high, instead of as path traversal.
 - ClamAV run by an upload plugin with its errors sent to a file named `1` (`2> 1`, as some
   plugins write it) is recognised like the `2>&1` form; any other target still alerts.
+- For a web server configuration file changed after the server read it, the sensor also sends
+  when the file's inode changed and when the configuration was read.
 - A command fed a here-document carries the sum of the raw text before the `<<` only, so the
   verifier can key its alert on what the command does rather than on the script it is fed.
 
@@ -31,6 +33,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   command before the `<<`: deploy and server management tools that pipe a new script, with a
   random delimiter, to `ssh host sh -s` at every run raise one alert, which can be accepted,
   instead of a new critical alert each time. The script stays in the alert's detail.
+- "Web server configuration changed after it started" says when the file changed, when it was
+  last modified and when the server read its configuration, and points out when only the
+  inode changed (owner, mode, links), so an edit not reloaded is told from a change of owner.
 
 ## [0.1.35] - 2026-10-29
 

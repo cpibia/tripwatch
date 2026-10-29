@@ -32,10 +32,21 @@ type Inventory struct {
 	// StaleConfig lists configuration files changed after the web server process started: the
 	// running configuration may differ from the one on disk, so reachability read from disk is
 	// not to be trusted for them.
-	StaleConfig  []string         `json:"stale_config,omitempty"`
+	StaleConfig []string `json:"stale_config,omitempty"`
+	// StaleTimes says, for each stale file, when its inode last changed and when the web server
+	// last read its configuration: what an operator needs to tell an edit not yet reloaded from
+	// a change of owner or mode, or a clock that moved.
+	StaleTimes   []StaleFile      `json:"stale_times,omitempty"`
 	Applications []Application    `json:"applications"`
 	Runtimes     []string         `json:"runtimes"`
 	Issues       collector.Issues `json:"issues,omitempty"`
+}
+
+// StaleFile is a configuration file changed after the web server read its configuration.
+type StaleFile struct {
+	Path    string    `json:"path"`
+	Changed time.Time `json:"changed"`
+	Loaded  time.Time `json:"loaded"`
 }
 
 // Inspect builds the web inventory: sites from every web server configuration present,
@@ -77,8 +88,9 @@ func inspectSites(fsys fs.FS) Inventory {
 				continue
 			}
 			inv.ConfigFiles = append(inv.ConfigFiles, f)
-			if running && changedAfter(fsys, name, started) {
+			if changed, ok := changedAt(fsys, name); running && ok && changed.After(started) {
 				inv.StaleConfig = append(inv.StaleConfig, f.Path)
+				inv.StaleTimes = append(inv.StaleTimes, StaleFile{Path: f.Path, Changed: changed.UTC(), Loaded: started.UTC()})
 				inv.Issues = append(inv.Issues, fmt.Sprintf("%s changed after the web server started: the running configuration may differ", f.Path))
 			}
 		}
@@ -275,15 +287,15 @@ func bootTime(fsys fs.FS) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// changedAfter compares with the change time where available: a file's owner can set its
-// modification time back, not its change time.
-func changedAfter(fsys fs.FS, name string, t time.Time) bool {
+// changedAt is when a file last changed: its inode change time, which unlike the modification
+// time no one can set back, or the modification time where the change time is unknown.
+func changedAt(fsys fs.FS, name string) (time.Time, bool) {
 	info, err := fs.Stat(fsys, name)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	if ctime, ok := collector.ChangeTime(info); ok {
-		return time.Unix(0, ctime).After(t)
+		return time.Unix(0, ctime), true
 	}
-	return info.ModTime().After(t)
+	return info.ModTime(), true
 }
