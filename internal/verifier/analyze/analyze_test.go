@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -559,5 +560,37 @@ func TestNewCollectorAfterAnUpdate(t *testing.T) {
 	h.analyse()
 	if _, ok := h.open()["sensor:baseline-lost:accounts"]; ok {
 		t.Fatalf("a collector new with the sensor's version raised a lost baseline: %v", h.open())
+	}
+}
+
+// A hook change a real-time event already reported is not raised again by the snapshot that
+// shows it; one no event reported is.
+func TestHookSeenInRealTimeIsNotRepeated(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	snap := func(taken time.Time, files string) string {
+		return `{"snapshot":{"taken_at":"` + taken.Format(time.RFC3339) + `","results":{"hooks":{"files":[` + files + `]}}}}`
+	}
+	old := h.clock.Add(-48 * time.Hour).Format(time.RFC3339)
+	h.deliver(protocol.KindSnapshot, gz(t, snap(h.clock, `{"path":"/etc/profile.d/a.sh","sha256":"aaaa","mtime":"`+old+`"},{"path":"/etc/profile.d/b.sh","sha256":"bbbb","mtime":"`+old+`"}`)))
+	h.clock = h.clock.Add(30 * time.Minute)
+	data := []byte(`{"class":"hook","op":"write","path":"/etc/profile.d/a.sh","sha256":"a222"}`)
+	if _, err := h.store.AddEvents(ctx, []store.Event{{HostID: "web-01", Seq: 1, At: h.clock, Class: "hook", Op: "write", Path: "/etc/profile.d/a.sh", Data: data}}, h.clock); err != nil {
+		t.Fatal(err)
+	}
+	h.clock = h.clock.Add(30 * time.Minute)
+	recent := h.clock.Add(-10 * time.Minute).Format(time.RFC3339)
+	h.deliver(protocol.KindSnapshot, gz(t, snap(h.clock, `{"path":"/etc/profile.d/a.sh","sha256":"a222","mtime":"`+recent+`"},{"path":"/etc/profile.d/b.sh","sha256":"b222","mtime":"`+recent+`"}`)))
+	ids, _ := h.store.PendingSnapshots(ctx, 10)
+	for _, id := range ids {
+		h.an.RunSnapshot(ctx, id)
+		_ = h.store.MarkAnalyzed(ctx, id)
+	}
+	open := h.open()
+	if _, ok := open["persistence-change:hook:/etc/profile.d/a.sh|a222"]; ok {
+		t.Error("the change reported in real time is raised again")
+	}
+	if _, ok := open["persistence-change:hook:/etc/profile.d/b.sh|b222"]; !ok {
+		t.Errorf("the change no event reported is not raised: %v", slices.Collect(maps.Keys(open)))
 	}
 }

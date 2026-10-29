@@ -38,6 +38,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A loader configuration file written and removed within minutes is a critical alert: the
   directories it named stay in `ld.so.cache` after it is gone. A change to the loader's search
   path is its own high alert; `~/.ssh/rc` changes are judged as the account's start-up files.
+- Start-up, login, network and loader hooks added or changed between two snapshots are an
+  alert (high in the system, medium in a home, low when packages changed in the same interval),
+  unless a real-time event already reported that content: changes made while the watcher was
+  stopped or past its bounds were only listed. Files collected for the first time and older than
+  the previous snapshot are not reported as new, so updating the sensor raises nothing.
 
 ## [0.1.32] - 2026-10-29
 

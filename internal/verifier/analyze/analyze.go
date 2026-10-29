@@ -342,7 +342,7 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	}
 	prev, lost := a.base(ctx, state, prevSnap)
 
-	findings := Evaluate(prev, state)
+	findings := a.dropReported(ctx, host, Evaluate(prev, state))
 	for _, name := range lost {
 		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:baseline-lost:" + name, Severity: "high",
 			Title:  "Collector " + name + " has nothing to compare with",
@@ -429,6 +429,33 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			a.Log.Error("resolve alerts", "host", host, "kind", kind, "err", err)
 		}
 	}
+}
+
+// maxReportedChecks bounds the event lookups of one snapshot: past it, findings are kept, and
+// the bound on findings per snapshot does the rest.
+const maxReportedChecks = 64
+
+// dropReported removes the findings about file content a real-time event already reported: the
+// event raised its own alert when it happened.
+func (a *Analyzer) dropReported(ctx context.Context, host string, findings []Finding) []Finding {
+	checks := 0
+	since := a.Now().Add(-store.EventRetention)
+	return slices.DeleteFunc(findings, func(f Finding) bool {
+		if f.Path == "" || f.SHA256 == "" || checks == maxReportedChecks {
+			return false
+		}
+		checks++
+		events, err := a.Store.PathEvents(ctx, host, f.Path, since)
+		if err != nil {
+			return false
+		}
+		return slices.ContainsFunc(events, func(e store.Event) bool {
+			var data struct {
+				SHA256 string `json:"sha256"`
+			}
+			return json.Unmarshal(e.Data, &data) == nil && data.SHA256 == f.SHA256
+		})
+	})
 }
 
 // raise records an alert and reports whether it is new or reopened.

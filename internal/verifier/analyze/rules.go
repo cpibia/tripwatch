@@ -37,6 +37,9 @@ type Finding struct {
 	// Diff is the complete diff of a policy change, kept with the alert: Detail shows only its
 	// first lines.
 	Diff []string
+	// Path and SHA256, when set, name the file content the finding is about: a real-time event
+	// that already reported that content makes it a duplicate.
+	Path, SHA256 string
 }
 
 // owned reports whether only root can have caused a finding: its owner says so, never its kind
@@ -602,6 +605,53 @@ func suspiciousPath(p string) bool {
 	return slices.ContainsFunc(strings.Split(p, "/"), func(seg string) bool { return strings.HasPrefix(seg, ".") && seg != "." && seg != ".." })
 }
 
+// hookChanges reports the start-up, login and loader hooks added or changed since prev: what the
+// real-time watcher reports as it happens, for when it was not running or left the place
+// unwatched. A file new to the list but older than prev was there already, collected now by a
+// newer sensor or found in a new home. Packages installed or upgraded in between bring the alert
+// down to low: they rewrite such files all the time (a kernel's apt.conf.d entry), and the
+// real-time event, when the place is watched, has already said more.
+func hookChanges(prev *State, cur State) []Finding {
+	known := make(map[string]string, len(prev.Hooks.Files))
+	for _, f := range prev.Hooks.Files {
+		known[f.Path] = f.SHA256
+	}
+	upgraded := prev.Packages != nil && cur.Packages != nil && prev.Packages.StatusSHA256 != "" &&
+		cur.Packages.StatusSHA256 != "" && prev.Packages.StatusSHA256 != cur.Packages.StatusSHA256
+	var out []Finding
+	for _, f := range cur.Hooks.Files {
+		if f.SHA256 == "" || unjudgedHooks[path.Clean(f.Path)] {
+			continue
+		}
+		old, seen := known[f.Path]
+		if old == f.SHA256 || (!seen && !f.ModTime.IsZero() && f.ModTime.Before(prev.TakenAt)) {
+			continue
+		}
+		title, what := "Start-up script changed", "changed"
+		if !seen {
+			title, what = "New start-up script", "added"
+		}
+		owner, sev := homeOwner(f.Path), "high"
+		if owner != "root" {
+			sev = "medium"
+		}
+		detail := fmt.Sprintf("%s was %s since the previous snapshot: %d bytes, SHA-256 %s, mode %s. Code here runs at each login, boot, network change or library load, as whoever triggers it; no real-time event reported this content.",
+			f.Path, what, f.Size, f.SHA256, f.Mode)
+		if upgraded {
+			sev = "low"
+			detail += " Packages were installed or upgraded in the same interval: one of them may have made this change."
+		}
+		out = append(out, Finding{Kind: "persistence-change", Fingerprint: "persistence-change:hook:" + f.Path + "|" + f.SHA256[:min(16, len(f.SHA256))],
+			Severity: sev, Title: title, Detail: detail, Owner: owner, Path: f.Path, SHA256: f.SHA256})
+	}
+	return out
+}
+
+// unjudgedHooks are collected with the hooks but not judged by hookChanges: ld.so.preload has
+// its own rule on what it loads, and the resolver files are rewritten by DHCP clients and
+// container runtimes without running anything.
+var unjudgedHooks = map[string]bool{"/etc/ld.so.preload": true, "/etc/hosts": true, "/etc/resolv.conf": true}
+
 // set is a membership test built once per snapshot: comparing two snapshots stays linear in
 // their size, however many entries a hostile sensor sends.
 type set map[string]struct{}
@@ -905,6 +955,9 @@ func Evaluate(prev *State, cur State) []Finding {
 	if h := cur.Hooks; h != nil {
 		for _, lib := range h.Preload {
 			state("persistence", "preload:"+lib, "critical", "Library loaded into every process", lib+" is in /etc/ld.so.preload: the technique of userspace rootkits.")
+		}
+		if prev != nil && prev.Hooks != nil {
+			out = append(out, hookChanges(prev, cur)...)
 		}
 	}
 

@@ -373,11 +373,19 @@ reported by the schedule rules), root gained through an unknown set-user-ID prog
 preloading are critical. A script or an `.htaccess` landing in an upload directory, new SSH keys,
 services, scheduled tasks and start-up scripts are high. What a snapshot an hour later could not
 show is critical too: a script that appears in the uploads and is gone within 15 minutes, an SSH
-key file written and removed, or changed and put back. While a package manager runs (a process
+key file written and removed, or changed and put back, a loader configuration file written and
+removed. While a package manager runs (a process
 of root holds the lock of dpkg, rpm or apk: a process merely named `dpkg` does not count),
 changes to services, scheduled tasks and start-up scripts are one severity lower; changes to who
 may become root, to accounts, to SSH keys and to library preloading never are, nor are process
 starts and uploads. The server's page lists its latest events and says whether the watchers run.
+
+The snapshots back the watchers up: a start-up, login, network or loader hook added or changed
+since the previous snapshot is an alert (high for system files, medium in a home) unless a
+real-time event already reported that content, so a change made while the sensor was stopped or
+in a place left unwatched is still seen. A file collected for the first time but older than the
+previous snapshot is not new; if packages were installed or upgraded in the same interval the
+alert is low.
 
 The watchers are bounded against the users they guard against: files are hashed only up to 1 MB
 and 16 MB a second (root's files with a budget of their own, which other users cannot spend),

@@ -836,3 +836,48 @@ func TestCodeChangeOfDataFilesOnly(t *testing.T) {
 		}
 	}
 }
+
+// Hooks added or changed between two snapshots are reported, at a lower severity when packages
+// changed too; a file newly collected but older than the previous snapshot is not new.
+func TestHookChanges(t *testing.T) {
+	t0 := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
+	hook := func(p, sha string, mtime time.Time) collector.File {
+		return collector.File{Path: p, SHA256: sha, Mode: "-rwxr-xr-x", ModTime: mtime}
+	}
+	prev := baseState()
+	prev.TakenAt = t0
+	prev.Hooks = &system.HooksResult{Files: []collector.File{
+		hook("/etc/profile.d/a.sh", "aa", t0.Add(-time.Hour)),
+		hook("/home/alice/.bashrc", "bb", t0.Add(-time.Hour)),
+		hook("/etc/ld.so.preload", "cc", t0.Add(-time.Hour)),
+	}}
+	prev.Packages = &system.PackagesResult{StatusSHA256: "s1"}
+	cur := baseState()
+	cur.TakenAt = t0.Add(time.Hour)
+	cur.Hooks = &system.HooksResult{Files: []collector.File{
+		hook("/etc/profile.d/a.sh", "a2", t0.Add(time.Minute)),
+		hook("/home/alice/.bashrc", "b2", t0.Add(time.Minute)),
+		hook("/etc/ld.so.preload", "c2", t0.Add(time.Minute)),
+		hook("/etc/resolv.conf", "r2", t0.Add(time.Minute)),
+		hook("/etc/network/if-up.d/x", "dd", t0.Add(time.Minute)),
+		hook("/etc/bash_completion.d/git", "ee", t0.Add(-24*time.Hour)),
+		{Path: "/etc/rc.local", Mode: "-rwxr-xr-x", ModTime: t0.Add(time.Minute)},
+	}}
+	cur.Packages = &system.PackagesResult{StatusSHA256: "s1"}
+
+	want := []string{
+		"high persistence-change:hook:/etc/network/if-up.d/x|dd",
+		"high persistence-change:hook:/etc/profile.d/a.sh|a2",
+		"medium persistence-change:hook:/home/alice/.bashrc|b2",
+	}
+	got := slices.DeleteFunc(fingerprints(Evaluate(&prev, cur)), func(f string) bool { return !strings.Contains(f, ":hook:") })
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
+	cur.Packages = &system.PackagesResult{StatusSHA256: "s2"}
+	got = slices.DeleteFunc(fingerprints(Evaluate(&prev, cur)), func(f string) bool { return !strings.Contains(f, ":hook:") })
+	if len(got) != 3 || slices.ContainsFunc(got, func(f string) bool { return !strings.HasPrefix(f, "low ") }) {
+		t.Errorf("with packages upgraded: %v", got)
+	}
+}
