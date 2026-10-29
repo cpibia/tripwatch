@@ -995,3 +995,28 @@ func TestCronSuspicion(t *testing.T) {
 		}
 	}
 }
+
+// A deploy is one alert: past the scripts named one by one, the directories whose code changed
+// are listed in it instead of raised each on its own.
+func TestDeployIsOneAlert(t *testing.T) {
+	var changes []web.FileChange
+	for i := range maxNamedScripts + 5 {
+		dir := []string{"wp-admin", "wp-includes", "wp-content/plugins"}[i%3]
+		changes = append(changes, web.FileChange{Path: fmt.Sprintf("/var/www/site/%s/f%d.php", dir, i), Change: web.ChangeModified, SHA256: "x"})
+	}
+	hashes := func(v string) map[string]string {
+		return map[string]string{"/var/www/site/wp-admin": v, "/var/www/site/wp-includes": v, "/var/www/site/wp-content/plugins": v}
+	}
+	app := func(h map[string]string, c []web.FileChange) *web.Result {
+		return &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/var/www/site"}, DirHashes: h, Changes: c, ChangeCount: len(c)}}}
+	}
+	got := Evaluate(&State{Web: app(hashes("a"), nil)}, State{Web: app(hashes("b"), changes)})
+	if len(got) != 1 || !strings.Contains(got[0].Title, "25 scripts added or changed") ||
+		!strings.Contains(got[0].Detail, "Directories whose code changed:\n/var/www/site/wp-admin\n/var/www/site/wp-content/plugins\n/var/www/site/wp-includes") {
+		t.Errorf("findings = %+v", got)
+	}
+	got = Evaluate(&State{Web: app(hashes("a"), nil)}, State{Web: app(hashes("b"), changes[:3])})
+	if len(got) != 6 {
+		t.Errorf("a few scripts changed: %d findings, want 3 scripts and 3 directories", len(got))
+	}
+}

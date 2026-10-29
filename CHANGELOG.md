@@ -23,6 +23,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A new cron line is critical, with the reason, when it never runs on schedule (the 31st of
   February, as CronRAT hides its code), downloads and runs what it fetched, decodes a base64
   payload or starts a process under another name; other new lines stay high.
+- A deploy is one alert: when more than 20 scripts changed, the directories whose code changed
+  are listed in the "scripts added or changed" alert instead of raising a "Code changed in"
+  alert each (one WordPress update raised thirteen on each server).
 
 ## [0.1.41] - 2026-10-29
 

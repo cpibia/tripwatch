@@ -1307,8 +1307,17 @@ func Evaluate(prev *State, cur State) []Finding {
 				state("web", f.Kind+":"+f.Path, sev, title, detail)
 			}
 			if pa, ok := prevApps[app.Path]; ok {
+				scripts := scriptChanges(app)
+				// Past maxNamedScripts the scripts are one alert, a deploy most likely: the
+				// directories whose code changed are listed in it rather than raised one by one.
+				bulk := len(scripts) == 1 && strings.HasPrefix(scripts[0].Fingerprint, "scripts:")
+				var dirs []string
 				for dir, sum := range app.DirHashes {
 					if old, ok := pa.DirHashes[dir]; ok && old != sum && !onlyDataChanged(app, dir) {
+						if bulk {
+							dirs = append(dirs, dir)
+							continue
+						}
 						detail := "Without a deploy, someone changed the code of the application " + app.Path + "."
 						if files := changedIn(app.Changes, dir); files != "" {
 							detail += "\nChanged files:\n" + files
@@ -1316,7 +1325,16 @@ func Evaluate(prev *State, cur State) []Finding {
 						change("web-change", "code:"+dir+":"+sum, "medium", "Code changed in "+dir, detail)
 					}
 				}
-				for _, f := range scriptChanges(app) {
+				if bulk && len(dirs) > 0 {
+					slices.Sort(dirs)
+					more := ""
+					if len(dirs) > maxNamedScripts {
+						more = fmt.Sprintf("\nand %d more", len(dirs)-maxNamedScripts)
+						dirs = dirs[:maxNamedScripts]
+					}
+					scripts[0].Detail += "\nDirectories whose code changed:\n" + strings.Join(dirs, "\n") + more
+				}
+				for _, f := range scripts {
 					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
 			}

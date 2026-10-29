@@ -489,7 +489,8 @@ For each application the `web` collector produces:
 - **changed code files by name**: with a state directory the sensor keeps a manifest of each
   application's code files and reports the files added, changed or removed since the previous
   delivered snapshot; each script added or changed is a high alert of its own (one alert for
-  more than 20, as a deploy makes), and the change of a directory's hash lists its files;
+  more than 20, as a deploy makes, which also lists the directories whose code changed instead
+  of an alert for each), and the change of a directory's hash lists its files;
 - **hidden files** among scripts and in data directories, except the tool configurations and
   test fixtures that libraries ship on purpose and the `._` metadata files macOS puts in the zips
   it makes (signatures are still searched in those);
