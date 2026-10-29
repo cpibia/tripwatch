@@ -534,6 +534,9 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	tr.file(up+".png", "\x89PNG\r\n\x1a\nIHDR")
 	tr.file(up+".empty", "")
 	tr.file(up+".secret", "notes")
+	tr.file(up+".bd6328c0-28ee-4aac-a0ff-ab2555cc6e3e-wpmdb-scandir-manifest", `{"2026\/10":["a.jpg"]}`)
+	tr.file(up+".595d0e1a-9175-41b0-8aae-781a79f2e0d9-manifest", `["2026\/10\/a.jpg"]`)
+	tr.file(up+".11111111-2222-3333-4444-555555555555-manifest", `<?php system($_GET['c']);`)
 	tr.file(up+"pixels.png", "\x89PNG\r\n\x1a\nIDAT<?=$x random")
 	tr.file(up+"shell.png", "\x89PNG\r\n\x1a\nIDAT<?php echo 1;")
 	tr.file(up+"clip.mp4", "\x00\x00\x00\x18ftypmp42<?php `x`")
@@ -554,6 +557,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 		KindScriptInUploads + " /" + up + "layouts/interpolated.php",
 		KindCodeInUploads + " /" + up + "dropper.zip",
 		KindHiddenInData + " /" + up + ".secret",
+		KindHiddenInData + " /" + up + ".11111111-2222-3333-4444-555555555555-manifest",
 		KindPolyglotImage + " /" + up + "shell.png",
 		KindHiddenScript + " /var/www/blog/.loader.php",
 	} {
@@ -561,7 +565,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", "._pin.ico", ".dbVersion.php"} {
+	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", "._pin.ico", ".dbVersion.php", "wpmdb-scandir-manifest", "e2d9-manifest"} {
 		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
 			t.Errorf("%s reported: %v", name, got)
 		}

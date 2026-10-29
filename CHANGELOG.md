@@ -34,6 +34,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - The hooks of a home are described up to 64 files per pattern (the system's up to 1,024), the
   rest counted in the issues: an account filling its `.config/autostart` made every snapshot of
   the server too large to be accepted. Hook files carry their inode change time.
+- The hidden manifests WordPress migration plugins (WP Migrate's media sync) leave in the uploads,
+  a UUID name holding JSON, are not hidden files; their content is still searched for code.
 - More persistence places are collected and watched in real time: the SSH login scripts
   (`/etc/ssh/sshrc`, `~/.ssh/rc`), the scripts root runs when a network interface changes state
   (ifupdown's `/etc/network`, NetworkManager's `dispatcher.d`, networkd-dispatcher, dhclient's

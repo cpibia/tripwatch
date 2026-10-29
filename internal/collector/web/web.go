@@ -965,7 +965,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	switch {
 	case script && hidden && !inDependencyTests(name) && !runsNothing:
 		s.add(KindHiddenScript, name, e, nil)
-	case inData && hidden && !script && (complete && len(content) == 0 || mediaOrDocument(content) || appleDouble(content)):
+	case inData && hidden && !script && (complete && len(content) == 0 || mediaOrDocument(content) || appleDouble(content) || migrationManifest(e.Name(), content)):
 	case inData && hidden:
 		s.add(KindHiddenInData, name, e, nil)
 	}
@@ -1133,6 +1133,17 @@ func mediaOrDocument(head []byte) bool {
 	starts := func(m []byte) bool { return bytes.HasPrefix(head, m) }
 	return slices.ContainsFunc(documentMagic, starts) || slices.ContainsFunc(mediaMagic, starts) ||
 		len(head) >= 12 && bytes.Equal(head[4:8], []byte("ftyp"))
+}
+
+// migrationManifestName is the list of files WordPress migration plugins (WP Migrate's media
+// sync) write next to the uploads they copy: a hidden name made of a UUID.
+var migrationManifestName = regexp.MustCompile(`^\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(?:wpmdb-scandir-)?manifest$`)
+
+// migrationManifest reports a migration plugin's manifest: its name, and JSON with no open tag
+// in what was read. Code hidden in one is still searched for as in any data file.
+func migrationManifest(name string, head []byte) bool {
+	head = bytes.TrimLeft(head, " \t\r\n")
+	return migrationManifestName.MatchString(name) && len(head) > 0 && (head[0] == '[' || head[0] == '{') && !bytes.Contains(head, []byte("<?"))
 }
 
 // appleDouble reports the metadata file macOS writes as ._name next to every file it zips: a
