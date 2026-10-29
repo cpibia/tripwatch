@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -348,6 +349,16 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	return nil
+}
+
+// Backup writes a consistent copy of the database to dst, which must not exist, while the
+// verifier keeps running: VACUUM INTO reads one snapshot of the database and writes it compacted.
+func (s *Store) Backup(ctx context.Context, dst string) error {
+	if _, err := os.Lstat(dst); err == nil {
+		return fmt.Errorf("store: backup: %s exists", dst)
+	}
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, dst)
+	return err
 }
 
 // Ping runs a query on the writing connection, which waits behind any write in progress.

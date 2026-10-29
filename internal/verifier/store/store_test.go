@@ -637,3 +637,27 @@ func TestAlertsSearchAndOrder(t *testing.T) {
 		}
 	}
 }
+
+// A backup is a database of its own with what the store held, and never overwrites a file.
+func TestBackup(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	if err := s.Enroll(ctx, "web-01", make([]byte, 32), t0); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "copy.db")
+	if err := s.Backup(ctx, dst); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Backup(ctx, dst); err == nil {
+		t.Error("a backup overwrote an existing file")
+	}
+	copied, err := Open(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = copied.Close() }()
+	if _, err := copied.Host(ctx, "web-01"); err != nil {
+		t.Errorf("the backup lacks the host: %v", err)
+	}
+}

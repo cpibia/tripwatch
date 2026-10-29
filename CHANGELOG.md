@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- `tripwatch-verifier backup` copies the database (VACUUM INTO, consistent and compacted) and
+  the certificate authority to a new directory under `/data/backups` while the verifier runs:
+  an upgrade no longer needs a stop to keep a way back.
 - `GET /api/v1/alerts` answers with `total`, the count of every alert the filters match, and
   takes a cursor: with `after=<id>` alerts come in the order they were raised from the one
   after that ID, and `next` gives the cursor of the following page while pages are full. A

@@ -246,6 +246,18 @@ images on every deploy moves `latest` forward without being asked.
 The state stays in the `data` volume and the sensors keep their chain. On a platform such as
 Coolify, change the tag in the service's compose, or with `latest` pull the image, and redeploy.
 
+Before an upgrade, a backup taken while the verifier runs, with no stop:
+
+```sh
+docker compose exec verifier /tripwatch-verifier backup
+```
+
+It writes a consistent, compacted copy of the database and the certificate authority (its
+private key included) to a new directory under `/data/backups`, readable by its owner only, and
+prints its path; `-out` chooses another. To roll back, stop the verifier and put `tripwatch.db`
+and `pki/` back in the data volume. The copy lives in the same volume: for a disaster, move it
+off the machine, encrypted.
+
 ### Upgrading the sensor
 
 From 0.1.4 the sensor updates itself:

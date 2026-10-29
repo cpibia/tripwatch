@@ -66,8 +66,10 @@ func main() {
 		err = loginLink(args)
 	case "revoke-browsers":
 		err = revokeBrowsers(args)
+	case "backup":
+		err = backup(args)
 	default:
-		err = fmt.Errorf("unknown command %q (serve, enroll, revoke, user, login-link, revoke-browsers, healthcheck)", cmd)
+		err = fmt.Errorf("unknown command %q (serve, enroll, revoke, user, login-link, revoke-browsers, backup, healthcheck)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tripwatch-verifier:", err)
@@ -293,6 +295,62 @@ func enroll(args []string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// backup copies the database and the certificate authority into a new directory while the
+// verifier runs, so an upgrade needs no stop to be undone. The directory holds the CA's private
+// key: it is made readable by its owner only, and belongs off the machine for a disaster.
+func backup(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	out := fs.String("out", filepath.Join(dataDir(), "backups", time.Now().UTC().Format("20060102T150405Z")), "new directory to write the backup to")
+	_ = fs.Parse(args)
+	if err := os.MkdirAll(filepath.Dir(*out), 0o700); err != nil {
+		return err
+	}
+	if err := os.Mkdir(*out, 0o700); err != nil {
+		return err
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	db := filepath.Join(*out, "tripwatch.db")
+	if err := st.Backup(context.Background(), db); err != nil {
+		return err
+	}
+	if err := os.Chmod(db, 0o600); err != nil {
+		return err
+	}
+	if err := copyDir(filepath.Join(dataDir(), "pki"), filepath.Join(*out, "pki")); err != nil {
+		return fmt.Errorf("pki: %w", err)
+	}
+	fmt.Println(*out)
+	return nil
+}
+
+// copyDir copies the regular files of a directory, readable by their owner only.
+func copyDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.Mkdir(dst, 0o700); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(src, e.Name())) //nolint:gosec // the verifier's own data directory
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o600); err != nil { //nolint:gosec // names listed from the verifier's own directory
+			return err
+		}
+	}
+	return nil
 }
 
 func revoke(args []string) error {
