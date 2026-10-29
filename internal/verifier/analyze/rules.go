@@ -1131,7 +1131,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			if pa, ok := prevApps[app.Path]; ok {
 				for dir, sum := range app.DirHashes {
-					if old, ok := pa.DirHashes[dir]; ok && old != sum {
+					if old, ok := pa.DirHashes[dir]; ok && old != sum && !onlyDataChanged(app, dir) {
 						detail := "Without a deploy, someone changed the code of the application " + app.Path + "."
 						if files := changedIn(app.Changes, dir); files != "" {
 							detail += "\nChanged files:\n" + files
@@ -1378,6 +1378,30 @@ func scriptChanges(app web.AppReport) []Finding {
 }
 
 // changedIn lists the changes under a directory, at most maxNamedScripts of them.
+// codeExtensions are the files a change of the code tree is about: what the server or the
+// browser runs, and what tells the server how.
+var codeExtensions = []string{".js", ".mjs", ".html", ".htm", ".svg", ".twig", ".tpl", ".inc", ".module", ".py", ".rb", ".pl", ".cgi", ".sh", ".jsp", ".asp", ".aspx"}
+
+// onlyDataChanged reports a directory of the code tree where, by the complete list of the
+// files changed, none is code: a custom application writing its own data files next to its
+// code. Without the complete list the change stays reported.
+func onlyDataChanged(app web.AppReport, dir string) bool {
+	if app.ChangeCount == 0 || app.ChangeCount > len(app.Changes) {
+		return false
+	}
+	seen := false
+	for _, c := range app.Changes {
+		if !strings.HasPrefix(c.Path, dir+"/") {
+			continue
+		}
+		seen = true
+		if web.IsScript(c.Path) || web.IsOverride(c.Path) || slices.Contains(codeExtensions, strings.ToLower(path.Ext(c.Path))) {
+			return false
+		}
+	}
+	return seen
+}
+
 func changedIn(changes []web.FileChange, dir string) string {
 	var list []string
 	for _, c := range changes {

@@ -260,10 +260,13 @@ func dataOnlyWhy(content []byte) (bool, string) {
 	if m := directAccessGuard.FindIndex(src); m != nil {
 		src = src[m[1]:]
 	}
-	word := ""
+	word, depth := "", 0
 	for i := 0; i < len(src); i++ {
 		c := src[i]
 		switch {
+		case c == '}' && depth > 0:
+			depth--
+			word = ""
 		case c == '\'' || c == '"':
 			j := i + 1
 			for ; j < len(src) && src[j] != c; j++ {
@@ -286,6 +289,14 @@ func dataOnlyWhy(content []byte) (bool, string) {
 				j++
 			}
 			word = strings.ToLower(string(src[i:j]))
+			// A function without parameters whose body is data, as a theme wraps a page
+			// layout, defines something and runs nothing; any call in the file stays code.
+			if word == "function" && depth == 0 {
+				if m := functionHead.Find(src[i:]); m != nil {
+					i, word, depth = i+len(m)-1, "", 1
+					continue
+				}
+			}
 			if !strings.HasPrefix(word, "$") && !slices.Contains([]string{"return", "array", "true", "false", "null"}, word) {
 				return false, fmt.Sprintf("word %.32q at %d", word, i)
 			}
@@ -304,8 +315,14 @@ func dataOnlyWhy(content []byte) (bool, string) {
 			return false, fmt.Sprintf("byte %q at %d", c, i)
 		}
 	}
+	if depth > 0 {
+		return false, "unclosed function"
+	}
 	return true, ""
 }
+
+// functionHead is the head of a function without parameters, up to its opening brace.
+var functionHead = regexp.MustCompile(`^function\s+\w+\s*\(\s*\)\s*(?::\s*\??\w+\s*)?\{`)
 
 func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80 }
 

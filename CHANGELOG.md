@@ -8,12 +8,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- A directory of the code tree where, by the complete list of changed files, only data files
+  changed (a custom application writing next to its code) no longer raises "Code changed".
 - A pause of the heartbeats before a signed stop (a sensor frozen, then stopped by a reboot or an
   update) raises "Missed heartbeats": the start explains only the silence after the stop
   (SEC-194).
 
 ### Sensor
 
+- A PHP data file may define functions without parameters whose body is data, as a theme wraps
+  its page layouts; any call in the file keeps it code.
 - The private `/tmp` systemd and snapd give services and snaps is watched as a scratch directory
   of its own: it lies below root-only directories, deeper than the scratch depth from `/tmp`, and
   its service writes there as in `/tmp` (SEC-193).

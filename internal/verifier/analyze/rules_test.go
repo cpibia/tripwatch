@@ -805,3 +805,29 @@ func TestSensorUpdateLeavesNoAlerts(t *testing.T) {
 		t.Errorf("findings = %v, want %v", got, want)
 	}
 }
+
+// A directory of the code tree where only data files changed, by the complete list, is a
+// custom application writing next to its code; a script among them, or an incomplete list,
+// is a change of code.
+func TestCodeChangeOfDataFilesOnly(t *testing.T) {
+	app := func(changes []web.FileChange, count int) State {
+		return State{Web: &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/srv/site"},
+			DirHashes: map[string]string{"/srv/site/captcha": "new"}, Changes: changes, ChangeCount: count}}}}
+	}
+	prev := State{Web: &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/srv/site"}, DirHashes: map[string]string{"/srv/site/captcha": "old"}}}}}
+	data := []web.FileChange{{Path: "/srv/site/captcha/NoSession1", Change: "modified"}}
+	script := append(slices.Clone(data), web.FileChange{Path: "/srv/site/captcha/x.php", Change: "added"})
+	for name, tc := range map[string]struct {
+		cur  State
+		want bool
+	}{
+		"data only":       {app(data, 1), false},
+		"a script":        {app(script, 2), true},
+		"incomplete list": {app(data, 5), true},
+	} {
+		got := slices.ContainsFunc(Evaluate(&prev, tc.cur), func(f Finding) bool { return strings.HasPrefix(f.Fingerprint, "web-change:code:/srv/site/captcha") })
+		if got != tc.want {
+			t.Errorf("%s: alert %v, want %v", name, got, tc.want)
+		}
+	}
+}

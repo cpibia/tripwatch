@@ -520,6 +520,9 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	tr.file(up+"backup/site-dump", "-- MySQL dump 10.13\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `date`; ?>');\n")
 	tr.file(up+"layouts/prices.php", "<?php return array('price' => \"From $10 {per night}\", 'css' => \".a{color:red}\");")
 	tr.file(up+"plugin/index.php", "Silence is golden.")
+	tr.file(up+"layouts/function.php", "<?php\nfunction theme_page_science() {\n\treturn array( 'name' => 'Science', 'content' => '[fusion_builder_container]' );\n}\n")
+	tr.file(up+"layouts/function-called.php", "<?php\nfunction theme_page_x() {\n\treturn array();\n}\ntheme_page_x();\n")
+	tr.file(up+"layouts/function-runs.php", "<?php\nfunction theme_page_y() {\n\tsystem($_GET['c']);\n}\n")
 	tr.file(up+"layouts/call.php", "<?php return array('a' => system($_GET['c']));")
 	tr.file(up+"layouts/variable.php", "<?php $f = 'system'; $f($_GET['c']);")
 	tr.file(up+"layouts/interpolated.php", "<?php return array('a' => \"{$_GET['c']}\");")
@@ -539,6 +542,8 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	for _, want := range []string{
 		KindScriptInUploads + " /" + up + "plugin/guarded-then-code.php",
 		KindScriptInUploads + " /" + up + "layouts/call.php",
+		KindScriptInUploads + " /" + up + "layouts/function-called.php",
+		KindScriptInUploads + " /" + up + "layouts/function-runs.php",
 		KindScriptInUploads + " /" + up + "layouts/guarded-then-code.php",
 		KindScriptInUploads + " /" + up + "layouts/variable.php",
 		KindScriptInUploads + " /" + up + "layouts/interpolated.php",
@@ -551,7 +556,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
+	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
 		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
 			t.Errorf("%s reported: %v", name, got)
 		}
