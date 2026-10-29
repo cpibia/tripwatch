@@ -380,7 +380,7 @@ what changes there within two seconds, in signed event envelopes of the same cha
   without such a power and redeploys of one already known (same name, image and powers) are
   left to the snapshots.
 
-The verifier keeps the events for seven days (at most 20,000 a server in 24 hours for uploads
+The verifier keeps the events for seven days, unless configured otherwise (at most 20,000 a server in 24 hours for uploads
 and process starts, as many for the homes and crontabs of accounts other than root, 2,000 of
 them for each account, and as many for root's system paths, so a flood cannot push out the first
 ones, nor noise in the uploads or in a user's home root's changes) and judges them at once. The web server's user starting a shell
@@ -772,6 +772,12 @@ of a few hundred KB that comes to about 40 MB per server, so 50 servers fit in a
 heartbeats and alerts weigh little. A server that exceeds 1 GB of snapshots in a day, or 4 GB
 kept in all, stays alive for the verifier, but the snapshots over quota are not kept and an alert
 appears; likewise a server cannot keep more than 2000 alerts open.
+
+How long things are kept is set in days, from 1 to 3650, in the verifier's environment, and the
+console states it where it matters: `TRIPWATCH_KEEP_SNAPSHOTS_DAYS` (30, at least 2),
+`TRIPWATCH_KEEP_EVENTS_DAYS` (7), `TRIPWATCH_KEEP_RESOLVED_DAYS` for resolved critical and high
+alerts (90) and `TRIPWATCH_KEEP_RESOLVED_MINOR_DAYS` for resolved medium and low ones (7, no
+more than the others). Snapshots that are evidence of an open alert stay past their retention.
 
 More users are invited from the console (Settings, Users). A new password, or a first
 administrator, from the command line:

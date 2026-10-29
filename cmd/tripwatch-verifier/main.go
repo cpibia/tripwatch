@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -86,6 +87,30 @@ func env(name, def string) string {
 
 func dataDir() string { return env("TRIPWATCH_DATA", "/data") }
 
+// retention reads how many days the verifier keeps snapshots, events and resolved alerts, each
+// defaulting to store.DefaultRetention.
+func retention() (store.Retention, error) {
+	r := store.DefaultRetention
+	for _, v := range []struct {
+		name string
+		into *time.Duration
+	}{
+		{"TRIPWATCH_KEEP_SNAPSHOTS_DAYS", &r.Snapshots}, {"TRIPWATCH_KEEP_EVENTS_DAYS", &r.Events},
+		{"TRIPWATCH_KEEP_RESOLVED_DAYS", &r.Resolved}, {"TRIPWATCH_KEEP_RESOLVED_MINOR_DAYS", &r.MinorResolved},
+	} {
+		raw := os.Getenv(v.name)
+		if raw == "" {
+			continue
+		}
+		days, err := strconv.Atoi(raw)
+		if err != nil || days < 1 || days > 3650 {
+			return r, fmt.Errorf("%s: a number of days from 1 to 3650, not %q", v.name, raw)
+		}
+		*v.into = time.Duration(days) * 24 * time.Hour
+	}
+	return r, r.Validate()
+}
+
 func openStore() (*store.Store, error) {
 	if err := os.MkdirAll(dataDir(), 0o700); err != nil {
 		return nil, err
@@ -103,6 +128,13 @@ func serve(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+	retain, err := retention()
+	if err != nil {
+		return err
+	}
+	if err := st.SetRetention(retain); err != nil {
+		return err
+	}
 	if err := bootstrapAdmin(ctx, st, now()); err != nil {
 		return err
 	}

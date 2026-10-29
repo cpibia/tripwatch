@@ -39,7 +39,7 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 		}
 		analyze.CleanHostText(&ev)
 		// The sensor's clock dates the event; one far off is dated by its arrival instead.
-		if ev.At.IsZero() || ev.At.After(now.Add(time.Hour)) || ev.At.Before(now.Add(-store.EventRetention)) {
+		if ev.At.IsZero() || ev.At.After(now.Add(time.Hour)) || ev.At.Before(now.Add(-s.Store.Retention().Events)) {
 			ev.At = now
 		}
 		subject := ev.Path

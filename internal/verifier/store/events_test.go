@@ -42,7 +42,7 @@ func TestEventsQuotaAndRetention(t *testing.T) {
 	if k, _ := s.AddEvents(ctx, batch(2, t0.Add(25*time.Hour)), t0.Add(25*time.Hour)); stored(k) != 2 {
 		t.Fatalf("a day later: stored %d", stored(k))
 	}
-	if _, err := s.AddEvents(ctx, batch(1, t0.Add(EventRetention+2*time.Hour)), t0.Add(EventRetention+2*time.Hour)); err != nil {
+	if _, err := s.AddEvents(ctx, batch(1, t0.Add(DefaultRetention.Events+2*time.Hour)), t0.Add(DefaultRetention.Events+2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	left, err := s.HostEvents(ctx, "web-01", MaxEventsPerDay)

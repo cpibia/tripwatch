@@ -47,3 +47,21 @@ func TestEventRowsEscapeHostText(t *testing.T) {
 		t.Errorf("subject %q, detail %q", rows[0].Subject, rows[0].Detail)
 	}
 }
+
+// The host page says how long events are kept, as configured.
+func TestHostPageSaysEventRetention(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r := store.DefaultRetention
+	r.Events = 14 * 24 * time.Hour
+	if err := h.store.SetRetention(r); err != nil {
+		t.Fatal(err)
+	}
+	h.login()
+	if _, body := h.get("/hosts/web-01"); !strings.Contains(body, "kept 14 days") {
+		t.Error("the configured retention is not shown")
+	}
+}

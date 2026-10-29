@@ -400,7 +400,7 @@ func TestPruneResolved(t *testing.T) {
 	}
 	all, _ := s.Alerts(ctx, AlertFilter{})
 	_ = s.Resolve(ctx, all[0].ID, "ops@example.net", t0)
-	if err := s.PruneResolved(ctx, t0.Add(ResolvedRetention+time.Hour)); err != nil {
+	if err := s.PruneResolved(ctx, t0.Add(DefaultRetention.Resolved+time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	left, _ := s.Alerts(ctx, AlertFilter{})

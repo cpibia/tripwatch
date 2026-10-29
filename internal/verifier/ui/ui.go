@@ -132,7 +132,7 @@ func New(c Config) (http.Handler, error) {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite", "account", "secondfactor", "apitokens"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "hostname": s.hostName, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "hostname": s.hostName, "selecturl": selectURL, "version": func() string { return version }, "kept": s.kept}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}

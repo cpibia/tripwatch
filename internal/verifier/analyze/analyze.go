@@ -414,7 +414,7 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	}
 	prev, lost := a.base(ctx, state, prevSnap)
 
-	since := a.Now().Add(-store.EventRetention)
+	since := a.Now().Add(-a.Store.Retention().Events)
 	if prev != nil && prev.TakenAt.After(since) {
 		since = prev.TakenAt
 	}

@@ -30,7 +30,7 @@
 </section>
 
 <section class="panel" aria-labelledby="s-events">
-  <div class="panel-head"><h2 id="s-events">Real-time events</h2><p class="panel-note">newest first, kept 7 days: data from the servers</p></div>
+  <div class="panel-head"><h2 id="s-events">Real-time events</h2><p class="panel-note">newest first, kept {{kept "events"}}: data from the servers</p></div>
   {{if $d.Events}}
   <table class="grid events">
     <thead><tr><th scope="col" class="num">When</th><th scope="col">Server</th><th scope="col">Area</th><th scope="col">Path or program</th><th scope="col">What happened</th></tr></thead>

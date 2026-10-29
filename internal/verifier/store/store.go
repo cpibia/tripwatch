@@ -19,13 +19,10 @@ import (
 
 // Snapshot retention, by age and never by count, so that a compromised host flooding snapshots
 // cannot push the evidence out: every snapshot of the last DenseRetention, then the last one of
-// each day and every snapshot that raised an alert until Retention, and a host's first snapshot
-// for good as its baseline. Hourly snapshots of a stable host are nearly identical; thinning
-// them keeps the database at a few days' worth per host instead of a month.
-const (
-	DenseRetention = 48 * time.Hour
-	Retention      = 30 * 24 * time.Hour
-)
+// each day and every snapshot that raised an alert until the retention of snapshots, and a
+// host's first snapshot for good as its baseline. Hourly snapshots of a stable host are nearly
+// identical; thinning them keeps the database at a few days' worth per host instead of a month.
+const DenseRetention = 48 * time.Hour
 
 // ActivityRetention bounds the per-minute record of heartbeats and snapshots behind the traces
 // of the web interface.
@@ -225,6 +222,8 @@ type Store struct {
 	// own: under WAL they see the last commit and never hold up the single writer, so a slow
 	// search cannot stall ingest.
 	read *sql.DB
+	// retain is what the store keeps, DefaultRetention unless set before serving.
+	retain Retention
 }
 
 // readConns bounds the read-only connections.
@@ -252,7 +251,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	read.SetMaxOpenConns(readConns)
-	return &Store{db: db, read: read}, nil
+	return &Store{db: db, read: read, retain: DefaultRetention}, nil
 }
 
 // migrate adds the columns that databases created by earlier versions lack.
@@ -612,7 +611,7 @@ func (s *Store) accept(ctx context.Context, e protocol.Envelope, key ed25519.Pub
 				AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
 				AND NOT EXISTS (SELECT 1 FROM snapshot_evidence ev JOIN alerts a ON a.id = ev.alert_id
 					WHERE ev.snapshot_id = snapshots.id AND a.status != 'resolved') RETURNING id`,
-				[]any{e.HostID, now.Add(-Retention).Unix(), e.HostID}},
+				[]any{e.HostID, now.Add(-s.retain.Snapshots).Unix(), e.HostID}},
 			{`DELETE FROM snapshots WHERE host_id = ? AND analyzed = 1 AND keep = 0 AND received_at < ?
 				AND id != (SELECT MIN(id) FROM snapshots WHERE host_id = ?)
 				AND id NOT IN (SELECT MAX(id) FROM snapshots WHERE host_id = ? GROUP BY received_at / 86400) RETURNING id`,

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Events reported in real time are kept for EventRetention, and at most MaxEventsPerDay of one
+// Events reported in real time are kept for the retention of events, and at most MaxEventsPerDay of one
 // host in 24 hours in each of three budgets: one for what the web server's user can produce at
 // will (uploads and process starts), one for the homes and crontabs of accounts other than root,
 // MaxOwnerEventsPerDay of them for each account, and one for system paths only root can change.
@@ -15,7 +15,6 @@ import (
 // it stored first is never pushed out, and no account but root can use up the budget of root's
 // changes.
 const (
-	EventRetention       = 7 * 24 * time.Hour
 	MaxEventsPerDay      = 20000
 	MaxOwnerEventsPerDay = 2000
 	maxEventData         = 4 << 10
@@ -59,7 +58,7 @@ func (s *Store) AddEvents(ctx context.Context, events []Event, now time.Time) ([
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE host_id = ? AND received_at < ?`, host, now.Add(-EventRetention).Unix()); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE host_id = ? AND received_at < ?`, host, now.Add(-s.retain.Events).Unix()); err != nil {
 		return nil, err
 	}
 	// One pass over the host's day, whatever the number of accounts in the batch: a count per

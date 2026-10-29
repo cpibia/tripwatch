@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"html/template"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -12,6 +13,17 @@ var months = [...]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
 var severityLabels = map[string]string{"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
 
 var statusLabels = map[string]string{"open": "open", "acknowledged": "acknowledged", "resolved": "resolved"}
+
+// kept says how long the verifier keeps one kind of record, as the operator configured it.
+func (s *server) kept(what string) string {
+	r := s.Store.Retention()
+	d := map[string]time.Duration{"snapshots": r.Snapshots, "events": r.Events, "resolved": r.Resolved, "minor": r.MinorResolved}[what]
+	days := int(d / (24 * time.Hour))
+	if days == 1 {
+		return "1 day"
+	}
+	return strconv.Itoa(days) + " days"
+}
 
 func funcs(now func() time.Time) template.FuncMap {
 	return template.FuncMap{

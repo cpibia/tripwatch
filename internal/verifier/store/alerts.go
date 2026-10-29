@@ -256,18 +256,10 @@ func (s *Store) resolveMissing(ctx context.Context, host, kind string, current [
 	return nil
 }
 
-// Resolved alerts stay for reference: high and critical ones for ResolvedRetention, medium and
-// low ones, which are most of the noise, for MinorResolvedRetention. A condition that comes back
-// after that is raised as new.
-const (
-	ResolvedRetention      = 90 * 24 * time.Hour
-	MinorResolvedRetention = 7 * 24 * time.Hour
-)
-
 // PruneResolved deletes resolved alerts past their retention.
 func (s *Store) PruneResolved(ctx context.Context, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE status = 'resolved' AND (updated_at < ?
-		OR (severity NOT IN ('critical', 'high') AND updated_at < ?))`, now.Add(-ResolvedRetention).Unix(), now.Add(-MinorResolvedRetention).Unix())
+		OR (severity NOT IN ('critical', 'high') AND updated_at < ?))`, now.Add(-s.retain.Resolved).Unix(), now.Add(-s.retain.MinorResolved).Unix())
 	if err != nil {
 		return err
 	}
@@ -624,7 +616,8 @@ type Raised struct {
 }
 
 // RaisedSince lists the alerts raised since a time, whatever their status. Resolved medium and
-// low alerts are pruned after MinorResolvedRetention, so periods longer than that undercount them.
+// low alerts are pruned after the retention of resolved minor alerts, so periods longer than
+// that undercount them.
 func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, error) {
 	scope, args := scopeClause(ctx, "host_id")
 	//nolint:gosec // the scope is a constant clause of this package; its label is bound

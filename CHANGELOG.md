@@ -11,6 +11,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - The alert list exports as CSV or JSON with the filters and order it shows, every page of
   it up to 10,000 alerts, from links beside the count. CSV cells that a spreadsheet would run as
   a formula start with an apostrophe, and each export is recorded in the audit log.
+- How long the verifier keeps snapshots, real-time events and resolved alerts is set in days
+  with `TRIPWATCH_KEEP_SNAPSHOTS_DAYS`, `TRIPWATCH_KEEP_EVENTS_DAYS`,
+  `TRIPWATCH_KEEP_RESOLVED_DAYS` and `TRIPWATCH_KEEP_RESOLVED_MINOR_DAYS`; the defaults are
+  unchanged (30, 7, 90 and 7), and the console states the retention of events as configured.
 
 ## [0.1.40] - 2026-10-29
 
