@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.39] - 2026-10-29
+
+Update the verifier, then the sensors: the verifier has no changes of its own, but sensors are
+updated to its version.
+
 ### Sensor
 
 - In a document, a PHP block is read for at most 64 KiB: a `<?=` its compressed streams hold by
@@ -1283,7 +1288,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.38...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.39...HEAD
+[0.1.39]: https://github.com/cpibia/tripwatch/compare/v0.1.38...v0.1.39
 [0.1.38]: https://github.com/cpibia/tripwatch/compare/v0.1.37...v0.1.38
 [0.1.37]: https://github.com/cpibia/tripwatch/compare/v0.1.36...v0.1.37
 [0.1.36]: https://github.com/cpibia/tripwatch/compare/v0.1.35...v0.1.36
