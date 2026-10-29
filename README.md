@@ -866,6 +866,11 @@ is needed too, which closes them all.
   receives the alerts at or above its severity raised after it was added, can be tested, turned
   off and removed, and shows its latest send or the error; a channel that fails raises an alert.
   The email configured with `TRIPWATCH_SMTP_*` keeps working and is listed read-only.
+  A channel's settings, passwords, bot tokens and webhook secrets among them, are sealed in the
+  database with AES-256-GCM: the key is `TRIPWATCH_SECRETS_KEY` (32 bytes in base64, so it can
+  be kept outside the data volume) or, without it, `pki/secrets.key`, made on the first start
+  next to the CA's key and copied by `backup`. A copy of the database alone holds none of them;
+  a channel sealed with another key is listed as unreadable and sends nothing until added again.
 - **Server names, labels and notes.** Administrators give a server a name people use, labels as
   key=value pairs and a note, from its page; the name shows everywhere, the identity in the
   certificate stays, and searches find all three.

@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,5 +30,32 @@ func TestRetentionFromEnvironment(t *testing.T) {
 	t.Setenv("TRIPWATCH_KEEP_RESOLVED_MINOR_DAYS", "400")
 	if _, err := retention(); err == nil {
 		t.Error("minor alerts kept longer than the others accepted")
+	}
+}
+
+// The secrets key comes from the environment when set, otherwise from a file made once in the
+// data directory, readable by its owner only.
+func TestSecretsKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TRIPWATCH_DATA", dir)
+	t.Setenv("TRIPWATCH_SECRETS_KEY", "")
+	first, err := secretsKey()
+	if err != nil || len(first) != store.SecretsKeySize {
+		t.Fatalf("made: %d bytes, %v", len(first), err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "pki", "secrets.key"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("key file: %v, %v", info, err)
+	}
+	if again, err := secretsKey(); err != nil || !bytes.Equal(again, first) {
+		t.Fatal("the key changed at the second start")
+	}
+	t.Setenv("TRIPWATCH_SECRETS_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)))
+	if key, err := secretsKey(); err != nil || key[0] != 1 {
+		t.Fatalf("from the environment: %v", err)
+	}
+	t.Setenv("TRIPWATCH_SECRETS_KEY", "c2hvcnQ=")
+	if _, err := secretsKey(); err == nil {
+		t.Error("a short key accepted")
 	}
 }

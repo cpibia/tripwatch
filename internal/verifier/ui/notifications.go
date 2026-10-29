@@ -57,7 +57,7 @@ func (s *server) anyChannel(ctx context.Context) bool {
 		return false
 	}
 	for _, c := range channels {
-		if c.Enabled {
+		if c.Enabled && !c.Unreadable {
 			return true
 		}
 	}
@@ -185,7 +185,9 @@ func (s *server) channelAction(w http.ResponseWriter, r *http.Request, se sessio
 			return
 		}
 		result := "ok"
-		if err := s.TestChannel(ctx, c); err != nil {
+		if c.Unreadable {
+			result = "failed"
+		} else if err := s.TestChannel(ctx, c); err != nil {
 			result = "failed"
 		}
 		back += "?tested=" + result

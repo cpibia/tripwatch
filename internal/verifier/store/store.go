@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/ed25519"
 	"database/sql"
 	"errors"
@@ -224,6 +225,8 @@ type Store struct {
 	read *sql.DB
 	// retain is what the store keeps, DefaultRetention unless set before serving.
 	retain Retention
+	// sealer seals the channels' settings once a secrets key is set.
+	sealer cipher.AEAD
 }
 
 // readConns bounds the read-only connections.

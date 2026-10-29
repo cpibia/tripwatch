@@ -14,8 +14,8 @@ const (
 	ChannelWebhook  = "webhook"
 )
 
-// Channel is where alerts are sent: its settings, secrets included, stay in the database, which
-// only the verifier reads. MinSeverity is the least severe alert it receives.
+// Channel is where alerts are sent: its settings, secrets included, stay in the database, sealed
+// with the secrets key once one is set. MinSeverity is the least severe alert it receives.
 type Channel struct {
 	ID          int64
 	Kind        string
@@ -28,6 +28,8 @@ type Channel struct {
 	LastOK    time.Time
 	LastError string
 	LastTry   time.Time
+	// Unreadable means its settings were sealed with another key: it cannot send.
+	Unreadable bool
 }
 
 // ChannelSettings are a channel's settings: the fields of its kind only.
@@ -62,12 +64,16 @@ func (s *Store) AddChannel(ctx context.Context, c Channel, now time.Time) (int64
 	if n >= maxChannels {
 		return 0, ErrTooManyChannels
 	}
-	settings, err := json.Marshal(c.Settings) //nolint:gosec // a channel's credentials are kept in the verifier's database, which only it reads
+	settings, err := json.Marshal(c.Settings) //nolint:gosec // a channel's credentials are sealed before they are stored
+	if err != nil {
+		return 0, err
+	}
+	sealed, err := s.seal(string(settings))
 	if err != nil {
 		return 0, err
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO channels (kind, name, settings, min_severity, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)`,
-		c.Kind, c.Name, string(settings), c.MinSeverity, now.Unix())
+		c.Kind, c.Name, sealed, c.MinSeverity, now.Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -89,8 +95,15 @@ func (s *Store) Channels(ctx context.Context) ([]Channel, error) {
 		if err := rows.Scan(&c.ID, &c.Kind, &c.Name, &settings, &c.MinSeverity, &c.Enabled, &created, &ok, &c.LastError, &try); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(settings), &c.Settings); err != nil {
-			return nil, err
+		// A channel sealed with another key stays listed, without its settings, saying why:
+		// one lost key must not take the notifications page, or the other channels, with it.
+		plain, err := s.unseal(settings)
+		if err == nil {
+			err = json.Unmarshal([]byte(plain), &c.Settings)
+		}
+		if err != nil {
+			c.Settings, c.Unreadable = ChannelSettings{}, true
+			c.LastError = "its settings cannot be read: sealed with another secrets key; add the channel again"
 		}
 		c.CreatedAt, c.LastOK, c.LastTry = unix(created), unix(ok), unix(try)
 		out = append(out, c)

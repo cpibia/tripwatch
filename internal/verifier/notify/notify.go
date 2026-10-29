@@ -58,7 +58,7 @@ func (n *Notifier) channels(ctx context.Context) []store.Channel {
 		n.Log.Error("load notification channels", "err", err)
 	}
 	for _, c := range stored {
-		if c.Enabled {
+		if c.Enabled && !c.Unreadable {
 			out = append(out, c)
 		}
 	}

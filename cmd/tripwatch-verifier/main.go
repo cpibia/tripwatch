@@ -15,7 +15,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -87,6 +89,47 @@ func env(name, def string) string {
 
 func dataDir() string { return env("TRIPWATCH_DATA", "/data") }
 
+// secretsKey returns the key that seals the notification channels' settings in the database:
+// TRIPWATCH_SECRETS_KEY (32 bytes in base64) when set, so it can live outside the data volume,
+// otherwise pki/secrets.key, made on the first start next to the CA's key and backed up with it.
+func secretsKey() ([]byte, error) {
+	if raw := os.Getenv("TRIPWATCH_SECRETS_KEY"); raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil || len(key) != store.SecretsKeySize {
+			return nil, errors.New("TRIPWATCH_SECRETS_KEY is 32 bytes in base64 (openssl rand -base64 32)")
+		}
+		return key, nil
+	}
+	dir := filepath.Join(dataDir(), "pki")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "secrets.key")
+	key, err := os.ReadFile(path) //nolint:gosec // the verifier's own data directory
+	if err == nil {
+		if len(key) != store.SecretsKeySize {
+			return nil, fmt.Errorf("%s is not a key of %d bytes", path, store.SecretsKeySize)
+		}
+		return key, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	key = make([]byte, store.SecretsKeySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the verifier's own data directory
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Write(key); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return key, f.Close()
+}
+
 // retention reads how many days the verifier keeps snapshots, events and resolved alerts, each
 // defaulting to store.DefaultRetention.
 func retention() (store.Retention, error) {
@@ -133,6 +176,13 @@ func serve(log *slog.Logger) error {
 		return err
 	}
 	if err := st.SetRetention(retain); err != nil {
+		return err
+	}
+	key, err := secretsKey()
+	if err != nil {
+		return fmt.Errorf("secrets key: %w", err)
+	}
+	if err := st.SetSecretsKey(ctx, key); err != nil {
 		return err
 	}
 	if err := bootstrapAdmin(ctx, st, now()); err != nil {
