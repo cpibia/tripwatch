@@ -277,6 +277,8 @@ h2 { font-size: var(--fs-lg); line-height: 1.3; }
   .fleet-table td.sys, .fleet-table td.apps, .fleet-table td.addr { grid-column: 2 / -1; min-width: 0; }
   .fleet-table td.num { display: none; }
 }
+.fleet-more { margin: 0; font-size: var(--fs-sm); color: var(--ink-2); }
+.fleet-more a { color: var(--teal); font-weight: 600; }
 .revoked-list { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
 .revoked-list a { color: var(--muted); }
 .ok-dot { width: 10px; height: 10px; flex: none; border: 1.5px solid var(--muted); }

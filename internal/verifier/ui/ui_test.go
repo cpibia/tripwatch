@@ -1210,3 +1210,33 @@ func TestHealthzAsksTheDatabase(t *testing.T) {
 		t.Fatalf("without a database: %d", res.StatusCode)
 	}
 }
+
+// Past overviewCells servers the overview draws only those needing attention and counts the
+// healthy rest, so one silent server is not buried in a wall of green cells.
+func TestOverviewFleetShowsOnlyServersNeedingAttention(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for i := range overviewCells + 5 {
+		id := fmt.Sprintf("web-%02d", i)
+		if err := h.store.Enroll(ctx, id, make([]byte, 32), now.Add(-2*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		at := now.Add(-time.Minute)
+		if i == 0 {
+			at = now.Add(-time.Hour)
+		}
+		hs, _ := h.store.Host(ctx, id)
+		e := protocol.Envelope{HostID: id, Kind: protocol.KindHeartbeat, Sequence: hs.Chain.Sequence + 1, SentAt: at}
+		if err := h.store.Accept(ctx, e, hs.Chain, protocol.ChainState{Sequence: e.Sequence}, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.login()
+	_, body := h.get("/")
+	if n := strings.Count(body, `<li class="cell `); n != 1 {
+		t.Fatalf("%d cells drawn, want only the silent server", n)
+	}
+	if !strings.Contains(body, `href="/hosts/web-00"`) || !strings.Contains(body, fmt.Sprintf("%d healthy", overviewCells+4)) {
+		t.Fatal("the silent server or the count of the healthy ones is missing")
+	}
+}

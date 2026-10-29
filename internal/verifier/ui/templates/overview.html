@@ -38,9 +38,9 @@
     <h2 id="fleet-h">Servers</h2>
     <p class="aside">{{$d.Healthy}} of {{len $d.Hosts}} healthy</p>
   </div>
-  {{if $d.Hosts}}
+  {{if $d.Fleet}}
   <ul class="fleet">
-    {{range $d.Hosts}}
+    {{range $d.Fleet}}
     <li class="cell st-{{.State}}">
       <a href="/hosts/{{.ID}}">
         <span class="cell-top">{{if eq .State "silent"}}{{shape "silent" ""}}{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}{{else}}<span class="ok-dot" aria-hidden="true"></span>{{end}}<span class="mono name" title="{{.ID}}">{{.Display}}</span></span>
@@ -50,7 +50,9 @@
     </li>
     {{end}}
   </ul>
-  {{else}}
+  {{end}}
+  {{if $d.MoreTotal}}<p class="fleet-more"><a href="/hosts">{{if $d.Fleet}}{{$d.MoreTotal}} more {{plural $d.MoreTotal "server" "servers"}}{{else}}All {{$d.MoreHealthy}} servers healthy{{end}}</a>{{if $d.Fleet}}: {{if $d.MoreOther}}{{$d.MoreOther}} needing attention{{if $d.MoreHealthy}}, {{end}}{{end}}{{if $d.MoreHealthy}}{{$d.MoreHealthy}} healthy{{end}}{{end}}</p>{{end}}
+  {{if not $d.Hosts}}
   <p class="empty">No server enrolled{{if $d.Revoked}} now{{else}} yet{{end}}. <a href="/enroll">Enroll {{if $d.Revoked}}a{{else}}the first{{end}} server</a>: it shows up here with its first heartbeat.</p>
   {{end}}
   {{with $d.Revoked}}<p class="revoked-list">Revoked: {{range $i, $id := .}}{{if $i}}, {{end}}<a class="mono" href="/hosts/{{$id}}">{{$id}}</a>{{end}}</p>{{end}}

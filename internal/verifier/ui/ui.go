@@ -697,11 +697,17 @@ type overviewData struct {
 	Focus    focus
 	Base     string
 	Healthy  int
-	KPIs     []kpi
-	Timeline timeline
-	Rules    []rankRow
-	Loaded   []rankRow
-	Web      webAttacks
+	// Fleet holds the hosts shown as cells; past overviewCells only those needing attention are,
+	// and MoreHealthy and MoreOther count the rest, listed on the servers page.
+	Fleet       []hostRow
+	MoreHealthy int
+	MoreOther   int
+	MoreTotal   int
+	KPIs        []kpi
+	Timeline    timeline
+	Rules       []rankRow
+	Loaded      []rankRow
+	Web         webAttacks
 	// Revoked hosts no longer report: the overview only names them, their pages keep the record.
 	Revoked []string
 }
@@ -709,6 +715,10 @@ type overviewData struct {
 // overviewAlerts bounds the alert table of the overview; counters and host rows are computed
 // over all alerts.
 const overviewAlerts = 200
+
+// overviewCells is how many servers the overview draws as cells: a fleet past it shows only the
+// servers that need attention, so two hundred green cells do not bury the one that is not.
+const overviewCells = 30
 
 // overviewGroups is how many rows of open alerts the overview shows before linking to the rest.
 const overviewGroups = 10
@@ -795,6 +805,13 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
+	d.Fleet = d.Hosts
+	if len(d.Hosts) > overviewCells {
+		attention := len(d.Hosts) - d.Healthy
+		d.Fleet = d.Hosts[:min(attention, overviewCells)]
+		d.MoreHealthy, d.MoreOther = d.Healthy, attention-len(d.Fleet)
+		d.MoreTotal = d.MoreHealthy + d.MoreOther
+	}
 	s.render(w, r, http.StatusOK, "overview", page{Title: "Overview", Nav: "overview", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
 }
 
