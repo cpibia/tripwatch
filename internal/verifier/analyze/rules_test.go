@@ -213,7 +213,8 @@ func TestDatabaseObjects(t *testing.T) {
 }
 
 // Comparing two large snapshots stays linear: 80,000 sudo rules, all different between the two,
-// took 18 seconds with the list scans this replaced.
+// took 18 seconds with the list scans this replaced. The bound leaves room for a shared CI runner
+// under the race detector with coverage, where the linear version takes about 2 seconds.
 func TestEvaluateIsLinear(t *testing.T) {
 	rules := func(prefix string) []string {
 		out := make([]string, 80_000)
@@ -226,7 +227,7 @@ func TestEvaluateIsLinear(t *testing.T) {
 	cur := State{Sudoers: &system.SudoersResult{Files: []system.SudoersFile{{Rules: rules("b")}}}}
 	start := time.Now()
 	findings := Evaluate(&prev, cur)
-	if took := time.Since(start); took > 2*time.Second {
+	if took := time.Since(start); took > 6*time.Second {
 		t.Fatalf("Evaluate took %v", took)
 	}
 	// One alert for the changed file, its detail bounded.
