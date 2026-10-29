@@ -1081,15 +1081,16 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) (sigs []string
 	defer func() { _ = f.Close() }()
 	// What the file had when listed: a log written meanwhile does not keep the scan going.
 	r := io.LimitReader(f, info.Size())
-	c := newDataSearch(&s.budget.codeLeft)
+	var c *dataSearch
 	before := s.budget.codeLeft
 	defer func() { s.budget.spent(name, info, before-s.budget.codeLeft) }()
 	buf := make([]byte, dataScanChunk)
 	var head []byte
-	for !c.exhausted() {
+	for c == nil || !c.exhausted() {
 		n, err := io.ReadFull(r, buf)
 		if head == nil {
 			head = slices.Clone(buf[:min(n, 16)])
+			c = newDataSearch(&s.budget.codeLeft, mediaOrDocument(head))
 		}
 		last := err != nil
 		c.feed(buf[:n], last)

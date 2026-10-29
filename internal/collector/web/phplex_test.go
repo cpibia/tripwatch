@@ -67,7 +67,7 @@ func TestShortTagPieces(t *testing.T) {
 	} {
 		whole := first(codeInData([]byte(in), nil))
 		for _, size := range []int{1, 2, 3, 7, 64} {
-			d := newDataSearch(nil)
+			d := newDataSearch(nil, mediaOrDocument([]byte(in)))
 			for i := 0; i < len(in); i += size {
 				d.feed([]byte(in[i:min(i+size, len(in))]), i+size >= len(in))
 			}
@@ -165,7 +165,7 @@ func TestCodeInDataInterpolation(t *testing.T) {
 			t.Errorf("%.60q: %q, want %q", in, whole, want)
 		}
 		for _, size := range []int{1, 2, 3, 7} {
-			d := newDataSearch(nil)
+			d := newDataSearch(nil, mediaOrDocument([]byte(in)))
 			for i := 0; i < len(in); i += size {
 				d.feed([]byte(in[i:min(i+size, len(in))]), i+size >= len(in))
 			}
@@ -173,5 +173,25 @@ func TestCodeInDataInterpolation(t *testing.T) {
 				t.Errorf("pieces of %d of %.60q: %q, whole %q", size, in, got, whole)
 			}
 		}
+	}
+}
+
+// A document's short blocks, which its compressed streams open by chance, spend no budget; code
+// planted in it with a full open tag is still found.
+func TestDocumentsSkipShortBlocks(t *testing.T) {
+	noise := "%PDF-1.7\n" + strings.Repeat("<? "+strings.Repeat("a", 200)+" ?>", 50)
+	left := int64(1000)
+	if _, exhausted := codeInData([]byte(noise), &left); exhausted || left != 1000 {
+		t.Errorf("short blocks of a document spent the budget: %d left, exhausted %v", left, exhausted)
+	}
+	text := strings.TrimPrefix(noise, "%PDF-1.7\n")
+	left = 1000
+	if _, exhausted := codeInData([]byte(text), &left); !exhausted {
+		t.Error("the same short blocks outside a document spent nothing")
+	}
+	left = 1 << 20
+	planted := "%PDF-1.7\n" + noise + "<?php system($_GET['c']); ?>"
+	if sigs, _ := codeInData([]byte(planted), &left); len(strongInDocuments([]byte(planted), sigs)) == 0 {
+		t.Errorf("code planted in a document with a full tag: %v", sigs)
 	}
 }

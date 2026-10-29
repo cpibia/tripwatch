@@ -79,7 +79,7 @@ const (
 // codeInData returns the signatures of the PHP content would run if included, and whether the
 // budget of code ran out before the end.
 func codeInData(content []byte, codeLeft *int64) (sigs []string, exhausted bool) {
-	d := newDataSearch(codeLeft)
+	d := newDataSearch(codeLeft, mediaOrDocument(content))
 	d.feed(content, true)
 	return d.signatures(), d.exhausted()
 }
@@ -87,15 +87,25 @@ func codeInData(content []byte, codeLeft *int64) (sigs []string, exhausted bool)
 // dataSearch lexes content twice, since whether short open tags are on is php.ini's choice: with
 // them off a "<?" followed by code is text, with them on it opens a block that can swallow, up
 // to its "?>", a block that the other setting runs.
-type dataSearch struct{ long, short codeSearch }
+//
+// A document or an archive (by its first bytes) gets the first pass only: its compressed streams
+// hold "<?" and a blank every few kilobytes, each opening a short block that runs to the next
+// "?>" and spends the run's budget on noise, while only signatures count in documents, and code
+// planted to run there opens with "<?php" or "<?=", which compression does not make by chance.
+type dataSearch struct {
+	long, short codeSearch
+	document    bool
+}
 
-func newDataSearch(codeLeft *int64) *dataSearch {
-	return &dataSearch{long: codeSearch{codeLeft: codeLeft}, short: codeSearch{codeLeft: codeLeft, shortTags: true}}
+func newDataSearch(codeLeft *int64, document bool) *dataSearch {
+	return &dataSearch{long: codeSearch{codeLeft: codeLeft}, short: codeSearch{codeLeft: codeLeft, shortTags: true}, document: document}
 }
 
 func (d *dataSearch) feed(p []byte, final bool) {
 	d.long.feed(p, final)
-	d.short.feed(p, final)
+	if !d.document {
+		d.short.feed(p, final)
+	}
 }
 
 func (d *dataSearch) exhausted() bool { return d.long.exhausted || d.short.exhausted }

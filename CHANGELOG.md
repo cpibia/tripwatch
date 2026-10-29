@@ -11,6 +11,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A web server configuration file touched in the second the server started is no longer taken
   for one changed after: the boot time the kernel gives is in whole seconds, so the start
   computed from it can be early by up to one. Two seconds of slack absorb it.
+- Documents and archives (PDF, ZIP, Office, database dumps...) are searched for code with full
+  open tags only (`<?php`, `<?=`): the short blocks their compressed streams open by chance
+  spent the run's budget for code in data files, a megabyte per PDF, so hosts with many
+  uploaded documents reported a gap at every run. Only signatures count in documents, and code
+  planted to run there opens with a full tag.
 - Where the kernel reports a boot before its own build date, as virtual machines that count
   more uptime than passed do, process start times are wrong: configuration changes after the
   web server started are then not judged, and an issue says why, instead of every
