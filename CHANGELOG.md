@@ -32,6 +32,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   another administrator or rewritten, an integration whose consumer or role's rules changed,
   and a trigger, routine or event redefined by another account. The first snapshot of the new
   sensor only records the new hashes and grants.
+- A kind of database objects that one snapshot could not read (a query that failed or timed
+  out, as a table locked while a row is added to it can make it) is compared with the last
+  snapshot that read it, so what was added in between is still reported.
 
 ## [0.1.39] - 2026-10-29
 

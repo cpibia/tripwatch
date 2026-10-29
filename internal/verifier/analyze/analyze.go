@@ -256,9 +256,10 @@ func (a *Analyzer) base(ctx context.Context, cur State, prevSnap *store.Snapshot
 				out = &p
 			} else {
 				fillMissing(out, p)
+				fillObjects(out, p)
 			}
 		}
-		if out != nil && !missing(*out, cur) {
+		if out != nil && !missing(*out, cur) && !missingObjects(*out, cur) {
 			break
 		}
 		older, err := a.Store.SnapshotBefore(ctx, prevSnap.HostID, prevSnap.ID)
@@ -345,6 +346,50 @@ func fillMissing(base *State, older State) {
 	for i := range b {
 		if b[i].IsNil() {
 			b[i].Set(o[i])
+		}
+	}
+}
+
+// missingObjects reports whether an application of cur read a kind of database objects that the
+// same application in base did not: a query that failed or timed out, as a table locked by
+// whoever is adding a row to it can make it. Comparing that kind with the last snapshot that
+// read it keeps such a row from becoming part of the baseline unseen.
+func missingObjects(base, cur State) bool {
+	if base.Apps == nil || cur.Apps == nil {
+		return false
+	}
+	for _, app := range cur.Apps.Apps {
+		i := slices.IndexFunc(base.Apps.Apps, func(b apps.Profile) bool { return b.Path == app.Path })
+		if i >= 0 && slices.ContainsFunc(app.ObjectsRead, func(k string) bool { return !slices.Contains(base.Apps.Apps[i].ObjectsRead, k) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// fillObjects copies into base, for each application, the database objects of the kinds it did
+// not read and an older snapshot did.
+func fillObjects(base *State, older State) {
+	if base.Apps == nil || older.Apps == nil {
+		return
+	}
+	for i := range base.Apps.Apps {
+		b := &base.Apps.Apps[i]
+		j := slices.IndexFunc(older.Apps.Apps, func(o apps.Profile) bool { return o.Path == b.Path })
+		if j < 0 {
+			continue
+		}
+		o := older.Apps.Apps[j]
+		for _, kind := range o.ObjectsRead {
+			if slices.Contains(b.ObjectsRead, kind) {
+				continue
+			}
+			b.ObjectsRead = append(b.ObjectsRead, kind)
+			for _, obj := range o.Objects {
+				if obj.Kind == kind {
+					b.Objects = append(b.Objects, obj)
+				}
+			}
 		}
 	}
 }

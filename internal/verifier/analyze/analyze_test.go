@@ -463,6 +463,32 @@ func TestChangeAfterFailedCollectorIsCompared(t *testing.T) {
 	}
 }
 
+// A kind of database objects not read in one snapshot, a table locked while a row is added to it,
+// is compared with the last snapshot that read it: the row does not join the baseline unseen.
+func TestObjectKindNotReadIsComparedLater(t *testing.T) {
+	h := newHarness(t)
+	shop := func(read, objects string) []byte {
+		return gz(t, `{"snapshot":{"results":{"apps":{"apps":[{"path":"/var/www/shop","framework":"magento2","db_objects":[`+objects+`],"db_objects_read":[`+read+`]}]}}}}`)
+	}
+	h.deliver(protocol.KindSnapshot, shop(`"trigger","admin_token"`, `{"kind":"admin_token","id":"9","target":"integration 3","hash":"k1"}`))
+	h.analyse()
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, shop(`"trigger"`, ``))
+	h.analyse()
+	h.clock = h.clock.Add(10 * time.Minute)
+	h.deliver(protocol.KindSnapshot, shop(`"trigger","admin_token"`, `{"kind":"admin_token","id":"9","target":"integration 3","hash":"k1"},{"kind":"admin_token","id":"10","target":"administrator 1","hash":"k2"}`))
+	h.analyse()
+	var raised []string
+	for fp := range h.open() {
+		if strings.Contains(fp, "object:") {
+			raised = append(raised, fp)
+		}
+	}
+	if len(raised) != 1 || !strings.Contains(raised[0], ":admin_token:10:") {
+		t.Fatalf("object alerts = %v", raised)
+	}
+}
+
 // A collector that keeps failing is a high alert that stays open after it answers again, and
 // one silent past the walked history says its changes cannot be compared.
 func TestCollectorFailingForLong(t *testing.T) {
