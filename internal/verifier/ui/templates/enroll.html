@@ -26,9 +26,12 @@
   <fieldset class="choice">
     <legend>Server system, for the token command</legend>
     <label class="check"><input type="radio" name="system" value="deb"{{if eq $d.System "deb"}} checked{{end}}> Debian or Ubuntu: the command also installs the sensor {{$d.Release}}</label>
-    <label class="check"><input type="radio" name="system" value="rpm"{{if eq $d.System "rpm"}} checked{{end}}> RHEL, AlmaLinux, Rocky, Fedora or Amazon Linux: the command also installs the sensor {{$d.Release}}</label>
+    <label class="check"><input type="radio" name="system" value="rpm"{{if eq $d.System "rpm"}} checked{{end}}> RHEL, CentOS Stream, AlmaLinux, Rocky, Fedora or Amazon Linux: the command also installs the sensor {{$d.Release}}</label>
+    <label class="check"><input type="radio" name="system" value="bin"{{if eq $d.System "bin"}} checked{{end}}> Another Linux with systemd (SUSE, Arch...): the command installs the static binary {{$d.Release}}, checked against the release's SHA256SUMS, and its service</label>
     <label class="check"><input type="radio" name="system" value="installed"{{if eq $d.System "installed"}} checked{{end}}> Sensor already installed: enrollment only</label>
   </fieldset>
+  {{else}}
+  <p class="help">This verifier is a development build: it knows no release to install, so the command only enrolls. Install the sensor first from a release (the .deb, the .rpm or the static binary).</p>
   {{end}}
   {{if $d.Existing}}
   <label class="check"><input type="checkbox" name="replace" value="yes" required> Enroll it again: the current keys stop working and the chain starts over.</label>

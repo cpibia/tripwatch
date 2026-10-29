@@ -34,6 +34,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   when allowed, acknowledge and resolve alerts (`POST /api/v1/alerts/{id}/ack|resolve`),
   recorded in the audit log as `api:<name>`. A token sees the servers its owner sees, stops when
   revoked or when its owner is removed, and a browser session never counts as one.
+- Enrolling a server offers another Linux with systemd too: the command installs the static
+  binary of the release, checked against its `SHA256SUMS`, and the service unit of the same
+  release. A development build of the verifier says why it can only enroll.
 - Who sees what: a viewer or an operator can be limited to the servers carrying one label
   (Settings, Users). They then see nothing of the others: lists, counts, charts, searches and
   the tab icon leave them out, their pages answer not found, and their alerts cannot be changed,

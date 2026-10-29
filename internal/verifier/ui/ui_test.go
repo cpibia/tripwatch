@@ -698,6 +698,11 @@ func TestEnrollCommandInstallsTheSameRelease(t *testing.T) {
 	if !strings.Contains(rpm, "/download/v0.1.1/tripwatch-sensor-0.1.1-1.$(uname -m).rpm && ") || !strings.HasSuffix(rpm, enroll) {
 		t.Errorf("rpm command = %s", rpm)
 	}
+	bin := enrollCommand("bin", "0.1.1", "tw1.x")
+	if !strings.Contains(bin, "f=tripwatch-sensor_0.1.1_linux_$a") || !strings.Contains(bin, `SHA256SUMS | grep " $f$" | sha256sum -c - && sudo install -m 755 $f /usr/bin/tripwatch-sensor`) ||
+		!strings.Contains(bin, "/v0.1.1/deploy/systemd/tripwatch-sensor.service") || !strings.HasSuffix(bin, enroll) {
+		t.Errorf("binary command = %s", bin)
+	}
 	if got := enrollCommand("installed", "0.1.1", "tw1.x"); got != enroll {
 		t.Errorf("enrollment alone = %s", got)
 	}
