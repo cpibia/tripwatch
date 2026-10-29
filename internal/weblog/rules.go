@@ -54,7 +54,11 @@ var (
 		"/customer/account/loginpost",
 	}
 
-	sensitiveRe     = regexp.MustCompile(`(?i)(/\.env(\.|$)|/\.git/|/\.svn/|/\.hg/|/\.aws/|/\.ssh/|/id_[rd]sa|/\.htpasswd|/\.ds_store$|/app/etc/(env\.php|local\.xml)|/wp-config\.php[.~_-]|/config\.php[.~_-]|\.(sql|bak|old|orig|swp)$|/(backup|dump|database|db)\.(zip|tar|tar\.gz|tgz|sql\.gz)$|/(phpinfo|info|test)\.php$|/server-status$|/actuator/(env|heapdump)|/web\.config$)`)
+	sensitiveRe = regexp.MustCompile(`(?i)(/\.env(\.|$)|/\.git/|/\.svn/|/\.hg/|/\.aws/|/\.ssh/|/id_[rd]sa|/\.htpasswd|/\.ds_store$|/app/etc/(env\.php|local\.xml)|/wp-config\.php[.~_-]|/config\.php[.~_-]|\.(sql|bak|old|orig|swp)$|/(backup|dump|database|db)\.(zip|tar|tar\.gz|tgz|sql\.gz)$|/(phpinfo|info|test)\.php$|/server-status$|/actuator/(env|heapdump)|/web\.config$)`)
+	// PHP-CGI takes command line options from the query string when it has no "=" (CVE-2012-1823),
+	// and Windows turns a soft hyphen into one (CVE-2024-4577): -d sets an ini directive, and
+	// these make PHP run the request's body.
+	phpCGIOptionRe  = regexp.MustCompile(`(?i)(?:^|[\s&])[^\s&=]{0,3}d\s*(?:allow_url_include|auto_prepend_file|auto_append_file|disable_functions|open_basedir|safe_mode|cgi\.force_redirect|cgi\.redirect_status_env)\s*=`)
 	traversalRe     = regexp.MustCompile(`(?i)(\.\./|\.\.\\|/etc/passwd|/etc/shadow|/proc/self/|(php|file|expect|data|phar|zip)://)`)
 	sqlInjectionRe  = regexp.MustCompile(`(?i)(union(\s|/\*.*?\*/)+(all\s+)?select\b|\bsleep\s*\(\s*\d|benchmark\s*\(|information_schema|'\s*or\s*'?\d'?\s*=\s*'?\d|extractvalue\s*\(|updatexml\s*\(|waitfor\s+delay)`)
 	commandParamRe  = regexp.MustCompile(`(?i)(^|&)(cmd|exec|command|c|e|run|shell|do|code)=[^&]*(whoami|\bid\b|uname|cat\s+/|wget\s|curl\s|/bin/(ba)?sh|\bnc\s|python\s|perl\s|base64|chmod\s|powershell)`)
@@ -186,7 +190,11 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	if sensitiveRe.MatchString(p) {
 		hit("sensitive_file", bySuccess(ok, SeverityHigh, SeverityLow))
 	}
-	if traversalRe.MatchString(raw) || traversalRe.MatchString(q) {
+	// The php://input such a request sets as the prepended file is no traversal: one alert,
+	// named for what it is. Its status tells nothing, a site's home page answers 200 to it.
+	if phpCGIOptionRe.MatchString(q) {
+		hit("php_cgi_argument_injection", SeverityHigh)
+	} else if traversalRe.MatchString(raw) || traversalRe.MatchString(q) {
 		hit("path_traversal", bySuccess(ok, SeverityHigh, SeverityMedium))
 	}
 	if sqlInjectionRe.MatchString(q) || sqlInjectionRe.MatchString(p) {
