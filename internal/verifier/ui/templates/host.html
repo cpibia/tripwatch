@@ -34,10 +34,24 @@
 {{end}}
 
 <section aria-labelledby="alerts-h">
-  <div class="section-head"><h2 id="alerts-h">Alerts</h2><p class="aside">every status, the most severe on top</p></div>
+  <div class="section-head"><h2 id="alerts-h">Alerts</h2><p class="aside">critical, high and medium, every status, the most severe on top</p></div>
   {{if $d.Alerts}}{{template "alerttable" (hosttable $d.Alerts .CSRF .Path)}}
   {{else}}<p class="empty">No alerts for this server.</p>{{end}}
 </section>
+
+{{if $d.Notes}}
+<section aria-labelledby="notes-h">
+  <div class="section-head"><h2 id="notes-h">Health notes</h2><p class="aside">low: worth a look when there is time, never mailed</p></div>
+  {{template "alerttable" (hosttable $d.Notes .CSRF .Path)}}
+</section>
+{{end}}
+
+{{if $d.Activity}}
+<section aria-labelledby="activity-h">
+  <div class="section-head"><h2 id="activity-h">Sensor activity</h2><p class="aside">updates, restarts after a shutdown, first start</p></div>
+  {{template "alerttable" (activitytable $d.Activity .CSRF .Path)}}
+</section>
+{{end}}
 
 <section aria-labelledby="events-h">
   <div class="section-head"><h2 id="events-h">Real-time events</h2><p class="aside">newest first, kept 7 days: data from the server</p></div>

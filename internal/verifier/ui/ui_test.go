@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1084,5 +1085,117 @@ func TestOrderSensorUpdate(t *testing.T) {
 	}
 	if _, body := h.get("/hosts"); !strings.Contains(body, "Update to 0.2.0 ordered") {
 		t.Error("the order in force is not shown")
+	}
+}
+
+// The Alerts page hides the low notes unless asked, finds alerts by text, server and category,
+// and keeps every filter in its address.
+func TestAlertFilters(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, a := range []store.Alert{
+		{HostID: "web-01", Fingerprint: "weblog:a", Severity: "high", Kind: "weblog", Title: "Web request: command in parameters", Detail: "GET /x from 198.51.100.7"},
+		{HostID: "db-01", Fingerprint: "ssh:a", Severity: "medium", Kind: "ssh", Title: "SSH: root login with a password allowed"},
+		{HostID: "db-01", Fingerprint: "apps:a", Severity: "low", Kind: "apps", Title: "Development setting in /srv/app"},
+	} {
+		if _, err := h.store.Raise(ctx, a, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.login()
+	rows := func(path string) (int, string) {
+		t.Helper()
+		_, body := h.get(path)
+		return strings.Count(body, `<td class="what">`), body
+	}
+	if n, body := rows("/alerts"); n != 2 || strings.Contains(body, "Development setting") || !strings.Contains(body, "1 low note hidden") {
+		t.Errorf("default view: %d rows", n)
+	}
+	if n, body := rows("/alerts"); n == 2 && (!strings.Contains(body, `<span class="kind-tag">Web request</span>`) || !strings.Contains(body, ">Command in parameters<")) {
+		t.Error("the category is not a tag of its own")
+	}
+	if n, _ := rows("/alerts?sev=low"); n != 1 {
+		t.Errorf("low only: %d rows", n)
+	}
+	if n, _ := rows("/alerts?q=198.51.100.7"); n != 1 {
+		t.Errorf("search by address: %d rows", n)
+	}
+	if n, _ := rows("/alerts?host=db-01&sev=critical&sev=high&sev=medium&sev=low"); n != 2 {
+		t.Errorf("one server, every severity: %d rows", n)
+	}
+	if n, body := rows("/alerts?cat=access&sort=newest"); n != 1 || !strings.Contains(body, `href="/alerts?cat=access&amp;sort=newest&amp;view=resolved"`) {
+		t.Errorf("category: %d rows, or the tabs drop the filters", n)
+	}
+	if n, _ := rows("/alerts?cat=nonsense&sort=nonsense"); n != 2 {
+		t.Errorf("unknown filters are not ignored: %d rows", n)
+	}
+}
+
+// A server's page keeps its alerts apart from the notes on its health and its sensor's life.
+func TestHostPageSplitsNotesAndActivity(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []store.Alert{
+		{HostID: "web-01", Fingerprint: "a", Severity: "high", Kind: "web", Title: "Script in uploads"},
+		{HostID: "web-01", Fingerprint: "b", Severity: "low", Kind: "apps", Title: "Development setting"},
+		{HostID: "web-01", Fingerprint: "sensor:started:9", Severity: "low", Kind: "sensor-event", Title: "Sensor updated"},
+	} {
+		if _, err := h.store.Raise(ctx, a, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.login()
+	_, body := h.get("/hosts/web-01")
+	alerts, notes, activity := strings.Index(body, `id="alerts-h"`), strings.Index(body, `id="notes-h"`), strings.Index(body, `id="activity-h"`)
+	at := func(s string) int { return strings.Index(body, s) }
+	order := []int{alerts, at("Script in uploads"), notes, at("Development setting"), activity, at("Sensor updated")}
+	if alerts < 0 || !slices.IsSorted(order) {
+		t.Error("alerts, health notes and sensor activity are not in their sections")
+	}
+}
+
+// The Servers page finds servers by what they run and serve, and orders them as asked.
+func TestServersSearchAndOrder(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, id := range []string{"app-01", "web-01", "web-02"} {
+		if err := h.store.Enroll(ctx, id, make([]byte, 32), now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.Alive(ctx, id, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.store.SetFacts(ctx, "web-02", store.HostFacts{Apps: []store.AppFact{{Path: "/srv/shop", Framework: "magento", Sites: []string{"shop.example.com"}}}, SeenAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: "a", Severity: "high", Kind: "web", Title: "x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	h.login()
+	hosts := func(path string) []string {
+		t.Helper()
+		_, body := h.get(path)
+		var out []string
+		for _, m := range regexp.MustCompile(`<td class="host"><a class="host-tag mono hc-\d" href="/hosts/([^"]+)"`).FindAllStringSubmatch(body, -1) {
+			out = append(out, m[1])
+		}
+		return out
+	}
+	for path, want := range map[string][]string{
+		"/hosts":                 {"app-01", "web-01", "web-02"},
+		"/hosts?q=SHOP.example":  {"web-02"},
+		"/hosts?q=magento":       {"web-02"},
+		"/hosts?state=alerts":    {"web-01"},
+		"/hosts?sort=severity":   {"web-01", "app-01", "web-02"},
+		"/hosts?sort=whatever":   {"app-01", "web-01", "web-02"},
+		"/hosts?q=nothing-there": nil,
+	} {
+		if got := hosts(path); !slices.Equal(got, want) {
+			t.Errorf("%s: %v, want %v", path, got, want)
+		}
 	}
 }

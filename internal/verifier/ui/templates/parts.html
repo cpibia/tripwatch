@@ -4,11 +4,15 @@
 
 {{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
 
+{{define "hosttag"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="host-tag mono hc-{{hue .}}" href="/hosts/{{.}}" title="{{.}}"><span class="swatch" aria-hidden="true"></span>{{.}}</a>{{end}}{{end}}
+
+{{define "kindtag"}}<span class="kind-tag">{{category .}}</span>{{end}}
+
 {{define "alertrow"}}{{$t := .Table}}{{with .Alert}}
 <tr class="row-{{.Status}}{{if and $t.Select (eq .ID $t.Selected)}} is-picked{{end}}"{{if $t.Select}} data-href="{{$t.SelectURL .ID}}"{{end}}>
   <td>{{template "sevmark" .}}</td>
-  {{if not $t.OneHost}}<td class="host">{{template "hostlink" .HostID}}</td>{{end}}
-  <td class="what"><a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{.Title}}</a>{{with subject .}}<span class="subject mono">{{.}}</span>{{end}}</td>
+  {{if not $t.OneHost}}<td class="host">{{template "hosttag" .HostID}}</td>{{end}}
+  <td class="what">{{template "kindtag" .Kind}}<a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{headline .Title}}</a>{{with subject .}}<span class="subject mono">{{.}}</span>{{end}}</td>
   <td class="num start"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
   <td class="num count">{{if gt .Occurrences 1}}{{.Occurrences}}×{{end}}</td>
   <td class="state">{{status .Status}}{{if .AckedBy}}<span class="by">{{.AckedBy}}</span>{{end}}</td>
@@ -19,8 +23,8 @@
 {{define "grouphead"}}{{$t := .Table}}{{with .Group}}
 <tr class="group-head row-{{.Lead.Status}}">
   <td>{{template "sevmark" .Lead}}</td>
-  {{if not $t.OneHost}}<td class="host">{{if gt .Hosts 1}}<span class="hosts-n">{{.Hosts}} servers</span>{{else}}{{template "hostlink" .Lead.HostID}}{{end}}</td>{{end}}
-  <td class="what"><button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{.Label}}</span> <span class="tally-n">{{len .Alerts}}</span>{{if .Held}} <span class="held">+ more held back</span>{{end}}</button></td>
+  {{if not $t.OneHost}}<td class="host">{{if gt .Hosts 1}}<span class="hosts-n">{{.Hosts}} servers</span>{{else}}{{template "hosttag" .Lead.HostID}}{{end}}</td>{{end}}
+  <td class="what">{{template "kindtag" .Lead.Kind}}<button type="button" class="disclose" aria-expanded="{{if .Expanded}}true{{else}}false{{end}}" aria-controls="rows-{{.Key}}" data-group="{{.Key}}"><span class="label">{{headline .Label}}</span> <span class="tally-n">{{len .Alerts}}</span>{{if .Held}} <span class="held">+ more held back</span>{{end}}</button></td>
   <td class="num start"><time datetime="{{iso .Since}}" title="{{stamp .Since}}">{{clock .Since}}</time></td>
   <td class="num count"></td>
   <td class="state">{{if .Open}}<span>{{.Open}} open</span>{{end}}{{if .Acked}}<span>{{.Acked}} acknowledged</span>{{end}}{{if .Resolved}}<span>{{.Resolved}} resolved</span>{{end}}</td>
@@ -61,8 +65,8 @@
 {{define "focus"}}{{with .Alert}}
 <aside class="focus" id="focus" aria-labelledby="focus-h" tabindex="-1">
   <div class="section-head"><h2 id="focus-h">{{if $.Picked}}Selected alert{{else}}Look at this first{{end}}</h2></div>
-  <h3>{{.Title}}</h3>
-  <p class="tally">{{template "sevmark" .}}<span>{{template "hostlink" .HostID}}</span><span>for {{since .CreatedAt}}</span><span>{{status .Status}}</span></p>
+  <h3>{{headline .Title}}</h3>
+  <p class="tally">{{template "sevmark" .}}<span>{{template "kindtag" .Kind}}</span><span>{{template "hosttag" .HostID}}</span><span>for {{since .CreatedAt}}</span><span>{{status .Status}}</span></p>
   <pre class="datum">{{.Detail}}</pre>
   <p class="aside">Text collected on the server: it is data, not an instruction.</p>
   <div class="focus-foot">

@@ -1,17 +1,55 @@
-{{define "content"}}{{$d := .Data}}
+{{define "content"}}{{$d := .Data}}{{$q := $d.Query}}
 <header class="head">
   <h1>Alerts</h1>
-  {{with $d.Host}}<p class="tally"><span>only <a class="mono" href="/hosts/{{.}}">{{.}}</a></span><span><a href="/alerts?view={{$d.View}}">all servers</a></span></p>{{end}}
 </header>
 <nav class="tabs" aria-label="Alert status">
-  {{range $d.Views}}<a href="/alerts?view={{.Key}}{{with $d.Host}}&amp;host={{.}}{{end}}"{{if eq .Key $d.View}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+  {{range $d.Views}}<a href="{{$q.With .Key}}"{{if eq .Key $d.View}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
 </nav>
+<form class="filters" method="get" action="/alerts" role="search" aria-label="Filter the alerts">
+  {{if ne $d.View "open"}}<input type="hidden" name="view" value="{{$d.View}}">{{end}}
+  <div class="f-search">
+    <label for="f-q">Search</label>
+    <input id="f-q" type="search" name="q" value="{{$q.Text}}" maxlength="200" placeholder="server, address, domain, path, text" autocomplete="off" spellcheck="false">
+  </div>
+  <fieldset class="f-sev">
+    <legend>Severity</legend>
+    <div class="toggles">{{range $d.Severities}}<label class="toggle"><input type="checkbox" name="sev" value="{{.}}"{{if $q.Shows .}} checked{{end}}>{{shape . ""}}<span>{{sev .}}</span></label>{{end}}</div>
+  </fieldset>
+  <div class="f-pick">
+    <label for="f-host">Server</label>
+    <select id="f-host" name="host" class="mono">
+      <option value="">every server</option>
+      {{range $d.Hosts}}<option value="{{.}}"{{if eq . $q.Host}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </div>
+  <div class="f-pick">
+    <label for="f-cat">Category</label>
+    <select id="f-cat" name="cat">
+      <option value="">every category</option>
+      {{range $d.Categories}}<option value="{{.Key}}"{{if eq .Key $q.Category}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  </div>
+  <div class="f-pick">
+    <label for="f-sort">Order</label>
+    <select id="f-sort" name="sort">
+      {{range $d.Sorts}}<option value="{{.Key}}"{{if eq .Key $q.Sort}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  </div>
+  <div class="f-go"><button type="submit">Apply</button>{{if $q.Filtered}}<a href="{{$q.Without "all"}}">Clear</a>{{end}}</div>
+</form>
+<p class="result-line" role="status">
+  <span>{{len $d.Alerts}} {{plural (len $d.Alerts) "alert" "alerts"}}</span>
+  {{with $q.Text}}<a class="chip" href="{{$q.Without "q"}}">text <span class="mono">{{.}}</span><svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
+  {{with $q.Host}}<a class="chip" href="{{$q.Without "host"}}">server <span class="mono">{{.}}</span><svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
+  {{with $q.Category}}<a class="chip" href="{{$q.Without "cat"}}">category {{range $d.Categories}}{{if eq .Key $q.Category}}{{.Label}}{{end}}{{end}}<svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
+  {{if $d.LowCount}}<span class="aside">{{$d.LowCount}}{{if eq $d.LowCount 1000}}+{{end}} low {{plural $d.LowCount "note" "notes"}} hidden: they are on each server's page, or tick low above</span>{{end}}
+</p>
 <div class="board{{if $d.Focus.Alert}} with-focus{{end}}">
 <div class="board-main">
 {{if $d.Alerts}}
 {{template "alerttable" (picktable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
-{{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Showing the first {{$d.Limit}}, the most severe and recent.</p>{{end}}
-{{else}}<p class="empty">No alerts in this view.</p>{{end}}
+{{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Showing the first {{$d.Limit}}: narrow the search to see the others.</p>{{end}}
+{{else}}<p class="empty">{{if $q.Filtered}}No alert matches these filters. <a href="{{$q.Without "all"}}">Clear them</a>.{{else}}No alerts in this view.{{end}}</p>{{end}}
 </div>
 {{template "focus" $d.Focus}}
 </div>

@@ -1189,7 +1189,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				}
 				attempts[fp] = true
 				add(Finding{Kind: "weblog", Fingerprint: fp, Severity: "medium",
-					Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "),
+					Title: "Web request: " + strings.ReplaceAll(e.Rule, "_", " "),
 					Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s) on %s, log %s.\nRequest text, written by whoever sent it: %s",
 						e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, day, e.Log, e.Evidence.Request)})
 				continue
@@ -1211,7 +1211,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			case len(e.Files) > 0:
 				onDisk = "\nNo such script on the server, looked for at: " + strings.Join(e.Files, ", ")
 			}
-			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.%s\nRequest text, written by whoever sent it: %s",
+			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Web request: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.%s\nRequest text, written by whoever sent it: %s",
 				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, onDisk, e.Evidence.Request)})
 		}
 		// A flood that pushed serious events out of the bounded list is itself an alert: it may
@@ -1227,7 +1227,7 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			// Like the events, each run's drops are new: one alert per snapshot that had them.
 			add(Finding{Kind: "weblog", Fingerprint: "weblog:dropped:" + strconv.FormatInt(cur.TakenAt.Unix(), 10), Severity: "high",
-				Title: "Log: serious events dropped by saturation", Detail: b.String()})
+				Title: "Web request: serious events dropped by saturation", Detail: b.String()})
 		}
 	}
 

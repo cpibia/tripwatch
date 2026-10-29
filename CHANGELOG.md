@@ -21,7 +21,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
-- Log alerts give the host path of the requested script and say whether it exists.
+- Log alerts give the host path of the requested script and say whether it exists, and are
+  titled "Web request: ..." instead of "Log: ...".
+- The Alerts page has a filter bar: severity (low notes hidden by default), server, category,
+  free text (server, address, domain, path, detail) and order, kept in the page address. Alerts
+  show their category as a tag and their server with a colour of its own.
+- The Servers page searches servers by name, address, system, technology and domain, filters
+  them by state and sorts them.
+- A server's page keeps its health notes and its sensor's activity apart from its alerts.
 
 ## [0.1.30] - 2026-10-29
 

@@ -1,8 +1,8 @@
 {{define "content"}}{{$v := .Data}}{{$a := $v.Alert}}
 <header class="head">
   <p class="crumb"><a href="/alerts">Alerts</a></p>
-  <h1>{{$a.Title}}</h1>
-  <p class="tally">{{template "sevmark" $a}}<span>{{if eq $a.HostID "verifier"}}verifier{{else}}<a class="mono" href="/hosts/{{$a.HostID}}">{{$a.HostID}}</a>{{end}}</span><span>{{status $a.Status}}{{with $a.AckedBy}} · {{.}}{{end}}</span></p>
+  <h1>{{headline $a.Title}}</h1>
+  <p class="tally">{{template "sevmark" $a}}<span>{{template "kindtag" $a.Kind}}</span><span>{{template "hosttag" $a.HostID}}</span><span>{{status $a.Status}}{{with $a.AckedBy}} · {{.}}{{end}}</span></p>
 </header>
 
 <dl class="facts">

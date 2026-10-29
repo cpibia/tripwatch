@@ -1,10 +1,30 @@
 {{define "content"}}{{$d := .Data}}
 <header class="head">
-  <div class="title-line"><h1>Servers</h1><p class="aside">{{len $d.Hosts}} enrolled{{with $d.Revoked}}, {{len .}} revoked{{end}}{{with $d.Release}} · verifier {{.}}{{end}}</p></div>
+  <div class="title-line"><h1>Servers</h1><p class="aside">{{$d.Enrolled}} enrolled{{with $d.Revoked}}, {{len .}} revoked{{end}}{{with $d.Release}} · verifier {{.}}{{end}}</p></div>
   {{if $d.Outdated}}<p class="notice">{{shape "high" ""}}<span>{{$d.Outdated}} {{plural $d.Outdated "sensor is" "sensors are"}} older than the verifier. On each, as root: <code class="mono">tripwatch-sensor -update</code>, or order them all to update.</span></p>
   {{if not (and $d.Order (eq $d.Order.Version $d.Release))}}<form method="post" action="/hosts/update" class="form inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Update every sensor to {{$d.Release}}</button></form>{{end}}{{end}}
   {{with $d.Order}}<p class="aside">Update to {{.Version}} ordered <time datetime="{{iso .OrderedAt}}">{{stamp .OrderedAt}}</time> by {{.OrderedBy}}: each sensor older than that installs it at its next heartbeat, within a minute, if the files match the hashes signed with the order.</p>{{end}}
 </header>
+
+{{$q := $d.Query}}
+{{if $d.Enrolled}}
+<form class="filters filters-servers" method="get" action="/hosts" role="search" aria-label="Filter the servers">
+  <div class="f-search">
+    <label for="s-q">Search</label>
+    <input id="s-q" type="search" name="q" value="{{$q.Text}}" maxlength="200" placeholder="name, address, system, technology, domain" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="f-pick">
+    <label for="s-state">Show</label>
+    <select id="s-state" name="state">{{range $d.States}}<option value="{{.Key}}"{{if eq .Key $q.State}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+  </div>
+  <div class="f-pick">
+    <label for="s-sort">Order</label>
+    <select id="s-sort" name="sort">{{range $d.Sorts}}<option value="{{.Key}}"{{if eq .Key $q.Sort}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+  </div>
+  <div class="f-go"><button type="submit">Apply</button>{{if or $q.Filtered $q.Sort}}<a href="/hosts">Clear</a>{{end}}</div>
+</form>
+{{if $q.Filtered}}<p class="result-line" role="status"><span>{{len $d.Hosts}} of {{$d.Enrolled}} {{plural $d.Enrolled "server" "servers"}}</span></p>{{end}}
+{{end}}
 
 {{if $d.Hosts}}
 <div class="panel">
@@ -14,7 +34,7 @@
   {{range $d.Hosts}}{{$f := .Facts}}{{$row := .}}
   <tr class="st-{{.State}}">
     <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}<span class="sr">silent</span>{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}<span class="sr">{{sev .Worst.Severity}}</span>{{end}}</td>
-    <td class="host"><a class="mono" href="/hosts/{{.ID}}" title="{{.ID}}">{{.ID}}</a>{{with $f.Hostname}}{{if ne . $row.ID}}<span class="sub mono">{{.}}</span>{{end}}{{end}}</td>
+    <td class="host">{{template "hosttag" .ID}}{{with $f.Hostname}}{{if ne . $row.ID}}<span class="sub mono">{{.}}</span>{{end}}{{end}}</td>
     <td class="sys">{{if $f.OS}}<span>{{$f.OS}}</span>{{else}}<span class="quiet">not reported yet</span>{{end}}<span class="sub">{{with $f.Kernel}}<span class="mono">{{.}}</span>{{end}}{{with $f.Arch}} · {{.}}{{end}}{{with $f.Environment}}{{if ne . "host"}} · {{.}}{{end}}{{end}}</span></td>
     <td class="ver">{{if $f.SensorVersion}}<span class="mono">{{$f.SensorVersion}}</span>{{if .Outdated}}<span class="flag-update">update available</span>{{end}}{{else}}<span class="quiet">unknown</span>{{end}}</td>
     <td class="addr">{{with .PeerAddr}}<span class="mono" title="the address its sensor connects from">{{.}}</span>{{end}}{{range $i, $a := $f.Addresses}}{{if lt $i 2}}<span class="{{if $row.PeerAddr}}sub {{end}}mono">{{$a}}</span>{{end}}{{end}}{{if gt (len $f.Addresses) 2}}<span class="sub">+{{sub (len $f.Addresses) 2}} more</span>{{end}}</td>
@@ -27,6 +47,8 @@
   </tbody>
 </table>
 </div>
+{{else if $d.Enrolled}}
+<p class="empty">No server matches. <a href="/hosts">Show every server</a>.</p>
 {{else}}
 <p class="empty">No server enrolled{{if $d.Revoked}} now{{else}} yet{{end}}. <a href="/enroll">Enroll {{if $d.Revoked}}a{{else}}the first{{end}} server</a>.</p>
 {{end}}

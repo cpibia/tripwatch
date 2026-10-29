@@ -591,3 +591,49 @@ func TestUserEmailsAreCaseInsensitive(t *testing.T) {
 		t.Fatalf("the new password does not work: %v", err)
 	}
 }
+
+// Alerts are found by text in their host, title or detail, taken literally, and narrowed to
+// kinds and ordered as asked.
+func TestAlertsSearchAndOrder(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	for i, a := range []Alert{
+		{HostID: "web-1", Fingerprint: "a", Severity: "high", Kind: "weblog", Title: "Command in parameters", Detail: "GET /x from 198.51.100.7"},
+		{HostID: "db-1", Fingerprint: "b", Severity: "critical", Kind: "web", Title: "Script in uploads", Detail: "/var/www/a_b/uploads/x.php"},
+		{HostID: "db-1", Fingerprint: "c", Severity: "medium", Kind: "ssh", Title: "Root login with a password", Detail: "PermitRootLogin yes"},
+	} {
+		if _, err := s.Raise(ctx, a, t0.Add(time.Duration(i)*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := func(f AlertFilter) []string {
+		t.Helper()
+		list, err := s.Alerts(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, a := range list {
+			out = append(out, a.Fingerprint)
+		}
+		return out
+	}
+	for name, c := range map[string]struct {
+		f    AlertFilter
+		want []string
+	}{
+		"address in the detail": {AlertFilter{Query: "198.51.100.7"}, []string{"a"}},
+		"host, any case":        {AlertFilter{Query: "DB-1"}, []string{"b", "c"}},
+		"underscore literal":    {AlertFilter{Query: "a_b"}, []string{"b"}},
+		"percent literal":       {AlertFilter{Query: "%"}, nil},
+		"kinds":                 {AlertFilter{Kinds: []string{"ssh", "weblog"}}, []string{"a", "c"}},
+		"newest":                {AlertFilter{Sort: SortNewest}, []string{"c", "b", "a"}},
+		"oldest":                {AlertFilter{Sort: SortOldest}, []string{"a", "b", "c"}},
+		"by host":               {AlertFilter{Sort: SortHost}, []string{"b", "c", "a"}},
+		"severity first":        {AlertFilter{}, []string{"b", "a", "c"}},
+	} {
+		if got := ids(c.f); !slices.Equal(got, c.want) {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+}

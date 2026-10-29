@@ -113,7 +113,7 @@ func New(c Config) (http.Handler, error) {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "hue": hostHue, "headline": headline, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -682,13 +682,17 @@ type hostData struct {
 	Row          hostRow
 	SilenceAfter time.Duration
 	Alerts       []store.Alert
-	Silences     []Gap
-	Snapshots    []store.SnapshotHead
-	Accepted     []store.Acceptance
-	Facts        *store.HostFacts
-	Outdated     bool
-	Release      string
-	Events       []eventRow
+	// Activity is the sensor's life (updated, server switched off, first start) and Notes the
+	// low findings on the server's health: kept apart so the alerts to handle stand out.
+	Activity  []store.Alert
+	Notes     []store.Alert
+	Silences  []Gap
+	Snapshots []store.SnapshotHead
+	Accepted  []store.Acceptance
+	Facts     *store.HostFacts
+	Outdated  bool
+	Release   string
+	Events    []eventRow
 }
 
 func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
@@ -734,8 +738,18 @@ func (s *server) host(w http.ResponseWriter, r *http.Request, se session) {
 		return
 	}
 	sum, has := summarize(alerts)
-	d := hostData{Events: eventRows(events), Accepted: accepted, Release: s.release(), Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Alerts: alerts, Snapshots: snaps,
+	d := hostData{Events: eventRows(events), Accepted: accepted, Release: s.release(), Row: s.hostRow(h, sum, has), SilenceAfter: s.SilenceAfter, Snapshots: snaps,
 		Silences: silences(marks, h.EnrolledAt, now, store.ActivityRetention, s.SilenceAfter)}
+	for _, a := range alerts {
+		switch {
+		case a.Severity != "low":
+			d.Alerts = append(d.Alerts, a)
+		case a.Kind == "sensor-event":
+			d.Activity = append(d.Activity, a)
+		default:
+			d.Notes = append(d.Notes, a)
+		}
+	}
 	if f, ok := facts[h.ID]; ok {
 		d.Facts = &f
 		d.Outdated = outdated(f.SensorVersion, s.release())
@@ -797,6 +811,9 @@ type alertTable struct {
 	// groups are shown: the overview lists what deviates at a glance, the Alerts page in full.
 	AcrossHosts bool
 	MaxGroups   int
+	// Flat lists every alert on its own row: events that share a rule but not a meaning (a
+	// sensor updated, a server switched off) say nothing grouped.
+	Flat bool
 }
 
 // focus is the side panel of a page: the alert it shows and whether someone picked it.
@@ -894,6 +911,12 @@ func hostTable(alerts []store.Alert, csrf, back string) alertTable {
 	return alertTable{Alerts: alerts, CSRF: csrf, Back: back, OneHost: true}
 }
 
+func activityTable(alerts []store.Alert, csrf, back string) alertTable {
+	t := hostTable(alerts, csrf, back)
+	t.Flat = true
+	return t
+}
+
 func actx(a store.Alert, csrf, back string) alertAction { return alertAction{a, csrf, back} }
 
 // alertRow is one row of an alert table, with the table it belongs to.
@@ -957,6 +980,9 @@ func (t alertTable) Groups() []alertGroup {
 			fp, held = g, true
 		}
 		k := a.Severity + "\x00" + alertRule(fp)
+		if t.Flat {
+			k = strconv.FormatInt(a.ID, 10)
+		}
 		if !t.AcrossHosts {
 			k = a.HostID + "\x00" + k
 		}
@@ -1066,26 +1092,32 @@ var alertViews = []struct{ Key, Label string }{
 }
 
 type alertsData struct {
-	Focus  focus
-	Base   string
-	View   string
-	Views  []struct{ Key, Label string }
-	Host   string
-	Alerts []store.Alert
-	Limit  int
+	Focus      focus
+	Base       string
+	View       string
+	Views      []struct{ Key, Label string }
+	Query      alertQuery
+	Hosts      []string
+	Categories []category
+	Sorts      []struct{ Key, Label string }
+	Severities []string
+	Alerts     []store.Alert
+	Limit      int
+	// LowCount is how many low alerts the view leaves out.
+	LowCount int
 }
 
 func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
-	view := r.URL.Query().Get("view")
-	f := store.AlertFilter{HostID: r.URL.Query().Get("host"), Limit: 500}
-	switch view {
+	q := readAlertQuery(r.URL.Query())
+	f := store.AlertFilter{HostID: q.Host, Severities: q.Severity, Kinds: kindsOf(q.Category), Query: q.Text, Sort: q.Sort, Limit: 500}
+	switch q.View {
 	case "acknowledged":
 		f.Statuses = []string{store.StatusAcked}
 	case "resolved":
 		f.Statuses = []string{store.StatusResolved}
 	case "all":
 	default:
-		view = "open"
+		q.View = "open"
 		f.Statuses = []string{store.StatusOpen, store.StatusAcked}
 	}
 	list, err := s.Store.Alerts(r.Context(), f)
@@ -1093,14 +1125,38 @@ func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	panel, err := s.picked(r, list, se.csrf())
+	d := alertsData{View: q.View, Views: alertViews, Query: q, Categories: categories, Sorts: alertSorts, Severities: allSeverities, Alerts: list, Limit: f.Limit}
+	if q.LowHidden() {
+		low := f
+		low.Severities, low.Limit = []string{"low"}, maxLowCount
+		lows, err := s.Store.Alerts(r.Context(), low)
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
+		d.LowCount = len(lows)
+	}
+	hosts, err := s.Store.Hosts(r.Context())
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
-	s.render(w, r, http.StatusOK, "alerts", page{Title: "Alerts", Nav: "alerts", User: se.Email, CSRF: se.csrf(), Refresh: true,
-		Data: alertsData{View: view, Views: alertViews, Host: f.HostID, Alerts: list, Limit: f.Limit, Focus: panel, Base: pageWithoutPick(r)}})
+	for _, h := range hosts {
+		if !h.Revoked || h.ID == q.Host {
+			d.Hosts = append(d.Hosts, h.ID)
+		}
+	}
+	slices.Sort(d.Hosts)
+	if d.Focus, err = s.picked(r, list, se.csrf()); err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	d.Base = pageWithoutPick(r)
+	s.render(w, r, http.StatusOK, "alerts", page{Title: "Alerts", Nav: "alerts", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
 }
+
+// maxLowCount bounds the low alerts counted to say how many a view leaves out.
+const maxLowCount = 1000
 
 func (s *server) alertByPath(w http.ResponseWriter, r *http.Request) (store.Alert, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -1462,6 +1518,11 @@ func (l *limiter) begin(ctx context.Context, key string, now func() time.Time) (
 // serversData is the fleet page: every enrolled host with its system and sensor, then the
 // revoked ones.
 type serversData struct {
+	Query  serverQuery
+	States []struct{ Key, Label string }
+	Sorts  []struct{ Key, Label string }
+	// Enrolled counts the servers still enrolled, whatever the query.
+	Enrolled int
 	Hosts    []hostRow
 	Revoked  []hostRow
 	Release  string
@@ -1487,7 +1548,8 @@ func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	d := serversData{Release: s.release()}
+	q := readServerQuery(r.URL.Query())
+	d := serversData{Release: s.release(), Query: q, States: serverStates, Sorts: serverSorts}
 	if o, ok, err := s.Store.CurrentUpdateOrder(ctx); err != nil {
 		s.internal(w, r, err)
 		return
@@ -1506,9 +1568,12 @@ func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
 		if row.Outdated {
 			d.Outdated++
 		}
-		d.Hosts = append(d.Hosts, row)
+		d.Enrolled++
+		if q.matches(row) {
+			d.Hosts = append(d.Hosts, row)
+		}
 	}
-	slices.SortStableFunc(d.Hosts, func(a, b hostRow) int { return strings.Compare(a.ID, b.ID) })
+	q.order(d.Hosts)
 	s.render(w, r, http.StatusOK, "servers", page{Title: "Servers", Nav: "servers", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
 }
 

@@ -769,12 +769,23 @@ is needed too, which closes them all.
   its sensor connects from (on clouds with NAT, the public address no interface holds) and its
   interface addresses, the web applications grouped by framework and version (stacks first, with
   how many of each), the last heartbeat and snapshot and the number
-  of alerts; revoked servers listed apart.
+  of alerts; revoked servers listed apart. A search finds servers by name, address, system,
+  sensor version, technology and the domains they serve; the list narrows to servers with alerts,
+  silent ones or sensors to update, and sorts by name, worst severity, number of alerts or the
+  quietest first.
 - **Server.** State, the system as the sensor read it (with the package manager and count, the
-  listening ports, the web applications and whether the real-time watchers run), every alert,
+  listening ports, the web applications and whether the real-time watchers run), its critical,
+  high and medium alerts, then apart its health notes (the low findings) and its sensor's
+  activity (updates, restarts after a shutdown, the first start),
   the latest real-time events, the silences of the last 7 days with
   their duration, the last snapshots received, revocation.
-- **Alerts.** To handle, acknowledged, resolved. At the side (above the list on smaller screens)
+- **Alerts.** To handle, acknowledged, resolved. A filter bar narrows the list by severity (low
+  notes are left out unless ticked, and counted), server, category (web requests, web files,
+  real-time, access, persistence, processes, network, privileges, packages, applications, sensor)
+  and free text found in the server, title or detail (an address, a domain, a path), and orders it
+  by severity, date, repetitions or server; every filter stays in the page address, so a view
+  can be kept and shared. Each alert shows its category as a tag and its server with a colour of
+  its own, the same on every page. At the side (above the list on smaller screens)
   the alert to look at first, chosen by severity and then by kind (a silent sensor, then code
   planted in a web application, then the rest), with its actions; clicking another alert shows
   that one in the panel, with a link to its detail. Every alert can be acknowledged and resolved;

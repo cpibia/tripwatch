@@ -331,6 +331,28 @@ type AlertFilter struct {
 	// Current leaves out the alerts of revoked hosts, which no longer report: their alerts stay
 	// as a record, but they no longer describe the fleet.
 	Current bool
+	// Kinds keeps the alerts of these kinds only.
+	Kinds []string
+	// Query keeps the alerts whose host, title or detail contain it, ignoring case.
+	Query string
+	// Sort orders the alerts another way than the most severe and recently updated first.
+	Sort string
+}
+
+// Orders of an alert list besides the default.
+const (
+	SortOldest      = "oldest"
+	SortNewest      = "newest"
+	SortOccurrences = "occurrences"
+	SortHost        = "host"
+)
+
+// maxQueryLen bounds the text searched in alerts.
+const maxQueryLen = 200
+
+// likePattern makes text a LIKE pattern that matches it literally anywhere.
+func likePattern(text string) string {
+	return "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(text) + "%"
 }
 
 // currentHosts is the condition that keeps alerts of hosts still enrolled.
@@ -386,11 +408,30 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 			args = append(args, st)
 		}
 	}
-	q += ` ORDER BY ` + severityOrder
-	if f.Oldest {
-		q += `, created_at, id`
-	} else {
-		q += `, updated_at DESC, id DESC`
+	if len(f.Kinds) > 0 {
+		q += ` AND kind IN (?` + repeat(",?", len(f.Kinds)-1) + `)` //nolint:gosec // placeholders only; values are bound
+		for _, k := range f.Kinds {
+			args = append(args, k)
+		}
+	}
+	if text := strings.TrimSpace(f.Query); text != "" {
+		like := likePattern(strings.ToValidUTF8(text[:min(len(text), maxQueryLen)], ""))
+		q += ` AND (host_id LIKE ? ESCAPE '\' OR title LIKE ? ESCAPE '\' OR detail LIKE ? ESCAPE '\')`
+		args = append(args, like, like, like)
+	}
+	switch {
+	case f.Sort == SortNewest:
+		q += ` ORDER BY created_at DESC, id DESC`
+	case f.Sort == SortOldest:
+		q += ` ORDER BY created_at, id`
+	case f.Sort == SortOccurrences:
+		q += ` ORDER BY occurrences DESC, ` + severityOrder + `, id DESC`
+	case f.Sort == SortHost:
+		q += ` ORDER BY host_id, ` + severityOrder + `, updated_at DESC, id DESC`
+	case f.Oldest:
+		q += ` ORDER BY ` + severityOrder + `, created_at, id`
+	default:
+		q += ` ORDER BY ` + severityOrder + `, updated_at DESC, id DESC`
 	}
 	if f.Limit > 0 {
 		q += ` LIMIT ?`
