@@ -157,7 +157,7 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 	// script is reached; the request that follows it is logged with its own status. Only a plain
 	// GET or HEAD without a query answered with a permanent redirect counts as one: any other
 	// method, a query, or a 302 the script itself may have chosen stays high.
-	if script && hasUploadSegment(p) {
+	if uploaded, in := uploadTail(p); in && hasScriptSegment(uploaded) {
 		switch {
 		case ok:
 			hit("script_in_upload_path", SeverityCritical)
@@ -262,8 +262,19 @@ func hasScriptSegment(p string) bool {
 	})
 }
 
-func hasUploadSegment(p string) bool {
-	return slices.ContainsFunc(uploadSegments, func(s string) bool { return strings.Contains(p, s) })
+// uploadTail returns p from its first upload segment on. A script before it is a front
+// controller routing the rest as PATH_INFO (/index.php/en/images/a.jpg): it was not uploaded.
+func uploadTail(p string) (string, bool) {
+	first := -1
+	for _, s := range uploadSegments {
+		if i := strings.Index(p, s); i >= 0 && (first < 0 || i < first) {
+			first = i
+		}
+	}
+	if first < 0 {
+		return "", false
+	}
+	return p[first:], true
 }
 
 func bySuccess(ok bool, success, otherwise string) string {

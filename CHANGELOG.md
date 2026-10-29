@@ -12,6 +12,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   command fails) is no longer reported as root gained through an unknown program: the sensor
   remembers what each process it inspected started from, and uses it when the process is gone
   by its change of user. A process whose start was not inspected is still reported.
+- A script in an upload path counts only when it sits in or below the upload directory: a
+  front controller that routes the rest of the path, such as `/index.php/en/images/a.jpg`,
+  is no longer reported.
 
 ## [0.1.39] - 2026-10-29
 

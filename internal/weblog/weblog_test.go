@@ -100,6 +100,8 @@ func TestRules(t *testing.T) {
 		{req("GET", "/", 200, "${jndi:ldap://x/a}"), []string{"injection_probe:medium"}},
 		{req("GET", "/", 404, "sqlmap/1.7"), []string{"scanner_user_agent:low"}},
 		{req("GET", "/media/x.php.jpg", 200, "-"), []string{"script_in_upload_path:critical"}},
+		{req("GET", "/index.php/en/images/a.jpg", 301, "-"), nil},
+		{req("GET", "/index.php/media/x.php", 200, "-"), []string{"script_in_upload_path:critical"}},
 		{req("POST", "/rest/default/V1/guest-carts/abc/items?file_info=PD9waHA=", 200, "-"), []string{"cart_item_file_upload:medium"}},
 		{req("POST", "/rest/default/V1/guest-carts/abc/items", 200, "-"), nil},
 		{req("POST", "/rest/V1/guest-carts/test-cart/estimate-shipping-methods", 404, "-"), []string{"shipping_estimate_probe:medium"}},
