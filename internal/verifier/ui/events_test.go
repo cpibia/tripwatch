@@ -85,7 +85,7 @@ func TestOverviewNewLane(t *testing.T) {
 	_, body := h.get("/")
 	lane, before := strings.Index(body, "New in the last 24 hours"), strings.Index(body, "Open from before")
 	fresh, old := strings.Index(body, "new-finding"), strings.LastIndex(body, "old-finding")
-	if lane < 0 || before < 0 || !(lane < fresh && fresh < before && before < old) {
+	if lane < 0 || before < 0 || lane >= fresh || fresh >= before || before >= old {
 		t.Errorf("lane %d, new %d, before %d, old %d", lane, fresh, before, old)
 	}
 }
