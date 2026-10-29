@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.41] - 2026-10-29
+
+Back up the verifier (`tripwatch-verifier backup`), update it, then the sensors. Its first start
+seals the notification channels' settings: going back to 0.1.40 or earlier means restoring that
+backup.
+
 ### Sensor
 
 - A container health check whose shell was seen started by the runtime is no longer reported
@@ -1367,7 +1373,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.40...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.41...HEAD
+[0.1.41]: https://github.com/cpibia/tripwatch/compare/v0.1.40...v0.1.41
 [0.1.40]: https://github.com/cpibia/tripwatch/compare/v0.1.39...v0.1.40
 [0.1.39]: https://github.com/cpibia/tripwatch/compare/v0.1.38...v0.1.39
 [0.1.38]: https://github.com/cpibia/tripwatch/compare/v0.1.37...v0.1.38
