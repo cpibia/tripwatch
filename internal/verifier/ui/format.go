@@ -25,6 +25,9 @@ func funcs(now func() time.Time) template.FuncMap {
 		},
 		"iso": func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
 		"ago": func(t time.Time) string { return ago(t, now()) },
+		// fresh marks what first appeared in the last day: new deviations stand out from the
+		// ones that keep coming back.
+		"fresh": func(t time.Time) bool { return !t.IsZero() && now().Sub(t) < 24*time.Hour },
 		"since": func(t time.Time) string {
 			if s := ago(t, now()); s != "just now" {
 				return strings.TrimSuffix(s, " ago")

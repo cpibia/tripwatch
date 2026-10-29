@@ -558,6 +558,7 @@ details.revoke[open] > summary::after { content: " \2212"; }
   table.alerts td.count { grid-area: count; }
   table.alerts td.state { grid-area: state; }
   table.alerts td.act { display: none; }
+  table.alerts td.latest { display: none; }
   table.alerts tr.is-picked, table.alerts .group-rows tr { background: var(--surface); }
   table.alerts tr.is-picked td, table.alerts .group-rows td { background: none; box-shadow: none; }
   table.alerts .group-rows tr { padding-left: 12px; box-shadow: inset var(--hair) 0 0 var(--rule-strong); }
@@ -648,3 +649,8 @@ table.apps td.path { overflow-wrap: anywhere; }
 table.apps tr.has-alerts td { background: var(--red-wash); }
 table.apps tr.has-alerts td.site .mono { font-weight: 500; color: var(--ink); }
 table.apps tbody tr:hover td { background: var(--teal-wash); }
+
+/* An alert that first appeared in the last day: the deviations that are new stand out from the
+   ones that keep coming back. */
+.new-tag { display: inline-block; margin-left: 6px; padding: 0 7px; font-size: var(--fs-xs); font-weight: 600; line-height: 18px; color: var(--teal-ink); background: var(--teal); border-radius: 999px; vertical-align: 1px; }
+td.latest { color: var(--ink-2); font-size: var(--fs-sm); }

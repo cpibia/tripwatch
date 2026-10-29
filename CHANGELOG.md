@@ -18,6 +18,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   (the resolved ones one click away), then its web applications as a table: the site first,
   then what runs it and its directory, those with open alerts on top with their count, and a
   filter above when there are more than eight.
+- Alert lists show when each alert was first seen and its latest activity, and tag "new" the
+  ones that first appeared in the last day, so new deviations stand out from recurring ones.
 - Alert filters apply as soon as a choice is made, and `/` moves to the search box. Who handled an
   alert is shown only while it is acknowledged or resolved, not on an alert open again.
 

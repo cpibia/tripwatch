@@ -934,8 +934,10 @@ type alertGroup struct {
 	Label  string
 	Alerts []store.Alert
 	// Lead stands for the group: the first in the table's order, the most severe and recent.
-	Lead     store.Alert
-	Since    time.Time
+	Lead  store.Alert
+	Since time.Time
+	// Latest is the last time an alert of the group was raised or handled.
+	Latest   time.Time
 	Open     int
 	Acked    int
 	Resolved int
@@ -989,6 +991,9 @@ func (t alertTable) Groups() []alertGroup {
 		g.CanAccept = g.CanAccept || store.Acceptable(a)
 		if a.CreatedAt.Before(g.Since) {
 			g.Since = a.CreatedAt
+		}
+		if a.UpdatedAt.After(g.Latest) {
+			g.Latest = a.UpdatedAt
 		}
 		switch a.Status {
 		case "open":
