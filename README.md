@@ -534,10 +534,10 @@ or MariaDB, queries it with `SELECT` statements only and timeouts of a few secon
   hashes of its token and secret; an integration also carries its consumer and a digest of its
   role's rules. A new or changed one is an alert, including one taken over in place (a token
   moved to another administrator, an integration given more rules, a trigger redefined by
-  another account) (critical
-  for a trigger on orders, quotes, payments, customers, settings or users; medium for an email
-  template), and a layout update or email template holding PHP, an executing call or the
-  template filter callbacks of TrojanOrder-style attacks is critical even without a change;
+  another account): critical for a trigger on orders, quotes, payments, customers, settings or
+  users, medium for an email template, high otherwise. A layout update or email template
+  holding PHP, an executing call or the template filter callbacks of TrojanOrder-style attacks
+  is critical even without a change;
 - **administrators changed**: a new name, email or active flag of an existing administrator is
   an alert, since a changed email is how an account is taken over through a password reset;
 - **active extensions** (plugins, modules) and the site URLs;
