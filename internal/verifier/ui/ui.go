@@ -1462,7 +1462,7 @@ func enrollCommand(system, release, token string) string {
 		// Any other Linux with systemd: the static binary, checked against the release's
 		// SHA256SUMS before it is installed, and the unit of the same release.
 		return "cd /tmp && a=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && f=tripwatch-sensor_" + release + "_linux_$a && curl -fsSLO " + base + "$f" +
-			" && curl -fsSL " + base + "SHA256SUMS | grep \" \"$f\"$\" | sha256sum -c - && sudo install -m 755 $f /usr/bin/tripwatch-sensor && rm -f $f" +
+			" && curl -fsSL " + base + "SHA256SUMS | grep \" $f$\" | sha256sum -c - && sudo install -m 755 $f /usr/bin/tripwatch-sensor && rm -f $f" +
 			" && curl -fsSL " + unitSource + "v" + release + "/deploy/systemd/tripwatch-sensor.service | sudo tee /etc/systemd/system/tripwatch-sensor.service >/dev/null" +
 			" && sudo systemctl daemon-reload && " + enroll
 	}
