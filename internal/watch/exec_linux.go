@@ -3,9 +3,11 @@
 package watch
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -55,6 +57,9 @@ type Execs struct {
 	// the change of user that follows: a set-user-ID program that exits at once leaves nothing
 	// in /proc by then. Only the reader goroutine touches it.
 	started recentExes
+	// runtimeShells are the shells lately seen started by a container runtime, by PID and start
+	// time: the health check a shell runs is often inspected once runc has already gone.
+	runtimeShells recentStarts
 	// Dropped counts events lost because the consumer did not keep up; Skipped, processes not
 	// inspected because more started than MaxInspections in a second.
 	Dropped atomic.Int64
@@ -286,6 +291,50 @@ func (r *recentExes) get(pid int) (string, bool) {
 	return e.exe, e.deleted
 }
 
+// recentStarts remembers processes by PID and start time, the latest maxRecentExes of them: a
+// PID used again by another process has another start time and is not taken for the first.
+type recentStarts struct {
+	starts map[int]uint64
+	order  []int
+}
+
+func (r *recentStarts) add(pid int, start uint64) {
+	if r.starts == nil {
+		r.starts = map[int]uint64{}
+	}
+	if _, seen := r.starts[pid]; !seen {
+		if len(r.order) >= maxRecentExes {
+			delete(r.starts, r.order[0])
+			r.order = r.order[1:]
+		}
+		r.order = append(r.order, pid)
+	}
+	r.starts[pid] = start
+}
+
+func (r *recentStarts) has(pid int, start uint64) bool {
+	s, ok := r.starts[pid]
+	return ok && s == start
+}
+
+// startTicks reads when a process started, in clock ticks since boot (field 22 of its stat).
+func startTicks(fsys fs.FS, pid int) (uint64, bool) {
+	stat, err := fs.ReadFile(fsys, fmt.Sprintf("proc/%d/stat", pid))
+	if err != nil {
+		return 0, false
+	}
+	i := bytes.LastIndexByte(stat, ')')
+	if i < 0 {
+		return 0, false
+	}
+	fields := strings.Fields(string(stat[i+1:]))
+	if len(fields) < 20 {
+		return 0, false
+	}
+	ticks, err := strconv.ParseUint(fields[19], 10, 64)
+	return ticks, err == nil
+}
+
 // shells may stand between cron and the job it runs (sh -c "...").
 var shells = []string{"sh", "bash", "dash", "zsh", "ksh", "ash", "busybox"}
 
@@ -330,6 +379,31 @@ var runtimeNames = []string{"runc", "crun", "youki", "containerd-shim", "contain
 // in the process's current parent, the shim that adopts it, and a parent caught exiting, whose
 // executable can no longer be read, counts when it is a root runtime started by a verified one.
 func (x *Execs) fromRuntime(p system.Process) bool {
+	if x.runtimeParent(p.PPID) {
+		return true
+	}
+	if !x.walkToRuntime(p) {
+		return false
+	}
+	if slices.Contains(shells, path.Base(p.Exe)) {
+		if start, ok := startTicks(x.src.FS, p.PID); ok {
+			x.runtimeShells.add(p.PID, start)
+		}
+	}
+	return true
+}
+
+// runtimeParent reports a parent that is a shell lately seen started by a container runtime,
+// the same process still: same PID, same start time.
+func (x *Execs) runtimeParent(ppid int) bool {
+	if ppid <= 1 {
+		return false
+	}
+	start, ok := startTicks(x.src.FS, ppid)
+	return ok && x.runtimeShells.has(ppid, start)
+}
+
+func (x *Execs) walkToRuntime(p system.Process) bool {
 	ppid := p.PPID
 	for range 4 {
 		if ppid <= 1 {

@@ -162,6 +162,46 @@ func TestFromRuntime(t *testing.T) {
 	}
 }
 
+// A health check's shell seen started by the runtime vouches for the command it runs, inspected
+// once runc has gone; a process that took the shell's PID later does not.
+func TestRuntimeShellRemembered(t *testing.T) {
+	fsys := fstest.MapFS{}
+	proc := func(pid, ppid, uid int, exe string, start int) {
+		dir := "proc/" + strconv.Itoa(pid) + "/"
+		fsys[dir+"status"] = &fstest.MapFile{Data: []byte("Name:\tx\nPPid:\t" + strconv.Itoa(ppid) + "\nUid:\t" + strings.Repeat(strconv.Itoa(uid)+"\t", 4) + "\n")}
+		fsys[dir+"exe"] = &fstest.MapFile{Data: []byte(exe), Mode: fs.ModeSymlink}
+		fsys[dir+"cmdline"] = &fstest.MapFile{Data: []byte(path.Base(exe) + "\x00")}
+		fsys[dir+"stat"] = &fstest.MapFile{Data: []byte(strconv.Itoa(pid) + " (x) S " + strconv.Itoa(ppid) + strings.Repeat(" 0", 17) + " " + strconv.Itoa(start) + " 0 0\n")}
+	}
+	proc(10, 1, 0, "/usr/bin/containerd-shim-runc-v2", 100)
+	proc(15, 10, 0, "/usr/sbin/runc", 400)
+	proc(20, 15, 101, "/bin/busybox", 500)
+	proc(21, 20, 101, "/usr/bin/wget", 501)
+	x := &Execs{src: collector.Source{FS: fsys}}
+	read := func(pid int) system.Process {
+		p, ok := system.ReadProcess(fsys, pid)
+		if !ok {
+			t.Fatalf("pid %d unreadable", pid)
+		}
+		return p
+	}
+	if !x.fromRuntime(read(20)) {
+		t.Fatal("the health check's shell is not taken for the runtime's")
+	}
+	for name := range fsys {
+		if strings.HasPrefix(name, "proc/15/") {
+			delete(fsys, name)
+		}
+	}
+	if !x.fromRuntime(read(21)) {
+		t.Error("the command of a shell seen started by the runtime is not taken for the runtime's once runc is gone")
+	}
+	proc(20, 15, 101, "/bin/busybox", 900)
+	if x.fromRuntime(read(21)) {
+		t.Error("a process that took the shell's PID is taken for the runtime's")
+	}
+}
+
 // The executables remembered from process starts answer for a process gone by its change of
 // user, the oldest forgotten past the bound and a reused PID answered with its latest start.
 func TestRecentExes(t *testing.T) {

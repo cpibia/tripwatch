@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A container health check whose shell was seen started by the runtime is no longer reported
+  when the command it runs is inspected after runc has gone: the sensor remembers such shells
+  by PID and start time, so a process that later takes the same PID is not trusted.
+
 ### Verifier
 
 - The alert list exports as CSV or JSON with the filters and order it shows, every page of
