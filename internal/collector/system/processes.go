@@ -31,8 +31,12 @@ type Process struct {
 	// CommandSum tells apart command lines the redaction made identical (a secret, or what
 	// looked like one, hidden in each): a short hash of the full one, never sent by snapshots.
 	CommandSum string `json:"-"`
-	Exe        string `json:"exe,omitempty"`
-	ExeDeleted bool   `json:"exe_deleted,omitempty"`
+	// Args is the command line as the kernel gives it, for the sensor's own decisions: never
+	// sent. Judging the redacted Cmdline would let a secret-looking word, or the redaction
+	// itself, change what a command does.
+	Args       []string `json:"-"`
+	Exe        string   `json:"exe,omitempty"`
+	ExeDeleted bool     `json:"exe_deleted,omitempty"`
 	// ExeReplaced means a file exists again where a deleted executable was: a package upgrade
 	// that the process has not been restarted for, not a binary that removed itself.
 	ExeReplaced bool `json:"exe_replaced,omitempty"`
@@ -285,7 +289,8 @@ func readProcess(fsys fs.FS, pid int, issues *collector.Issues) (Process, bool) 
 	p.Comm = strings.TrimSpace(string(comm))
 
 	cmdline, _ := fs.ReadFile(fsys, dir+"cmdline")
-	p.Cmdline = redactCmdline(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"))
+	p.Args = strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+	p.Cmdline = redactCmdline(p.Args)
 	if raw := strings.ReplaceAll(strings.TrimRight(string(cmdline), "\x00"), "\x00", " "); raw != p.Cmdline {
 		sum := sha256.Sum256(cmdline)
 		p.CommandSum = hex.EncodeToString(sum[:6])
@@ -337,6 +342,10 @@ var secretNextArg = map[string][]string{
 // names, passwords in URLs, authorization headers, the -p<password> form of the MySQL and
 // MariaDB clients, and the same inside a shell's -c script.
 func redactCmdline(args []string) string {
+	return strings.TrimSpace(strings.Join(redactArgs(args), " "))
+}
+
+func redactArgs(args []string) []string {
 	prog := ""
 	if len(args) > 0 {
 		prog = path.Base(args[0])
@@ -351,14 +360,23 @@ func redactCmdline(args []string) string {
 		}
 		// A script after -c, whether the program is a shell or a wrapper (sudo, su, env,
 		// timeout...) that passes it to one.
+		// The separators are kept as written: what joins the commands is what the alert
+		// reader and the verifier must see.
 		if i > 0 && args[i-1] == "-c" && strings.ContainsAny(a, " \t") {
-			out = append(out, redactCmdline(shellWords(a)))
+			words, seps := shellWords(a)
+			var b strings.Builder
+			for j, w := range redactArgs(words) {
+				b.WriteString(seps[j])
+				b.WriteString(w)
+			}
+			b.WriteString(seps[len(words)])
+			out = append(out, strings.TrimSpace(b.String()))
 			continue
 		}
 		a, hideNext = redactArg(prog, a)
 		out = append(out, a)
 	}
-	return strings.TrimSpace(strings.Join(out, " "))
+	return out
 }
 
 func redactArg(prog, a string) (string, bool) {
@@ -393,10 +411,10 @@ func redactArg(prog, a string) (string, bool) {
 }
 
 // shellWords splits a shell script into words, keeping quoted strings together, so that a
-// header such as "Authorization: Bearer x" stays one argument.
-func shellWords(s string) []string {
-	var out []string
-	var cur strings.Builder
+// header such as "Authorization: Bearer x" stays one argument. seps holds the text around the
+// words: seps[i] comes before words[i], the last one after them all.
+func shellWords(s string) (words, seps []string) {
+	var cur, sep strings.Builder
 	var quote rune
 	in := false
 	for _, r := range s {
@@ -407,19 +425,24 @@ func shellWords(s string) []string {
 			quote, in = r, true
 		case quote == 0 && (r == ' ' || r == '\t' || r == ';' || r == '|' || r == '&'):
 			if in {
-				out = append(out, cur.String())
+				seps = append(seps, sep.String())
+				words = append(words, cur.String())
 				cur.Reset()
+				sep.Reset()
 				in = false
 			}
+			sep.WriteRune(r)
 		default:
 			cur.WriteRune(r)
 			in = true
 		}
 	}
 	if in {
-		out = append(out, cur.String())
+		seps = append(seps, sep.String())
+		words = append(words, cur.String())
+		sep.Reset()
 	}
-	return out
+	return words, append(seps, sep.String())
 }
 
 // isKernelThread reads the flags field of /proc/<pid>/stat. The command name in that line is

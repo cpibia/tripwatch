@@ -140,7 +140,7 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 	exe := path.Clean(p.Exe)
 	tool := toolName(exe, p.Comm)
 	if slices.Contains(interpreters, tool) || strings.HasPrefix(tool, "php") {
-		if script = scriptArg(p.Cmdline); script != "" {
+		if script = scriptArg(rawCommand(p)); script != "" {
 			script = path.Clean(script)
 		}
 	}
@@ -158,14 +158,28 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 	return "", script
 }
 
+// rawCommand is a process's command line as the kernel gives it: the redacted one hides the
+// words that look like secrets, and a command must be judged on what runs.
+func rawCommand(p system.Process) string {
+	if p.Args == nil {
+		return p.Cmdline
+	}
+	return strings.Join(p.Args, " ")
+}
+
 // sendmailCommand is the command PHP's mail() hands to sh -c: the configured sendmail with its
 // options and nothing a shell would interpret.
 var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Za-z][^\s;&|$` + "`" + `<>()'"\\]*)*$`)
 
 // virusScanCommand is ClamAV run on one uploaded file, as the upload plugins of CMSs do: the
 // scanner from the system's directories, options only, and one file, single-quoted (where the
-// shell expands nothing) or plain.
-var virusScanCommand = regexp.MustCompile(`^/usr/(?:local/)?bin/clamd?scan(?: +--?[a-z][a-z-]*(?:=[A-Za-z0-9_./-]+)?)* +(?:'[^']*'|[^\s;&|$` + "`" + `<>()'"\\]+)$`)
+// shell expands nothing) or plain, its errors sent to the output the plugin reads.
+var virusScanCommand = regexp.MustCompile(`^/usr/(?:local/)?bin/clamd?scan(?: +--?[a-z][a-z-]*(?:=[A-Za-z0-9_./-]+)?)* +(?:'[^']*'|[^\s;&|$` + "`" + `<>()'"\\]+)(?: 2>&1)?$`)
+
+// terminalQuery is a console library asking for the terminal's size or settings, as Symfony's
+// Console does (under Laravel's artisan, Composer, Drush and Magento's CLI) at every command:
+// stty run alone, or through the shell, its output silenced or filtered for the columns.
+var terminalQuery = regexp.MustCompile(`^stty(?: -[ag])?(?: 2> ?/dev/null| 2>&1)?(?: \| grep columns)?$`)
 
 // errorReporterCommands are the shell commands error reporters run from the PHP pool when an
 // application throws (Flare and Ignition read the project's git root): matched whole, they only
@@ -196,7 +210,11 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	if !slices.Contains([]string{"sh", "bash", "dash", "ash", "busybox"}, tool) {
 		return false
 	}
-	_, command, ok := strings.Cut(p.Cmdline, " -c ")
+	// BusyBox's applets, stty among them, run as busybox itself.
+	if tool == "busybox" && terminalQuery.MatchString(rawCommand(p)) {
+		return true
+	}
+	_, command, ok := strings.Cut(rawCommand(p), " -c ")
 	if !ok {
 		return false
 	}
@@ -211,7 +229,8 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	// Queue supervisors replace the shell with the worker.
 	command = strings.TrimPrefix(command, "exec ")
-	if sendmailCommand.MatchString(command) || virusScanCommand.MatchString(command) || slices.Contains(errorReporterCommands, command) {
+	if sendmailCommand.MatchString(command) || virusScanCommand.MatchString(command) || terminalQuery.MatchString(command) ||
+		slices.Contains(errorReporterCommands, command) {
 		return true
 	}
 	command, plain := plainCommand(command)
@@ -219,7 +238,7 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 		return false
 	}
 	parent, ok := c.parent(p)
-	return ok && parent.UID == p.UID && c.frameworkCommand(parent.Cmdline)
+	return ok && parent.UID == p.UID && c.frameworkCommand(rawCommand(parent))
 }
 
 // frameworkCommand reports whether a command line runs PHP on a framework's command-line entry
@@ -306,7 +325,7 @@ func preconfigure(parent system.Process) bool {
 	if !rootProgram(parent) || (parent.Exe != "/usr/bin/perl" && parent.Exe != "/bin/perl") {
 		return false
 	}
-	return scriptArg(parent.Cmdline) == "/usr/sbin/dpkg-preconfigure"
+	return scriptArg(rawCommand(parent)) == "/usr/sbin/dpkg-preconfigure"
 }
 
 // rpmPrograms run rpm's scriptlets themselves; rpmPythonTools are the Python front ends that
@@ -326,7 +345,7 @@ func rpmInstaller(parent system.Process) bool {
 	if slices.Contains(rpmPrograms, parent.Exe) {
 		return true
 	}
-	return systemPython.MatchString(parent.Exe) && slices.Contains(rpmPythonTools, scriptArg(parent.Cmdline))
+	return systemPython.MatchString(parent.Exe) && slices.Contains(rpmPythonTools, scriptArg(rawCommand(parent)))
 }
 
 func rootProgram(p system.Process) bool {

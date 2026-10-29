@@ -22,6 +22,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
   is not taken for a web shell; anything more in the command still is.
 - The shell an error reporter starts from the PHP pool to read the project's git root (Flare and
   Ignition in Laravel, `echo $(git rev-parse --show-toplevel)`, matched whole) is not a web shell.
+- Process starts are judged on their command line as the kernel gives it, not on the redacted
+  one: the redaction dropped the `;`, `|` and `&` of a shell script, so a scheduler's command
+  followed by anything (`artisan x; curl ...|sh`) passed for a plain one. The redacted command
+  line keeps those separators as written (`2>&1` was shown as `2> 1`).
+- Symfony's Console asking for the terminal size (`stty`, `stty -a`, through the shell silenced or
+  filtered for the columns, BusyBox's applet included) is not a web shell; ClamAV scanning an
+  upload may send its errors to its output (`2>&1`).
 - More persistence places are collected and watched in real time: the SSH login scripts
   (`/etc/ssh/sshrc`, `~/.ssh/rc`), the scripts root runs when a network interface changes state
   (ifupdown's `/etc/network`, NetworkManager's `dispatcher.d`, networkd-dispatcher, dhclient's

