@@ -88,3 +88,26 @@ func TestScopedUserSeesOnlyTheirServers(t *testing.T) {
 		t.Error("the tab icon tells about a critical alert out of scope")
 	}
 }
+
+// The server list splits by the value of a label key, the servers without it last.
+func TestServersGroupedByLabel(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for id, labels := range map[string][]string{"web-a": {"client=acme"}, "web-b": {"client=zeta", "env=prod"}, "db-1": nil} {
+		if err := h.store.Enroll(ctx, id, make([]byte, 32), now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.SetHostDetails(ctx, id, "", labels, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.login()
+	_, body := h.get("/hosts?group=client")
+	acme, zeta, none := strings.Index(body, "client=acme"), strings.Index(body, "client=zeta"), strings.Index(body, "no client label")
+	if acme < 0 || zeta < acme || none < zeta || !strings.Contains(body, `<option value="env">label env</option>`) {
+		t.Errorf("groups at %d, %d, %d", acme, zeta, none)
+	}
+	if _, body := h.get("/hosts?group=nothere"); strings.Contains(body, "group-row") {
+		t.Error("grouped by a key no server carries")
+	}
+}

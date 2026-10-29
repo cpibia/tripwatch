@@ -1749,6 +1749,9 @@ type serversData struct {
 	Outdated int
 	// Order is the update order in force, if any.
 	Order *store.UpdateOrder
+	// Keys are the label keys to group by; Groups the list split by the chosen one.
+	Keys   []string
+	Groups []serverGroup
 }
 
 func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
@@ -1794,6 +1797,12 @@ func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
 		}
 	}
 	q.order(d.Hosts)
+	d.Keys = labelKeys(d.Hosts)
+	if !slices.Contains(d.Keys, q.Group) {
+		d.Query.Group = ""
+	} else {
+		d.Groups = groupBy(d.Hosts, q.Group)
+	}
 	s.render(w, r, http.StatusOK, "servers", page{Title: "Servers", Nav: "servers", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
 }
 

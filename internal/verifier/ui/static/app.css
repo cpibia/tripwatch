@@ -261,6 +261,8 @@ h2 { font-size: var(--fs-lg); line-height: 1.3; }
 .fleet-table td.sys, .fleet-table td.apps { min-width: 12rem; }
 .fleet-table td.addr span, .fleet-table td.apps > span:not(.sub) { display: block; font-size: var(--fs-sm); }
 .fleet-table td.ver { white-space: nowrap; }
+.fleet-table .group-row th { padding-top: 16px; text-align: left; font-size: var(--fs-sm); font-weight: 600; color: var(--ink); border-bottom: 1px solid var(--rule-strong); background: var(--raised); }
+.fleet-table .group-row .quiet { margin-left: 8px; font-weight: 400; }
 .flag-update { display: inline-block; margin-left: 6px; padding: 0 8px; font-size: var(--fs-xs); line-height: 20px; color: var(--amber-text); background: var(--amber-wash); border: var(--hair) solid var(--amber); border-radius: 999px; white-space: nowrap; }
 .flag-update code { font-size: var(--fs-xs); }
 .cell-ver { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

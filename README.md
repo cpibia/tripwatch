@@ -873,7 +873,8 @@ is needed too, which closes them all.
   a channel sealed with another key is listed as unreadable and sends nothing until added again.
 - **Server names, labels and notes.** Administrators give a server a name people use, labels as
   key=value pairs and a note, from its page; the name shows everywhere, the identity in the
-  certificate stays, and searches find all three.
+  certificate stays, and searches find all three. The server list groups by a label key, one
+  section per value.
 - **Users and audit log.** Three roles: viewers read, operators also handle alerts,
   administrators also enroll and revoke servers, order sensor updates, set up notifications and
   manage users. Administrators invite people with a one-time link (three days) in which they

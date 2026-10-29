@@ -27,6 +27,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   full, set apart from those open for longer: what is new is the first question of a morning
   look.
 - `j` and `k` move down and up the rows of the alert lists; Enter opens the alert or the group.
+- The server list groups by a label key (Group by), one section per value with how many of its
+  servers have alerts, the servers without the label last.
 
 ## [0.1.40] - 2026-10-29
 

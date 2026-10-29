@@ -224,6 +224,8 @@ type serverQuery struct {
 	Text  string
 	State string
 	Sort  string
+	// Group is a label key the list is split by, one section per value.
+	Group string
 }
 
 var serverStates = []struct{ Key, Label string }{
@@ -235,7 +237,7 @@ var serverSorts = []struct{ Key, Label string }{
 }
 
 func readServerQuery(v url.Values) serverQuery {
-	q := serverQuery{Text: strings.TrimSpace(v.Get("q")), State: v.Get("state"), Sort: v.Get("sort")}
+	q := serverQuery{Text: strings.TrimSpace(v.Get("q")), State: v.Get("state"), Sort: v.Get("sort"), Group: v.Get("group")}
 	if len(q.Text) > maxServerQuery {
 		q.Text = strings.ToValidUTF8(q.Text[:maxServerQuery], "")
 	}
@@ -285,6 +287,70 @@ func (q serverQuery) matches(r hostRow) bool {
 		fields = append(fields, a.Sites...)
 	}
 	return slices.ContainsFunc(fields, func(s string) bool { return strings.Contains(strings.ToLower(s), text) })
+}
+
+// serverGroup is the servers carrying one value of the label key the list is grouped by.
+type serverGroup struct {
+	Value  string
+	Hosts  []hostRow
+	Alerts int
+}
+
+// maxLabelKeys bounds the keys offered to group by: labels are set by administrators.
+const maxLabelKeys = 32
+
+// labelKeys lists the label keys the servers carry, sorted.
+func labelKeys(rows []hostRow) []string {
+	var keys []string
+	for _, r := range rows {
+		for _, l := range r.Labels {
+			if k, _, ok := strings.Cut(l, "="); ok && !slices.Contains(keys, k) && len(keys) < maxLabelKeys {
+				keys = append(keys, k)
+			}
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// groupBy splits ordered servers by the value of a label key, values sorted, the servers
+// without it last; each keeps the list's order.
+func groupBy(rows []hostRow, key string) []serverGroup {
+	byValue := map[string]*serverGroup{}
+	var values []string
+	for _, r := range rows {
+		value := ""
+		for _, l := range r.Labels {
+			if k, v, ok := strings.Cut(l, "="); ok && k == key {
+				value = v
+				break
+			}
+		}
+		g, ok := byValue[value]
+		if !ok {
+			g = &serverGroup{Value: value}
+			byValue[value] = g
+			values = append(values, value)
+		}
+		g.Hosts = append(g.Hosts, r)
+		if r.Open > 0 {
+			g.Alerts++
+		}
+	}
+	slices.SortFunc(values, func(a, b string) int {
+		if (a == "") != (b == "") {
+			if a == "" {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a, b)
+	})
+	out := make([]serverGroup, 0, len(values))
+	for _, v := range values {
+		out = append(out, *byValue[v])
+	}
+	return out
 }
 
 // order sorts servers as the query asks; equal ones stay by name.
