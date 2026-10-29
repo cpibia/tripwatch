@@ -190,6 +190,8 @@ func Targets(homes []Home, uploads []string, webRoots ...string) []Target {
 		{Dir: "/etc/networkd-dispatcher", Class: ClassHook, Recursive: true, Depth: 1},
 		{Dir: "/etc/dhcp/dhclient-enter-hooks.d", Class: ClassHook},
 		{Dir: "/etc/dhcp/dhclient-exit-hooks.d", Class: ClassHook},
+		{Dir: "/etc/ppp/ip-up.d", Class: ClassHook},
+		{Dir: "/etc/ppp/ip-down.d", Class: ClassHook},
 	}
 	seen := map[string]bool{}
 	for _, h := range homes {

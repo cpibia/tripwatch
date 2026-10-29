@@ -86,7 +86,10 @@ type File struct {
 	GID     *uint32   `json:"gid,omitempty"`
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"mtime"`
-	SHA256  string    `json:"sha256,omitempty"`
+	// ChangeTime is the inode's change time, which no one sets back short of changing the
+	// clock: set where telling an old file from one dated back matters.
+	ChangeTime time.Time `json:"ctime,omitzero"`
+	SHA256     string    `json:"sha256,omitempty"`
 	// Mount names, for a file on a filesystem an unprivileged user mounted (FUSE), its type and
 	// the user: the owner and mode it reports are whatever that user chose.
 	Mount string `json:"mount,omitempty"`

@@ -32,11 +32,15 @@ import (
 // Limits on a decompressed snapshot, which comes from a host that may be compromised. Real
 // snapshots are a few hundred KB with tens of thousands of values; the decoded structure weighs
 // several times the text, so both the size and the number of values are bounded before
-// decoding, and so is the nesting.
+// decoding, and so is the nesting. The values are bounded per collector result too: what an
+// unprivileged user can inflate (files in a home, processes) then costs that result alone,
+// named in the snapshot's errors, and never the whole snapshot.
 const (
 	maxSnapshotSize   = 32 << 20
-	maxSnapshotValues = 500_000
+	maxSnapshotValues = 4_000_000
 	maxSnapshotDepth  = 32
+	maxResultValues   = 500_000
+	maxDecodedValues  = 1_000_000
 )
 
 // maxEvidencePerDay bounds the snapshots a host keeps as evidence each day for one kind of
@@ -104,7 +108,7 @@ func Decode(payload []byte) (State, error) {
 	if len(data) > maxSnapshotSize {
 		return State{}, errors.New("snapshot too large")
 	}
-	if err := checkShape(data); err != nil {
+	if _, err := checkShape(data, maxSnapshotValues); err != nil {
 		return State{}, err
 	}
 	var r Report
@@ -119,46 +123,68 @@ func Decode(payload []byte) (State, error) {
 		"packages": &st.Packages, "privileged": &st.Privileged, "web": &st.Web, "weblog": &st.Weblog, "apps": &st.Apps, "kernel": &st.Kernel,
 		"containers": &st.Containers,
 	}
+	fail := func(name, msg string) {
+		if st.Errors == nil {
+			st.Errors = map[string]string{}
+		}
+		st.Errors[name] = msg
+	}
+	type sized struct {
+		name   string
+		values int
+	}
+	var results []sized
 	for name, raw := range r.Snapshot.Results {
-		target, ok := targets[name]
-		if !ok {
+		if _, ok := targets[name]; !ok {
 			continue
 		}
-		if err := json.Unmarshal(raw, target); err != nil {
-			if st.Errors == nil {
-				st.Errors = map[string]string{}
-			}
-			st.Errors[name] = "undecodable result: " + err.Error()
+		n, err := checkShape(raw, maxResultValues)
+		if err != nil {
+			fail(name, "result refused: "+err.Error())
+			continue
+		}
+		results = append(results, sized{name, n})
+	}
+	// The smallest first: a result inflated to take the decoding budget is the one left out.
+	slices.SortFunc(results, func(a, b sized) int { return a.values - b.values })
+	decoded := 0
+	for _, res := range results {
+		if decoded += res.values; decoded > maxDecodedValues {
+			fail(res.name, fmt.Sprintf("result refused: %d values, past what the snapshot's results may hold together", res.values))
+			continue
+		}
+		if err := json.Unmarshal(r.Snapshot.Results[res.name], targets[res.name]); err != nil {
+			fail(res.name, "undecodable result: "+err.Error())
 		}
 	}
 	return st, nil
 }
 
-// checkShape walks the JSON tokens without building anything and refuses documents with too
-// many values or too deep a nesting.
-func checkShape(data []byte) error {
+// checkShape walks the JSON tokens without building anything, refuses documents with more than
+// limit values or too deep a nesting, and returns how many values it found.
+func checkShape(data []byte, limit int) (int, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	values, depth := 0, 0
 	for {
 		tok, err := dec.Token()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return values, nil
 		}
 		if err != nil {
-			return fmt.Errorf("malformed snapshot: %w", err)
+			return values, fmt.Errorf("malformed snapshot: %w", err)
 		}
 		if delim, ok := tok.(json.Delim); ok {
 			switch delim {
 			case '{', '[':
 				if depth++; depth > maxSnapshotDepth {
-					return errors.New("snapshot nested too deeply")
+					return values, errors.New("snapshot nested too deeply")
 				}
 			default:
 				depth--
 			}
 		}
-		if values++; values > maxSnapshotValues {
-			return errors.New("snapshot has too many values")
+		if values++; values > limit {
+			return values, fmt.Errorf("more than %d values", limit)
 		}
 	}
 }
@@ -342,7 +368,11 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	}
 	prev, lost := a.base(ctx, state, prevSnap)
 
-	findings := a.dropReported(ctx, host, Evaluate(prev, state))
+	since := a.Now().Add(-store.EventRetention)
+	if prev != nil && prev.TakenAt.After(since) {
+		since = prev.TakenAt
+	}
+	findings := a.dropReported(ctx, host, since, Evaluate(prev, state))
 	for _, name := range lost {
 		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:baseline-lost:" + name, Severity: "high",
 			Title:  "Collector " + name + " has nothing to compare with",
@@ -435,11 +465,11 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 // the bound on findings per snapshot does the rest.
 const maxReportedChecks = 64
 
-// dropReported removes the findings about file content a real-time event already reported: the
-// event raised its own alert when it happened.
-func (a *Analyzer) dropReported(ctx context.Context, host string, findings []Finding) []Finding {
+// dropReported removes the findings about file content a real-time event reported since the
+// previous snapshot: the event raised its own alert when it happened. An older event with the
+// same content says nothing of this change.
+func (a *Analyzer) dropReported(ctx context.Context, host string, since time.Time, findings []Finding) []Finding {
 	checks := 0
-	since := a.Now().Add(-store.EventRetention)
 	return slices.DeleteFunc(findings, func(f Finding) bool {
 		if f.Path == "" || f.SHA256 == "" || checks == maxReportedChecks {
 			return false

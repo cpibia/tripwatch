@@ -332,6 +332,29 @@ func TestHooks(t *testing.T) {
 	}
 }
 
+// An account filling its own autostart directory gets a bounded share of the result, said in
+// the issues, so the snapshot stays one the verifier accepts.
+func TestHooksBounded(t *testing.T) {
+	src := compromisedHost()
+	fsys := src.FS.(fstest.MapFS)
+	for i := range maxUserHookFiles + 10 {
+		fsys[fmt.Sprintf("home/backupd/.config/autostart/%03d.desktop", i)] = text("")
+	}
+	res := collect[HooksResult](t, Hooks{}, src)
+	n := 0
+	for _, f := range res.Files {
+		if strings.HasPrefix(f.Path, "/home/backupd/.config/autostart/") {
+			n++
+		}
+	}
+	if n != maxUserHookFiles || !slices.ContainsFunc(res.Issues, func(s string) bool { return strings.Contains(s, "only the first") }) {
+		t.Errorf("%d autostart files described, issues %v", n, res.Issues)
+	}
+	if !slices.Contains(paths(res.Files), "/etc/ld.so.preload") {
+		t.Error("system hooks lost")
+	}
+}
+
 func TestPrivileged(t *testing.T) {
 	res := collect[PrivilegedResult](t, Privileged{Skip: DefaultSkip, Extra: DefaultExtra}, compromisedHost())
 

@@ -55,7 +55,10 @@ the signing key does not change.
   days' worth per host. Every minute in which a heartbeat or a snapshot arrives is recorded for 7
   days: the interface derives the silences of each host from it.
 - **Analysis** (`internal/verifier/analyze`): a queue in the database, analysed in order. Every
-  snapshot is decompressed with limits on size, number of values and depth, then compared,
+  snapshot is decompressed with limits on size, number of values and depth, the values bounded
+  per collector result too (500,000 each, 1,000,000 decoded together, smallest first), so a
+  result an unprivileged user inflates is refused alone, named as that collector's error, and
+  never takes the rest of the snapshot with it; then it is compared,
   collector by collector, with the last snapshot in which that collector answered: making a
   collector fail once does not turn a change made in the meantime into the baseline. A collector
   that fails for 3 snapshots in a row raises a high alert that stays open even after it

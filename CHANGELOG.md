@@ -29,6 +29,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Symfony's Console asking for the terminal size (`stty`, `stty -a`, through the shell silenced or
   filtered for the columns, BusyBox's applet included) is not a web shell; ClamAV scanning an
   upload may send its errors to its output (`2>&1`).
+- The hooks of a home are described up to 64 files per pattern (the system's up to 1,024), the
+  rest counted in the issues: an account filling its `.config/autostart` made every snapshot of
+  the server too large to be accepted. Hook files carry their inode change time.
 - More persistence places are collected and watched in real time: the SSH login scripts
   (`/etc/ssh/sshrc`, `~/.ssh/rc`), the scripts root runs when a network interface changes state
   (ifupdown's `/etc/network`, NetworkManager's `dispatcher.d`, networkd-dispatcher, dhclient's
@@ -52,8 +55,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Start-up, login, network and loader hooks added or changed between two snapshots are an
   alert (high in the system, medium in a home, low when packages changed in the same interval),
   unless a real-time event already reported that content: changes made while the watcher was
-  stopped or past its bounds were only listed. Files collected for the first time and older than
-  the previous snapshot are not reported as new, so updating the sensor raises nothing.
+  stopped or past its bounds were only listed. Files collected for the first time and changed
+  (by their inode change time, which `touch` cannot set back) before the previous snapshot are
+  not reported as new, so updating the sensor raises nothing. Only a change of package versions
+  lowers them, not `apt-mark hold`; files without a hash are compared by type and size.
+- A collector result with more than 500,000 values, or past 1,000,000 together with the others
+  (smallest first), is refused alone and reported as that collector's error: one inflated result
+  no longer makes the whole snapshot refused.
 
 ## [0.1.32] - 2026-10-29
 

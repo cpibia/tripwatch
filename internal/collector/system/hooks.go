@@ -2,7 +2,10 @@ package system
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"path"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 )
@@ -55,6 +58,14 @@ var userHooks = []string{
 	".config/autostart/*", ".ssh/rc",
 }
 
+// Bounds on the files described for one pattern: an account can fill its own
+// .config/autostart by the thousand, and a snapshot that grows past what the verifier accepts
+// is lost whole. The system's directories are root's, and hold a few dozen files each.
+const (
+	maxSystemHookFiles = 1024
+	maxUserHookFiles   = 64
+)
+
 type HooksResult struct {
 	Files []collector.File `json:"files"`
 	// Preload lists the libraries in /etc/ld.so.preload, injected into every process.
@@ -75,19 +86,37 @@ func (Hooks) Collect(ctx context.Context, src collector.Source) (any, error) {
 		return nil, err
 	}
 
-	patterns := append([]string{}, systemHooks...)
+	type bounded struct {
+		pattern string
+		limit   int
+	}
+	patterns := make([]bounded, 0, len(systemHooks))
+	for _, p := range systemHooks {
+		patterns = append(patterns, bounded{p, maxSystemHookFiles})
+	}
 	for _, home := range homes(accounts) {
 		for _, h := range userHooks {
-			patterns = append(patterns, path.Join(home, h))
+			patterns = append(patterns, bounded{path.Join(home, h), maxUserHookFiles})
 		}
 	}
 
-	for _, pattern := range patterns {
+	for _, p := range patterns {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		for _, name := range collector.Glob(src.FS, pattern) {
+		names := collector.Glob(src.FS, p.pattern)
+		if len(names) > p.limit {
+			res.Issues = append(res.Issues, fmt.Sprintf("/%s: %d files, only the first %d described", p.pattern, len(names), p.limit))
+			names = names[:p.limit]
+		}
+		for _, name := range names {
 			res.Files = appendDescribed(res.Files, &res.Issues, src, name)
+			// The verifier tells a file there all along from one written and dated back by it.
+			if info, err := fs.Stat(src.FS, name); err == nil && len(res.Files) > 0 && res.Files[len(res.Files)-1].Path == "/"+name {
+				if ns, ok := collector.ChangeTime(info); ok {
+					res.Files[len(res.Files)-1].ChangeTime = time.Unix(0, ns).UTC()
+				}
+			}
 		}
 	}
 

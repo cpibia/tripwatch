@@ -607,24 +607,36 @@ func suspiciousPath(p string) bool {
 
 // hookChanges reports the start-up, login and loader hooks added or changed since prev: what the
 // real-time watcher reports as it happens, for when it was not running or left the place
-// unwatched. A file new to the list but older than prev was there already, collected now by a
-// newer sensor or found in a new home. Packages installed or upgraded in between bring the alert
-// down to low: they rewrite such files all the time (a kernel's apt.conf.d entry), and the
-// real-time event, when the place is watched, has already said more.
+// unwatched. A file new to the list but changed (ctime, which no one dates back) before prev was
+// there already, collected now by a newer sensor or found in a new home. Packages installed,
+// upgraded or removed in between bring the alert down to low: they rewrite such files all the
+// time (a kernel's apt.conf.d entry), and the real-time event, when the place is watched, has
+// already said more. A file without a hash (too large, or not a regular file) is compared by its
+// type and size.
 func hookChanges(prev *State, cur State) []Finding {
+	content := func(f collector.File) string {
+		if f.SHA256 != "" {
+			return f.SHA256
+		}
+		return fmt.Sprintf("%s:%d", f.Mode, f.Size)
+	}
 	known := make(map[string]string, len(prev.Hooks.Files))
 	for _, f := range prev.Hooks.Files {
-		known[f.Path] = f.SHA256
+		known[f.Path] = content(f)
 	}
-	upgraded := prev.Packages != nil && cur.Packages != nil && prev.Packages.StatusSHA256 != "" &&
-		cur.Packages.StatusSHA256 != "" && prev.Packages.StatusSHA256 != cur.Packages.StatusSHA256
+	upgraded := packagesChanged(prev.Packages, cur.Packages)
 	var out []Finding
 	for _, f := range cur.Hooks.Files {
-		if f.SHA256 == "" || unjudgedHooks[path.Clean(f.Path)] {
+		if unjudgedHooks[path.Clean(f.Path)] {
 			continue
 		}
+		// Sensors before 0.1.33 send no change time: the modification time is the best there is.
+		changed := f.ChangeTime
+		if changed.IsZero() {
+			changed = f.ModTime
+		}
 		old, seen := known[f.Path]
-		if old == f.SHA256 || (!seen && !f.ModTime.IsZero() && f.ModTime.Before(prev.TakenAt)) {
+		if old == content(f) || (!seen && !changed.IsZero() && changed.Before(prev.TakenAt)) {
 			continue
 		}
 		title, what := "Start-up script changed", "changed"
@@ -636,15 +648,37 @@ func hookChanges(prev *State, cur State) []Finding {
 			sev = "medium"
 		}
 		detail := fmt.Sprintf("%s was %s since the previous snapshot: %d bytes, SHA-256 %s, mode %s. Code here runs at each login, boot, network change or library load, as whoever triggers it; no real-time event reported this content.",
-			f.Path, what, f.Size, f.SHA256, f.Mode)
+			f.Path, what, f.Size, orNone(f.SHA256), f.Mode)
 		if upgraded {
 			sev = "low"
-			detail += " Packages were installed or upgraded in the same interval: one of them may have made this change."
+			detail += " Packages were installed, upgraded or removed in the same interval: one of them may have made this change."
 		}
-		out = append(out, Finding{Kind: "persistence-change", Fingerprint: "persistence-change:hook:" + f.Path + "|" + f.SHA256[:min(16, len(f.SHA256))],
+		key := content(f)
+		out = append(out, Finding{Kind: "persistence-change", Fingerprint: "persistence-change:hook:" + f.Path + "|" + key[:min(16, len(key))],
 			Severity: sev, Title: title, Detail: detail, Owner: owner, Path: f.Path, SHA256: f.SHA256})
 	}
 	return out
+}
+
+// packagesChanged reports whether packages were installed, upgraded or removed between two
+// snapshots: their versions for dpkg, which marking a package held does not change; the
+// manager's status file elsewhere.
+func packagesChanged(prev, cur *system.PackagesResult) bool {
+	if prev == nil || cur == nil {
+		return false
+	}
+	if len(prev.States) > 0 && len(cur.States) > 0 {
+		if len(prev.States) != len(cur.States) {
+			return true
+		}
+		for name, st := range cur.States {
+			if p, ok := prev.States[name]; !ok || p.Version != st.Version {
+				return true
+			}
+		}
+		return false
+	}
+	return prev.StatusSHA256 != "" && cur.StatusSHA256 != "" && prev.StatusSHA256 != cur.StatusSHA256
 }
 
 // unjudgedHooks are collected with the hooks but not judged by hookChanges: ld.so.preload has
