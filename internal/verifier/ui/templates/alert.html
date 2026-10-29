@@ -28,6 +28,21 @@
   </dl>
 </section>
 
+<section class="panel" aria-labelledby="around-h">
+  <div class="panel-head"><h2 id="around-h">Around that time on {{hostname $a.HostID}}</h2><p class="panel-note">an hour before and after {{clock $a.CreatedAt}}</p></div>
+  {{if $v.Around}}{{template "alerttable" (hosttable $v.Around .CSRF .Path)}}{{else}}<p class="empty">No other alert on this server in that interval.</p>{{end}}
+  {{if $v.Events}}
+  <table class="grid events">
+    <thead><tr><th scope="col" class="num">When</th><th scope="col">Area</th><th scope="col">Path or program</th><th scope="col">What happened</th></tr></thead>
+    <tbody>{{range $v.Events}}
+    <tr><td class="num"><time datetime="{{iso .At}}" title="{{stamp .At}}">{{clock .At}}</time></td><td class="area">{{.Class}}</td>
+      <td class="what"><span class="mono">{{.Subject}}</span>{{with .Detail}}<span class="subject mono">{{.}}</span>{{end}}</td>
+      <td class="state">{{.What}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="aside">No real-time event recorded on this server in that interval.</p>{{end}}
+</section>
+
 {{if ne $a.Status "resolved"}}
 <section class="manage" aria-labelledby="act-h">
   <div class="section-head"><h2 id="act-h">Handling</h2></div>

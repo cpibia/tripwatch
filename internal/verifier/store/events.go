@@ -156,6 +156,12 @@ func (s *Store) HostEvents(ctx context.Context, host string, limit int) ([]Event
 		WHERE host_id = ? ORDER BY id DESC LIMIT ?`, host, limit)
 }
 
+// HostEventsBetween returns a host's events in a time interval, oldest first, at most limit.
+func (s *Store) HostEventsBetween(ctx context.Context, host string, from, to time.Time, limit int) ([]Event, error) {
+	return s.events(ctx, `SELECT id, host_id, seq, at, received_at, class, op, path, package_manager, data FROM events
+		WHERE host_id = ? AND at >= ? AND at <= ? ORDER BY at, id LIMIT ?`, host, from.Unix(), to.Unix(), limit)
+}
+
 // SearchEvents returns the latest events, of every host, whose path or report contains text,
 // ignoring the case of ASCII letters: what the console's search finds among the changes seen as
 // they happened.

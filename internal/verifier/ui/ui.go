@@ -1295,6 +1295,18 @@ func (s *server) alert(w http.ResponseWriter, r *http.Request, se session) {
 		s.Log.Error("alert diff", "alert", a.ID, "err", err)
 	}
 	v.Brief = brief(a, v.Diff)
+	// What else happened on the server around the alert: the question an operator asks next.
+	from, to := a.CreatedAt.Add(-aroundWindow), a.CreatedAt.Add(aroundWindow)
+	if others, err := s.Store.Alerts(r.Context(), store.AlertFilter{HostID: a.HostID, Limit: 300}); err == nil {
+		for _, o := range others {
+			if o.ID != a.ID && !o.CreatedAt.Before(from) && !o.CreatedAt.After(to) && len(v.Around) < maxAround {
+				v.Around = append(v.Around, o)
+			}
+		}
+	}
+	if events, err := s.Store.HostEventsBetween(r.Context(), a.HostID, from, to, maxAround); err == nil {
+		v.Events = eventRows(events)
+	}
 	s.render(w, r, http.StatusOK, "alert", page{Title: a.Title, Nav: "alerts", User: se.Email, CSRF: se.csrf(), Data: v})
 }
 
@@ -1304,7 +1316,17 @@ type alertView struct {
 	Diff *alertDiff
 	// Brief is the alert in Markdown, to paste into an AI assistant.
 	Brief string
+	// Around are the other alerts and the real-time events of the server within aroundWindow
+	// of this one.
+	Around []store.Alert
+	Events []eventRow
 }
+
+// The context shown with an alert: what happened on its server an hour either side.
+const (
+	aroundWindow = time.Hour
+	maxAround    = 20
+)
 
 type alertDiff struct {
 	Lines []string

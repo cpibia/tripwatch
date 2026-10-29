@@ -57,6 +57,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   marked sent once any channel took them, so the others are not repeated. The email set in the
   environment keeps working as before, listed read-only. The menu warning now says when alerts
   go nowhere and links to the page.
+- An alert's page shows what else happened on its server an hour either side: the other alerts
+  and the real-time events, so the question that comes next is answered on the same page.
 - Alert lists show when each alert was first seen and its latest activity, and tag "new" the
   ones that first appeared in the last day, so new deviations stand out from recurring ones.
 - Alert filters apply as soon as a choice is made, and `/` moves to the search box. Who handled an
