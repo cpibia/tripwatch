@@ -590,6 +590,7 @@ func TestCapistranoDeployWithSharedUploadsElsewhere(t *testing.T) {
 		tr.link("../../../shared/wp-content/uploads", "var/www/deploy/releases/"+r+"/wp-content/uploads")
 	}
 	tr.file("data/uploads/2026/shell.php", `<?php system($_GET['c']);`)
+	tr.file("data/uploads/.595d0e1a-9175-41b0-8aae-781a79f2e0d9-wpmdb-scandir-manifest", `{"\/var\/www\/deploy\/shared\/wp-content\/uploads\/":{"offset":0,"completed":true,"children":[]}}`)
 	tr.file("var/www/deploy/shared/wp-content/index.php", "<?php")
 	// Relative links: outside Linux the test runs without confinement to the observed root.
 	tr.link("../../../../../data/uploads", "var/www/deploy/shared/wp-content/uploads")
@@ -604,7 +605,9 @@ func TestCapistranoDeployWithSharedUploadsElsewhere(t *testing.T) {
 		t.Errorf("applications = %v", paths)
 	}
 	got := findingsOf(res)
-	if !slices.Contains(got, KindScriptInUploads+" /data/uploads/2026/shell.php") || slices.ContainsFunc(got, func(f string) bool { return strings.HasPrefix(f, KindSuspiciousSymlink) }) {
+	if !slices.Contains(got, KindScriptInUploads+" /data/uploads/2026/shell.php") || slices.ContainsFunc(got, func(f string) bool {
+		return strings.HasPrefix(f, KindSuspiciousSymlink) || strings.HasPrefix(f, KindHiddenInData)
+	}) {
 		t.Errorf("findings = %v", got)
 	}
 }
