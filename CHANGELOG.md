@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.36] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - A container health check or `docker exec` is recognised also when runc is caught exiting as
@@ -1225,7 +1229,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.35...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.36...HEAD
+[0.1.36]: https://github.com/cpibia/tripwatch/compare/v0.1.35...v0.1.36
 [0.1.35]: https://github.com/cpibia/tripwatch/compare/v0.1.34...v0.1.35
 [0.1.34]: https://github.com/cpibia/tripwatch/compare/v0.1.33...v0.1.34
 [0.1.33]: https://github.com/cpibia/tripwatch/compare/v0.1.32...v0.1.33
