@@ -46,7 +46,7 @@
   --acked: #6f8f8a;
   --focus: #2ee6c8;
   --seg-medium: #9fc2bc;
-  --seg-low: #3e6a65;
+  --seg-low: #5a8a84;
   --radius: 14px;
   --radius-sm: 9px;
   color-scheme: dark;
@@ -648,7 +648,7 @@ td.host .host-tag { overflow: hidden; text-overflow: ellipsis; white-space: nowr
 .table-filter input::placeholder { color: var(--muted); }
 table.apps td.site { white-space: nowrap; }
 table.apps td.path { overflow-wrap: anywhere; }
-table.apps tr.has-alerts td { background: var(--red-wash); }
+table.apps tr.has-alerts td { background: var(--raised); }
 table.apps tr.has-alerts td.site .mono { font-weight: 500; color: var(--ink); }
 table.apps tbody tr:hover td { background: var(--teal-wash); }
 

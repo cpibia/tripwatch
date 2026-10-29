@@ -76,8 +76,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   go nowhere and links to the page.
 - An alert's page shows what else happened on its server an hour either side: the other alerts
   and the real-time events, so the question that comes next is answered on the same page.
-- With more than 30 servers the overview draws only those needing attention (silent, alerts,
-  updates due), at most 30, and counts the rest, healthy and not, with a link to the servers
+- Low severity marks in charts are lighter, readable against the panels, and a web application
+  with open alerts is raised on a lighter row instead of a red one whatever the severity.
+- With more than 30 servers the overview draws only those needing attention (silent or with
+  open alerts), at most 30, and counts the rest, healthy and not, with a link to the servers
   page: two hundred green cells no longer bury the one that is not.
 - The alert list says how many alerts match in all ("201-700 of 18,342"), not how many it
   loaded, counts the hidden low notes exactly, and pages through the rest 500 at a time.
