@@ -968,3 +968,32 @@ func TestPrivateTmpRemovedIsNoEvent(t *testing.T) {
 		}
 	}
 }
+
+// Renames in a loop never put off a plan already due: the watches are planned again within a
+// second of the first, whatever follows.
+func TestReplanNotPutOff(t *testing.T) {
+	ch := make(chan Event, 16)
+	f, err := NewFiles(t.TempDir(), collector.NewSource(t.TempDir()), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	f.now = func() time.Time { return now }
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.replanSoon()
+	due := f.replanAt
+	for range 20 {
+		now = now.Add(200 * time.Millisecond)
+		f.replanSoon()
+		if f.replanAt.After(due) {
+			t.Fatalf("a rename put the plan off to %v, due %v", f.replanAt, due)
+		}
+	}
+	f.replanAt = time.Time{}
+	f.replanSoon()
+	if want := now.Add(time.Second); !f.replanAt.Equal(want) {
+		t.Errorf("plan at %v, want %v", f.replanAt, want)
+	}
+}

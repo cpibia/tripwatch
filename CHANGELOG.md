@@ -14,6 +14,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A script in an upload path answered with a permanent redirect stays high unless the script is
   the path's last segment with nothing after it: `x.php/a.php`, `x.php/` and `x.php/y.php.jpg`
   run `x.php` through PATH_INFO, which chooses its own status.
+- Directories renamed in a loop by any user no longer put off the sensor's next plan of its
+  watches: a watched root moved away and back is watched again within a couple of seconds, while
+  the loop runs, instead of staying blind until it stops.
 
 ### Verifier
 

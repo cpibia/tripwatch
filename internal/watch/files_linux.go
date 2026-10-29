@@ -286,7 +286,7 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 			f.gap(t.Class, fmt.Sprintf("watch: %s was moved away or removed and is not back", dir))
 			if tries > 0 {
 				f.missing[dir] = tries - 1
-				f.replanAt = f.now().Add(replanDelay)
+				f.replanBy(f.now().Add(replanDelay))
 			}
 		}
 		return
@@ -403,15 +403,23 @@ func (f *Files) rootGone(w *watched) {
 func (f *Files) rootLost(dir, class string) {
 	f.gap(class, fmt.Sprintf("watch: %s was moved away or removed", dir))
 	f.missing[dir] = replanRetries
-	f.replanAt = f.now().Add(replanDelay)
+	f.replanBy(f.now().Add(replanDelay))
 	f.send(Event{At: f.now().UTC(), Class: class, Op: OpDelete, Path: dir, Dir: true, Root: true})
 }
 
-// replanSoon plans the watches again once a burst of renames settles: a plan made in the
-// middle of one, with half its events still queued, would be undone by the other half.
+// replanSoon plans the watches again a second after a rename that may have moved a watched
+// directory. A plan made in the middle of a burst may be undone by the rest of it, and the next
+// rename asks for another: renames in a loop cost one plan a second, but never put off a plan
+// already due, which would leave a root moved meanwhile unwatched for as long as the loop runs.
 // Callers hold f.mu.
 func (f *Files) replanSoon() {
-	if at := f.now().Add(time.Second); f.replanAt.IsZero() || f.replanAt.Before(at) {
+	f.replanBy(f.now().Add(time.Second))
+}
+
+// replanBy plans the watches again at the latest at a time: an earlier plan stays. Callers hold
+// f.mu.
+func (f *Files) replanBy(at time.Time) {
+	if f.replanAt.IsZero() || at.Before(f.replanAt) {
 		f.replanAt = at
 	}
 }
