@@ -1,10 +1,8 @@
-{{define "glyph"}}<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path class="g-post" d="M2 3V14M14 3V14"/><path class="g-wire" d="M2 7.5H6.6L7.6 5.8M14 7.5H9.4L8.4 9.2"/></svg>{{end}}
-
 {{define "sevmark"}}{{if eq .Kind "silence"}}<span class="sev sev-critical{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape "silent" .Status}}silent</span>{{else}}<span class="sev sev-{{.Severity}}{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape .Severity .Status}}{{sev .Severity}}</span>{{end}}{{end}}
 
 {{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
 
-{{define "hosttag"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="host-tag mono hc-{{hue .}}" href="/hosts/{{.}}" title="{{.}}"><span class="swatch" aria-hidden="true"></span>{{.}}</a>{{end}}{{end}}
+{{define "hosttag"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="host-tag mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
 
 {{define "kindtag"}}<span class="kind-tag">{{category .}}</span>{{end}}
 

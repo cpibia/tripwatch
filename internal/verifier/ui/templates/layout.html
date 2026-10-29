@@ -1,12 +1,12 @@
 {{define "layout"}}<!doctype html>
-<html lang="en" data-theme="{{.Theme}}">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <title>{{.Title}} · tripwatch</title>
-<link rel="icon" href="/static/{{if .Alarm}}mark-alarm{{else}}mark{{end}}.svg" type="image/svg+xml">
+<link rel="icon" href="/static/{{if .Alarm}}favicon-alarm{{else}}favicon{{end}}.png" type="image/png">
 <link rel="stylesheet" href="/static/app.css?v={{version}}">
 <script src="/static/app.js?v={{version}}" defer></script>
 </head>
@@ -14,20 +14,20 @@
 {{if .User}}
 <div class="shell">
 <nav class="rail" aria-label="Sections">
-  <a class="wordmark{{if .Alarm}} alarm{{end}}" href="/" aria-label="tripwatch, overview{{if .Alarm}}, critical alerts open{{end}}">{{template "glyph"}}<span>tripwatch</span></a>
-  <ul class="nav">
-    <li><a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Overview</a></li>
-    <li><a href="/hosts"{{if eq .Nav "servers"}} aria-current="page"{{end}}>Servers</a></li>
-    <li><a href="/alerts"{{if eq .Nav "alerts"}} aria-current="page"{{end}}>Alerts</a></li>
-    <li><a href="/enroll"{{if eq .Nav "enroll"}} aria-current="page"{{end}}>Enroll server</a></li>
+  <a class="brand{{if .Alarm}} alarm{{end}}" href="/" aria-label="tripwatch, overview{{if .Alarm}}, critical alerts open{{end}}"><img src="/static/logo.png" width="32" height="32" alt=""><span>tripwatch</span></a>
+  <p class="nav-group" id="nav-ops">Operations</p>
+  <ul class="nav" aria-labelledby="nav-ops">
+    <li><a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>{{template "icon" "overview"}}<span>Overview</span></a></li>
+    <li><a href="/alerts"{{if eq .Nav "alerts"}} aria-current="page"{{end}}>{{template "icon" "alerts"}}<span>Alerts</span></a></li>
+    <li><a href="/hosts"{{if eq .Nav "servers"}} aria-current="page"{{end}}>{{template "icon" "servers"}}<span>Servers</span></a></li>
+  </ul>
+  <p class="nav-group" id="nav-conf">Configuration</p>
+  <ul class="nav" aria-labelledby="nav-conf">
+    <li><a href="/enroll"{{if eq .Nav "enroll"}} aria-current="page"{{end}}>{{template "icon" "enroll"}}<span>Enroll a server</span></a></li>
   </ul>
   <div class="rail-foot">
+    {{if not .Notify}}<p class="notify off" title="Critical and high alerts are not sent by email: set TRIPWATCH_SMTP_HOST">{{shape "high" ""}}<span>Email <span class="long">not configured</span><span class="short">off</span></span></p>{{end}}
     <p class="who" title="{{.User}}">{{.User}}</p>
-    {{if .Notify}}<p class="notify">Email alerts on</p>{{else}}<p class="notify off" title="Critical and high alerts are not sent by email: set TRIPWATCH_SMTP_HOST">{{shape "high" ""}}<span>Email <span class="long">not configured</span><span class="short">off</span></span></p>{{end}}
-    <form method="post" action="/theme">
-      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Path}}">
-      <button class="link" type="submit">Theme: {{.Theme}}</button>
-    </form>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <button class="link" type="submit">Sign out</button>
@@ -35,9 +35,19 @@
     {{with .Release}}<p class="version">tripwatch {{.}}</p>{{end}}
   </div>
 </nav>
+<div class="page">
+<header class="topbar">
+  <form class="global-search" method="get" action="/search" role="search" aria-label="Search everything">
+    <label for="gs" class="sr">Search servers, alerts, paths and addresses</label>
+    {{template "icon" "search"}}
+    <input id="gs" type="search" name="q" value="{{.Search}}" maxlength="200" placeholder="Search servers, alerts, paths, addresses" autocomplete="off" spellcheck="false">
+    <kbd aria-hidden="true">/</kbd>
+  </form>
+</header>
 <main class="main" id="main">
 {{template "content" .}}
 </main>
+</div>
 </div>
 {{else}}
 <main class="bare" id="main">
@@ -46,3 +56,5 @@
 {{end}}
 </body>
 </html>{{end}}
+
+{{define "icon"}}{{if eq . "overview"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="2" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="2" y="10.5" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="10.5" width="5.5" height="5.5" rx="1.5"/></svg>{{else if eq . "alerts"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2 16.5 15h-15Z"/><path d="M9 7v3.5M9 12.6v.1"/></svg>{{else if eq . "servers"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="2.5" y="2.5" width="13" height="5" rx="1.5"/><rect x="2.5" y="10.5" width="13" height="5" rx="1.5"/><path d="M5.5 5h.1M5.5 13h.1"/></svg>{{else if eq . "enroll"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 3.5v11M3.5 9h11"/></svg>{{else if eq . "search"}}<svg class="icon" viewBox="0 0 18 18" aria-hidden="true"><circle cx="8" cy="8" r="5"/><path d="m12 12 4 4"/></svg>{{end}}{{end}}

@@ -413,23 +413,9 @@ func TestAlertViews(t *testing.T) {
 	}
 }
 
-func TestLogoutAndTheme(t *testing.T) {
+func TestLogout(t *testing.T) {
 	h := newHarness(t)
 	csrf := h.login()
-	themes := []string{}
-	for range 3 {
-		res, _ := h.post("/theme", url.Values{"csrf": {csrf}, "back": {"/alerts"}})
-		if res.Header.Get("Location") != "/alerts" {
-			t.Fatalf("theme redirected to %q", res.Header.Get("Location"))
-		}
-		_, body := h.get("/")
-		m := regexp.MustCompile(`Theme: ([a-z ]+)<`).FindStringSubmatch(body)
-		themes = append(themes, m[1])
-	}
-	if strings.Join(themes, ",") != "light,system,dark" {
-		t.Fatalf("theme cycle = %v", themes)
-	}
-
 	if res, _ := h.post("/logout", url.Values{"csrf": {csrf}}); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("logout: status %d", res.StatusCode)
 	}
@@ -882,7 +868,7 @@ func TestBoardLeadsWithDeviations(t *testing.T) {
 	if strings.Contains(body, `<td class="act">`) {
 		t.Error("the overview's rows carry actions")
 	}
-	if !strings.Contains(body, `href="/static/mark-alarm.svg"`) || !strings.Contains(body, `class="wordmark alarm"`) {
+	if !strings.Contains(body, `href="/static/favicon-alarm.png"`) || !strings.Contains(body, `class="brand alarm"`) {
 		t.Error("an open critical alert does not turn the mark red")
 	}
 	if !strings.Contains(res.Header.Get("Content-Security-Policy"), "font-src 'self'") {
@@ -922,7 +908,7 @@ func TestOverviewLeavesRevokedHostsOut(t *testing.T) {
 	if !regexp.MustCompile(`kpi k-critical"[^>]*>\s*<span class="kpi-label"><svg[^>]*>.*?</svg>Critical</span>\s*<span class="kpi-n">0</span>`).MatchString(body) {
 		t.Error("the revoked host's alert is counted")
 	}
-	if strings.Contains(body, "mark-alarm.svg") {
+	if strings.Contains(body, "favicon-alarm.png") {
 		t.Error("the revoked host's alert turns the mark red")
 	}
 	if !strings.Contains(body, `Revoked: <a class="mono" href="/hosts/old-01">old-01</a>`) {
@@ -1180,7 +1166,7 @@ func TestServersSearchAndOrder(t *testing.T) {
 		t.Helper()
 		_, body := h.get(path)
 		var out []string
-		for _, m := range regexp.MustCompile(`<td class="host"><a class="host-tag mono hc-\d" href="/hosts/([^"]+)"`).FindAllStringSubmatch(body, -1) {
+		for _, m := range regexp.MustCompile(`<td class="host"><a class="host-tag mono" href="/hosts/([^"]+)"`).FindAllStringSubmatch(body, -1) {
 			out = append(out, m[1])
 		}
 		return out

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -153,6 +154,19 @@ func (s *Store) PathEvents(ctx context.Context, host, path string, since time.Ti
 func (s *Store) HostEvents(ctx context.Context, host string, limit int) ([]Event, error) {
 	return s.events(ctx, `SELECT id, host_id, seq, at, received_at, class, op, path, package_manager, data FROM events
 		WHERE host_id = ? ORDER BY id DESC LIMIT ?`, host, limit)
+}
+
+// SearchEvents returns the latest events, of every host, whose path or report contains text,
+// ignoring the case of ASCII letters: what the console's search finds among the changes seen as
+// they happened.
+func (s *Store) SearchEvents(ctx context.Context, text string, limit int) ([]Event, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	like := likePattern(strings.ToValidUTF8(text[:min(len(text), maxQueryLen)], ""))
+	return s.events(ctx, `SELECT id, host_id, seq, at, received_at, class, op, path, package_manager, data FROM events
+		WHERE path LIKE ? ESCAPE '\' OR data LIKE ? ESCAPE '\' ORDER BY id DESC LIMIT ?`, like, like, limit)
 }
 
 func (s *Store) events(ctx context.Context, q string, args ...any) ([]Event, error) {

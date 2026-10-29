@@ -42,7 +42,6 @@ var assets embed.FS
 
 const (
 	sessionCookie = "tw_session"
-	themeCookie   = "tw_theme"
 	deviceCookie  = "tw_device"
 )
 
@@ -112,8 +111,8 @@ func New(c Config) (http.Handler, error) {
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
-	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "hue": hostHue, "headline": headline, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search"} {
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -133,13 +132,13 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /login/link", s.loginLinkForm)
 	mux.HandleFunc("POST /login/link", s.loginLink)
 	mux.HandleFunc("POST /logout", s.authed(s.logout))
-	mux.HandleFunc("POST /theme", s.authed(s.theme))
 	mux.HandleFunc("GET /{$}", s.authed(s.overview))
 	mux.HandleFunc("GET /hosts", s.authed(s.servers))
 	mux.HandleFunc("GET /hosts/{id}", s.authed(s.host))
 	mux.HandleFunc("POST /hosts/update", s.authed(s.orderUpdate))
 	mux.HandleFunc("POST /hosts/{id}/revoke", s.authed(s.revoke))
 	mux.HandleFunc("POST /hosts/{id}/withdraw", s.authed(s.withdraw))
+	mux.HandleFunc("GET /search", s.authed(s.search))
 	mux.HandleFunc("GET /alerts", s.authed(s.alerts))
 	mux.HandleFunc("GET /alerts/{id}", s.authed(s.alert))
 	mux.HandleFunc("POST /alerts/{id}/ack", s.authed(s.ack))
@@ -233,10 +232,11 @@ type page struct {
 	Nav     string
 	User    string
 	CSRF    string
-	Theme   string
 	Refresh bool
 	Notify  bool
 	Path    string
+	// Search is the text in the search box at the top of every page.
+	Search string
 	// Alarm is set while a critical alert is open, Release is the running version.
 	Alarm   bool
 	Release string
@@ -244,9 +244,11 @@ type page struct {
 }
 
 func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name string, p page) {
-	p.Theme = themeOf(r)
 	p.Notify = s.Notify
 	p.Path = r.URL.RequestURI()
+	if r.URL.Path == "/search" {
+		p.Search = r.URL.Query().Get("q")
+	}
 	p.Release = s.release()
 	if p.User != "" {
 		alarm, err := s.Store.Alarming(r.Context())
@@ -288,13 +290,6 @@ func (s *server) cookie(w http.ResponseWriter, name, value string, maxAge time.D
 	//nolint:gosec // Secure follows the deployment: on whenever the interface is served over HTTPS
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: int(maxAge / time.Second),
 		HttpOnly: true, Secure: s.SecureCookies, SameSite: http.SameSiteLaxMode})
-}
-
-func themeOf(r *http.Request) string {
-	if c, err := r.Cookie(themeCookie); err == nil && (c.Value == "light" || c.Value == "system") {
-		return c.Value
-	}
-	return "dark"
 }
 
 // localPath accepts only paths on this site as redirect targets. Browsers drop tabs and line
@@ -461,18 +456,6 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, se session) {
 	}
 	s.cookie(w, sessionCookie, "", -time.Second)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
-}
-
-// theme cycles between the system's theme, light and dark.
-func (s *server) theme(w http.ResponseWriter, r *http.Request, _ session) {
-	// Dark is the default and needs no cookie; the button cycles dark, light, system.
-	next := map[string]string{"dark": "light", "light": "system", "system": "dark"}[themeOf(r)]
-	if next == "dark" {
-		s.cookie(w, themeCookie, "", -time.Second)
-	} else {
-		s.cookie(w, themeCookie, next, 365*24*time.Hour)
-	}
-	http.Redirect(w, r, localPath(r.PostFormValue("back"), "/"), http.StatusSeeOther) //nolint:gosec // localPath accepts only paths on this site
 }
 
 // Hosts.

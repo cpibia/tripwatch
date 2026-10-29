@@ -1,6 +1,6 @@
 {{define "content"}}
 <div class="login">
-  <p class="wordmark">{{template "glyph"}}<span>tripwatch</span></p>
+  <p class="brand"><img src="/static/logo.png" width="32" height="32" alt=""><span>tripwatch</span></p>
   <h1>Sign in to the console</h1>
   {{with .Data.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
   <form method="post" action="/login" class="form">

@@ -6,6 +6,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- A new console look in the colours of the new logo (a fingerprint with one broken ridge): teal
+  for what can be used or is selected, coral and amber only for the severities, rounded panels.
+  Dark only: the light and system themes are gone. Servers are no longer told apart by a colour,
+  which competed with the severities.
+- The menu groups operations and configuration, with icons, and a search box at the top of every
+  page looks across servers, alerts and real-time events at once (`/search`).
+
 ## [0.1.34] - 2026-10-29
 
 Update the verifier, then the sensors.

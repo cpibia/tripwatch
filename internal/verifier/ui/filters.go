@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"hash/fnv"
 	"net/url"
 	"slices"
 	"strings"
@@ -55,16 +54,6 @@ func kindsOf(key string) []string {
 		}
 	}
 	return nil
-}
-
-// hostHues is how many colours tell servers apart in a list.
-const hostHues = 8
-
-// hostHue gives a server the same colour on every page and every load.
-func hostHue(host string) int {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(host))
-	return int(h.Sum32() % hostHues)
 }
 
 // headline is an alert's title without the prefix that names its category, which the page

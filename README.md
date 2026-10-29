@@ -823,10 +823,16 @@ is needed too, which closes them all.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 
-Dark theme by default, light or following the system from the menu; refreshes by itself every
-minute and works on a phone too. The mark in the menu, a tripwire cut in the middle, and the
-browser tab icon turn red while a critical alert is open; a verifier without email shows it as a
-warning in the menu. Fonts (IBM Plex) are embedded in the binary and served by the verifier. Pages run no inline scripts or styles (strict Content Security
+A search box at the top of every page looks for a text across the fleet at once: servers (name,
+address, system, applications and the sites they serve), alerts of every status (server, title,
+what the server reported) and the real-time events of the last 7 days (path, command).
+
+A dark operations console in the colours of the logo, a fingerprint with one broken ridge: teal
+for what can be used or is selected, coral and amber only for the severities. The menu groups
+operations (overview, alerts, servers) and configuration (enrolling a server). It refreshes by
+itself every minute and works on a phone too. The mark in the menu and the browser tab icon carry
+a coral dot while a critical alert is open; a verifier without email shows it as a warning in the
+menu. Fonts (IBM Plex) are embedded in the binary and served by the verifier. Pages run no inline scripts or styles (strict Content Security
 Policy), forms are protected by CSRF tokens, and sign-in attempts for the same email address go
 through one at a time, with a delay that grows after five failures up to 15 seconds, whatever
 address they come from: guessing the password becomes very slow even in parallel. A browser that

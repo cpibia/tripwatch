@@ -1,0 +1,46 @@
+{{define "content"}}{{$d := .Data}}
+<header class="head">
+  <h1>Search</h1>
+  {{if $d.Text}}<p class="tally"><span>{{len $d.Hosts}} {{plural (len $d.Hosts) "server" "servers"}}</span><span>{{len $d.Alerts}}{{if $d.MoreAlerts}}+{{end}} {{plural (len $d.Alerts) "alert" "alerts"}}</span><span>{{len $d.Events}}{{if $d.MoreEvents}}+{{end}} real-time {{plural (len $d.Events) "event" "events"}}</span><span>for <span class="mono">{{$d.Text}}</span></span></p>
+  {{else}}<p class="aside">Type in the box above: a server, an address, a domain, a path, a command or words of an alert.</p>{{end}}
+</header>
+
+{{if $d.Text}}
+<section class="panel" aria-labelledby="s-hosts">
+  <div class="panel-head"><h2 id="s-hosts">Servers</h2><p class="panel-note">by name, address, system, application and site</p></div>
+  {{if $d.Hosts}}
+  <table class="grid hosts">
+    <thead><tr><th scope="col"><span class="sr">State</span></th><th scope="col">Server</th><th scope="col">System</th><th scope="col">Web applications</th><th scope="col" class="num">Alerts</th></tr></thead>
+    <tbody>{{range $d.Hosts}}{{$f := .Facts}}
+    <tr class="st-{{.State}}">
+      <td class="m">{{if eq .State "silent"}}{{shape "silent" ""}}<span class="sr">silent</span>{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}<span class="sr">{{sev .Worst.Severity}}</span>{{end}}</td>
+      <td class="host">{{template "hosttag" .ID}}</td>
+      <td>{{if $f.OS}}{{$f.OS}}{{else}}<span class="quiet">not reported yet</span>{{end}}</td>
+      <td>{{range $i, $g := $f.AppGroups}}{{if $i}}, {{end}}{{$g.Framework}}{{with $g.Version}} {{.}}{{end}}{{if gt $g.Count 1}} ×{{$g.Count}}{{end}}{{else}}<span class="quiet">none</span>{{end}}</td>
+      <td class="num">{{if .Open}}{{.Open}}{{else}}<span class="quiet">0</span>{{end}}</td>
+    </tr>{{end}}</tbody>
+  </table>
+  {{else}}<p class="empty">No server matches.</p>{{end}}
+</section>
+
+<section class="panel" aria-labelledby="s-alerts">
+  <div class="panel-head"><h2 id="s-alerts">Alerts</h2><p class="panel-note">every status, by server, title and what the server reported{{if $d.MoreAlerts}} · <a href="/alerts?view=all&amp;sev=critical&amp;sev=high&amp;sev=medium&amp;sev=low&amp;q={{$d.Text}}">all matches</a>{{end}}</p></div>
+  {{if $d.Alerts}}{{template "alerttable" (table $d.Alerts .CSRF .Path)}}
+  {{else}}<p class="empty">No alert matches.</p>{{end}}
+</section>
+
+<section class="panel" aria-labelledby="s-events">
+  <div class="panel-head"><h2 id="s-events">Real-time events</h2><p class="panel-note">newest first, kept 7 days: data from the servers</p></div>
+  {{if $d.Events}}
+  <table class="grid events">
+    <thead><tr><th scope="col" class="num">When</th><th scope="col">Server</th><th scope="col">Area</th><th scope="col">Path or program</th><th scope="col">What happened</th></tr></thead>
+    <tbody>{{range $d.Events}}
+    <tr><td class="num"><time datetime="{{iso .At}}" title="{{stamp .At}}">{{clock .At}}</time></td><td class="host">{{template "hosttag" .Host}}</td><td class="area">{{.Class}}</td>
+      <td class="what"><span class="mono">{{.Subject}}</span>{{with .Detail}}<span class="subject mono">{{.}}</span>{{end}}</td>
+      <td class="state">{{.What}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="empty">No real-time event matches.</p>{{end}}
+</section>
+{{end}}
+{{end}}
