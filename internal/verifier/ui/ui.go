@@ -1218,11 +1218,15 @@ type alertsData struct {
 	Limit      int
 	// LowCount is how many low alerts the view leaves out.
 	LowCount int
+	// Total is how many alerts the query matches; From and To number the ones shown, More says
+	// a page follows.
+	Total, From, To int
+	More            bool
 }
 
 func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
 	q := readAlertQuery(r.URL.Query())
-	f := store.AlertFilter{HostID: q.Host, Severities: q.Severity, Kinds: kindsOf(q.Category), Query: q.Text, Sort: q.Sort, Limit: 500}
+	f := store.AlertFilter{HostID: q.Host, Severities: q.Severity, Kinds: kindsOf(q.Category), Query: q.Text, Sort: q.Sort, Limit: alertsPerPage, Offset: q.Page * alertsPerPage}
 	switch q.View {
 	case "acknowledged":
 		f.Statuses = []string{store.StatusAcked}
@@ -1238,16 +1242,20 @@ func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	d := alertsData{View: q.View, Views: alertViews, Query: q, Categories: categories, Sorts: alertSorts, Severities: allSeverities, Alerts: list, Limit: f.Limit}
+	d := alertsData{View: q.View, Views: alertViews, Query: q, Categories: categories, Sorts: alertSorts, Severities: allSeverities, Alerts: list, Limit: f.Limit, From: f.Offset + 1}
+	if d.Total, err = s.Store.CountAlerts(r.Context(), f); err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	d.To = f.Offset + len(list)
+	d.More = d.To < d.Total && q.Page < maxAlertPages
 	if q.LowHidden() {
 		low := f
-		low.Severities, low.Limit = []string{"low"}, maxLowCount
-		lows, err := s.Store.Alerts(r.Context(), low)
-		if err != nil {
+		low.Severities = []string{"low"}
+		if d.LowCount, err = s.Store.CountAlerts(r.Context(), low); err != nil {
 			s.internal(w, r, err)
 			return
 		}
-		d.LowCount = len(lows)
 	}
 	hosts, err := s.Store.Hosts(r.Context())
 	if err != nil {
@@ -1268,8 +1276,8 @@ func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
 	s.render(w, r, http.StatusOK, "alerts", page{Title: "Alerts", Nav: "alerts", User: se.Email, CSRF: se.csrf(), Refresh: true, Data: d})
 }
 
-// maxLowCount bounds the low alerts counted to say how many a view leaves out.
-const maxLowCount = 1000
+// alertsPerPage is how many alerts a page of the list shows.
+const alertsPerPage = 500
 
 func (s *server) alertByPath(w http.ResponseWriter, r *http.Request) (store.Alert, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

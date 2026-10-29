@@ -38,17 +38,17 @@
   <div class="f-go"><button type="submit">Apply</button>{{if $q.Filtered}}<a href="{{$q.Without "all"}}">Clear</a>{{end}}</div>
 </form>
 <p class="result-line" role="status">
-  <span>{{len $d.Alerts}} {{plural (len $d.Alerts) "alert" "alerts"}}</span>
+  <span>{{if or $d.More (gt $d.From 1)}}{{$d.From}}-{{$d.To}} of {{$d.Total}} alerts{{else}}{{$d.Total}} {{plural $d.Total "alert" "alerts"}}{{end}}</span>
   {{with $q.Text}}<a class="chip" href="{{$q.Without "q"}}">text <span class="mono">{{.}}</span><svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
   {{with $q.Host}}<a class="chip" href="{{$q.Without "host"}}">server <span class="mono">{{.}}</span><svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
   {{with $q.Category}}<a class="chip" href="{{$q.Without "cat"}}">category {{range $d.Categories}}{{if eq .Key $q.Category}}{{.Label}}{{end}}{{end}}<svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
-  {{if $d.LowCount}}<span class="aside">{{$d.LowCount}}{{if eq $d.LowCount 1000}}+{{end}} low {{plural $d.LowCount "note" "notes"}} hidden: they are on each server's page, or tick low above</span>{{end}}
+  {{if $d.LowCount}}<span class="aside">{{$d.LowCount}} low {{plural $d.LowCount "note" "notes"}} hidden: they are on each server's page, or tick low above</span>{{end}}
 </p>
 <div class="board{{if $d.Focus.Alert}} with-focus{{end}}">
 <div class="board-main">
 {{if $d.Alerts}}
 {{template "alerttable" (picktable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
-{{if eq (len $d.Alerts) $d.Limit}}<p class="aside">Showing the first {{$d.Limit}}: narrow the search to see the others.</p>{{end}}
+{{if or $d.More (gt $d.From 1)}}<nav class="pager" aria-label="Pages of alerts">{{if gt $d.From 1}}<a href="{{$q.Prev}}" rel="prev">Previous {{$d.Limit}}</a>{{end}}<span>{{$d.From}}-{{$d.To}} of {{$d.Total}}</span>{{if $d.More}}<a href="{{$q.Next}}" rel="next">Next {{$d.Limit}}</a>{{end}}</nav>{{end}}
 {{else}}<p class="empty">{{if $q.Filtered}}No alert matches these filters. <a href="{{$q.Without "all"}}">Clear them</a>.{{else}}No alerts in this view.{{end}}</p>{{end}}
 </div>
 {{template "focus" $d.Focus}}

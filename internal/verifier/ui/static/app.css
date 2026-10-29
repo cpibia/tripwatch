@@ -709,3 +709,8 @@ select option { background: var(--surface); color: var(--ink); }
 .form select { width: 100%; }
 input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-color: var(--teal); }
 .filters select, .role-form select, .invite-form select { padding-right: 34px; background: var(--raised) url("chevron.svg") no-repeat right 11px center / 12px 12px; }
+
+/* Pages of a long list: where in it one is, and the way to the neighbouring pages. */
+.pager { display: flex; align-items: center; gap: 16px; margin-top: 12px; font-size: var(--fs-sm); color: var(--muted); }
+.pager a { padding: 7px 14px; color: var(--ink); text-decoration: none; border: var(--hair) solid var(--rule-strong); border-radius: var(--radius-sm); background: var(--raised); }
+.pager a:hover { border-color: var(--teal); }

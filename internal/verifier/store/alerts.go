@@ -337,6 +337,8 @@ type AlertFilter struct {
 	Query string
 	// Sort orders the alerts another way than the most severe and recently updated first.
 	Sort string
+	// Offset skips that many alerts of the order, for the pages after the first.
+	Offset int
 }
 
 // Orders of an alert list besides the default.
@@ -374,9 +376,18 @@ func (s *Store) Alert(ctx context.Context, id int64) (Alert, error) {
 	return out[0], nil
 }
 
-func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
-	q := `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at, occurrences,
-		COALESCE(acked_by, ''), notified_at FROM alerts WHERE 1 = 1`
+// CountAlerts counts the alerts a filter matches, whatever its limit: a list cut short says of
+// how many.
+func (s *Store) CountAlerts(ctx context.Context, f AlertFilter) (int, error) {
+	where, args := alertWhere(ctx, f)
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts`+where, args...).Scan(&n) //nolint:gosec // alertWhere builds constant clauses; values are bound
+	return n, err
+}
+
+// alertWhere is the WHERE clause of a filter, with its arguments, the request's scope included.
+func alertWhere(ctx context.Context, f AlertFilter) (string, []any) {
+	q := ` WHERE 1 = 1`
 	var args []any
 	if f.ID != 0 {
 		q += ` AND id = ?`
@@ -423,6 +434,14 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 		q += ` AND (host_id LIKE ? ESCAPE '\' OR title LIKE ? ESCAPE '\' OR detail LIKE ? ESCAPE '\')`
 		args = append(args, like, like, like)
 	}
+	return q, args
+}
+
+func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
+	where, args := alertWhere(ctx, f)
+	//nolint:gosec // alertWhere builds constant clauses; values are bound
+	q := `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at, occurrences,
+		COALESCE(acked_by, ''), notified_at FROM alerts` + where
 	switch {
 	case f.Sort == SortNewest:
 		q += ` ORDER BY created_at DESC, id DESC`
@@ -438,8 +457,8 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 		q += ` ORDER BY ` + severityOrder + `, updated_at DESC, id DESC`
 	}
 	if f.Limit > 0 {
-		q += ` LIMIT ?`
-		args = append(args, f.Limit)
+		q += ` LIMIT ? OFFSET ?`
+		args = append(args, f.Limit, max(f.Offset, 0))
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

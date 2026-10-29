@@ -3,6 +3,7 @@ package ui
 import (
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/verifier/store"
@@ -76,9 +77,14 @@ type alertQuery struct {
 	Host     string
 	Category string
 	Sort     string
+	// Page is the page of the list shown, from 0.
+	Page int
 }
 
 var allSeverities = []string{"critical", "high", "medium", "low"}
+
+// maxAlertPages bounds how deep a list is paged: past it, filters find what is looked for.
+const maxAlertPages = 200
 
 // defaultSeverities leaves the low alerts out: they are notes on a server's health and its
 // sensor's life, kept and shown on its page, not alerts to handle.
@@ -90,6 +96,9 @@ var alertSorts = []struct{ Key, Label string }{
 
 func readAlertQuery(v url.Values) alertQuery {
 	q := alertQuery{View: v.Get("view"), Text: strings.TrimSpace(v.Get("q")), Host: v.Get("host"), Category: v.Get("cat"), Sort: v.Get("sort")}
+	if p, err := strconv.Atoi(v.Get("page")); err == nil && p > 0 {
+		q.Page = min(p, maxAlertPages)
+	}
 	for _, s := range v["sev"] {
 		if slices.Contains(allSeverities, s) && !slices.Contains(q.Severity, s) {
 			q.Severity = append(q.Severity, s)
@@ -128,17 +137,32 @@ func (q alertQuery) values() url.Values {
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
 	}
+	if q.Page > 0 {
+		v.Set("page", strconv.Itoa(q.Page))
+	}
 	return v
+}
+
+// Next and Prev are the addresses of the following and preceding pages of the same query.
+func (q alertQuery) Next() string {
+	q.Page++
+	return link(q)
+}
+
+func (q alertQuery) Prev() string {
+	q.Page = max(q.Page-1, 0)
+	return link(q)
 }
 
 // With returns the address of the same query in another status view.
 func (q alertQuery) With(view string) string {
-	q.View = view
+	q.View, q.Page = view, 0
 	return link(q)
 }
 
 // Without returns the address of the query with one of its filters cleared.
 func (q alertQuery) Without(filter string) string {
+	q.Page = 0
 	switch filter {
 	case "q":
 		q.Text = ""

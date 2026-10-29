@@ -62,6 +62,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   go nowhere and links to the page.
 - An alert's page shows what else happened on its server an hour either side: the other alerts
   and the real-time events, so the question that comes next is answered on the same page.
+- The alert list says how many alerts match in all ("201-700 of 18,342"), not how many it
+  loaded, counts the hidden low notes exactly, and pages through the rest 500 at a time.
 - Alert lists show when each alert was first seen and its latest activity, and tag "new" the
   ones that first appeared in the last day, so new deviations stand out from recurring ones.
 - Alert filters apply as soon as a choice is made, and `/` moves to the search box. Who handled an
