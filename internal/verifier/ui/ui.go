@@ -145,7 +145,7 @@ func New(c Config) (http.Handler, error) {
 	s.static = http.StripPrefix("/static/", http.FileServer(http.FS(static)))
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
+	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /static/", s.serveStatic)
 	mux.HandleFunc("GET /login", s.loginForm)
 	mux.HandleFunc("POST /login", s.login)
@@ -475,6 +475,19 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.rememberDevice(w, r, email)
 	}
 	http.Redirect(w, r, data.Next, http.StatusSeeOther) //nolint:gosec // data.Next went through localPath
+}
+
+// healthz answers ok when the database answers a write-side query in time: a verifier whose only
+// writer is stuck takes no snapshots, however well its pages load.
+func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.Store.Ping(ctx); err != nil {
+		s.Log.Error("health", "err", err)
+		http.Error(w, "database not answering", http.StatusServiceUnavailable)
+		return
+	}
+	_, _ = w.Write([]byte("ok\n"))
 }
 
 // rememberDevice makes the browser a known one for email, unless it is already.

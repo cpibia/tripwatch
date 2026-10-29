@@ -1198,3 +1198,15 @@ func TestServersSearchAndOrder(t *testing.T) {
 		}
 	}
 }
+
+// The health check asks the database, and fails once it is gone.
+func TestHealthzAsksTheDatabase(t *testing.T) {
+	h := newHarness(t)
+	if res, body := h.get("/healthz"); res.StatusCode != http.StatusOK || body != "ok\n" {
+		t.Fatalf("healthy: %d %q", res.StatusCode, body)
+	}
+	_ = h.store.Close()
+	if res, _ := h.get("/healthz"); res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("without a database: %d", res.StatusCode)
+	}
+}

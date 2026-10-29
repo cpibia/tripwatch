@@ -350,6 +350,12 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
+// Ping runs a query on the writing connection, which waits behind any write in progress.
+func (s *Store) Ping(ctx context.Context) error {
+	var one int
+	return s.db.QueryRowContext(ctx, `SELECT 1`).Scan(&one)
+}
+
 func (s *Store) Close() error { return errors.Join(s.read.Close(), s.db.Close()) }
 
 type Host struct {

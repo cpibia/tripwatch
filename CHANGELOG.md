@@ -59,6 +59,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Searches (the top search box and the alert list's text filter) run on read-only connections
   of their own, at most five seconds each, and the real-time events they look through are the
   newest 50,000: text a server chose can no longer make a search hold up what the servers send.
+- The health check (`/healthz`, used by the container's `healthcheck`) now asks the database,
+  so a verifier whose database stopped answering shows as unhealthy instead of ok.
 - A webhook that answers with an error is reported by its status only: its answer, which may
   come from inside the verifier's network, is no longer shown. Telegram's answers still are.
 - An audit log (Settings, Audit log) records who signed in, handled alerts, enrolled, revoked,
