@@ -57,6 +57,27 @@ func TestCodeSearchPieces(t *testing.T) {
 	}
 }
 
+// The short pass reads ahead of "<?" to judge a word glued to it: the verdict does not depend on
+// where the content is split.
+func TestShortTagPieces(t *testing.T) {
+	for _, in := range []string{
+		"log <?phpinfo:system($_GET['c']);",
+		"log <?php" + strings.Repeat("x", openTagLook) + ":system($_GET['c']);",
+		"q=<?php+system($_GET[c]); <?xml version=\"1.0\"?>",
+	} {
+		whole := first(codeInData([]byte(in), nil))
+		for _, size := range []int{1, 2, 3, 7, 64} {
+			d := newDataSearch(nil)
+			for i := 0; i < len(in); i += size {
+				d.feed([]byte(in[i:min(i+size, len(in))]), i+size >= len(in))
+			}
+			if got := d.signatures(); !slices.Equal(got, whole) {
+				t.Errorf("pieces of %d: %v, whole %v, in %.40q", size, got, whole, in)
+			}
+		}
+	}
+}
+
 // Binary data holds open tags and backticks by chance; the blocks it makes cannot compile, so
 // their weak signals are dropped. Code planted in the same file still counts.
 func TestCodeInDataBinary(t *testing.T) {
@@ -97,22 +118,31 @@ func TestCodeInDataBinary(t *testing.T) {
 func TestCodeInDataInterpolation(t *testing.T) {
 	deep := "<?php $x = \"" + strings.Repeat("{$a[\"", maxNested+1) + "\"; system($_GET['c']);"
 	for in, want := range map[string]string{
-		`log line <?php $x = "{$a["\""]}?>"; system($_GET['c']);`:           "exec_request_input",
-		`log line <?php $x = "${a["\""]}?>"; system($_GET['c']);`:           "exec_request_input",
-		"<?php $x = `{$a[\"`\"]}?>`; system($_GET['c']);":                   "exec_request_input",
-		"<?php $x = \"{$a[\"{$b[\"\\\"\"]}\"]}?>\"; system($_GET['c']);":    "exec_request_input",
-		"<?php $x = <<<EOT\n{$a[\"\nEOT\n?>\"]}\nEOT;\nsystem($_GET['c']);": "exec_request_input",
-		"<?php $x = <<<'EOT'\n{$a}?>\nEOT;\n?> after: system($_GET['c'])":   "",
-		`<?php $x = "{ $a } $ "; ?> after: system($_GET['c'])`:              "",
-		`<?php $x = "\{$a}"; ?> after: system($_GET['c'])`:                  "",
-		"log line <?system($_GET['c']);?> rest":                             "exec_request_input",
-		"log line <?\tsystem($_GET['c']);?> rest":                           "exec_request_input",
-		"<?xml version=\"1.0\"?><a>system($_GET['c'])</a>":                  "",
-		"q=<?php+system($_GET[c]);":                                         "",
-		"log <?php:system($_GET['c']);":                                     "exec_request_input",
-		"log <?PHP:system($_GET['c']);":                                     "exec_request_input",
-		"log <?xml:system($_GET['c']);":                                     "exec_request_input",
-		"log <?php::class;system($_GET['c']);":                              "exec_request_input",
+		`log line <?php $x = "{$a["\""]}?>"; system($_GET['c']);`:                   "exec_request_input",
+		`log line <?php $x = "${a["\""]}?>"; system($_GET['c']);`:                   "exec_request_input",
+		"<?php $x = `{$a[\"`\"]}?>`; system($_GET['c']);":                           "exec_request_input",
+		"<?php $x = \"{$a[\"{$b[\"\\\"\"]}\"]}?>\"; system($_GET['c']);":            "exec_request_input",
+		"<?php $x = <<<EOT\n{$a[\"\nEOT\n?>\"]}\nEOT;\nsystem($_GET['c']);":         "exec_request_input",
+		"<?php $x = <<<'EOT'\n{$a}?>\nEOT;\n?> after: system($_GET['c'])":           "",
+		`<?php $x = "{ $a } $ "; ?> after: system($_GET['c'])`:                      "",
+		`<?php $x = "\{$a}"; ?> after: system($_GET['c'])`:                          "",
+		"log line <?system($_GET['c']);?> rest":                                     "exec_request_input",
+		"log line <?\tsystem($_GET['c']);?> rest":                                   "exec_request_input",
+		"<?xml version=\"1.0\"?><a>system($_GET['c'])</a>":                          "",
+		"q=<?php+system($_GET[c]);":                                                 "",
+		"log <?php:system($_GET['c']);":                                             "exec_request_input",
+		"log <?PHP:system($_GET['c']);":                                             "exec_request_input",
+		"log <?xml:system($_GET['c']);":                                             "exec_request_input",
+		"log <?php::class;system($_GET['c']);":                                      "exec_request_input",
+		"log <?phpinfo:system($_GET['c']);":                                         "exec_request_input",
+		"log <?php_x::class;system($_GET['c']);":                                    "exec_request_input",
+		"log <?xmlfoo :system($_GET['c']);":                                         "exec_request_input",
+		"log <?phpinfo();system($_GET['c']);":                                       "exec_request_input",
+		"log <?php" + strings.Repeat("x", openTagLook) + ":system($_GET['c']);":     "exec_request_input",
+		"log <?phpinfo/**/:system($_GET['c']);":                                     "exec_request_input",
+		"log <?phpinfo" + strings.Repeat(" ", openTagLook) + ":system($_GET['c']);": "exec_request_input",
+		"log <?phpx+system($_GET['c']);":                                            "",
+		"log <? /* x\n<?php system($_GET['c']); ?> */ y":                            "exec_request_input",
 		"Unsupported instruction <?mso-application> in import\n#0 call_user_func_array(Array, Array)\n#1 require_once('/app/x.php')": "",
 		"<?mso-application progid=\"Excel.Sheet\"?><x/>": "",
 		deep: "nested_interpolation",

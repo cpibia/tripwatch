@@ -34,8 +34,12 @@ type codeSearch struct {
 	// call says a dangerous call was seen in the block, broken that it cannot compile.
 	call   bool
 	broken bool
-	carry  []byte
-	sigs   []string
+	// glued says the block was opened by "<?" glued to a word, which only short_open_tag opens:
+	// a "<?" quoted in a log (an XML processing instruction) does that and runs to the end of the
+	// file, through stack traces full of call_user_func_array(, so only named signatures count.
+	glued bool
+	carry []byte
+	sigs  []string
 	// codeLeft, when set, is the budget of code matched; exhausted says it ran out.
 	codeLeft  *int64
 	exhausted bool
@@ -92,14 +96,11 @@ func (d *dataSearch) feed(p []byte, final bool) {
 
 func (d *dataSearch) exhausted() bool { return d.long.exhausted || d.short.exhausted }
 
-// signatures joins the two passes. From the short one only the named signatures count: there a
-// "<?" quoted in a log (an XML processing instruction) opens a block that runs to the end of the
-// file, through stack traces full of call_user_func_array(; the weak signals of real code are
-// found by the long pass, where the open tag is unambiguous.
+// signatures joins the two passes.
 func (d *dataSearch) signatures() []string {
 	sigs := slices.Clone(d.long.sigs)
 	for _, sig := range d.short.sigs {
-		if !slices.Contains(sigs, sig) && !slices.Contains(weakCodeSignals, sig) {
+		if !slices.Contains(sigs, sig) {
 			sigs = append(sigs, sig)
 		}
 	}
@@ -141,12 +142,16 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 			}
 			return j
 		}
-		if !more(6) {
+		look := 6
+		if c.shortTags {
+			look = openTagLook + 3
+		}
+		if !more(look) {
 			return 0
 		}
 		if i+1 < len(d) && d[i+1] == '?' {
 			if n, ok := openTagLen(d[i+2:], c.shortTags); ok {
-				c.mode = lexCode
+				c.mode, c.glued = lexCode, n == 0
 				return 2 + n
 			}
 		}
@@ -386,25 +391,48 @@ func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 }
 
 // openTagLen returns the length of what follows "<?" in an open tag PHP runs: "php" and a blank,
-// "=", or a blank alone. With short tags "<?" opens a block whatever follows, but for "php" and
-// "xml" glued to more text: "<?xml version" makes PHP refuse the file and "<?php+" runs as the
-// undefined constant php and stops there, while "<?php:" is a goto label and "<?php::class;"
-// compiles, so those two run what follows.
+// or "=". With short_open_tag off a blank alone is text, and a block opened there would let a
+// comment after it swallow the real "<?php" block that follows. With short tags "<?" opens a
+// block whatever follows, but for a word starting with "php" or "xml": "<?xml version" makes PHP
+// refuse the file and "<?php+" runs as the undefined constant php and stops there, while a word
+// followed by ":" is a goto label ("<?phpinfo:") or a class ("<?php::class;"), and one followed
+// by "(" a call: those run what follows. Blanks or a comment may come before them.
 func openTagLen(t []byte, short bool) (int, bool) {
 	blank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 	word := func(w string) bool { return len(t) >= len(w) && bytes.EqualFold(t[:len(w)], []byte(w)) }
 	switch {
 	case word("php") && len(t) > 3 && blank(t[3]):
 		return 4, true
-	case len(t) > 0 && (t[0] == '=' || blank(t[0])):
+	case len(t) > 0 && t[0] == '=':
 		return 1, true
 	case !short:
 		return 0, false
+	case len(t) > 0 && blank(t[0]):
+		return 1, true
 	case word("xml") || word("php"):
-		return 0, len(t) > 3 && t[3] == ':'
+		j := 3
+		for j < len(t) && identByte(t[j]) {
+			if j == openTagLook {
+				// A word too long to judge: the short pass keeps only named signatures, so
+				// opening costs no noise.
+				return 0, true
+			}
+			j++
+		}
+		for j < len(t) && blank(t[j]) {
+			if j == openTagLook {
+				return 0, true
+			}
+			j++
+		}
+		// A comment may stand between the word and what follows it: "<?phpinfo/**/:".
+		return 0, j < len(t) && strings.IndexByte(":(/#", t[j]) >= 0
 	}
 	return 0, true
 }
+
+// openTagLook bounds how far after "<?" the short pass reads to judge a word glued to the tag.
+const openTagLook = 64
 
 // heredocStart reads "<<<ID", "<<<\"ID\"" or "<<<'ID'" and the line break after it.
 func heredocStart(d []byte) (id []byte, n int, ok bool) {
@@ -465,7 +493,7 @@ func (c *codeSearch) emit(p []byte) {
 func (c *codeSearch) endBlock() {
 	if c.mode != lexText && (!c.broken || !c.shortTags) {
 		c.match()
-		if !c.exhausted && !c.broken {
+		if !c.exhausted && !c.broken && !c.glued {
 			if c.backtick {
 				c.add("backtick_exec")
 			}
@@ -474,7 +502,7 @@ func (c *codeSearch) endBlock() {
 			}
 		}
 	}
-	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken = lexText, c.code[:0], false, nil, false, false
+	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken, c.glued = lexText, c.code[:0], false, nil, false, false, false
 	c.nested, c.nowdoc = c.nested[:0], false
 }
 

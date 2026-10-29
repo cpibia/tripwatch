@@ -27,6 +27,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
   (ifupdown's `/etc/network`, NetworkManager's `dispatcher.d`, networkd-dispatcher, dhclient's
   hooks; ppp's in snapshots only), `/etc/bash_completion.d` and the loader's search path
   (`ld.so.conf`, `ld.so.conf.d`).
+- The search for PHP in data files no longer opens a block on `<?` and a blank when short open
+  tags are off, as PHP does not: a comment opened there could hide a real `<?php` block written
+  after it. With short tags on, a word starting with `php` or `xml` glued to `<?` opens a block
+  when a goto label, a class constant or a call follows (`<?phpinfo:`, `<?php_x::class;`),
+  blanks and comments in between included.
 
 ### Verifier
 
