@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.27] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - A `.php` file in the uploads without any PHP tag ("Silence is golden.") is text PHP sends as it
@@ -924,7 +928,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.26...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.27...HEAD
+[0.1.27]: https://github.com/cpibia/tripwatch/compare/v0.1.26...v0.1.27
 [0.1.26]: https://github.com/cpibia/tripwatch/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/cpibia/tripwatch/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/cpibia/tripwatch/compare/v0.1.23...v0.1.24
