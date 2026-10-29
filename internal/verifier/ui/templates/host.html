@@ -1,7 +1,9 @@
 {{define "content"}}{{$d := .Data}}{{$h := $d.Row}}
 <header class="head">
   <p class="crumb"><a href="/hosts">Servers</a></p>
-  <h1 class="mono">{{$h.ID}}</h1>
+  <h1{{if not $h.Name}} class="mono"{{end}}>{{$h.Display}}</h1>
+  {{if or $h.Name $h.Labels}}<p class="host-ids">{{if $h.Name}}<span class="mono" title="the server's identity, in its certificate">{{$h.ID}}</span>{{end}}{{range $h.Labels}}<a class="chip label" href="/hosts?q={{.}}">{{.}}</a>{{end}}</p>{{end}}
+  {{with $h.Note}}<p class="host-note">{{.}}</p>{{end}}
   <p class="tally st-{{$h.State}}{{if and $h.Worst (eq $h.Worst.Status "acknowledged")}} acked{{end}}"><span class="state-line">{{if eq $h.State "silent"}}{{shape "silent" ""}}{{else if $h.Worst}}{{shape $h.Worst.Severity $h.Worst.Status}}{{end}}{{$h.StateText}}{{if not $h.Since.IsZero}} for {{since $h.Since}}{{end}}</span>{{if $h.Open}}<span>{{$h.Open}} {{plural $h.Open "alert to handle" "alerts to handle"}}</span>{{end}}</p>
 </header>
 
@@ -128,7 +130,25 @@
 </section>
 </div>
 
-{{if not $h.Revoked}}
+{{if eq .Role "admin"}}
+<details class="panel add" aria-labelledby="details-h">
+  <summary><h2 id="details-h">Name, labels and note</h2></summary>
+  <form method="post" action="/hosts/{{$h.ID}}/details" class="form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="d-name">Name</label>
+    <input id="d-name" name="name" type="text" maxlength="80" value="{{$h.Name}}" placeholder="{{$h.ID}}">
+    <p class="help">What people call the server, shown everywhere in the console. Its identity stays <span class="mono">{{$h.ID}}</span>, the name in its certificate.</p>
+    <label for="d-labels">Labels</label>
+    <input id="d-labels" name="labels" type="text" class="mono" value="{{range $i, $l := $h.Labels}}{{if $i}} {{end}}{{$l}}{{end}}" placeholder="env=prod client=acme">
+    <p class="help">key=value pairs separated by spaces: they group servers and the search finds them.</p>
+    <label for="d-note">Note</label>
+    <textarea id="d-note" name="note" rows="3" maxlength="2000">{{$h.Note}}</textarea>
+    <button class="primary" type="submit">Save</button>
+  </form>
+</details>
+{{end}}
+
+{{if and (not $h.Revoked) (eq .Role "admin")}}
 <details class="danger revoke" aria-labelledby="revoke-h">
   <summary><h2 id="revoke-h">Revoke this server</h2></summary>
   <p>The verifier will refuse every envelope from this server, and tell its sensor to remove itself: the package, <span class="mono">/etc/tripwatch</span> and <span class="mono">/var/lib/tripwatch</span> are deleted at its next heartbeat (sensors from 0.1.17, run by systemd). Bringing it back takes a new enrollment, with new keys.</p>

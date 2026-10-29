@@ -684,3 +684,10 @@ a.notify.off:hover { outline: var(--hair) solid var(--amber); }
 .rail-foot a.who { display: block; color: var(--ink-2); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0; }
 .rail-foot a.who:hover, .rail-foot a.who[aria-current="page"] { color: var(--teal); }
 @media (max-width: 860px) { .setup { grid-template-columns: minmax(0, 1fr); } .rail-foot a.who { display: none; } }
+
+/* A server's given name over its identity, its labels and note. */
+.host-ids { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--fs-sm); color: var(--muted); }
+.chip.label { font-family: var(--mono); }
+.host-note { margin: 0; max-width: 70ch; color: var(--ink-2); white-space: pre-line; }
+textarea { width: 100%; font: 400 var(--fs-md)/1.45 var(--sans); color: var(--ink); background: var(--raised); border: var(--hair) solid var(--rule-strong); border-radius: var(--radius-sm); padding: 9px 11px; resize: vertical; }
+textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }

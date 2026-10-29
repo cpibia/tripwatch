@@ -43,7 +43,7 @@
     {{range $d.Hosts}}
     <li class="cell st-{{.State}}">
       <a href="/hosts/{{.ID}}">
-        <span class="cell-top">{{if eq .State "silent"}}{{shape "silent" ""}}{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}{{else}}<span class="ok-dot" aria-hidden="true"></span>{{end}}<span class="mono name" title="{{.ID}}">{{.ID}}</span></span>
+        <span class="cell-top">{{if eq .State "silent"}}{{shape "silent" ""}}{{else if .Worst}}{{shape .Worst.Severity .Worst.Status}}{{else}}<span class="ok-dot" aria-hidden="true"></span>{{end}}<span class="mono name" title="{{.ID}}">{{.Display}}</span></span>
         <span class="cell-state">{{.StateText}}{{if not .Since.IsZero}} · {{since .Since}}{{end}}{{if .Outdated}} <span class="flag-update">update</span>{{end}}</span>
         <span class="cell-beat" title="last heartbeat; last snapshot {{clock .LastSnapshot}}; sensor {{if .Facts.SensorVersion}}{{.Facts.SensorVersion}}{{else}}unknown{{end}}"><time datetime="{{iso .LastHeartbeat}}">{{clock .LastHeartbeat}}</time></span>
       </a>

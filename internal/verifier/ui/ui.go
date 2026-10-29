@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/protocol"
@@ -104,6 +105,19 @@ type server struct {
 	// reserved to known browsers.
 	checks     chan struct{}
 	knownCheck chan struct{}
+	// names maps the hosts that were given a name to it, refreshed at each page: every place a
+	// host appears shows its name, its ID in the tooltip.
+	names atomic.Pointer[map[string]string]
+}
+
+// hostName is the name shown for a host ID.
+func (s *server) hostName(id string) string {
+	if m := s.names.Load(); m != nil {
+		if n, ok := (*m)[id]; ok {
+			return n
+		}
+	}
+	return id
 }
 
 // New returns the web interface handler.
@@ -114,7 +128,7 @@ func New(c Config) (http.Handler, error) {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
 	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite", "account", "secondfactor"} {
-		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
+		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "hostname": s.hostName, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
 		}
@@ -140,6 +154,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("POST /hosts/update", s.as(store.RoleAdmin, s.orderUpdate))
 	mux.HandleFunc("POST /hosts/{id}/revoke", s.as(store.RoleAdmin, s.revoke))
 	mux.HandleFunc("POST /hosts/{id}/withdraw", s.authed(s.withdraw))
+	mux.HandleFunc("POST /hosts/{id}/details", s.as(store.RoleAdmin, s.hostDetails))
 	mux.HandleFunc("GET /search", s.authed(s.search))
 	mux.HandleFunc("GET /alerts", s.authed(s.alerts))
 	mux.HandleFunc("GET /alerts/{id}", s.authed(s.alert))
@@ -302,6 +317,15 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	}
 	if p.User != "" {
 		p.Role, _ = s.Store.UserRole(r.Context(), p.User)
+		if hosts, err := s.Store.Hosts(r.Context()); err == nil {
+			names := map[string]string{}
+			for _, h := range hosts {
+				if h.Name != "" {
+					names[h.ID] = h.Name
+				}
+			}
+			s.names.Store(&names)
+		}
 	}
 	p.Path = r.URL.RequestURI()
 	if r.URL.Path == "/search" {

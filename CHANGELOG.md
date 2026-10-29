@@ -24,6 +24,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   days, in which they choose their password (12 characters at least), change roles and remove
   accounts; the last administrator can be neither demoted nor removed. The menu shows each role
   what it may use.
+- Servers can be renamed: administrators give a server a name, labels (`env=prod`,
+  `client=acme`) and a note from its page. The name shows wherever the server appears, its
+  identity (the name in its certificate) stays and shows beside it, and the searches find names,
+  labels and notes.
 - A second factor for signing in: each user sets up an authenticator app from their account page
   (QR code or key, RFC 6238 codes of six digits), confirmed with a first code, with ten
   single-use recovery codes shown once. After the password, or a one-time sign-in link, the

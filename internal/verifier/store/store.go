@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure Go driver: the verifier image needs no C toolchain
@@ -264,7 +265,7 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	for _, col := range []string{"cert_serial", "prev_serial", "peer_addr"} {
+	for _, col := range []string{"cert_serial", "prev_serial", "peer_addr", "name", "labels", "note"} {
 		var n int
 		if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = ?`, col).Scan(&n); err != nil {
 			return err
@@ -343,6 +344,25 @@ type Host struct {
 	// PeerAddr is the address the host's sensor last connected from, as the verifier saw it:
 	// behind NAT, as on most clouds, its public address, which no interface of the host holds.
 	PeerAddr string
+	// Name is what people call the server, set in the console; the ID stays its identity,
+	// written in its certificate. Labels are key=value pairs that group servers; Note is free
+	// text for whoever looks after it.
+	Name   string
+	Labels []string
+	Note   string
+}
+
+// Display is the name shown for a host: the one given in the console, or its ID.
+func (h Host) Display() string {
+	if h.Name != "" {
+		return h.Name
+	}
+	return h.ID
+}
+
+// SetHostDetails changes what people call a host, its labels and its note.
+func (s *Store) SetHostDetails(ctx context.Context, id, name string, labels []string, note string) error {
+	return s.one(ctx, `UPDATE hosts SET name = ?, labels = ?, note = ? WHERE id = ?`, name, strings.Join(labels, "\n"), note, id)
 }
 
 // Enroll registers a host and its signing key, or replaces the key of an existing host and
@@ -430,7 +450,7 @@ func (s *Store) Hosts(ctx context.Context) ([]Host, error) {
 func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, error) {
 	//nolint:gosec // where is a constant clause from this package; values are bound
 	rows, err := s.db.QueryContext(ctx, `SELECT id, public_key, enrolled_at, revoked, last_seq, last_digest,
-		last_seen, last_heartbeat, last_snapshot, cert_serial, prev_serial, peer_addr FROM hosts `+where, args...)
+		last_seen, last_heartbeat, last_snapshot, cert_serial, prev_serial, peer_addr, name, labels, note FROM hosts `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -440,8 +460,12 @@ func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, e
 		var h Host
 		var pub, digest []byte
 		var enrolled, seen, heartbeat, snapshot int64
-		if err := rows.Scan(&h.ID, &pub, &enrolled, &h.Revoked, &h.Chain.Sequence, &digest, &seen, &heartbeat, &snapshot, &h.CertSerial, &h.PrevSerial, &h.PeerAddr); err != nil {
+		var labels string
+		if err := rows.Scan(&h.ID, &pub, &enrolled, &h.Revoked, &h.Chain.Sequence, &digest, &seen, &heartbeat, &snapshot, &h.CertSerial, &h.PrevSerial, &h.PeerAddr, &h.Name, &labels, &h.Note); err != nil {
 			return nil, err
+		}
+		if labels != "" {
+			h.Labels = strings.Split(labels, "\n")
 		}
 		h.PublicKey, h.Chain.LastDigest = pub, digest
 		h.EnrolledAt, h.LastSeen, h.LastHeartbeat, h.LastSnapshot = unix(enrolled), unix(seen), unix(heartbeat), unix(snapshot)

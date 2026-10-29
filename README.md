@@ -834,6 +834,9 @@ is needed too, which closes them all.
   receives the alerts at or above its severity raised after it was added, can be tested, turned
   off and removed, and shows its latest send or the error; a channel that fails raises an alert.
   The email configured with `TRIPWATCH_SMTP_*` keeps working and is listed read-only.
+- **Server names, labels and notes.** Administrators give a server a name people use, labels as
+  key=value pairs and a note, from its page; the name shows everywhere, the identity in the
+  certificate stays, and searches find all three.
 - **Users and audit log.** Three roles: viewers read, operators also handle alerts,
   administrators also enroll and revoke servers, order sensor updates, set up notifications and
   manage users. Administrators invite people with a one-time link (three days) in which they

@@ -229,7 +229,8 @@ func (q serverQuery) matches(r hostRow) bool {
 	}
 	text := strings.ToLower(q.Text)
 	f := r.Facts
-	fields := []string{r.ID, r.PeerAddr, f.Hostname, f.OS, f.Kernel, f.Arch, f.Environment, f.SensorVersion, f.PackageManager}
+	fields := []string{r.ID, r.Name, r.Note, r.PeerAddr, f.Hostname, f.OS, f.Kernel, f.Arch, f.Environment, f.SensorVersion, f.PackageManager}
+	fields = append(fields, r.Labels...)
 	fields = append(fields, f.Addresses...)
 	fields = append(fields, f.ContainerRuntimes...)
 	for _, a := range f.Apps {

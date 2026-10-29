@@ -56,7 +56,7 @@
 {{with $d.Revoked}}
 <section aria-labelledby="revoked-h">
   <div class="section-head"><h2 id="revoked-h">Revoked</h2><p class="aside">they no longer report; their pages keep their alerts</p></div>
-  <ul class="revoked-rows">{{range .}}<li><a class="mono" href="/hosts/{{.ID}}">{{.ID}}</a>{{with .Facts.OS}} <span class="quiet">{{.}}</span>{{end}} <span class="quiet">· last heartbeat {{clock .LastHeartbeat}}</span></li>{{end}}</ul>
+  <ul class="revoked-rows">{{range .}}<li><a class="mono" href="/hosts/{{.ID}}" title="{{.ID}}">{{.Display}}</a>{{with .Facts.OS}} <span class="quiet">{{.}}</span>{{end}} <span class="quiet">· last heartbeat {{clock .LastHeartbeat}}</span></li>{{end}}</ul>
 </section>
 {{end}}
 {{end}}

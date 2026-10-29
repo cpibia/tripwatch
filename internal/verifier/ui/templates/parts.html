@@ -1,8 +1,8 @@
 {{define "sevmark"}}{{if eq .Kind "silence"}}<span class="sev sev-critical{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape "silent" .Status}}silent</span>{{else}}<span class="sev sev-{{.Severity}}{{if eq .Status "acknowledged"}} is-acked{{end}}">{{shape .Severity .Status}}{{sev .Severity}}</span>{{end}}{{end}}
 
-{{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
+{{define "hostlink"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="mono" href="/hosts/{{.}}" title="{{.}}">{{hostname .}}</a>{{end}}{{end}}
 
-{{define "hosttag"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="host-tag mono" href="/hosts/{{.}}" title="{{.}}">{{.}}</a>{{end}}{{end}}
+{{define "hosttag"}}{{if eq . "verifier"}}<span class="mono">verifier</span>{{else}}<a class="host-tag mono" href="/hosts/{{.}}" title="{{.}}">{{hostname .}}</a>{{end}}{{end}}
 
 {{define "kindtag"}}<span class="kind-tag">{{category .}}</span>{{end}}
 
