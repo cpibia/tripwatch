@@ -159,8 +159,14 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 // options and nothing a shell would interpret.
 var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Za-z][^\s;&|$` + "`" + `<>()'"\\]*)*$`)
 
+// errorReporterCommands are the shell commands error reporters run from the PHP pool when an
+// application throws (Flare and Ignition read the project's git root): matched whole, they only
+// print a directory, and anything appended makes them a shell command like any other.
+var errorReporterCommands = []string{"echo $(git rev-parse --show-toplevel)"}
+
 // routineShell reports a shell the web server's user starts for its own work, which a webshell
-// cannot pass for: PHP's mail() running the configured sendmail, and a framework's scheduler or
+// cannot pass for: PHP's mail() running the configured sendmail, an error reporter reading the
+// project's git root, and a framework's scheduler or
 // queue worker running one of its commands. The scheduler is the parent, not something named in
 // the command: the shells a webshell starts have the PHP pool as their parent.
 func (c execContext) routineShell(p system.Process, tool string) bool {
@@ -173,7 +179,7 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	// Symfony's mailer ends the shell's options with "--" before the command.
 	command = strings.TrimPrefix(command, "-- ")
-	if sendmailCommand.MatchString(command) {
+	if sendmailCommand.MatchString(command) || slices.Contains(errorReporterCommands, command) {
 		return true
 	}
 	if c.parent == nil || !c.frameworkCommand(command) {

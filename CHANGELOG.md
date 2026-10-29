@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- The shell an error reporter starts from the PHP pool to read the project's git root (Flare and
+  Ignition in Laravel, `echo $(git rev-parse --show-toplevel)`, matched whole) is not a web shell.
+
 ## [0.1.32] - 2026-10-29
 
 Update the verifier, then the sensors.

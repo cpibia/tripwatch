@@ -220,6 +220,10 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/sbin/sendmail -bs"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- id"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i; id"}, ReasonWebShell},
+		// An error reporter reading the git root; with anything more it is a shell command.
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c echo $(git rev-parse --show-toplevel)"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c echo $(git rev-parse --show-toplevel); id"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c echo $(id)"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t $(id)"}, ReasonWebShell},
 		// A scheduler runs its commands through the shell; the same command from the PHP pool
 		// is a webshell's.
