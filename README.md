@@ -552,7 +552,8 @@ those in the standard locations, resuming where it stopped. Recognized formats a
 Apache combined (also with extra trailing fields) and Caddy's JSON. The rules look for scripts
 requested in upload directories, known webshell names, commands in parameters, POSTs to static
 files or to endpoints that only serve files, access to sensitive files (`.env`, `.git`, backups),
-path traversal, SQL injection, injection probes, PHP code sent in a request (meant for a log or
+path traversal, PHP-CGI options in the query string (`-d allow_url_include=1`, written with a
+soft hyphen for CVE-2024-4577), SQL injection, injection probes, PHP code sent in a request (meant for a log or
 cache the application includes), known scanners and HTTP libraries (a weak signal, low), brute
 force on public logins and known exploit chains, correlated by IP: a session file uploaded through
 the customer address form and loaded by a failing guest cart call, a cart item added through the

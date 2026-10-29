@@ -518,6 +518,9 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	tr.file(up+"layouts/guarded-then-code.php", "<?php\ndefined( 'ABSPATH' ) || exit;\nsystem($_GET['c']);\n")
 	tr.file("var/www/blog/.redirects.php", "<?php\n$redirects = array(\n  '/old' => '/new',\n);\n")
 	tr.file(up+"backup/site-dump", "-- MySQL dump 10.13\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `date`; ?>');\n")
+	tr.file(up+"backup/bare-dump", "/*!40101 SET NAMES utf8mb4 */;\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `ls -la`; ?>');\n")
+	tr.file(up+"backup/dump-with-shell", "DROP TABLE IF EXISTS `x`;\n<?php eval(base64_decode($_POST['p'])); ?>\n")
+	tr.file(up+"backup/table-dump", "DROP TABLE IF EXISTS `wp_posts`;\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `date +%F`; ?>');\n")
 	tr.file(up+"layouts/prices.php", "<?php return array('price' => \"From $10 {per night}\", 'css' => \".a{color:red}\");")
 	tr.file(up+"plugin/index.php", "Silence is golden.")
 	tr.file(up+"layouts/function.php", "<?php\nfunction theme_page_science() {\n\treturn array( 'name' => 'Science', 'content' => '[fusion_builder_container]' );\n}\n")
@@ -556,6 +559,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 		KindScriptInUploads + " /" + up + "layouts/variable.php",
 		KindScriptInUploads + " /" + up + "layouts/interpolated.php",
 		KindCodeInUploads + " /" + up + "dropper.zip",
+		KindCodeInUploads + " /" + up + "backup/dump-with-shell",
 		KindHiddenInData + " /" + up + ".secret",
 		KindHiddenInData + " /" + up + ".11111111-2222-3333-4444-555555555555-manifest",
 		KindPolyglotImage + " /" + up + "shell.png",
@@ -565,7 +569,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", "._pin.ico", ".dbVersion.php", "wpmdb-scandir-manifest", "e2d9-manifest"} {
+	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "bare-dump", "table-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", "._pin.ico", ".dbVersion.php", "wpmdb-scandir-manifest", "e2d9-manifest"} {
 		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
 			t.Errorf("%s reported: %v", name, got)
 		}

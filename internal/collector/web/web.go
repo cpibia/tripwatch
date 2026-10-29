@@ -1166,8 +1166,12 @@ func polyglot(content []byte, php bool) bool {
 // ZIP (and the Office and OpenDocument formats inside), gzip, old Office, 7-Zip, RAR, and
 // database dumps.
 var documentMagic = [][]byte{[]byte("%PDF-"), []byte("PK\x03\x04"), []byte("\x1f\x8b"), []byte("\xd0\xcf\x11\xe0"), []byte("7z\xbc\xaf"), []byte("Rar!"),
-	// Database dumps quote every identifier in backticks.
-	[]byte("-- MySQL dump"), []byte("-- MariaDB dump"), []byte("-- phpMyAdmin SQL Dump"), []byte("-- Adminer")}
+	// Database dumps quote every identifier in backticks. Without their header comment
+	// (mysqldump --skip-comments, backup tools of hosting panels) they open with the version
+	// comment mysqldump writes, a SET, or the first statement on a table.
+	[]byte("-- MySQL dump"), []byte("-- MariaDB dump"), []byte("-- phpMyAdmin SQL Dump"), []byte("-- Adminer"),
+	[]byte("/*!40"), []byte("/*M!"), []byte("SET NAMES "), []byte("SET SQL_MODE"), []byte("SET FOREIGN_KEY_CHECKS"), []byte("SET @OLD_"),
+	[]byte("DROP TABLE "), []byte("CREATE TABLE "), []byte("LOCK TABLES "), []byte("INSERT INTO `")}
 
 // weakCodeSignals are the signals of a block that random bytes produce too: a backtick, a word
 // like exec(.

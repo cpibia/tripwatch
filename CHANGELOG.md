@@ -12,6 +12,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   the command starts, its executable no longer readable: it counts when it runs as root and
   its own parent is a verified runtime (the shim). These were reported as the web server's user
   running a shell or curl, every few seconds on hosts whose containers have health checks.
+- A database dump without its header comment (mysqldump `--skip-comments`, hosting panels'
+  backups), starting with mysqldump's version comment, a `SET`, or a first `DROP TABLE`,
+  `CREATE TABLE`, `LOCK TABLES` or `INSERT INTO`, is read like one with it: the backticks
+  around names and code quoted in posts are no longer "code inside a data file". A signature
+  that names planted code still is.
+- Web requests passing PHP-CGI options in the query string (`-d allow_url_include=1 -d
+  auto_prepend_file=php://input`, with a soft hyphen for CVE-2024-4577) are reported as such,
+  high, instead of as path traversal.
 - A command fed a here-document carries the sum of the raw text before the `<<` only, so the
   verifier can key its alert on what the command does rather than on the script it is fed.
 
