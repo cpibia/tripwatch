@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.35] - 2026-10-29
+
+Update the verifier only: the sensor has no changes, sensors on 0.1.34 stay as they are. The
+verifier adds the columns and tables it needs to the database on its first start.
+
 ### Verifier
 
 - A new console look in the colours of the new logo (a fingerprint with one broken ridge): teal
@@ -1189,7 +1194,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.34...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.35...HEAD
+[0.1.35]: https://github.com/cpibia/tripwatch/compare/v0.1.34...v0.1.35
 [0.1.34]: https://github.com/cpibia/tripwatch/compare/v0.1.33...v0.1.34
 [0.1.33]: https://github.com/cpibia/tripwatch/compare/v0.1.32...v0.1.33
 [0.1.32]: https://github.com/cpibia/tripwatch/compare/v0.1.31...v0.1.32
