@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.33] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - Apache's configuration is judged stale against its oldest worker, as nginx's: the graceful
@@ -1073,7 +1077,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.32...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.33...HEAD
+[0.1.33]: https://github.com/cpibia/tripwatch/compare/v0.1.32...v0.1.33
 [0.1.32]: https://github.com/cpibia/tripwatch/compare/v0.1.31...v0.1.32
 [0.1.31]: https://github.com/cpibia/tripwatch/compare/v0.1.30...v0.1.31
 [0.1.30]: https://github.com/cpibia/tripwatch/compare/v0.1.29...v0.1.30
