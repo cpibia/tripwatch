@@ -161,6 +161,7 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("POST /hosts/{id}/details", s.as(store.RoleAdmin, s.hostDetails))
 	mux.HandleFunc("GET /search", s.authed(s.search))
 	mux.HandleFunc("GET /alerts", s.authed(s.alerts))
+	mux.HandleFunc("GET /alerts/export", s.authed(s.exportAlerts))
 	mux.HandleFunc("GET /alerts/{id}", s.authed(s.alert))
 	mux.HandleFunc("POST /alerts/{id}/ack", s.authed(s.ack))
 	mux.HandleFunc("POST /alerts/{id}/resolve", s.authed(s.resolve))
@@ -1269,16 +1270,10 @@ type alertsData struct {
 
 func (s *server) alerts(w http.ResponseWriter, r *http.Request, se session) {
 	q := readAlertQuery(r.URL.Query())
-	f := store.AlertFilter{HostID: q.Host, Severities: q.Severity, Kinds: kindsOf(q.Category), Query: q.Text, Sort: q.Sort, Limit: alertsPerPage, Offset: q.Page * alertsPerPage}
-	switch q.View {
-	case "acknowledged":
-		f.Statuses = []string{store.StatusAcked}
-	case "resolved":
-		f.Statuses = []string{store.StatusResolved}
-	case "all":
-	default:
+	f := q.filter()
+	f.Limit, f.Offset = alertsPerPage, q.Page*alertsPerPage
+	if q.View != "acknowledged" && q.View != "resolved" && q.View != "all" {
 		q.View = "open"
-		f.Statuses = []string{store.StatusOpen, store.StatusAcked}
 	}
 	list, err := s.Store.Alerts(r.Context(), f)
 	if err != nil {

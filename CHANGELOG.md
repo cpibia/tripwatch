@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- The alert list exports as CSV or JSON with the filters and order it shows, every page of
+  it up to 10,000 alerts, from links beside the count. CSV cells that a spreadsheet would run as
+  a formula start with an apostrophe, and each export is recorded in the audit log.
+
 ## [0.1.40] - 2026-10-29
 
 Update the verifier, then the sensors: the verifier reads the new sensor's database object

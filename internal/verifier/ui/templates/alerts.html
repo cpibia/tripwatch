@@ -43,6 +43,7 @@
   {{with $q.Host}}<a class="chip" href="{{$q.Without "host"}}">server <span class="mono">{{.}}</span><svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
   {{with $q.Category}}<a class="chip" href="{{$q.Without "cat"}}">category {{range $d.Categories}}{{if eq .Key $q.Category}}{{.Label}}{{end}}{{end}}<svg class="x" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2L8 8M8 2L2 8"/></svg><span class="sr"> (remove)</span></a>{{end}}
   {{if $d.LowCount}}<span class="aside">{{$d.LowCount}} low {{plural $d.LowCount "note" "notes"}} hidden: they are on each server's page, or tick low above</span>{{end}}
+  {{if $d.Total}}<span class="export">Export <a href="{{$q.Export "csv"}}" download>CSV</a> <a href="{{$q.Export "json"}}" download>JSON</a></span>{{end}}
 </p>
 <div class="board{{if $d.Focus.Alert}} with-focus{{end}}">
 <div class="board-main">

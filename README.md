@@ -870,6 +870,10 @@ is needed too, which closes them all.
   left. A viewer or an operator can be limited to the servers carrying one label: everything
   else stays out of their lists, counts, charts and searches, and out of reach. The audit log
   keeps who did what in the console, newest first.
+- **Export.** The alert list, as filtered and in its order, downloads as CSV or JSON, every
+  page of it up to 10,000 alerts (the file says when it stops there). Cells of the CSV that a
+  spreadsheet would run as a formula, since titles and details carry what the server wrote,
+  start with an apostrophe. Each export is in the audit log.
 - **API.** Administrators make tokens (Settings, API tokens) that programs send as
   `Authorization: Bearer twk_...`: `GET /api/v1/alerts` (filters `status`, `severity`, `host`,
   `limit`; `total` counts every match; with `after=<id>` alerts come in the order they were

@@ -143,6 +143,29 @@ func (q alertQuery) values() url.Values {
 	return v
 }
 
+// filter is what the query selects, without its page.
+func (q alertQuery) filter() store.AlertFilter {
+	f := store.AlertFilter{HostID: q.Host, Severities: q.Severity, Kinds: kindsOf(q.Category), Query: q.Text, Sort: q.Sort}
+	switch q.View {
+	case "acknowledged":
+		f.Statuses = []string{store.StatusAcked}
+	case "resolved":
+		f.Statuses = []string{store.StatusResolved}
+	case "all":
+	default:
+		f.Statuses = []string{store.StatusOpen, store.StatusAcked}
+	}
+	return f
+}
+
+// Export returns the address of the whole query, every page, as a file of a format.
+func (q alertQuery) Export(format string) string {
+	q.Page = 0
+	v := q.values()
+	v.Set("format", format)
+	return "/alerts/export?" + v.Encode()
+}
+
 // Next and Prev are the addresses of the following and preceding pages of the same query.
 func (q alertQuery) Next() string {
 	q.Page++

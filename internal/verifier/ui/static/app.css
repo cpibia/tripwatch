@@ -620,6 +620,7 @@ input[type="radio"] { accent-color: var(--teal); margin: 0; }
 .result-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0 -12px; font-size: var(--fs-sm); color: var(--ink-2); }
 .result-line > span:first-child { font-weight: 600; color: var(--ink); }
 .result-line .aside { margin: 0; }
+.result-line .export { margin-left: auto; display: inline-flex; gap: 8px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; font-size: var(--fs-xs); color: var(--ink-2); text-decoration: none; border: var(--hair) solid var(--rule-strong); border-radius: 999px; background: var(--surface); }
 .chip:hover { color: var(--ink); border-color: var(--teal); }
 .chip .x { width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.4; fill: none; }

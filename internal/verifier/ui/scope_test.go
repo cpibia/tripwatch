@@ -64,7 +64,8 @@ func TestScopedUserSeesOnlyTheirServers(t *testing.T) {
 	_, body := h.get("/")
 	ops := csrfField.FindStringSubmatch(body)[1]
 
-	for _, path := range []string{"/", "/hosts", "/alerts?view=all", "/search?q=%2Fsrv%2Fshared", "/search?q=other"} {
+	for _, path := range []string{"/", "/hosts", "/alerts?view=all", "/search?q=%2Fsrv%2Fshared", "/search?q=other",
+		"/alerts/export?view=all&format=csv", "/alerts/export?view=all&format=json"} {
 		_, body := h.get(path)
 		if strings.Contains(body, "other-db") || strings.Contains(body, "hidden-title") || strings.Contains(body, "hidden-event") {
 			t.Errorf("%s shows a server out of scope", path)
