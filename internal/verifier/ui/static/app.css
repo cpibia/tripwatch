@@ -196,7 +196,8 @@ h2 { font-size: var(--fs-lg); line-height: 1.3; }
 .k-high.on .spark polyline { stroke: var(--amber); }
 .kpi.on .spark polyline { stroke-width: 1.75; }
 
-.dash { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; align-items: start; }
+/* Dense: the rankings rise into the space beside a tall list of servers. */
+.dash { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-flow: row dense; gap: 16px; align-items: start; }
 .panel { display: grid; gap: 12px; align-content: start; min-width: 0; padding: 18px 20px 20px; background: linear-gradient(180deg, var(--raised) 0%, var(--surface) 100%); border: var(--hair) solid var(--rule); border-radius: var(--radius); }
 .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; padding-bottom: 10px; border-bottom: var(--hair) solid var(--rule); }
 .panel-head h2 { font-size: var(--fs-lg); }
@@ -204,9 +205,10 @@ h2 { font-size: var(--fs-lg); line-height: 1.3; }
 .panel-note b { color: var(--ink); font-weight: 600; }
 .panel .empty { border-bottom: 0; padding: 8px 0; }
 .p-time { grid-column: span 8; }
-.p-fleet { grid-column: span 4; }
+.p-fleet { grid-column: span 4; grid-row: span 2; }
 .p-open { grid-column: span 12; }
-.p-rules, .p-load, .p-web { grid-column: span 4; }
+.p-rules, .p-load { grid-column: span 4; }
+.p-web { grid-column: span 12; }
 @media (max-width: 1279px) {
   .p-time, .p-fleet { grid-column: span 12; }
   .p-rules, .p-load { grid-column: span 6; }
@@ -234,8 +236,10 @@ h2 { font-size: var(--fs-lg); line-height: 1.3; }
 .key .mark-medium path, .key .mark-medium circle { fill: var(--seg-medium); stroke: var(--seg-medium); }
 .key .mark-low circle { stroke: var(--seg-low); fill: var(--seg-low); }
 
-.fleet { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 8px; }
-.cell a { display: grid; gap: 4px; padding: 10px 12px; height: 100%; text-decoration: none; background: var(--raised); border: var(--hair) solid var(--rule); border-radius: var(--radius-sm); }
+.fleet { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.cell a { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 9px 12px; text-decoration: none; background: var(--raised); border: var(--hair) solid var(--rule); border-radius: var(--radius-sm); }
+.cell .cell-state { grid-column: 1; }
+.cell .cell-beat { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 .cell a:hover { border-color: var(--teal); }
 .cell-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cell .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
