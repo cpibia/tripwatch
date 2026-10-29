@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.31] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - A failed probe logged by several proxy sites (the same path tried over http and https, each
@@ -992,7 +996,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.30...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.31...HEAD
+[0.1.31]: https://github.com/cpibia/tripwatch/compare/v0.1.30...v0.1.31
 [0.1.30]: https://github.com/cpibia/tripwatch/compare/v0.1.29...v0.1.30
 [0.1.29]: https://github.com/cpibia/tripwatch/compare/v0.1.28...v0.1.29
 [0.1.28]: https://github.com/cpibia/tripwatch/compare/v0.1.27...v0.1.28
