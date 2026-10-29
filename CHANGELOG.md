@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.34] - 2026-10-29
+
+Update the verifier, then the sensors.
+
 ### Sensor
 
 - A process's command line and `LD_PRELOAD` are reported up to 4 KB (the sensor still judges the
@@ -1103,7 +1107,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.33...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.34...HEAD
+[0.1.34]: https://github.com/cpibia/tripwatch/compare/v0.1.33...v0.1.34
 [0.1.33]: https://github.com/cpibia/tripwatch/compare/v0.1.32...v0.1.33
 [0.1.32]: https://github.com/cpibia/tripwatch/compare/v0.1.31...v0.1.32
 [0.1.31]: https://github.com/cpibia/tripwatch/compare/v0.1.30...v0.1.31
