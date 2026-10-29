@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,5 +46,15 @@ func TestRemoveOwn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(shared, "bundle.json")); !os.IsNotExist(err) {
 		t.Error("the bundle was kept")
+	}
+}
+
+// A snapshot cut short by the sensor's stop is not sealed: no envelope reaches the transport,
+// which this test does not even provide.
+func TestSnapshotCutShortIsNotSent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := (sensor{root: t.TempDir()}).sendSnapshot(ctx, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the stop's cancellation", err)
 	}
 }

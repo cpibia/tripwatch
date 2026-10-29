@@ -466,9 +466,16 @@ const (
 )
 
 func (s sensor) sendSnapshot(ctx context.Context, client *transport.Client) error {
+	r := s.snapshot(ctx)
+	// Cut short by the sensor's own stop (an update, a reboot), the snapshot would be sealed and
+	// sent by the next start: it holds what a scan finds by name before its content clears it,
+	// and the next start collects a whole one anyway.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
-	if err := json.NewEncoder(zw).Encode(s.snapshot(ctx)); err != nil {
+	if err := json.NewEncoder(zw).Encode(r); err != nil {
 		return err
 	}
 	if err := zw.Close(); err != nil {

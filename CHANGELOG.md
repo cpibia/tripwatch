@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A snapshot cut short by the sensor's own stop (an update, a reboot) is no longer sealed and
+  sent by the next start: it listed the scripts in upload directories found by name before
+  their content was checked, raising alerts the whole snapshot withdraws.
+
 ## [0.1.31] - 2026-10-29
 
 Update the verifier, then the sensors.
