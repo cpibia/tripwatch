@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -209,6 +210,43 @@ func TestDatabaseObjects(t *testing.T) {
 	}
 	if len(got) != 7 {
 		t.Errorf("findings = %v", got)
+	}
+}
+
+// An object taken over in place keeps its ID and what it does: a token moved to another
+// administrator, an integration given more rules or a trigger redefined by another account are
+// changes too. Hashes and grants an older sensor did not send are not compared.
+func TestDatabaseObjectsChangedInPlace(t *testing.T) {
+	read := []string{apps.ObjectAdminToken, apps.ObjectIntegration, apps.ObjectTrigger}
+	state := func(objects ...apps.DBObject) State {
+		st := baseState()
+		st.Apps.Apps[0].ObjectsRead = read
+		st.Apps.Apps[0].Objects = objects
+		return st
+	}
+	prev := state(
+		apps.DBObject{Kind: apps.ObjectAdminToken, ID: "9", Target: "integration 3", Hash: "k1"},
+		apps.DBObject{Kind: apps.ObjectIntegration, ID: "3", Target: "status 1", Hash: "i1", Grants: "consumer 5, rules 2:1"},
+		apps.DBObject{Kind: apps.ObjectTrigger, ID: "trg", Target: "catalog (AFTER INSERT)", Hash: "t1", Definer: "shop@localhost"},
+		apps.DBObject{Kind: apps.ObjectAdminToken, ID: "10", Target: "administrator 2"},
+	)
+	cur := state(
+		apps.DBObject{Kind: apps.ObjectAdminToken, ID: "9", Target: "administrator 1", Hash: "k1"},
+		apps.DBObject{Kind: apps.ObjectIntegration, ID: "3", Target: "status 1", Hash: "i1", Grants: "consumer 5, rules 3:7"},
+		apps.DBObject{Kind: apps.ObjectTrigger, ID: "trg", Target: "catalog (AFTER INSERT)", Hash: "t1", Definer: "root@%"},
+		apps.DBObject{Kind: apps.ObjectAdminToken, ID: "10", Target: "administrator 2", Hash: "k2"},
+	)
+	got := map[string]int{}
+	for _, f := range Evaluate(&prev, cur) {
+		got[f.Title]++
+	}
+	want := map[string]int{
+		"Database admin API token changed in /var/www/shop": 1,
+		"Database integration changed in /var/www/shop":     1,
+		"Database trigger changed in /var/www/shop":         1,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("findings = %v, want %v", got, want)
 	}
 }
 

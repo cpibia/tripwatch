@@ -434,13 +434,30 @@ $databases['default']['default'] = array('database' => 'd', 'username' => 'u', '
 	}
 }
 
+// An integration carries what it may do, so that rules given to an existing one are seen.
+func TestMagentoIntegrationGrants(t *testing.T) {
+	db := &fakeDB{answers: map[string][]map[string]string{
+		"FROM integration": {{"id": "3", "name": "erp", "what": "1", "hash": "aa", "grants": "consumer 5, rules 2:123"}},
+	}}
+	var seen dbConfig
+	res := collect(t, fstest.MapFS{
+		"var/www/shop/bin/magento":     text(""),
+		"var/www/shop/app/etc/di.xml":  text(""),
+		"var/www/shop/app/etc/env.php": text(magentoEnv),
+	}, Collector{Connect: connectTo(db, &seen)})
+	i := slices.IndexFunc(res.Apps[0].Objects, func(o DBObject) bool { return o.Kind == ObjectIntegration })
+	if i < 0 || res.Apps[0].Objects[i].Grants != "consumer 5, rules 2:123" {
+		t.Errorf("objects = %+v", res.Apps[0].Objects)
+	}
+}
+
 // The database's code and Magento's ways back in are listed with a hash of what they do, never
 // their bodies; a kind whose query failed is not marked as read.
 func TestMagentoDatabaseObjects(t *testing.T) {
 	db := &fakeDB{answers: map[string][]map[string]string{
 		"information_schema.TRIGGERS": {{"name": "trg_order", "target": "sales_order", "what": "AFTER INSERT", "definer": "shop@localhost", "hash": "aa", "created": "2026-10-27"}},
 		"information_schema.ROUTINES": {{"name": "f1", "what": "FUNCTION", "hash": "bb"}, {"name": "p1", "what": "PROCEDURE", "hash": "cc"}},
-		"FROM oauth_token":            {{"id": "9", "admin": "1", "consumer": "", "what": "access", "created": "2026-10-27"}},
+		"FROM oauth_token":            {{"id": "9", "admin": "1", "consumer": "", "what": "access", "created": "2026-10-27", "hash": "ff"}},
 		"FROM layout_update": {{"id": "4", "handle": "checkout_cart_index", "hash": "dd",
 			"body": `<block class="Magento\Framework\View\Element\Template"><arguments><argument name="x">{{var this.getTemplateFilter().filter(system)}}</argument></arguments></block>`}},
 		"FROM email_template":  {{"id": "2", "name": "order_new", "hash": "ee", "body": "Thanks {{var order.increment_id}}"}},
@@ -463,7 +480,7 @@ func TestMagentoDatabaseObjects(t *testing.T) {
 	if len(byKind[ObjectFunction]) != 1 || len(byKind[ObjectProcedure]) != 1 {
 		t.Errorf("routines = %+v", p.Objects)
 	}
-	if o := byKind[ObjectAdminToken]; len(o) != 1 || o[0].Target != "administrator 1" {
+	if o := byKind[ObjectAdminToken]; len(o) != 1 || o[0].Target != "administrator 1" || o[0].Hash != "ff" {
 		t.Errorf("tokens = %+v", o)
 	}
 	if o := byKind[ObjectLayoutUpdate]; len(o) != 1 || !slices.Contains(o[0].Markers, "gettemplatefilter") {

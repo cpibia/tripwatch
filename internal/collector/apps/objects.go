@@ -28,13 +28,16 @@ const (
 // leaves it); Markers name the dangerous constructs found in it. The bodies themselves, token
 // values and customers' names are never collected.
 type DBObject struct {
-	Kind    string   `json:"kind"`
-	ID      string   `json:"id"`
-	Name    string   `json:"name,omitempty"`
-	Target  string   `json:"target,omitempty"`
-	Hash    string   `json:"hash,omitempty"`
-	Created string   `json:"created,omitempty"`
-	Definer string   `json:"definer,omitempty"`
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Name    string `json:"name,omitempty"`
+	Target  string `json:"target,omitempty"`
+	Hash    string `json:"hash,omitempty"`
+	Created string `json:"created,omitempty"`
+	Definer string `json:"definer,omitempty"`
+	// Grants is what an integration may do: its consumer and a digest of its role's rules,
+	// computed by the database server. Taking over an existing integration changes no other field.
+	Grants  string   `json:"grants,omitempty"`
 	Markers []string `json:"markers,omitempty"`
 }
 
@@ -101,20 +104,28 @@ var schemaQueries = []objectQuery{
 // come first, so what is added is always within the bound.
 func magentoQueries(t string) []objectQuery {
 	return []objectQuery{
-		{ObjectIntegration, limit(`SELECT integration_id AS id, name, status AS what, created_at AS created,
-			SHA2(CONCAT_WS('|', name, email, endpoint, identity_link_url, status, setup_type), 256) AS hash
-			FROM ` + t + `integration ORDER BY integration_id DESC`),
+		// The rules of an integration's role are folded with BIT_XOR rather than GROUP_CONCAT,
+		// which group_concat_max_len would cut after a few dozen of Magento's hundreds of rules.
+		{ObjectIntegration, limit(`SELECT i.integration_id AS id, i.name, i.status AS what, i.created_at AS created,
+			SHA2(CONCAT_WS('|', i.name, i.email, i.endpoint, i.identity_link_url, i.status, i.setup_type), 256) AS hash,
+			CONCAT('consumer ', COALESCE(i.consumer_id, ''), ', rules ', (SELECT CONCAT(COUNT(*), ':', COALESCE(BIT_XOR(CONV(LEFT(SHA2(CONCAT(ru.resource_id, '=', ru.permission), 256), 16), 16, 10)), 0))
+				FROM ` + t + `authorization_role ro JOIN ` + t + `authorization_rule ru ON ru.role_id = ro.role_id
+				WHERE ro.user_id = i.integration_id AND ro.user_type = 1)) AS grants
+			FROM ` + t + `integration i ORDER BY i.integration_id DESC`),
 			func(r map[string]string) DBObject {
-				return DBObject{ID: r["id"], Name: r["name"], Target: "status " + r["what"], Hash: r["hash"], Created: r["created"]}
+				return DBObject{ID: r["id"], Name: r["name"], Target: "status " + r["what"], Hash: r["hash"], Created: r["created"], Grants: r["grants"]}
 			}},
-		{ObjectAdminToken, limit(`SELECT entity_id AS id, COALESCE(admin_id, '') AS admin, COALESCE(consumer_id, '') AS consumer, type AS what, created_at AS created
+		// The token and its secret are hashed by the database server: their values never leave it,
+		// and one rewritten in place, or moved to another administrator, changes the hash.
+		{ObjectAdminToken, limit(`SELECT entity_id AS id, COALESCE(admin_id, '') AS admin, COALESCE(consumer_id, '') AS consumer, type AS what, created_at AS created,
+			SHA2(CONCAT_WS('|', COALESCE(admin_id, ''), COALESCE(consumer_id, ''), type, authorized, SHA2(token, 256), SHA2(secret, 256)), 256) AS hash
 			FROM ` + t + `oauth_token WHERE customer_id IS NULL AND revoked = 0 ORDER BY entity_id DESC`),
 			func(r map[string]string) DBObject {
 				target := "integration " + r["consumer"]
 				if r["admin"] != "" {
 					target = "administrator " + r["admin"]
 				}
-				return DBObject{ID: r["id"], Name: r["what"], Target: target, Created: r["created"]}
+				return DBObject{ID: r["id"], Name: r["what"], Target: target, Hash: r["hash"], Created: r["created"]}
 			}},
 		{ObjectLayoutUpdate, limit(`SELECT layout_update_id AS id, handle, SHA2(xml, 256) AS hash, LEFT(xml, 65535) AS body
 			FROM ` + t + `layout_update ORDER BY layout_update_id DESC`),

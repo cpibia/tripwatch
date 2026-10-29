@@ -28,6 +28,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   file name holding a line break can no longer add a line to an alert email that reads as the
   verifier's own, and a right-to-left override can no longer show `x.php` as `xphp.png`. The
   same goes for the real-time events listed on the host page, including the ones stored before.
+- A Magento admin token or integration taken over in place is an alert: a token moved to
+  another administrator or rewritten, an integration whose consumer or role's rules changed,
+  and a trigger, routine or event redefined by another account. The first snapshot of the new
+  sensor only records the new hashes and grants.
 
 ## [0.1.39] - 2026-10-29
 

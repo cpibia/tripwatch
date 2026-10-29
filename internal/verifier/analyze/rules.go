@@ -1445,7 +1445,7 @@ func objectChanges(appPath string, prev, cur apps.Profile) []Finding {
 			continue
 		}
 		before, seen := old[o.Kind+"\x00"+o.ID]
-		if seen && before.Hash == o.Hash {
+		if seen && sameObject(before, o) {
 			continue
 		}
 		sev := "high"
@@ -1470,9 +1470,28 @@ func objectChanges(appPath string, prev, cur apps.Profile) []Finding {
 			detail += " Created or changed: " + o.Created + "."
 		}
 		detail += "\nName, written by whoever created it: " + o.Name
-		out = append(out, Finding{Fingerprint: "object:" + appPath + ":" + o.Kind + ":" + o.ID + ":" + o.Hash, Severity: sev, Title: title, Detail: detail})
+		fingerprint := "object:" + appPath + ":" + o.Kind + ":" + o.ID + ":" + o.Hash
+		if seen && before.Hash == o.Hash {
+			sum := sha256.Sum256([]byte(o.Target + "\x00" + o.Definer + "\x00" + o.Grants))
+			fingerprint += ":" + hex.EncodeToString(sum[:8])
+			detail += "\nWhat it does is the same; what changed is whom it acts for or what it may do."
+		}
+		out = append(out, Finding{Fingerprint: fingerprint, Severity: sev, Title: title, Detail: detail})
 	}
 	return out
+}
+
+// sameObject reports whether an object is unchanged: what it does, whom it acts for, who defined
+// it and what it may do. Hashes and grants that the previous sensor did not collect are not
+// compared, so an update of the sensor does not make every object look changed.
+func sameObject(before, cur objectT) bool {
+	if before.Hash != "" && before.Hash != cur.Hash {
+		return false
+	}
+	if before.Grants != "" && before.Grants != cur.Grants {
+		return false
+	}
+	return before.Target == cur.Target && before.Definer == cur.Definer
 }
 
 // maxNamedScripts is how many changed scripts of one application get an alert each; past it, a
