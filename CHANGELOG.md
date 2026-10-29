@@ -23,6 +23,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   `TRIPWATCH_SECRETS_KEY` or, without it, `pki/secrets.key` in the data volume, copied by
   `backup`. A verifier older than this one cannot read sealed channels: going back to one
   means restoring the backup taken before the upgrade.
+- The overview's open alerts start with a lane of those raised in the last 24 hours, counted in
+  full, set apart from those open for longer: what is new is the first question of a morning
+  look.
 
 ## [0.1.40] - 2026-10-29
 

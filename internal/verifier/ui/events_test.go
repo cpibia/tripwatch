@@ -65,3 +65,27 @@ func TestHostPageSaysEventRetention(t *testing.T) {
 		t.Error("the configured retention is not shown")
 	}
 }
+
+// The overview sets the alerts raised in the last day apart from those open for longer.
+func TestOverviewNewLane(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-72*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []struct {
+		title string
+		at    time.Time
+	}{{"old-finding", now.Add(-48 * time.Hour)}, {"new-finding", now.Add(-time.Hour)}} {
+		if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: a.title, Severity: "high", Kind: "web", Title: a.title}, a.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.login()
+	_, body := h.get("/")
+	lane, before := strings.Index(body, "New in the last 24 hours"), strings.Index(body, "Open from before")
+	fresh, old := strings.Index(body, "new-finding"), strings.LastIndex(body, "old-finding")
+	if lane < 0 || before < 0 || !(lane < fresh && fresh < before && before < old) {
+		t.Errorf("lane %d, new %d, before %d, old %d", lane, fresh, before, old)
+	}
+}

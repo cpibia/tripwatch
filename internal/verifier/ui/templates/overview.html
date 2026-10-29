@@ -63,8 +63,13 @@
     <h2 id="alerts-h">Open alerts</h2>
     <p class="aside">most severe first, alerts of one rule grouped · <a href="/alerts">all alerts</a></p>
   </div>
+  {{if $d.Fresh}}
+  <h3 class="lane-h">New in the last 24 hours <span class="lane-n">{{$d.FreshTotal}}</span></h3>
+  {{template "alerttable" (boardtable $d.Fresh .CSRF .Path $d.Base $d.Focus)}}
+  {{if $d.Alerts}}<h3 class="lane-h">Open from before</h3>{{end}}
+  {{end}}
   {{if $d.Alerts}}{{template "alerttable" (boardtable $d.Alerts .CSRF .Path $d.Base $d.Focus)}}
-  {{else}}<p class="empty">No open or acknowledged alerts.</p>{{end}}
+  {{else if not $d.Fresh}}<p class="empty">No open or acknowledged alerts.</p>{{end}}
 </section>
 
 <section class="panel p-rules" aria-labelledby="rules-h">

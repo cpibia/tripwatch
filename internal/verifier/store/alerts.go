@@ -316,8 +316,10 @@ type AlertFilter struct {
 	Statuses   []string
 	Severities []string
 	Unnotified bool
-	Since      time.Time
-	Limit      int
+	// Since keeps the alerts updated since a time, CreatedSince those raised since a time.
+	Since        time.Time
+	CreatedSince time.Time
+	Limit        int
 	// Oldest orders by creation, oldest first, within each severity instead of newest update.
 	Oldest bool
 	// Current leaves out the alerts of revoked hosts, which no longer report: their alerts stay
@@ -403,6 +405,10 @@ func alertWhere(ctx context.Context, f AlertFilter) (string, []any) {
 	if !f.Since.IsZero() {
 		q += ` AND updated_at >= ?`
 		args = append(args, f.Since.Unix())
+	}
+	if !f.CreatedSince.IsZero() {
+		q += ` AND created_at >= ?`
+		args = append(args, f.CreatedSince.Unix())
 	}
 	if f.HostID != "" {
 		q += ` AND host_id = ?`

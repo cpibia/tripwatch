@@ -695,13 +695,17 @@ func (c *counter) add(at time.Time) {
 }
 
 type overviewData struct {
-	Hosts    []hostRow
-	Alerts   []store.Alert
-	Counters []*counter
-	Limit    int
-	Focus    focus
-	Base     string
-	Healthy  int
+	Hosts []hostRow
+	// Fresh are the open alerts raised in the last 24 hours, FreshTotal how many there are past
+	// the list's bound, and Alerts the others not resolved.
+	Fresh      []store.Alert
+	FreshTotal int
+	Alerts     []store.Alert
+	Counters   []*counter
+	Limit      int
+	Focus      focus
+	Base       string
+	Healthy    int
 	// Fleet holds the hosts shown as cells; past overviewCells only those needing attention are,
 	// and MoreHealthy and MoreOther count the rest, listed on the servers page.
 	Fleet       []hostRow
@@ -781,7 +785,22 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request, se session) {
 		s.internal(w, r, err)
 		return
 	}
-	d := overviewData{Alerts: open, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r),
+	// What was raised in the last day is set apart from what has been open for longer: the first
+	// question of a morning look is what is new.
+	cutoff := now.Add(-24 * time.Hour)
+	freshFilter := store.AlertFilter{Statuses: []string{store.StatusOpen}, CreatedSince: cutoff, Limit: overviewAlerts, Current: true}
+	fresh, err := s.Store.Alerts(ctx, freshFilter)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	freshTotal, err := s.Store.CountAlerts(ctx, freshFilter)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	earlier := slices.DeleteFunc(slices.Clone(open), func(a store.Alert) bool { return a.Status == store.StatusOpen && !a.CreatedAt.Before(cutoff) })
+	d := overviewData{Alerts: earlier, Fresh: fresh, FreshTotal: freshTotal, Limit: overviewAlerts, Counters: []*counter{critical, silent, high, acked}, Focus: panel, Base: pageWithoutPick(r),
 		Timeline: buildTimeline(raised, r.URL.Query().Get("range"), now), Rules: buildRules(raised, 8), Loaded: buildHosts(bySeverity, 8), Web: buildWeb(raised, 6)}
 	for _, h := range hosts {
 		if h.Revoked {
