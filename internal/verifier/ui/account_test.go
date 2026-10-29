@@ -48,11 +48,19 @@ func TestSecondFactorSignIn(t *testing.T) {
 	if len(codes) != 10 {
 		t.Fatalf("%d recovery codes shown", len(codes))
 	}
+	if res, _ := h.post("/account/2fa-begin", url.Values{"csrf": {csrf}}); res.StatusCode != http.StatusConflict {
+		t.Fatalf("second factor replaced without a code: %d", res.StatusCode)
+	}
 	h.post("/logout", url.Values{"csrf": {csrf}})
 
 	res, _ := h.post("/login", url.Values{"email": {email}, "password": {password}, "next": {"/alerts"}})
 	if loc := res.Header.Get("Location"); !strings.HasPrefix(loc, "/login/2fa") {
 		t.Fatalf("after the password: %q", loc)
+	}
+	for _, c := range res.Header.Values("Set-Cookie") {
+		if strings.HasPrefix(c, deviceCookie+"=") {
+			t.Fatal("the password alone made the browser a known one")
+		}
 	}
 	if res, _ := h.get("/alerts"); res.StatusCode != http.StatusSeeOther || !strings.HasPrefix(res.Header.Get("Location"), "/login/2fa") {
 		t.Fatalf("a page before the code: %d %q", res.StatusCode, res.Header.Get("Location"))

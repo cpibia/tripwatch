@@ -165,6 +165,12 @@ func (s *Store) HostEventsBetween(ctx context.Context, host string, from, to tim
 // SearchEvents returns the latest events, of every host, whose path or report contains text,
 // ignoring the case of ASCII letters: what the console's search finds among the changes seen as
 // they happened.
+// searchedEvents is how many of the newest events a search looks through.
+const searchedEvents = 50000
+
+// searchTimeout bounds one search.
+const searchTimeout = 5 * time.Second
+
 func (s *Store) SearchEvents(ctx context.Context, text string, limit int) ([]Event, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -172,12 +178,18 @@ func (s *Store) SearchEvents(ctx context.Context, text string, limit int) ([]Eve
 	}
 	like := likePattern(strings.ToValidUTF8(text[:min(len(text), maxQueryLen)], ""))
 	scope, args := scopeClause(ctx, "host_id")
+	// The events hold text a monitored host chooses (upload paths and names), and a LIKE over
+	// all of them costs as much as that text is long: only the newest are searched, within a
+	// time limit.
+	ctx, cancel := context.WithTimeout(ctx, searchTimeout)
+	defer cancel()
 	return s.events(ctx, `SELECT id, host_id, seq, at, received_at, class, op, path, package_manager, data FROM events
-		WHERE (path LIKE ? ESCAPE '\' OR data LIKE ? ESCAPE '\')`+scope+` ORDER BY id DESC LIMIT ?`, append(append([]any{like, like}, args...), limit)...)
+		WHERE id > (SELECT COALESCE(MAX(id), 0) FROM events) - ? AND (path LIKE ? ESCAPE '\' OR data LIKE ? ESCAPE '\')`+scope+`
+		ORDER BY id DESC LIMIT ?`, append(append([]any{searchedEvents, like, like}, args...), limit)...)
 }
 
 func (s *Store) events(ctx context.Context, q string, args ...any) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.read.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -45,10 +45,20 @@ verifier, so it is clear which of the two needs updating. Versions follow
   (QR code or key, RFC 6238 codes of six digits), confirmed with a first code, with ten
   single-use recovery codes shown once. After the password, or a one-time sign-in link, the
   session opens nothing until a code is given; a code works once, and five wrong ones end the
-  session. Administrators can reset the second factor of someone who lost their phone, and
+  session and refuse the account's codes for 15 minutes, each wrong one after that locking
+  them again. The count belongs to the account: parallel requests and new sign-ins with the
+  password do not reset it, only a right code does, and every wrong code is in the audit log. A
+  browser becomes a known one (with its own sign-in lane) only after its code. Replacing the
+  second factor takes turning it off with a current code first; turning it on, or an
+  administrator resetting it, signs the account out of its other sessions. Administrators can reset the second factor of someone who lost their phone, and
   `tripwatch-verifier user -email ... -reset-2fa` does it from the server when none can.
 - The account page lists where the account is signed in (browser, sign-in, last use) and signs
-  out any of them.
+  out any of them; only a session that existed is recorded in the audit log.
+- Searches (the top search box and the alert list's text filter) run on read-only connections
+  of their own, at most five seconds each, and the real-time events they look through are the
+  newest 50,000: text a server chose can no longer make a search hold up what the servers send.
+- A webhook that answers with an error is reported by its status only: its answer, which may
+  come from inside the verifier's network, is no longer shown. Telegram's answers still are.
 - An audit log (Settings, Audit log) records who signed in, handled alerts, enrolled, revoked,
   ordered updates, changed notifications and managed users, only ever added to, the oldest
   dropped past 100,000 entries.

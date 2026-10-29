@@ -460,20 +460,33 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("login", "email", email)
-	if err := s.Store.Audit(r.Context(), email, "signed in", "", "with the password", s.Now()); err != nil {
-		s.Log.Error("audit", "err", err)
-	}
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
-	if !strings.HasPrefix(lane, "device:") {
-		if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
-			s.cookie(w, deviceCookie, device, store.DeviceLifetime)
-		}
-	}
 	if on, _ := s.Store.TOTPEnabled(r.Context(), email); on {
+		if err := s.Store.Audit(r.Context(), email, "password accepted", "", "waiting for the second factor", s.Now()); err != nil {
+			s.Log.Error("audit", "err", err)
+		}
 		http.Redirect(w, r, "/login/2fa?next="+url.QueryEscape(data.Next), http.StatusSeeOther)
 		return
 	}
+	if err := s.Store.Audit(r.Context(), email, "signed in", "", "with the password", s.Now()); err != nil {
+		s.Log.Error("audit", "err", err)
+	}
+	if !strings.HasPrefix(lane, "device:") {
+		s.rememberDevice(w, r, email)
+	}
 	http.Redirect(w, r, data.Next, http.StatusSeeOther) //nolint:gosec // data.Next went through localPath
+}
+
+// rememberDevice makes the browser a known one for email, unless it is already.
+func (s *server) rememberDevice(w http.ResponseWriter, r *http.Request, email string) {
+	if c, err := r.Cookie(deviceCookie); err == nil {
+		if owner, err := s.Store.DeviceEmail(r.Context(), c.Value, s.Now()); err == nil && owner == email {
+			return
+		}
+	}
+	if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
+		s.cookie(w, deviceCookie, device, store.DeviceLifetime)
+	}
 }
 
 // checkSlot waits for a turn to check a password. Every lane, users' and unknown emails' alike,

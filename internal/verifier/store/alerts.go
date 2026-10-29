@@ -380,9 +380,19 @@ func (s *Store) Alert(ctx context.Context, id int64) (Alert, error) {
 // how many.
 func (s *Store) CountAlerts(ctx context.Context, f AlertFilter) (int, error) {
 	where, args := alertWhere(ctx, f)
+	ctx, cancel := searchContext(ctx, f)
+	defer cancel()
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts`+where, args...).Scan(&n) //nolint:gosec // alertWhere builds constant clauses; values are bound
+	err := s.read.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts`+where, args...).Scan(&n) //nolint:gosec // alertWhere builds constant clauses; values are bound
 	return n, err
+}
+
+// searchContext bounds a list that searches text in time, like a search of events.
+func searchContext(ctx context.Context, f AlertFilter) (context.Context, context.CancelFunc) {
+	if strings.TrimSpace(f.Query) == "" {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, searchTimeout)
 }
 
 // alertWhere is the WHERE clause of a filter, with its arguments, the request's scope included.
@@ -460,7 +470,9 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 		q += ` LIMIT ? OFFSET ?`
 		args = append(args, f.Limit, max(f.Offset, 0))
 	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	ctx, cancel := searchContext(ctx, f)
+	defer cancel()
+	rows, err := s.read.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -512,7 +524,7 @@ type HostSummary struct {
 func (s *Store) Summaries(ctx context.Context) (map[string]HostSummary, error) {
 	scope, args := scopeClause(ctx, "host_id")
 	//nolint:gosec // the scope is a constant clause of this package; its label is bound
-	rows, err := s.db.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at,
+	rows, err := s.read.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at,
 		occurrences, COALESCE(acked_by, ''), notified_at, n FROM (
 			SELECT *, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY status = 'open' DESC, `+severityOrder+`, created_at, id) AS rn,
 				COUNT(*) OVER (PARTITION BY host_id) AS n
@@ -548,7 +560,7 @@ type Tally struct {
 func (s *Store) Tallies(ctx context.Context) (map[string]Tally, error) {
 	scope, args := scopeClause(ctx, "host_id")
 	//nolint:gosec // the scope is a constant clause of this package; its label is bound
-	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN status = 'acknowledged' THEN 'acknowledged' ELSE severity END AS k,
+	rows, err := s.read.QueryContext(ctx, `SELECT CASE WHEN status = 'acknowledged' THEN 'acknowledged' ELSE severity END AS k,
 		COUNT(*), MIN(created_at) FROM alerts WHERE status != 'resolved' AND kind != 'silence' AND `+currentHosts+scope+` GROUP BY k`, args...)
 	if err != nil {
 		return nil, err

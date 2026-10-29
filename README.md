@@ -851,14 +851,19 @@ is needed too, which closes them all.
   servers they may see included, is shown once, expires, and can be revoked.
 - **Account.** Each user can set up a second factor (an authenticator app, with ten single-use
   recovery codes): signing in then asks a code after the password, five wrong codes end the
-  attempt, and a code works once. The page lists the sessions of the account and signs out any
+  attempt and refuse the account's codes for 15 minutes (each wrong one after that again),
+  whatever the session or the address, and a code works once. A browser becomes a known one
+  only once its code is given, and replacing the second factor takes turning it off with a
+  current code; setting it up or having it reset signs the account out everywhere else. The page lists the sessions of the account and signs out any
   of them; administrators can reset the second factor of someone who lost their phone.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 
 A search box at the top of every page looks for a text across the fleet at once: servers (name,
 address, system, applications and the sites they serve), alerts of every status (server, title,
-what the server reported) and the real-time events of the last 7 days (path, command).
+what the server reported) and the newest 50,000 real-time events (path, command). A search runs
+at most five seconds, on read-only connections of its own, so it never holds up what the
+servers send.
 
 A dark operations console in the colours of the logo, a fingerprint with one broken ridge: teal
 for what can be used or is selected, coral and amber only for the severities. The menu groups

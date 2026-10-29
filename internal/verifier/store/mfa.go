@@ -26,13 +26,19 @@ const (
 	// recoveryCodes is how many single-use codes a user gets when turning the second factor on.
 	recoveryCodes = 10
 	// MaxSecondFactorFailures ends a half-open session after this many wrong codes: the password
-	// must be given again.
+	// must be given again. The same count, kept per user, locks the codes for SecondFactorLock.
 	MaxSecondFactorFailures = 5
+	// SecondFactorLock is how long a user's codes are refused once MaxSecondFactorFailures were
+	// wrong in a row; every wrong code after that locks them again.
+	SecondFactorLock = 15 * time.Minute
 )
 
 var (
 	// ErrBadCode is returned for a wrong, reused or expired code.
 	ErrBadCode = errors.New("store: wrong code")
+	// ErrSecondFactorLocked is returned, without looking at the code, while a user's codes are
+	// locked after too many wrong ones.
+	ErrSecondFactorLocked = errors.New("store: too many wrong codes, try again later")
 	// ErrSecondFactorRequired is returned for a session that still waits for its code.
 	ErrSecondFactorRequired = errors.New("store: the session waits for its second factor")
 	b32                     = base32.StdEncoding.WithPadding(base32.NoPadding)
@@ -141,10 +147,10 @@ func (s *Store) RecoveryCodesLeft(ctx context.Context, email string) (int, error
 	return n, err
 }
 
-// DisableTOTP turns a user's second factor off, with their recovery codes.
+// DisableTOTP turns a user's second factor off, with their recovery codes and any lock.
 func (s *Store) DisableTOTP(ctx context.Context, email string) error {
 	email = normalEmail(email)
-	if err := s.one(ctx, `UPDATE users SET totp_secret = '', totp_pending = '', totp_last = 0 WHERE email = ?`, email); err != nil {
+	if err := s.one(ctx, `UPDATE users SET totp_secret = '', totp_pending = '', totp_last = 0, mfa_failures = 0, mfa_locked_until = 0 WHERE email = ?`, email); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM recovery_codes WHERE email = ?`, email)
@@ -153,32 +159,54 @@ func (s *Store) DisableTOTP(ctx context.Context, email string) error {
 
 // CheckSecondFactor accepts a code from the user's app, once (a code seen before, or one older
 // than the last used, is refused), or one of their recovery codes, which is then spent.
+//
+// Each check first takes one of the user's attempts, in a single statement, so parallel requests
+// cannot check more codes than the limit allows; the count belongs to the user, not to a session,
+// so signing in again with a stolen password does not start it over. Only a right code resets it.
 func (s *Store) CheckSecondFactor(ctx context.Context, email, code string, now time.Time) error {
 	email = normalEmail(email)
 	var secret string
 	var last int64
-	if err := s.db.QueryRowContext(ctx, `SELECT totp_secret, totp_last FROM users WHERE email = ?`, email).Scan(&secret, &last); err != nil {
+	err := s.db.QueryRowContext(ctx, `UPDATE users SET mfa_failures = mfa_failures + 1,
+		mfa_locked_until = CASE WHEN mfa_failures + 1 >= ? THEN ? ELSE mfa_locked_until END
+		WHERE email = ? AND mfa_locked_until <= ? RETURNING totp_secret, totp_last`,
+		MaxSecondFactorFailures, now.Add(SecondFactorLock).Unix(), email, now.Unix()).Scan(&secret, &last)
+	if errors.Is(err, sql.ErrNoRows) {
+		if exists, _ := s.UserExists(ctx, email); exists {
+			return ErrSecondFactorLocked
+		}
 		return ErrBadCode
 	}
+	if err != nil {
+		return err
+	}
+	ok, err := s.matchSecondFactor(ctx, email, secret, last, code, now)
+	if err != nil || !ok {
+		if err == nil {
+			err = ErrBadCode
+		}
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE users SET mfa_failures = 0, mfa_locked_until = 0 WHERE email = ?`, email)
+	return err
+}
+
+func (s *Store) matchSecondFactor(ctx context.Context, email, secret string, last int64, code string, now time.Time) (bool, error) {
 	if step := matchTOTP(secret, code, now); secret != "" && step > last {
 		res, err := s.db.ExecContext(ctx, `UPDATE users SET totp_last = ? WHERE email = ? AND totp_last < ?`, step, email, step)
 		if err != nil {
-			return err
+			return false, err
 		}
-		if n, _ := res.RowsAffected(); n == 1 {
-			return nil
-		}
-		return ErrBadCode
+		n, _ := res.RowsAffected()
+		return n == 1, nil
 	}
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(code))))
 	res, err := s.db.ExecContext(ctx, `DELETE FROM recovery_codes WHERE code_hash = ? AND email = ?`, sum[:], email)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if n, _ := res.RowsAffected(); n == 1 {
-		return nil
-	}
-	return ErrBadCode
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // CompleteSecondFactor lets a half-open session through once its code checked out.
@@ -242,6 +270,14 @@ func (s *Store) EndSession(ctx context.Context, email, id string) error {
 		return ErrNotFound
 	}
 	return s.one(ctx, `DELETE FROM sessions WHERE token_hash = ? AND email = ?`, hash, normalEmail(email))
+}
+
+// EndOtherSessions closes every session of a user but the one of keepToken (all of them for an
+// empty one): after the second factor changes, a session opened without it must not stay.
+func (s *Store) EndOtherSessions(ctx context.Context, email, keepToken string) error {
+	keep := sha256.Sum256([]byte(keepToken))
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE email = ? AND token_hash != ?`, normalEmail(email), keep[:])
+	return err
 }
 
 // touchEvery bounds how often a session's last use is written.

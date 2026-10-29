@@ -108,3 +108,52 @@ func TestSecondFactor(t *testing.T) {
 		t.Errorf("sign-in without a second factor: %v", err)
 	}
 }
+
+// Wrong codes sent in parallel take one attempt each before any is checked, so no more than the
+// limit are ever checked; the lock holds against a right code and new sign-ins, and lifts later.
+func TestSecondFactorLock(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	const user = "admin@example.net"
+	if err := s.SetUser(ctx, user, "a long enough password", t0); err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := s.BeginTOTP(ctx, user)
+	if _, err := s.ConfirmTOTP(ctx, user, codeAt(t, secret, t0), t0); err != nil {
+		t.Fatal(err)
+	}
+	at := t0.Add(time.Hour)
+	errs := make(chan error, 50)
+	for range cap(errs) {
+		go func() { errs <- s.CheckSecondFactor(ctx, user, "000000", at) }()
+	}
+	checked := 0
+	for range cap(errs) {
+		switch err := <-errs; {
+		case errors.Is(err, ErrBadCode):
+			checked++
+		case !errors.Is(err, ErrSecondFactorLocked):
+			t.Fatal(err)
+		}
+	}
+	if checked != MaxSecondFactorFailures {
+		t.Fatalf("%d codes checked, want %d", checked, MaxSecondFactorFailures)
+	}
+	if err := s.CheckSecondFactor(ctx, user, codeAt(t, secret, at), at); !errors.Is(err, ErrSecondFactorLocked) {
+		t.Fatalf("right code while locked: %v", err)
+	}
+	later := at.Add(SecondFactorLock)
+	if err := s.CheckSecondFactor(ctx, user, "000000", later); !errors.Is(err, ErrBadCode) {
+		t.Fatalf("after the lock: %v", err)
+	}
+	if err := s.CheckSecondFactor(ctx, user, codeAt(t, secret, later), later); !errors.Is(err, ErrSecondFactorLocked) {
+		t.Fatalf("a wrong code past the limit did not lock again: %v", err)
+	}
+	last := later.Add(SecondFactorLock)
+	if err := s.CheckSecondFactor(ctx, user, codeAt(t, secret, last), last); err != nil {
+		t.Fatalf("right code after the lock: %v", err)
+	}
+	if err := s.CheckSecondFactor(ctx, user, "000000", last); !errors.Is(err, ErrBadCode) {
+		t.Fatalf("a right code did not reset the count: %v", err)
+	}
+}

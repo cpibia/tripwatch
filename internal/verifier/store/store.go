@@ -220,7 +220,14 @@ CREATE TABLE IF NOT EXISTS update_order (
 
 type Store struct {
 	db *sql.DB
+	// read serves the console's heavy reads (lists, counts, searches) on connections of their
+	// own: under WAL they see the last commit and never hold up the single writer, so a slow
+	// search cannot stall ingest.
+	read *sql.DB
 }
+
+// readConns bounds the read-only connections.
+const readConns = 4
 
 // Open opens or creates the database at path.
 func Open(path string) (*Store, error) {
@@ -238,7 +245,13 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: migration: %w", err)
 	}
-	return &Store{db: db}, nil
+	read, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)")
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	read.SetMaxOpenConns(readConns)
+	return &Store{db: db, read: read}, nil
 }
 
 // migrate adds the columns that databases created by earlier versions lack.
@@ -288,7 +301,8 @@ func migrate(db *sql.DB) error {
 	}
 	// Users before roles were all administrators; sessions before 0.1.35 carry no history.
 	for table, cols := range map[string]map[string]string{
-		"users": {"role": "TEXT NOT NULL DEFAULT 'admin'", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_last": "INTEGER NOT NULL DEFAULT 0", "scope": "TEXT NOT NULL DEFAULT ''"}, //nolint:gosec // column definitions, not credentials
+		"users": {"role": "TEXT NOT NULL DEFAULT 'admin'", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_last": "INTEGER NOT NULL DEFAULT 0", "scope": "TEXT NOT NULL DEFAULT ''", //nolint:gosec // column definitions, not credentials
+			"mfa_failures": "INTEGER NOT NULL DEFAULT 0", "mfa_locked_until": "INTEGER NOT NULL DEFAULT 0"},
 		"sessions": {"created_at": "INTEGER NOT NULL DEFAULT 0", "last_seen": "INTEGER NOT NULL DEFAULT 0", "agent": "TEXT NOT NULL DEFAULT ''",
 			"mfa_pending": "INTEGER NOT NULL DEFAULT 0", "mfa_failures": "INTEGER NOT NULL DEFAULT 0"},
 	} {
@@ -336,7 +350,7 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error { return errors.Join(s.read.Close(), s.db.Close()) }
 
 type Host struct {
 	ID            string

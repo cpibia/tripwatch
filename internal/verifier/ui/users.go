@@ -102,6 +102,12 @@ func (s *server) userAction(w http.ResponseWriter, r *http.Request, se session) 
 		err = s.Store.DisableTOTP(r.Context(), email)
 		if err == nil {
 			s.audit(r, se, "second factor reset", email, "")
+			// Someone who lost their phone may have lost it to whoever holds it now.
+			keep := ""
+			if strings.EqualFold(email, se.Email) {
+				keep = se.token
+			}
+			err = s.Store.EndOtherSessions(r.Context(), email, keep)
 		}
 	default:
 		s.fail(w, r, http.StatusNotFound, "Unknown action", "This action does not exist.")

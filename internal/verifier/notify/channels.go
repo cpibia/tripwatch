@@ -62,7 +62,7 @@ func (n *Notifier) deliver(ctx context.Context, c store.Channel, subject, body s
 		if err != nil {
 			return err
 		}
-		endpoint := "https://api.telegram.org/bot" + url.PathEscape(c.Settings.BotToken) + "/sendMessage"
+		endpoint := "https://" + telegramHost + "/bot" + url.PathEscape(c.Settings.BotToken) + "/sendMessage"
 		return n.postJSON(ctx, endpoint, payload, nil)
 	case store.ChannelWebhook:
 		list := make([]webhookAlert, 0, len(alerts))
@@ -114,11 +114,20 @@ func (n *Notifier) postJSON(ctx context.Context, endpoint string, body []byte, h
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
+		// Only Telegram's own answer is quoted, it says what to fix ("chat not found"). A webhook
+		// may point inside the verifier's network, and its error page must not be read back
+		// through the notifications page and the alerts.
+		if req.URL.Host != telegramHost {
+			return fmt.Errorf("%s answered %s", redactURL(endpoint), resp.Status)
+		}
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("%s answered %s: %s", redactURL(endpoint), resp.Status, bytes.TrimSpace(msg))
 	}
 	return nil
 }
+
+// telegramHost is the Bot API's address.
+const telegramHost = "api.telegram.org"
 
 // redactURL keeps the host of an address: paths and queries may hold tokens.
 func redactURL(raw string) string {

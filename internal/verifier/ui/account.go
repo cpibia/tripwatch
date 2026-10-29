@@ -53,6 +53,12 @@ func (s *server) accountAction(w http.ResponseWriter, r *http.Request, se sessio
 	ctx := r.Context()
 	switch r.PathValue("action") {
 	case "2fa-begin":
+		// Replacing a second factor goes through turning it off, which takes a current code: a
+		// session alone must not be enough to move it to another phone.
+		if on, err := s.Store.TOTPEnabled(ctx, se.Email); err != nil || on {
+			s.renderAccount(w, r, se, http.StatusConflict, accountData{Error: "The second factor is on already: turn it off with a current code first."})
+			return
+		}
 		secret, err := s.Store.BeginTOTP(ctx, se.Email)
 		if err != nil {
 			s.internal(w, r, err)
@@ -71,10 +77,17 @@ func (s *server) accountAction(w http.ResponseWriter, r *http.Request, se sessio
 			return
 		}
 		s.audit(r, se, "second factor turned on", se.Email, "")
+		if err := s.Store.EndOtherSessions(ctx, se.Email, se.token); err != nil {
+			s.Log.Error("end other sessions", "err", err)
+		}
 		s.renderAccount(w, r, se, http.StatusOK, accountData{Recovery: codes})
 	case "2fa-off":
 		if err := s.Store.CheckSecondFactor(ctx, se.Email, r.PostFormValue("code"), s.Now()); err != nil {
-			s.renderAccount(w, r, se, http.StatusBadRequest, accountData{Error: "Give a current code from your app, or a recovery code, to turn the second factor off."})
+			msg := "Give a current code from your app, or a recovery code, to turn the second factor off."
+			if errors.Is(err, store.ErrSecondFactorLocked) {
+				msg = lockedMessage
+			}
+			s.renderAccount(w, r, se, http.StatusBadRequest, accountData{Error: msg})
 			return
 		}
 		if err := s.Store.DisableTOTP(ctx, se.Email); err != nil {
@@ -84,11 +97,15 @@ func (s *server) accountAction(w http.ResponseWriter, r *http.Request, se sessio
 		s.audit(r, se, "second factor turned off", se.Email, "")
 		s.renderAccount(w, r, se, http.StatusOK, accountData{Notice: "The second factor is off: signing in takes the password only."})
 	case "end-session":
-		if err := s.Store.EndSession(ctx, se.Email, r.PostFormValue("id")); err != nil && !errors.Is(err, store.ErrNotFound) {
+		// Only a session that existed is recorded: anyone signed in could otherwise flood the
+		// audit log with made-up IDs and push older entries out.
+		switch err := s.Store.EndSession(ctx, se.Email, r.PostFormValue("id")); {
+		case err == nil:
+			s.audit(r, se, "session ended", se.Email, "")
+		case !errors.Is(err, store.ErrNotFound):
 			s.internal(w, r, err)
 			return
 		}
-		s.audit(r, se, "session ended", se.Email, "")
 		http.Redirect(w, r, "/account", http.StatusSeeOther)
 	default:
 		s.fail(w, r, http.StatusNotFound, "Unknown action", "This action does not exist.")
@@ -137,8 +154,16 @@ func (s *server) secondFactor(w http.ResponseWriter, r *http.Request) {
 	}
 	next := localPath(r.PostFormValue("next"), "/")
 	c, _ := r.Cookie(sessionCookie)
-	if err := s.Store.CheckSecondFactor(r.Context(), email, r.PostFormValue("code"), s.Now()); err != nil {
+	err := s.Store.CheckSecondFactor(r.Context(), email, r.PostFormValue("code"), s.Now())
+	if errors.Is(err, store.ErrSecondFactorLocked) {
+		s.render(w, r, http.StatusTooManyRequests, "secondfactor", page{Title: "Code", Data: secondFactorData{Next: next, Error: lockedMessage}})
+		return
+	}
+	if err != nil {
 		s.Log.Warn("wrong second factor", "email", email)
+		if err := s.Store.Audit(r.Context(), email, "wrong second factor code", "", "", s.Now()); err != nil {
+			s.Log.Error("audit", "err", err)
+		}
 		alive, ferr := s.Store.FailSecondFactor(r.Context(), c.Value)
 		if ferr != nil || !alive {
 			s.cookie(w, sessionCookie, "", -1)
@@ -155,8 +180,14 @@ func (s *server) secondFactor(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.Audit(r.Context(), email, "second factor given", "", "", s.Now()); err != nil {
 		s.Log.Error("audit", "err", err)
 	}
+	// The browser becomes a known one, with a sign-in lane of its own, only once the code
+	// checked out: the password alone must not buy a way around the email's lane.
+	s.rememberDevice(w, r, email)
 	http.Redirect(w, r, next, http.StatusSeeOther) //nolint:gosec // next went through localPath
 }
+
+// lockedMessage tells a user their codes are locked, without saying for how long exactly.
+const lockedMessage = "Too many wrong codes: codes are refused for a while. Try again in 15 minutes, or ask an administrator to reset your second factor."
 
 // halfOpen returns the user of a session that gave its password and waits for its code.
 func (s *server) halfOpen(r *http.Request) (string, bool) {
