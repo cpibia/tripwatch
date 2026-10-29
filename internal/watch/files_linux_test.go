@@ -895,3 +895,36 @@ func TestPrivateTmpIsWatched(t *testing.T) {
 		t.Errorf("duplicated events: %v", got)
 	}
 }
+
+// A service's private /tmp goes when the service stops: its removal is no event.
+func TestPrivateTmpRemovedIsNoEvent(t *testing.T) {
+	root := t.TempDir()
+	private := filepath.Join(root, "tmp/systemd-private-abc-man-db.service-x")
+	if err := os.MkdirAll(filepath.Join(private, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	if err := os.RemoveAll(private); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range collect(t, ch, 1) {
+		if e.Root {
+			t.Errorf("root event for %s", e.Path)
+		}
+	}
+	for _, u := range f.Unwatched() {
+		if strings.Contains(u, "systemd-private") {
+			t.Errorf("gap for the private /tmp: %s", u)
+		}
+	}
+}

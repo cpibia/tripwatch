@@ -343,7 +343,7 @@ func (f *Files) add(dir string, targets []Target, depth int) {
 		switch {
 		case errors.Is(err, unix.ENOSPC):
 			f.issues.Add(errors.New("watch: the kernel's inotify watch limit is reached (fs.inotify.max_user_watches): " + dir + " is not watched"))
-		case root:
+		case root && !slices.ContainsFunc(targets, func(t Target) bool { return t.Dir == dir && t.Ephemeral }):
 			// The directory was there a moment ago, when the plan listed it: a root moved
 			// away again is tried again, like one whose move the kernel reported.
 			f.rootLost(dir, class)
@@ -389,7 +389,9 @@ const (
 func (f *Files) rootGone(w *watched) {
 	for _, t := range w.targets {
 		if t.Dir == w.dir {
-			f.rootLost(w.dir, t.Class)
+			if !t.Ephemeral {
+				f.rootLost(w.dir, t.Class)
+			}
 			return
 		}
 	}
@@ -1003,7 +1005,7 @@ func (f *Files) globTargets(targets []Target) []Target {
 			}
 			if info, err := fs.Lstat(f.src.FS, m); err == nil && info.IsDir() {
 				t := t
-				t.Dir = "/" + m
+				t.Dir, t.Ephemeral = "/"+m, true
 				out = append(out, t)
 			}
 		}

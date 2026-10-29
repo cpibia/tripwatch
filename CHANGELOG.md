@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A service's private `/tmp` that goes when the service stops is no "watched directory moved
+  away" event.
+- A data function may take parameters: they run nothing while it is only defined.
+
 ## [0.1.28] - 2026-10-29
 
 Update the verifier, then the sensors.

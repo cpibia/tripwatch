@@ -113,6 +113,9 @@ type Target struct {
 	Spawn     map[string]Target
 	// Depth, when set, replaces MaxDepth for this target.
 	Depth int
+	// Ephemeral marks a directory that comes and goes with what created it (a service's
+	// private /tmp): its removal is no event and is not watched for again.
+	Ephemeral bool
 }
 
 // Bounds: watches cost kernel memory, and upload trees can be deep and wide.

@@ -289,13 +289,14 @@ func dataOnlyWhy(content []byte) (bool, string) {
 				j++
 			}
 			word = strings.ToLower(string(src[i:j]))
-			// A function without parameters whose body is data, as a theme wraps a page
-			// layout, defines something and runs nothing; any call in the file stays code.
+			// A function whose body is data, as a theme wraps a page layout, defines
+			// something and runs nothing; any call in the file stays code.
 			if word == "function" && depth == 0 {
 				if m := functionHead.Find(src[i:]); m != nil {
 					i, word, depth = i+len(m)-1, "", 1
 					continue
 				}
+				return false, fmt.Sprintf("function head %.48q at %d", src[i:min(len(src), i+48)], i)
 			}
 			if !strings.HasPrefix(word, "$") && !slices.Contains([]string{"return", "array", "true", "false", "null"}, word) {
 				return false, fmt.Sprintf("word %.32q at %d", word, i)
@@ -321,8 +322,9 @@ func dataOnlyWhy(content []byte) (bool, string) {
 	return true, ""
 }
 
-// functionHead is the head of a function without parameters, up to its opening brace.
-var functionHead = regexp.MustCompile(`^function\s+\w+\s*\(\s*\)\s*(?::\s*\??\w+\s*)?\{`)
+// functionHead is the head of a function, up to its opening brace. Its parameters run nothing
+// while it is only defined: their defaults are constant expressions.
+var functionHead = regexp.MustCompile(`^function\s+&?\w+\s*\([^{};]*\)\s*(?::\s*\??\w+\s*)?\{`)
 
 func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80 }
 
