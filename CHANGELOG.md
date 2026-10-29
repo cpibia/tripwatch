@@ -6,6 +6,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A set-user-ID program from the system's directories that exits at once (a `sudo` whose
+  command fails) is no longer reported as root gained through an unknown program: the sensor
+  remembers what each process it inspected started from, and uses it when the process is gone
+  by its change of user. A process whose start was not inspected is still reported.
+
 ## [0.1.39] - 2026-10-29
 
 Update the verifier, then the sensors: the verifier has no changes of its own, but sensors are

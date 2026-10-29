@@ -51,6 +51,10 @@ type Execs struct {
 	homes    map[int]string
 	uploads  []string
 	repeats  repeats
+	// started remembers the executable of the processes recently inspected at their start, for
+	// the change of user that follows: a set-user-ID program that exits at once leaves nothing
+	// in /proc by then. Only the reader goroutine touches it.
+	started recentExes
 	// Dropped counts events lost because the consumer did not keep up; Skipped, processes not
 	// inspected because more started than MaxInspections in a second.
 	Dropped atomic.Int64
@@ -210,6 +214,7 @@ func (x *Execs) message(m []byte) bool {
 		if !ok {
 			return true
 		}
+		x.started.add(pid, p.Exe, p.ExeDeleted)
 		x.mu.Lock()
 		reason, script := classifyExec(p, execContext{webUsers: x.webUsers, homes: x.homes, uploads: x.uploads, fromCron: x.fromCron, fromRuntime: x.fromRuntime, owner: x.owner, parent: x.parent})
 		x.mu.Unlock()
@@ -232,6 +237,10 @@ func (x *Execs) message(m []byte) bool {
 			return false
 		}
 		p, ok := system.ReadProcess(x.src.FS, tgid)
+		if ok && p.Exe == "" {
+			// Gone between its start and now: what it ran was read when it started.
+			p.Exe, p.ExeDeleted = x.started.get(tgid)
+		}
 		if ok && privileged(p, ruid, euid) {
 			e := x.event(ReasonPrivilege, p)
 			e.User, e.EUser = &ruid, &euid
@@ -240,6 +249,41 @@ func (x *Execs) message(m []byte) bool {
 		return true
 	}
 	return false
+}
+
+// maxRecentExes bounds the processes remembered from their start: a few seconds of a busy host.
+const maxRecentExes = 4096
+
+// recentExes maps the PIDs of the latest processes inspected at their start to their executable,
+// the oldest forgotten first. A PID is reused only after its process is gone, and its next start
+// replaces the entry.
+type recentExes struct {
+	exes  map[int]recentExe
+	order []int
+}
+
+type recentExe struct {
+	exe     string
+	deleted bool
+}
+
+func (r *recentExes) add(pid int, exe string, deleted bool) {
+	if r.exes == nil {
+		r.exes = map[int]recentExe{}
+	}
+	if _, seen := r.exes[pid]; !seen {
+		if len(r.order) >= maxRecentExes {
+			delete(r.exes, r.order[0])
+			r.order = r.order[1:]
+		}
+		r.order = append(r.order, pid)
+	}
+	r.exes[pid] = recentExe{exe: exe, deleted: deleted}
+}
+
+func (r *recentExes) get(pid int) (string, bool) {
+	e := r.exes[pid]
+	return e.exe, e.deleted
 }
 
 // shells may stand between cron and the job it runs (sh -c "...").

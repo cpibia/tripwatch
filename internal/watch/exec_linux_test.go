@@ -161,3 +161,26 @@ func TestFromRuntime(t *testing.T) {
 		t.Error("an exiting runc not started by a runtime, or not root, is taken for the runtime's")
 	}
 }
+
+// The executables remembered from process starts answer for a process gone by its change of
+// user, the oldest forgotten past the bound and a reused PID answered with its latest start.
+func TestRecentExes(t *testing.T) {
+	var r recentExes
+	r.add(10, "/usr/bin/sudo", false)
+	if exe, _ := r.get(10); exe != "/usr/bin/sudo" {
+		t.Fatalf("remembered %q", exe)
+	}
+	r.add(10, "/tmp/x", true)
+	if exe, deleted := r.get(10); exe != "/tmp/x" || !deleted {
+		t.Fatalf("a reused PID: %q %v", exe, deleted)
+	}
+	for pid := 11; pid < 11+maxRecentExes; pid++ {
+		r.add(pid, "/usr/bin/true", false)
+	}
+	if exe, _ := r.get(10); exe != "" || len(r.exes) != maxRecentExes {
+		t.Errorf("past the bound: %q, %d kept", exe, len(r.exes))
+	}
+	if p := (system.Process{Exe: "/usr/bin/sudo"}); privileged(p, 1000, 0) {
+		t.Error("sudo, read at its start, taken for a backdoor")
+	}
+}
