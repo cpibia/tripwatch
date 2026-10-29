@@ -889,3 +889,23 @@ func TestHookChanges(t *testing.T) {
 		t.Errorf("with packages upgraded: %v", got)
 	}
 }
+
+// A directory in the loader's cache that no configuration names is an alert; the system's
+// default directories, hwcaps subdirectories and what the configuration names are not.
+func TestLoaderCacheDirs(t *testing.T) {
+	cur := baseState()
+	cur.Hooks = &system.HooksResult{Loader: &system.LoaderPaths{
+		CacheDirs: []string{"/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3", "/usr/lib64", "/lib/tls",
+			"/usr/local/lib", "/opt/vendor/lib/haswell", "/opt/x", "/usr/lib/x86_64-linux-gnu/evil"},
+		ConfigDirs: []string{"/usr/local/lib", "/opt/vendor/lib"},
+	}}
+	got := slices.DeleteFunc(fingerprints(Evaluate(nil, cur)), func(f string) bool { return !strings.Contains(f, "loader-cache") })
+	want := []string{"high persistence:loader-cache:/opt/x", "high persistence:loader-cache:/usr/lib/x86_64-linux-gnu/evil"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	cur.Hooks.Loader.Truncated = true
+	if got := slices.DeleteFunc(fingerprints(Evaluate(nil, cur)), func(f string) bool { return !strings.Contains(f, "loader-cache") }); len(got) != 0 {
+		t.Errorf("truncated: %v", got)
+	}
+}

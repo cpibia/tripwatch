@@ -69,8 +69,11 @@ const (
 type HooksResult struct {
 	Files []collector.File `json:"files"`
 	// Preload lists the libraries in /etc/ld.so.preload, injected into every process.
-	Preload []string         `json:"preload,omitempty"`
-	Issues  collector.Issues `json:"issues,omitempty"`
+	Preload []string `json:"preload,omitempty"`
+	// Loader is where the dynamic loader looks for libraries, by its cache and its
+	// configuration.
+	Loader *LoaderPaths     `json:"loader,omitempty"`
+	Issues collector.Issues `json:"issues,omitempty"`
 }
 
 // Hooks collects startup, login and loader hooks, system-wide and in every home directory.
@@ -119,6 +122,8 @@ func (Hooks) Collect(ctx context.Context, src collector.Source) (any, error) {
 			}
 		}
 	}
+
+	res.Loader = readLoaderPaths(src.FS, &res.Issues)
 
 	preload, err := collector.ReadLines(src.FS, "etc/ld.so.preload")
 	res.Issues.Add(err)

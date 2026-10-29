@@ -681,6 +681,34 @@ func packagesChanged(prev, cur *system.PackagesResult) bool {
 	return prev.StatusSHA256 != "" && cur.StatusSHA256 != "" && prev.StatusSHA256 != cur.StatusSHA256
 }
 
+// trustedLoaderDir matches the directories ldconfig searches whatever the configuration says:
+// /lib and /usr/lib, their 32 and 64-bit variants, and their multiarch subdirectories.
+var trustedLoaderDir = regexp.MustCompile(`^/(?:usr/)?lib(?:32|64|x32)?(?:/[a-z0-9_]+-linux-[a-z0-9_]+)?$`)
+
+// legacyHwcaps are the subdirectories older glibc versions searched for optimised builds.
+var legacyHwcaps = []string{"tls", "haswell", "avx512_1", "x86_64", "i686", "i586", "sse2", "v2", "v3", "v4"}
+
+// unconfiguredLoaderDirs lists the directories of the loader's cache that neither its
+// configuration nor its defaults name, the glibc-hwcaps subdirectories of a named one counting
+// as that one.
+func unconfiguredLoaderDirs(l *system.LoaderPaths) []string {
+	named := setOf(l.ConfigDirs, func(d string) string { return d })
+	var out []string
+	for _, dir := range l.CacheDirs {
+		d := path.Clean(dir)
+		if i := strings.Index(d, "/glibc-hwcaps/"); i > 0 {
+			d = d[:i]
+		}
+		for slices.Contains(legacyHwcaps, path.Base(d)) && !named.has(d) && !trustedLoaderDir.MatchString(d) {
+			d = path.Dir(d)
+		}
+		if !named.has(d) && !trustedLoaderDir.MatchString(d) {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
 // unjudgedHooks are collected with the hooks but not judged by hookChanges: ld.so.preload has
 // its own rule on what it loads, and the resolver files are rewritten by DHCP clients and
 // container runtimes without running anything.
@@ -989,6 +1017,12 @@ func Evaluate(prev *State, cur State) []Finding {
 	if h := cur.Hooks; h != nil {
 		for _, lib := range h.Preload {
 			state("persistence", "preload:"+lib, "critical", "Library loaded into every process", lib+" is in /etc/ld.so.preload: the technique of userspace rootkits.")
+		}
+		if l := h.Loader; l != nil && !l.Truncated {
+			for _, dir := range unconfiguredLoaderDirs(l) {
+				state("persistence", "loader-cache:"+dir, "high", "Library cache searches a directory no configuration names: "+dir,
+					dir+" is in /etc/ld.so.cache, so programs load libraries from it, but neither ld.so.conf nor its includes name it: \"ldconfig "+dir+"\" puts it there, and a library in it with the name of a system one is loaded instead. Compare ldconfig -p with the configuration; running ldconfig without arguments rebuilds the cache from the configuration.")
+			}
 		}
 		if prev != nil && prev.Hooks != nil {
 			out = append(out, hookChanges(prev, cur)...)

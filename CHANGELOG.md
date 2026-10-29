@@ -29,6 +29,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Symfony's Console asking for the terminal size (`stty`, `stty -a`, through the shell silenced or
   filtered for the columns, BusyBox's applet included) is not a web shell; ClamAV scanning an
   upload may send its errors to its output (`2>&1`).
+- The directories the loader's cache (`/etc/ld.so.cache`, glibc's format, bounded) searches and
+  those its configuration names are reported with the hooks.
 - The hooks of a home are described up to 64 files per pattern (the system's up to 1,024), the
   rest counted in the issues: an account filling its `.config/autostart` made every snapshot of
   the server too large to be accepted. Hook files carry their inode change time.
@@ -59,6 +61,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   (by their inode change time, which `touch` cannot set back) before the previous snapshot are
   not reported as new, so updating the sensor raises nothing. Only a change of package versions
   lowers them, not `apt-mark hold`; files without a hash are compared by type and size.
+- A directory in the loader's cache that neither its configuration nor the system's library
+  directories name is a high alert: `ldconfig /dir` puts one there without any configuration
+  file, and a library in it with a system library's name is loaded instead.
 - A collector result with more than 500,000 values, or past 1,000,000 together with the others
   (smallest first), is refused alone and reported as that collector's error: one inflated result
   no longer makes the whole snapshot refused.
