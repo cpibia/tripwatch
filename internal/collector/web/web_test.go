@@ -1207,7 +1207,7 @@ func TestCodeInDocuments(t *testing.T) {
 	tr.file("var/www/blog/wp-includes/version.php", "<?php $wp_version = '6.6';")
 	tr.file("var/www/blog/wp-content/uploads/2026/offer.pdf", "%PDF-1.7\n<? Ej4`x9 ?>\nendobj")
 	tr.file("var/www/blog/wp-content/uploads/2026/planted.pdf", "%PDF-1.7\n<?php system($_GET['c']); ?>")
-	tr.file("var/www/blog/wp-content/uploads/2026/notes.txt", "log <? `id` ?>")
+	tr.file("var/www/blog/wp-content/uploads/2026/notes.txt", "log <? `ls -la` ?>")
 	got := findingsOf(tr.scan())
 	for _, want := range []string{KindCodeInUploads + " /var/www/blog/wp-content/uploads/2026/planted.pdf", KindCodeInData + " /var/www/blog/wp-content/uploads/2026/notes.txt"} {
 		if !slices.Contains(got, want) {

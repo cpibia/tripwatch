@@ -160,6 +160,11 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 		return c.stepCode(d, i, final)
 	case lexSingle, lexDouble, lexBacktick:
 		quote := map[int]byte{lexSingle: '\'', lexDouble: '"', lexBacktick: '`'}[c.mode]
+		// A backtick around a bare word is how SQL quotes a name (a dump's `wp_posts`); one that
+		// runs a command worth planting passes it input or arguments.
+		if c.mode == lexBacktick && b != '`' && !identByte(b) {
+			c.backtick = true
+		}
 		if b == '\\' {
 			if !more(2) {
 				return 0
@@ -246,9 +251,6 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		}
 	case '\'', '"', '`':
 		c.mode = map[byte]int{'\'': lexSingle, '"': lexDouble, '`': lexBacktick}[b]
-		if b == '`' {
-			c.backtick = true
-		}
 	case '/':
 		if !more(2) {
 			return 0
@@ -393,10 +395,11 @@ func (c *codeSearch) stepHeredoc(d []byte, i int, final bool) int {
 // openTagLen returns the length of what follows "<?" in an open tag PHP runs: "php" and a blank,
 // or "=". With short_open_tag off a blank alone is text, and a block opened there would let a
 // comment after it swallow the real "<?php" block that follows. With short tags "<?" opens a
-// block whatever follows, but for a word starting with "php" or "xml": "<?xml version" makes PHP
-// refuse the file and "<?php+" runs as the undefined constant php and stops there, while a word
-// followed by ":" is a goto label ("<?phpinfo:") or a class ("<?php::class;"), and one followed
-// by "(" a call: those run what follows. Blanks or a comment may come before them.
+// block whatever follows, so a name glued to it is code: a constant ("<?PHP_EOL;"), a function,
+// a namespaced class ("<?php\x::class;"). Only "php" and "xml" alone stay text, as PHP fails on
+// them first: "<?xml version" makes PHP refuse the file, "<?php+" runs as the undefined
+// constant php and stops there. Followed by ":" (a goto label, "::class"), "(" or a comment,
+// blanks included, they run what follows too.
 func openTagLen(t []byte, short bool) (int, bool) {
 	blank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 	word := func(w string) bool { return len(t) >= len(w) && bytes.EqualFold(t[:len(w)], []byte(w)) }
@@ -410,22 +413,16 @@ func openTagLen(t []byte, short bool) (int, bool) {
 	case len(t) > 0 && blank(t[0]):
 		return 1, true
 	case word("xml") || word("php"):
-		j := 3
-		for j < len(t) && identByte(t[j]) {
-			if j == openTagLook {
-				// A word too long to judge: the short pass keeps only named signatures, so
-				// opening costs no noise.
-				return 0, true
-			}
-			j++
+		if len(t) > 3 && (identByte(t[3]) || t[3] == '\\') {
+			return 0, true
 		}
+		j := 3
 		for j < len(t) && blank(t[j]) {
 			if j == openTagLook {
 				return 0, true
 			}
 			j++
 		}
-		// A comment may stand between the word and what follows it: "<?phpinfo/**/:".
 		return 0, j < len(t) && strings.IndexByte(":(/#", t[j]) >= 0
 	}
 	return 0, true

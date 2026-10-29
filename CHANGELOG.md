@@ -38,7 +38,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
   tags are off, as PHP does not: a comment opened there could hide a real `<?php` block written
   after it. With short tags on, a word starting with `php` or `xml` glued to `<?` opens a block
   when a goto label, a class constant or a call follows (`<?phpinfo:`, `<?php_x::class;`),
-  blanks and comments in between included.
+  blanks and comments in between included. Any longer name glued to `<?` (a constant such as
+  `PHP_EOL`, a namespaced class) opens one too.
+- A backtick around a bare word in a data file is not taken for a command: SQL dumps quote every
+  table and column that way, and a `<?` left open in one made a critical alert of a backup. A
+  backtick passing input or arguments (`$c`, `ls -la`) still is.
 
 ### Verifier
 
