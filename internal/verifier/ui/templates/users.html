@@ -1,0 +1,45 @@
+{{define "content"}}{{$d := .Data}}{{$csrf := .CSRF}}
+<header class="head">
+  <h1>Users</h1>
+  <p class="aside">Viewers read the console; operators also handle alerts; administrators also enroll and revoke servers, set up notifications and manage users.</p>
+</header>
+
+{{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+{{with $d.Link}}<section class="panel issued" aria-labelledby="inv-h">
+  <div class="panel-head"><h2 id="inv-h">Invitation for {{$d.Invited}}</h2><p class="panel-note">valid until {{stamp $d.Expires}}, once: shown only now</p></div>
+  <p class="note">Send this link to {{$d.Invited}} over a channel you trust: whoever opens it chooses the password of the account.</p>
+  <pre class="datum command" id="invite-link">{{.}}</pre>
+  <div class="actions"><button type="button" data-copy="invite-link">Copy the link</button></div>
+</section>{{end}}
+
+<section class="panel" aria-labelledby="users-h">
+  <div class="panel-head"><h2 id="users-h">People</h2><p class="panel-note">{{len $d.Users}} {{plural (len $d.Users) "account" "accounts"}}</p></div>
+  <table class="grid users">
+    <thead><tr><th scope="col">Email</th><th scope="col">Role</th><th scope="col" class="num">Since</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+    <tbody>{{range $d.Users}}
+    <tr>
+      <td>{{.Email}}{{if eq .Email $d.Self}} <span class="quiet">(you)</span>{{end}}</td>
+      <td><form method="post" action="/users/role" class="role-form"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="email" value="{{.Email}}">
+        <label class="sr" for="role-{{.Email}}">Role of {{.Email}}</label>
+        <select id="role-{{.Email}}" name="role">{{$role := .Role}}{{range $d.Roles}}<option value="{{.}}"{{if eq . $role}} selected{{end}}>{{.}}</option>{{end}}</select>
+        <button type="submit">Change<span class="sr"> the role of {{.Email}}</span></button></form></td>
+      <td class="num"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
+      <td class="act"><details class="confirm"><summary>Remove<span class="sr">: {{.Email}}</span></summary>
+        <form method="post" action="/users/remove"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="email" value="{{.Email}}"><p>{{.Email}} is signed out everywhere and can no longer sign in.</p><button type="submit" class="danger">Remove the account</button></form>
+      </details></td>
+    </tr>{{end}}</tbody>
+  </table>
+</section>
+
+<section class="panel" aria-labelledby="add-h">
+  <div class="panel-head"><h2 id="add-h">Invite someone</h2><p class="panel-note">a one-time link, valid for 3 days</p></div>
+  <form method="post" action="/users" class="form inline invite-form">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="inv-email">Email</label>
+    <input id="inv-email" name="email" type="email" required autocomplete="off">
+    <label for="inv-role">Role</label>
+    <select id="inv-role" name="role">{{range $d.Roles}}<option value="{{.}}"{{if eq . "operator"}} selected{{end}}>{{.}}</option>{{end}}</select>
+    <button class="primary" type="submit">Make the invitation</button>
+  </form>
+</section>
+{{end}}

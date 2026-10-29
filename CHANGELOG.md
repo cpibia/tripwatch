@@ -18,6 +18,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
   (the resolved ones one click away), then its web applications as a table: the site first,
   then what runs it and its directory, those with open alerts on top with their count, and a
   filter above when there are more than eight.
+- Users and roles: viewers read the console, operators also handle alerts, administrators also
+  enroll and revoke servers, order sensor updates, set up notifications and manage users (users
+  made before keep administrator). Administrators invite people with a one-time link valid three
+  days, in which they choose their password (12 characters at least), change roles and remove
+  accounts; the last administrator can be neither demoted nor removed. The menu shows each role
+  what it may use.
+- An audit log (Settings, Audit log) records who signed in, handled alerts, enrolled, revoked,
+  ordered updates, changed notifications and managed users, only ever added to, the oldest
+  dropped past 100,000 entries.
 - Notification channels set up from the console (Configuration, Notifications): email (SMTP, TLS
   required), Telegram chats and webhooks (JSON with a `text` field chat tools show and the
   alerts, signed with HMAC-SHA256 in `X-Tripwatch-Signature`). Each receives the alerts at or

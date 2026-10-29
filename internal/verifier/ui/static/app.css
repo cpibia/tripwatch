@@ -667,3 +667,11 @@ details.add[open] > summary { padding-bottom: 10px; border-bottom: var(--hair) s
 table.channels td .sub { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
 a.notify.off { text-decoration: none; }
 a.notify.off:hover { outline: var(--hair) solid var(--amber); }
+
+/* Users: the role changes in place; the invitation link is shown once to be copied. */
+.role-form { display: flex; align-items: center; gap: 8px; margin: 0; }
+.role-form select, .invite-form select { min-height: 34px; padding: 6px 10px; font: 400 var(--fs-sm)/1.2 var(--sans); color: var(--ink); background: var(--raised); border: var(--hair) solid var(--rule-strong); border-radius: var(--radius-sm); }
+.invite-form { grid-template-columns: minmax(0, 20rem) minmax(0, 10rem) auto; }
+.invite-form label { grid-column: auto; grid-row: 1; margin: 0; }
+.invite-form input, .invite-form select, .invite-form button { grid-row: 2; }
+.rail-foot .who .role { display: block; font-size: var(--fs-xs); color: var(--muted); }

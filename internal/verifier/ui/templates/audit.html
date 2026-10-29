@@ -1,0 +1,16 @@
+{{define "content"}}
+<header class="head">
+  <h1>Audit log</h1>
+  <p class="aside">What people did in the console, newest first: only ever added to, the oldest dropped past 100,000 entries.</p>
+</header>
+<section class="panel" aria-label="Entries">
+  {{if .Data}}
+  <table class="grid audit">
+    <thead><tr><th scope="col" class="num">When</th><th scope="col">Who</th><th scope="col">Did</th><th scope="col">On</th><th scope="col">Detail</th></tr></thead>
+    <tbody>{{range .Data}}
+    <tr><td class="num"><time datetime="{{iso .At}}" title="{{stamp .At}}">{{clock .At}}</time></td><td>{{.Actor}}</td><td>{{.Action}}</td><td class="mono">{{.Target}}</td><td class="quiet">{{.Detail}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="empty">Nothing recorded yet.</p>{{end}}
+</section>
+{{end}}

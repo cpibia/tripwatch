@@ -113,7 +113,7 @@ func New(c Config) (http.Handler, error) {
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
-	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications"} {
+	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
@@ -133,12 +133,12 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("GET /login/link", s.loginLinkForm)
 	mux.HandleFunc("POST /login/link", s.loginLink)
-	mux.HandleFunc("POST /logout", s.authed(s.logout))
+	mux.HandleFunc("POST /logout", s.as(store.RoleViewer, s.logout))
 	mux.HandleFunc("GET /{$}", s.authed(s.overview))
 	mux.HandleFunc("GET /hosts", s.authed(s.servers))
 	mux.HandleFunc("GET /hosts/{id}", s.authed(s.host))
-	mux.HandleFunc("POST /hosts/update", s.authed(s.orderUpdate))
-	mux.HandleFunc("POST /hosts/{id}/revoke", s.authed(s.revoke))
+	mux.HandleFunc("POST /hosts/update", s.as(store.RoleAdmin, s.orderUpdate))
+	mux.HandleFunc("POST /hosts/{id}/revoke", s.as(store.RoleAdmin, s.revoke))
 	mux.HandleFunc("POST /hosts/{id}/withdraw", s.authed(s.withdraw))
 	mux.HandleFunc("GET /search", s.authed(s.search))
 	mux.HandleFunc("GET /alerts", s.authed(s.alerts))
@@ -147,11 +147,17 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("POST /alerts/{id}/resolve", s.authed(s.resolve))
 	mux.HandleFunc("POST /alerts/{id}/accept", s.authed(s.accept))
 	mux.HandleFunc("POST /bulk/{action}", s.authed(s.bulk))
-	mux.HandleFunc("GET /notifications", s.authed(s.notifications))
-	mux.HandleFunc("POST /notifications", s.authed(s.addChannel))
-	mux.HandleFunc("POST /notifications/{id}/{action}", s.authed(s.channelAction))
-	mux.HandleFunc("GET /enroll", s.authed(s.enrollForm))
-	mux.HandleFunc("POST /enroll", s.authed(s.enroll))
+	mux.HandleFunc("GET /notifications", s.as(store.RoleAdmin, s.notifications))
+	mux.HandleFunc("POST /notifications", s.as(store.RoleAdmin, s.addChannel))
+	mux.HandleFunc("POST /notifications/{id}/{action}", s.as(store.RoleAdmin, s.channelAction))
+	mux.HandleFunc("GET /users", s.as(store.RoleAdmin, s.users))
+	mux.HandleFunc("POST /users", s.as(store.RoleAdmin, s.invite))
+	mux.HandleFunc("POST /users/{action}", s.as(store.RoleAdmin, s.userAction))
+	mux.HandleFunc("GET /audit", s.as(store.RoleAdmin, s.auditLog))
+	mux.HandleFunc("GET /invite", s.inviteForm)
+	mux.HandleFunc("POST /invite", s.acceptInvite)
+	mux.HandleFunc("GET /enroll", s.as(store.RoleAdmin, s.enrollForm))
+	mux.HandleFunc("POST /enroll", s.as(store.RoleAdmin, s.enroll))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusNotFound, "Page not found", "The address does not match any page of the console.")
 	})
@@ -180,6 +186,7 @@ func (s *server) serveStatic(w http.ResponseWriter, r *http.Request) {
 // session is the signed-in user of a request.
 type session struct {
 	Email string
+	Role  string
 	token string
 }
 
@@ -200,6 +207,9 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 			se.token = c.Value
 			se.Email, err = s.Store.Session(r.Context(), c.Value, s.Now())
 		}
+		if err == nil {
+			se.Role, err = s.Store.UserRole(r.Context(), se.Email)
+		}
 		safe := r.Method == http.MethodGet || r.Method == http.MethodHead
 		if err != nil {
 			if !safe {
@@ -214,9 +224,25 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 				s.fail(w, r, http.StatusForbidden, "Request refused", "The form does not come from this console, or it expired. Reload the page and try again.")
 				return
 			}
+			// Reading is every user's; changing anything starts at the operator's role.
+			if !store.RoleAtLeast(se.Role, store.RoleOperator) && r.URL.Path != "/logout" {
+				s.fail(w, r, http.StatusForbidden, "Not allowed", "Your role lets you read the console, not change it: ask an administrator.")
+				return
+			}
 		}
 		h(w, r, se)
 	}
+}
+
+// as is authed for the users of a role and above, whatever the method.
+func (s *server) as(least string, h authedHandler) http.HandlerFunc {
+	return s.authed(func(w http.ResponseWriter, r *http.Request, se session) {
+		if !store.RoleAtLeast(se.Role, least) {
+			s.fail(w, r, http.StatusForbidden, "Not allowed", "Your role does not allow this: ask an administrator.")
+			return
+		}
+		h(w, r, se)
+	})
 }
 
 // sameOrigin rejects requests a browser marks as coming from another site.
@@ -242,6 +268,8 @@ type page struct {
 	Path    string
 	// Search is the text in the search box at the top of every page.
 	Search string
+	// Role is the signed-in user's: the menu shows what it may use.
+	Role string
 	// Alarm is set while a critical alert is open, Release is the running version.
 	Alarm   bool
 	Release string
@@ -252,6 +280,9 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	p.Notify = s.Notify
 	if !p.Notify && p.User != "" {
 		p.Notify = s.anyChannel(r.Context())
+	}
+	if p.User != "" {
+		p.Role, _ = s.Store.UserRole(r.Context(), p.User)
 	}
 	p.Path = r.URL.RequestURI()
 	if r.URL.Path == "/search" {
@@ -371,6 +402,9 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("login", "email", email)
+	if err := s.Store.Audit(r.Context(), email, "signed in", "", "with the password", s.Now()); err != nil {
+		s.Log.Error("audit", "err", err)
+	}
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
 	if !strings.HasPrefix(lane, "device:") {
 		if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
@@ -450,6 +484,9 @@ func (s *server) loginLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("login with a one-time link", "email", email)
+	if err := s.Store.Audit(r.Context(), email, "signed in", "", "with a one-time link", s.Now()); err != nil {
+		s.Log.Error("audit", "err", err)
+	}
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
 	if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
 		s.cookie(w, deviceCookie, device, store.DeviceLifetime)
@@ -773,6 +810,7 @@ func (s *server) revoke(w http.ResponseWriter, r *http.Request, se session) {
 		return
 	}
 	s.Log.Info("host revoked", "host", id, "by", se.Email)
+	s.audit(r, se, "server revoked", id, "")
 	http.Redirect(w, r, "/hosts/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -784,6 +822,7 @@ func (s *server) withdraw(w http.ResponseWriter, r *http.Request, se session) {
 		return
 	}
 	s.Log.Info("acceptance withdrawn", "host", id, "fingerprint", fp, "by", se.Email)
+	s.audit(r, se, "put back under watch", id, fp)
 	http.Redirect(w, r, "/hosts/"+url.PathEscape(id)+"#accepted-h", http.StatusSeeOther)
 }
 
@@ -1252,6 +1291,7 @@ func (s *server) bulk(w http.ResponseWriter, r *http.Request, se session) {
 		done++
 	}
 	s.Log.Info(msg, "count", done, "by", se.Email)
+	s.audit(r, se, msg, strconv.Itoa(done)+" alerts", "")
 	http.Redirect(w, r, localPath(r.PostFormValue("back"), "/alerts"), http.StatusSeeOther) //nolint:gosec // localPath accepts only paths on this site
 }
 
@@ -1266,6 +1306,7 @@ func (s *server) transition(w http.ResponseWriter, r *http.Request, se session, 
 		return
 	}
 	s.Log.Info(msg, "alert", a.ID, "host", a.HostID, "by", se.Email)
+	s.audit(r, se, msg, a.HostID, "#"+strconv.FormatInt(a.ID, 10)+" "+a.Title)
 	http.Redirect(w, r, localPath(r.PostFormValue("back"), "/alerts/"+strconv.FormatInt(a.ID, 10)), http.StatusSeeOther) //nolint:gosec // localPath accepts only paths on this site
 }
 
@@ -1366,6 +1407,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 			return
 		}
 		s.Log.Info("enrollment token made", "host", host, "by", se.Email, "replaces", existing.ID != "")
+		s.audit(r, se, "enrollment token made", host, "")
 		d.Token = pki.EnrollToken{URL: s.IngestURL, Secret: secret, CA: s.CA.Fingerprint()}.String()
 		d.Command = enrollCommand(d.System, release, d.Token)
 		d.Expires = expires
@@ -1387,6 +1429,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request, se session) {
 		return
 	}
 	s.Log.Info("host enrolled", "host", host, "by", se.Email, "replaced", existing.ID != "")
+	s.audit(r, se, "server enrolled", host, "")
 	body, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
 		s.internal(w, r, err)
@@ -1608,6 +1651,7 @@ func (s *server) orderUpdate(w http.ResponseWriter, r *http.Request, se session)
 		return
 	}
 	s.Log.Info("sensor update ordered", "version", release, "by", se.Email)
+	s.audit(r, se, "sensor update ordered", "every sensor", release)
 	http.Redirect(w, r, "/hosts", http.StatusSeeOther)
 }
 

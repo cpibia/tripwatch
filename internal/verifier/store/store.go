@@ -166,6 +166,21 @@ CREATE TABLE IF NOT EXISTS sessions (
 	email      TEXT NOT NULL REFERENCES users(email),
 	expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS invites (
+	token_hash BLOB PRIMARY KEY,
+	email      TEXT NOT NULL,
+	role       TEXT NOT NULL,
+	invited_by TEXT NOT NULL,
+	expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit (
+	id     INTEGER PRIMARY KEY AUTOINCREMENT,
+	at     INTEGER NOT NULL,
+	actor  TEXT NOT NULL,
+	action TEXT NOT NULL,
+	target TEXT NOT NULL,
+	detail TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS channels (
 	id           INTEGER PRIMARY KEY AUTOINCREMENT,
 	kind         TEXT NOT NULL,
@@ -253,6 +268,23 @@ func migrate(db *sql.DB) error {
 		if n == 0 {
 			if _, err := db.ExecContext(context.Background(), `ALTER TABLE hosts ADD COLUMN `+col+` TEXT NOT NULL DEFAULT ''`); err != nil { //nolint:gosec // column names from the list above
 				return err
+			}
+		}
+	}
+	// Users before roles were all administrators; sessions before 0.1.35 carry no history.
+	for table, cols := range map[string]map[string]string{
+		"users":    {"role": "TEXT NOT NULL DEFAULT 'admin'"},
+		"sessions": {"created_at": "INTEGER NOT NULL DEFAULT 0", "last_seen": "INTEGER NOT NULL DEFAULT 0", "agent": "TEXT NOT NULL DEFAULT ''"},
+	} {
+		for col, def := range cols {
+			var have int
+			if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, col).Scan(&have); err != nil {
+				return err
+			}
+			if have == 0 {
+				if _, err := db.ExecContext(context.Background(), `ALTER TABLE `+table+` ADD COLUMN `+col+` `+def); err != nil { //nolint:gosec // names and definitions from the map above
+					return err
+				}
 			}
 		}
 	}

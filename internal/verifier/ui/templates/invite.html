@@ -1,0 +1,18 @@
+{{define "content"}}{{$d := .Data}}
+<div class="login">
+  <p class="brand"><img src="/static/logo.png" width="32" height="32" alt=""><span>tripwatch</span></p>
+  <h1>Welcome</h1>
+  <p class="note">You are invited to the console as <strong>{{$d.Role}}</strong>, with the account <span class="mono">{{$d.Email}}</span>. Choose your password.</p>
+  {{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  <form method="post" action="/invite" class="form">
+    <input type="hidden" name="t" value="{{$d.Token}}">
+    <input type="hidden" name="email" value="{{$d.Email}}" autocomplete="username">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required minlength="{{$d.Min}}" autofocus>
+    <p class="help">At least {{$d.Min}} characters. A long phrase is easier to remember and harder to guess.</p>
+    <label for="again">Password again</label>
+    <input id="again" name="again" type="password" autocomplete="new-password" required minlength="{{$d.Min}}">
+    <button class="primary" type="submit">Create the account</button>
+  </form>
+</div>
+{{end}}

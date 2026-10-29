@@ -826,6 +826,11 @@ is needed too, which closes them all.
   receives the alerts at or above its severity raised after it was added, can be tested, turned
   off and removed, and shows its latest send or the error; a channel that fails raises an alert.
   The email configured with `TRIPWATCH_SMTP_*` keeps working and is listed read-only.
+- **Users and audit log.** Three roles: viewers read, operators also handle alerts,
+  administrators also enroll and revoke servers, order sensor updates, set up notifications and
+  manage users. Administrators invite people with a one-time link (three days) in which they
+  choose their password, change roles and remove accounts; there is always one administrator
+  left. The audit log keeps who did what in the console, newest first.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 

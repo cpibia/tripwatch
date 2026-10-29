@@ -101,6 +101,7 @@ func (s *server) addChannel(w http.ResponseWriter, r *http.Request, se session) 
 		return
 	}
 	s.Log.Info("notification channel added", "kind", c.Kind, "name", c.Name, "by", se.Email)
+	s.audit(r, se, "channel added", c.Name, c.Kind+", "+c.MinSeverity+" and above")
 	http.Redirect(w, r, "/notifications", http.StatusSeeOther)
 }
 
@@ -201,5 +202,6 @@ func (s *server) channelAction(w http.ResponseWriter, r *http.Request, se sessio
 		return
 	}
 	s.Log.Info("notification channel "+r.PathValue("action"), "channel", c.Name, "by", se.Email)
+	s.audit(r, se, "channel "+r.PathValue("action"), c.Name, "")
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
