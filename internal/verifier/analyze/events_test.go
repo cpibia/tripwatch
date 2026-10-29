@@ -50,8 +50,8 @@ func TestEvaluateEvents(t *testing.T) {
 			{At: t0.Add(time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "bbbb"},
 			{At: t0.Add(2 * time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: keys, SHA256: "aaaa"},
 		},
-		"/tmp/.bench-dropper":      {{At: t0, Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/.bench-dropper", Mode: "-rwxr-xr-x", UID: &root0}},
-		"/srv/app/uploads/old.php": {{At: t0.Add(-time.Hour), Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/srv/app/uploads/old.php"}},
+		"/tmp/.bench-dropper":              {{At: t0, Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/.bench-dropper", Mode: "-rwxr-xr-x", UID: &root0}},
+		"/srv/app/uploads/old.php":         {{At: t0.Add(-time.Hour), Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/srv/app/uploads/old.php"}},
 		"/srv/app/public/health_check.php": {{At: t0.Add(-time.Minute), Class: watch.ClassWebRoot, Op: watch.OpCreate, Path: "/srv/app/public/health_check.php"}},
 		// A file unchanged for months, then a key added: the sensor knew the content before it.
 		oldKeys: {{At: t0.Add(time.Minute), Class: watch.ClassSSH, Op: watch.OpWrite, Path: oldKeys, SHA256: "1111", PrevSHA256: "0000"}},
