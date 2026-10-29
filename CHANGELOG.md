@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.40] - 2026-10-29
+
+Update the verifier, then the sensors: the verifier reads the new sensor's database object
+hashes, integration grants and budget losses, and records the sensors' update to this version
+in the audit log; older sensors keep working with it.
+
 ### Sensor
 
 - A set-user-ID program from the system's directories that exits at once (a `sudo` whose
@@ -1330,7 +1336,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.39...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.40...HEAD
+[0.1.40]: https://github.com/cpibia/tripwatch/compare/v0.1.39...v0.1.40
 [0.1.39]: https://github.com/cpibia/tripwatch/compare/v0.1.38...v0.1.39
 [0.1.38]: https://github.com/cpibia/tripwatch/compare/v0.1.37...v0.1.38
 [0.1.37]: https://github.com/cpibia/tripwatch/compare/v0.1.36...v0.1.37
