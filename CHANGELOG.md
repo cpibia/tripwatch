@@ -18,6 +18,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- On a machine up for more than about three years, the start of the web server was computed
+  years before the boot (the conversion of its start, in ticks, overflowed), so every
+  configuration file was reported as changed after the server started. 0.1.37's check of the
+  boot against the kernel's build date, written for a wrong explanation of the same reports, is
+  removed.
 - WP Migrate manifests written as serialized PHP arrays, as the plugin did before it moved to
   JSON in 2024, are recognised like the JSON ones instead of reported as hidden files.
 

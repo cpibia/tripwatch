@@ -606,17 +606,14 @@ func TestStaleConfig(t *testing.T) {
 		t.Errorf("stale within the rounding of the start = %v", inv.StaleConfig)
 	}
 
-	// A boot before the running kernel was built means the clock since boot is wrong: nothing
-	// is judged, and the issue says why.
-	fsys["etc/nginx/sites/a"] = &fstest.MapFile{Data: []byte("server { root /srv; }"), ModTime: boot.Add(90 * time.Minute)}
-	fsys["proc/sys/kernel/version"] = text("#50-Ubuntu SMP Fri Sep 23 21:02:22 UTC 2024\n")
-	inv = Inspect(fsys)
-	if len(inv.StaleConfig) != 0 || !slices.ContainsFunc(inv.Issues, func(i string) bool { return strings.Contains(i, "boot before it was built") }) {
-		t.Errorf("with a boot before the kernel's build: stale %v, issues %v", inv.StaleConfig, inv.Issues)
-	}
-	fsys["proc/sys/kernel/version"] = text("#50-Ubuntu SMP Fri Sep 23 21:02:22 UTC 2022\n")
-	if inv := Inspect(fsys); len(inv.StaleConfig) != 1 {
-		t.Errorf("with a kernel built before the boot: stale %v", inv.StaleConfig)
+	// A server that has run for more than three years still started after its boot: its start,
+	// in ticks, does not overflow when converted.
+	years := int64(4 * 365 * 24 * 3600 * userHZ)
+	fsys["proc/10/stat"] = stat("10", "1", 0)
+	fsys["proc/11/stat"] = &fstest.MapFile{Data: []byte("11 (nginx) S 10 10 10 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 " + strconv.FormatInt(years, 10) + " 0 0")}
+	fsys["etc/nginx/sites/a"] = &fstest.MapFile{Data: []byte("server { root /srv; }"), ModTime: boot.Add(time.Hour)}
+	if inv := Inspect(fsys); len(inv.StaleConfig) != 0 || len(inv.StaleTimes) != 0 {
+		t.Errorf("after four years of uptime: stale %v %+v", inv.StaleConfig, inv.StaleTimes)
 	}
 }
 
