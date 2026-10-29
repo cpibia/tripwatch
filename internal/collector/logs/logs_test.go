@@ -563,15 +563,22 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		server { root /var/www/b; access_log /var/log/nginx/access.log; location /api/ { proxy_pass http://127.0.0.1:8080; } }
 		server { root /var/www/c; access_log /var/log/nginx/c.log; location / { proxy_pass http://127.0.0.1:9000; } }
 		server { listen 80; access_log /var/log/nginx/redirect.log; return 301 https://$host$request_uri; }
+		server { listen 443; access_log /var/log/nginx/d.log; location / { proxy_pass https://d_backend; } }
 	}`)
 	write("var/www/b/uploads/shell.php", "<?php")
 	h.writeLog(logLine("203.0.113.7", "GET", "/wp-content/uploads/probe.php", 404) +
 		logLine("203.0.113.7", "GET", "/uploads/shell.php/x.jpg", 404) +
 		logLine("203.0.113.7", "GET", "/api/files/x.php", 404) +
-		logLine("203.0.113.7", "GET", "/.env", 404))
-	write("var/log/nginx/c.log", logLine("203.0.113.8", "GET", "/media/y.php", 404))
+		logLine("203.0.113.7", "GET", "/.env", 404) +
+		logLine("203.0.113.11", "GET", "/files/about.php", 404))
 	write("var/log/nginx/other.access.log", logLine("203.0.113.9", "GET", "/media/z.php", 404))
 	write("var/log/nginx/redirect.log", logLine("203.0.113.10", "GET", "/tmp/phpinfo.php", 301))
+	// The same probe over http and https, logged by two proxies, and one also logged by a site
+	// that runs scripts.
+	write("var/log/nginx/d.log", logLine("203.0.113.11", "GET", "/images/about.php", 404)+
+		logLine("203.0.113.11", "GET", "/files/about.php", 404))
+	write("var/log/nginx/c.log", logLine("203.0.113.8", "GET", "/media/y.php", 404)+
+		logLine("203.0.113.11", "GET", "/images/about.php", 404))
 
 	got := map[string]string{}
 	for _, e := range h.run().Events {
@@ -585,6 +592,8 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		"/media/y.php":                  "elsewhere",
 		"/tmp/phpinfo.php":              "elsewhere",
 		"/media/z.php":                  "",
+		"/images/about.php":             "elsewhere",
+		"/files/about.php":              "",
 	} {
 		if v, ok := got[uri]; !ok || v != want {
 			t.Errorf("%s: on disk %q (event %v), want %q", uri, v, ok, want)

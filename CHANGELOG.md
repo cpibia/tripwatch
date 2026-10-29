@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A failed probe logged by several proxy sites (the same path tried over http and https, each
+  scheme with its own log) no longer raises an alert: requests seen in more than one log are
+  judged against the sites of every one of them, instead of being left open.
+
 ## [0.1.30] - 2026-10-29
 
 Update the verifier, then the sensors.

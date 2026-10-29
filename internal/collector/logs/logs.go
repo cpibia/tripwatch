@@ -114,16 +114,30 @@ type Event struct {
 
 	path   string
 	ipSeen map[string]struct{}
-	// otherLogs says the requests came from more than one log, so from more than one set of
-	// sites.
-	otherLogs bool
+	// logs are the logs the requests came from, beyond the first one (Log), up to
+	// maxLogsPerEvent: each has its own set of sites. moreLogs says some were left out.
+	logs     []string
+	moreLogs bool
 }
 
 const (
 	maxSampleIPs     = 5
 	maxIPsPerEvent   = 1000
 	maxEventsPerRule = maxEvents / 4
+	// A request is usually logged once per scheme a site listens on: a few logs per event.
+	maxLogsPerEvent = 4
 )
+
+func (e *Event) addLog(log string) {
+	if e.Log == "/"+log || slices.Contains(e.logs, log) {
+		return
+	}
+	if len(e.logs) == maxLogsPerEvent {
+		e.moreLogs = true
+		return
+	}
+	e.logs = append(e.logs, log)
+}
 
 func (e *Event) addIP(ip string) {
 	if e.ipSeen == nil {
@@ -712,7 +726,7 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 		e.Count++
 		e.Last = req.Time
 		e.addIP(req.IP)
-		e.otherLogs = e.otherLogs || e.Log != "/"+log
+		e.addLog(log)
 	}
 }
 
@@ -922,16 +936,26 @@ const maxScriptStats = 4096
 // known and was looked at: a file under any of them makes it present.
 func (r *runState) onDisk(e *Event) string {
 	script := weblog.ScriptPath(e.path)
-	if !weblog.IsScript(script) || e.otherLogs {
+	if !weblog.IsScript(script) || e.moreLogs {
+		return ""
+	}
+	// Scanners try http and https alike, and a proxy often logs each scheme apart: requests
+	// from several logs are a probe only if every site writing any of them ran no code.
+	elsewhere := true
+	for _, log := range append([]string{strings.TrimPrefix(e.Log, "/")}, e.logs...) {
+		sites := r.sites[log]
+		if len(sites) == 0 {
+			return ""
+		}
+		elsewhere = elsewhere && !slices.ContainsFunc(sites, func(s discovery.Site) bool { return !s.RunsNothing(script) })
+	}
+	if elsewhere {
+		return "elsewhere"
+	}
+	if len(e.logs) > 0 {
 		return ""
 	}
 	sites := r.sites[strings.TrimPrefix(e.Log, "/")]
-	if len(sites) == 0 {
-		return ""
-	}
-	if !slices.ContainsFunc(sites, func(s discovery.Site) bool { return !s.RunsNothing(script) }) {
-		return "elsewhere"
-	}
 	var files []string
 	for i := range sites {
 		f, ok := sites[i].ScriptFiles(script)
