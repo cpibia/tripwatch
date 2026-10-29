@@ -8,7 +8,8 @@ import (
 )
 
 // systemHooks are files and directories that make code run at boot, at login, when a library
-// is loaded or when a package is installed: common places to hide persistence.
+// is loaded, when a package is installed or when a network interface comes up: common places to
+// hide persistence.
 var systemHooks = []string{
 	"etc/ld.so.preload",
 	"etc/ld.so.conf",
@@ -36,11 +37,22 @@ var systemHooks = []string{
 	"etc/logrotate.d/*",
 	"etc/xdg/autostart/*",
 	"etc/sudo.conf",
+	"etc/ssh/sshrc",
+	"etc/bash_completion.d/*",
+	"etc/network/interfaces",
+	"etc/network/interfaces.d/*",
+	"etc/network/if-*.d/*",
+	"etc/NetworkManager/dispatcher.d/*",
+	"etc/NetworkManager/dispatcher.d/*/*",
+	"etc/networkd-dispatcher/*/*",
+	"etc/dhcp/dhclient-enter-hooks.d/*",
+	"etc/dhcp/dhclient-exit-hooks.d/*",
+	"etc/ppp/ip-*.d/*",
 }
 
 var userHooks = []string{
 	".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zprofile",
-	".config/autostart/*",
+	".config/autostart/*", ".ssh/rc",
 }
 
 type HooksResult struct {

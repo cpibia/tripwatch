@@ -69,9 +69,14 @@ func compromisedHost() collector.Source {
 		"etc/systemd/system-generators/net-helper":    &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o755},
 		"etc/systemd/system.conf":                     text("[Manager]\n#DefaultEnvironment=\nDefaultEnvironment=LD_PRELOAD=/usr/lib/libx.so\n"),
 
-		"etc/ld.so.preload":  text("/usr/lib/libprocesshider.so\n"),
-		"etc/profile.d/x.sh": text("export A=1\n"),
-		"root/.bashrc":       text("alias ll='ls -l'\n"),
+		"etc/ld.so.preload":      text("/usr/lib/libprocesshider.so\n"),
+		"etc/profile.d/x.sh":     text("export A=1\n"),
+		"root/.bashrc":           text("alias ll='ls -l'\n"),
+		"etc/ssh/sshrc":          text("/usr/local/sbin/.helper &\n"),
+		"root/.ssh/rc":           text("/usr/local/sbin/.helper &\n"),
+		"etc/network/if-up.d/zz": text("#!/bin/sh\n"),
+		"etc/NetworkManager/dispatcher.d/pre-up.d/zz": text("#!/bin/sh\n"),
+		"etc/bash_completion.d/zz":                    text("(/usr/local/sbin/.helper &)\n"),
 
 		"usr/lib/.syslib/sh2":       &fstest.MapFile{Data: []byte("bash"), Mode: 0o755 | fs.ModeSetuid},
 		"usr/lib/.syslib/runner.sh": text("#!/bin/sh\n"),
@@ -319,7 +324,8 @@ func TestHooks(t *testing.T) {
 		t.Errorf("preload = %v", res.Preload)
 	}
 	got := paths(res.Files)
-	for _, want := range []string{"/etc/ld.so.preload", "/etc/profile.d/x.sh", "/root/.bashrc"} {
+	for _, want := range []string{"/etc/ld.so.preload", "/etc/profile.d/x.sh", "/root/.bashrc", "/etc/ssh/sshrc", "/root/.ssh/rc",
+		"/etc/network/if-up.d/zz", "/etc/NetworkManager/dispatcher.d/pre-up.d/zz", "/etc/bash_completion.d/zz"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("%s missing from %v", want, got)
 		}

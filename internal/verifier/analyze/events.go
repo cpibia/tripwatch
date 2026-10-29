@@ -156,6 +156,11 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 			return event("sshd-config", e.Path, "high", "SSH server configuration changed",
 				fmt.Sprintf("%s was %s: %s. Check that root login, password authentication and the accepted keys are still as intended.", e.Path, verb(e.Op), describeFile(e))), true
 		}
+		if name == "rc" && path.Dir(e.Path) != "/etc/ssh" {
+			// sshd runs ~/.ssh/rc at each login of that account, before its shell.
+			return systemChange(e, "hook", "medium", "Start-up script changed",
+				"Code here runs at each SSH login of the account, before its shell.")
+		}
 		if name != "authorized_keys" && name != "authorized_keys2" {
 			return Finding{}, false
 		}
@@ -187,6 +192,20 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 			return systemChange(e, "preload", "critical", "Library preloading changed",
 				"Every program started from now on loads what this file names: it is how user-space rootkits hide.")
 		}
+		if loaderConfig(e.Path) {
+			if e.Op == watch.OpDelete {
+				if first, ok := appeared(e, history); ok {
+					return event("loader-transient", e.Path+occurrence(first), "critical", "Library search path changed and put back within minutes",
+						fmt.Sprintf("%s was written at %s and removed at %s. ldconfig may have baked the directories it named into /etc/ld.so.cache in between, and they stay searched after the file is gone: compare ldconfig -p with the remaining configuration, and look for libraries in directories it does not name. %s",
+							e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))), true
+				}
+			}
+			return systemChange(e, "loader-config", "high", "Library search path changed",
+				"The loader looks for libraries in the directories named here: a library placed in one is loaded instead of the system's.")
+		}
+		if path.Dir(e.Path) == "/etc/ld.so.conf.d" {
+			return Finding{}, false
+		}
 		severity := "high"
 		if !strings.HasPrefix(e.Path, "/etc/") {
 			severity = "medium"
@@ -210,6 +229,12 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 			"The next snapshot shows which accounts, groups or passwords changed.")
 	}
 	return Finding{}, false
+}
+
+// loaderConfig reports whether ldconfig reads the file: ld.so.conf and the .conf files it
+// includes from ld.so.conf.d. The temporary names package managers write first are not read.
+func loaderConfig(p string) bool {
+	return p == "/etc/ld.so.conf" || path.Dir(p) == "/etc/ld.so.conf.d" && path.Ext(p) == ".conf"
 }
 
 // systemChange judges a change to a system configuration file: additions and changes at the

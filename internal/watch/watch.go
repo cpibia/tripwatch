@@ -154,12 +154,15 @@ func Targets(homes []Home, uploads []string, webRoots ...string) []Target {
 	t := []Target{
 		{Dir: "/etc", Class: ClassAccounts, Names: []string{"passwd", "shadow", "group", "gshadow"}},
 		{Dir: "/etc", Class: ClassPrivilege, Names: []string{"sudoers", "doas.conf"}},
-		{Dir: "/etc", Class: ClassHook, Names: []string{"ld.so.preload", "rc.local", "profile", "bash.bashrc", "environment"}},
+		// bash_completion.d is sourced into every interactive bash: one created later is watched too.
+		{Dir: "/etc", Class: ClassHook, Names: []string{"ld.so.preload", "ld.so.conf", "rc.local", "profile", "bash.bashrc", "environment", "bash_completion.d"},
+			Spawn: map[string]Target{"bash_completion.d": {Dir: "/etc/bash_completion.d", Class: ClassHook}}},
 		{Dir: "/etc", Class: ClassSchedule, Names: []string{"crontab", "anacrontab"}},
 		{Dir: "/etc/sudoers.d", Class: ClassPrivilege},
 		{Dir: "/etc/polkit-1", Class: ClassPrivilege, Recursive: true},
 		{Dir: "/usr/share/polkit-1/rules.d", Class: ClassPrivilege},
 		{Dir: "/etc/ssh", Class: ClassSSH, Names: []string{"sshd_config"}},
+		{Dir: "/etc/ssh", Class: ClassHook, Names: []string{"sshrc"}},
 		{Dir: "/etc/ssh/sshd_config.d", Class: ClassSSH},
 		{Dir: "/etc/cron.d", Class: ClassSchedule},
 		{Dir: "/etc/cron.hourly", Class: ClassSchedule},
@@ -175,6 +178,18 @@ func Targets(homes []Home, uploads []string, webRoots ...string) []Target {
 		{Dir: "/etc/profile.d", Class: ClassHook},
 		{Dir: "/etc/pam.d", Class: ClassHook},
 		{Dir: "/etc/update-motd.d", Class: ClassHook},
+		{Dir: "/etc/bash_completion.d", Class: ClassHook},
+		// The loader's search path: a directory added here and baked into ld.so.cache by ldconfig
+		// stays in effect after the file is gone.
+		{Dir: "/etc/ld.so.conf.d", Class: ClassHook},
+		// Scripts root runs when a network interface changes state, with ifupdown,
+		// NetworkManager, networkd-dispatcher and dhclient; /etc/network's interfaces files hold
+		// commands too.
+		{Dir: "/etc/network", Class: ClassHook, Recursive: true, Depth: 1},
+		{Dir: "/etc/NetworkManager/dispatcher.d", Class: ClassHook, Recursive: true, Depth: 1},
+		{Dir: "/etc/networkd-dispatcher", Class: ClassHook, Recursive: true, Depth: 1},
+		{Dir: "/etc/dhcp/dhclient-enter-hooks.d", Class: ClassHook},
+		{Dir: "/etc/dhcp/dhclient-exit-hooks.d", Class: ClassHook},
 	}
 	seen := map[string]bool{}
 	for _, h := range homes {

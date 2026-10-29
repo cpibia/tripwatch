@@ -22,6 +22,17 @@ verifier, so it is clear which of the two needs updating. Versions follow
   is not taken for a web shell; anything more in the command still is.
 - The shell an error reporter starts from the PHP pool to read the project's git root (Flare and
   Ignition in Laravel, `echo $(git rev-parse --show-toplevel)`, matched whole) is not a web shell.
+- More persistence places are collected and watched in real time: the SSH login scripts
+  (`/etc/ssh/sshrc`, `~/.ssh/rc`), the scripts root runs when a network interface changes state
+  (ifupdown's `/etc/network`, NetworkManager's `dispatcher.d`, networkd-dispatcher, dhclient's
+  hooks; ppp's in snapshots only), `/etc/bash_completion.d` and the loader's search path
+  (`ld.so.conf`, `ld.so.conf.d`).
+
+### Verifier
+
+- A loader configuration file written and removed within minutes is a critical alert: the
+  directories it named stay in `ld.so.cache` after it is gone. A change to the loader's search
+  path is its own high alert; `~/.ssh/rc` changes are judged as the account's start-up files.
 
 ## [0.1.32] - 2026-10-29
 

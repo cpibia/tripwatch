@@ -13,7 +13,7 @@ func TestTargetsHomes(t *testing.T) {
 			t.Errorf("%s is watched", d)
 		}
 	}
-	for _, d := range []string{"/home/alice", "/home/alice/.ssh", "/var/www", "/var/www/.ssh", "/var/www/site/uploads", "/etc/sudoers.d"} {
+	for _, d := range []string{"/home/alice", "/home/alice/.ssh", "/var/www", "/var/www/.ssh", "/var/www/site/uploads", "/etc/sudoers.d", "/etc/ld.so.conf.d", "/etc/network", "/etc/bash_completion.d"} {
 		if !dirs[d] {
 			t.Errorf("%s is not watched", d)
 		}
