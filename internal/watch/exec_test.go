@@ -221,6 +221,12 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/sbin/sendmail -bs"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- id"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i; id"}, ReasonWebShell},
+		// An upload plugin scanning a file with ClamAV; with anything more it is a shell command.
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /var/www/site/uploads/forms/12/2025-08-05-Quote.pdf"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamscan --no-summary --stdout '/var/www/site/uploads/a b; $(id).pdf'"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /tmp/x; id"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary '/tmp/x' $(id)"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /tmp/clamdscan /var/www/x"}, ReasonWebShell},
 		// An error reporter reading the git root; with anything more it is a shell command.
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c echo $(git rev-parse --show-toplevel)"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c echo $(git rev-parse --show-toplevel); id"}, ReasonWebShell},

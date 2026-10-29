@@ -344,7 +344,8 @@ what changes there within two seconds, in signed event envelopes of the same cha
   `<package>.config.XXXXXX` from the system's perl running `/usr/sbin/dpkg-preconfigure`,
   `rpm-tmp.XXXXXX` from rpm, dnf5, microdnf, PackageKit or the system's Python running
   dnf or yum. Some shells of the web server's user are its own work: `sh -c` running sendmail
-  with options only (PHP's `mail()`); an error reporter reading the project's git root (Flare
+  with options only (PHP's `mail()`); ClamAV scanning one uploaded file, with options only
+  (the upload plugins of CMSs); an error reporter reading the project's git root (Flare
   and Ignition, `echo $(git rev-parse --show-toplevel)`, matched whole); and a framework
   command (`php artisan ...`, `bin/console`, `bin/magento`) whose parent is that framework's
   scheduler or worker, not the PHP pool, with nothing a shell interprets but the redirection to

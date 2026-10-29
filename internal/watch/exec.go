@@ -162,6 +162,11 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 // options and nothing a shell would interpret.
 var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Za-z][^\s;&|$` + "`" + `<>()'"\\]*)*$`)
 
+// virusScanCommand is ClamAV run on one uploaded file, as the upload plugins of CMSs do: the
+// scanner from the system's directories, options only, and one file, single-quoted (where the
+// shell expands nothing) or plain.
+var virusScanCommand = regexp.MustCompile(`^/usr/(?:local/)?bin/clamd?scan(?: +--?[a-z][a-z-]*(?:=[A-Za-z0-9_./-]+)?)* +(?:'[^']*'|[^\s;&|$` + "`" + `<>()'"\\]+)$`)
+
 // errorReporterCommands are the shell commands error reporters run from the PHP pool when an
 // application throws (Flare and Ignition read the project's git root): matched whole, they only
 // print a directory, and anything appended makes them a shell command like any other.
@@ -182,8 +187,8 @@ func plainCommand(command string) (string, bool) {
 }
 
 // routineShell reports a shell the web server's user starts for its own work, which a webshell
-// cannot pass for: PHP's mail() running the configured sendmail, an error reporter reading the
-// project's git root, and a framework's scheduler or
+// cannot pass for: PHP's mail() running the configured sendmail, ClamAV scanning an upload, an
+// error reporter reading the project's git root, and a framework's scheduler or
 // queue worker running one of its commands. The scheduler is the parent, not something named in
 // the command: the shells a webshell starts have the PHP pool as their parent.
 func (c execContext) routineShell(p system.Process, tool string) bool {
@@ -206,7 +211,7 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	// Queue supervisors replace the shell with the worker.
 	command = strings.TrimPrefix(command, "exec ")
-	if sendmailCommand.MatchString(command) || slices.Contains(errorReporterCommands, command) {
+	if sendmailCommand.MatchString(command) || virusScanCommand.MatchString(command) || slices.Contains(errorReporterCommands, command) {
 		return true
 	}
 	command, plain := plainCommand(command)

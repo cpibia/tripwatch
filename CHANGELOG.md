@@ -18,6 +18,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   supervisors) or in Laravel's background form are recognised as the scheduler's work; a
   framework command with anything a shell interprets besides the redirection to `/dev/null`
   no longer is.
+- ClamAV run through the shell on one uploaded file, with options only, as upload plugins do,
+  is not taken for a web shell; anything more in the command still is.
 - The shell an error reporter starts from the PHP pool to read the project's git root (Flare and
   Ignition in Laravel, `echo $(git rev-parse --show-toplevel)`, matched whole) is not a web shell.
 
