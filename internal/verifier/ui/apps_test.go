@@ -23,7 +23,7 @@ func TestHostApps(t *testing.T) {
 	got := hostApps(f, alerts)
 	want := []struct {
 		path, worst, site string
-		open, others   int
+		open, others      int
 	}{
 		{"/srv/shop/admin", "critical", "admin.example", 1, 0},
 		{"/srv/shop", "high", "shop.example", 1, 1},
