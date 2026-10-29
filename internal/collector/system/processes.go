@@ -139,7 +139,101 @@ func (Processes) Collect(ctx context.Context, src collector.Source) (any, error)
 		}
 		res.Processes = append(res.Processes, p)
 	}
+	boundProcesses(&res)
 	return res, nil
+}
+
+// Bounds of the processes reported. Any user can start tens of thousands of processes, each with
+// a long command line, and a result past the verifier's budget is refused whole: over the
+// bounds the processes the rules judge come first, and the command lines of the others are
+// shortened before any process is left out.
+const (
+	MaxProcesses        = 10_000
+	maxCommandLineBytes = 4 << 20
+	shortCommandLine    = 256
+)
+
+// systemExeDirs are where installed programs live: a process running from anywhere else is one
+// the rules look at.
+var systemExeDirs = []string{"/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/"}
+
+// processRank orders processes by what they tell: those carrying a signal the verifier's rules
+// read, root's first, then the other processes of root, then everyone else's.
+func processRank(p Process, tracers map[int]bool) int {
+	signal := len(p.Mapped) > 0 || p.Tracer != 0 || tracers[p.PID] || p.ExeDeleted || p.Preload != "" ||
+		strings.HasPrefix(strings.TrimSpace(p.Cmdline), "[") ||
+		(p.Exe != "" && !slices.ContainsFunc(systemExeDirs, func(d string) bool { return strings.HasPrefix(p.Exe, d) }))
+	root := p.UID == 0 || p.EUID == 0
+	switch {
+	case signal && root:
+		return 0
+	case signal:
+		return 1
+	case root:
+		return 2
+	}
+	return 3
+}
+
+func boundProcesses(res *ProcessesResult) {
+	text := 0
+	for _, p := range res.Processes {
+		text += len(p.Cmdline)
+	}
+	if len(res.Processes) <= MaxProcesses && text <= maxCommandLineBytes {
+		return
+	}
+	tracers := map[int]bool{}
+	for _, p := range res.Processes {
+		if p.Tracer != 0 {
+			tracers[p.Tracer] = true
+		}
+	}
+	slices.SortStableFunc(res.Processes, func(a, b Process) int { return processRank(a, tracers) - processRank(b, tracers) })
+	if n := len(res.Processes); n > MaxProcesses {
+		dropped := map[int]int{}
+		for _, p := range res.Processes[MaxProcesses:] {
+			dropped[p.UID]++
+		}
+		res.Processes = slices.Clip(res.Processes[:MaxProcesses])
+		res.Issues = append(res.Issues, fmt.Sprintf("%d processes left out over the limit of %d: %s", n-MaxProcesses, MaxProcesses, byOwner(dropped)))
+	}
+	text, cut := 0, 0
+	for i := range res.Processes {
+		if text += len(res.Processes[i].Cmdline); text > maxCommandLineBytes && len(res.Processes[i].Cmdline) > shortCommandLine {
+			res.Processes[i].Cmdline = clip(res.Processes[i].Cmdline, shortCommandLine)
+			cut++
+		}
+	}
+	if cut > 0 {
+		res.Issues = append(res.Issues, fmt.Sprintf("command lines of %d processes shortened to %d bytes over %d MB in all", cut, shortCommandLine, maxCommandLineBytes>>20))
+	}
+}
+
+// byOwner names the largest counts by UID, the rest summed.
+func byOwner(counts map[int]int) string {
+	uids := make([]int, 0, len(counts))
+	for uid := range counts {
+		uids = append(uids, uid)
+	}
+	slices.SortFunc(uids, func(x, y int) int {
+		if c := counts[y] - counts[x]; c != 0 {
+			return c
+		}
+		return x - y
+	})
+	parts, others := []string{}, 0
+	for i, uid := range uids {
+		if i >= maxDroppedOwners {
+			others += counts[uid]
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%d of UID %d", counts[uid], uid))
+	}
+	if others > 0 {
+		parts = append(parts, fmt.Sprintf("%d of other users", others))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // exeHash hashes the binary a process runs, through /proc/<pid>/exe so that a deleted or

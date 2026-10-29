@@ -15,6 +15,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A script in an upload path counts only when it sits in or below the upload directory: a
   front controller that routes the rest of the path, such as `/index.php/en/images/a.jpg`,
   is no longer reported.
+- Any user could make the verifier refuse the whole `sockets` or `processes` result by opening
+  tens of thousands of sockets or processes, which silenced the rules on new listening ports,
+  raw sockets and suspicious processes. The sensor now reports at most 20,000 sockets and
+  10,000 processes, with 4 MB of command lines in all. Over those bounds what the rules read
+  comes first, root's next, and what is left out is counted by owner in the result's issues.
 
 ## [0.1.39] - 2026-10-29
 

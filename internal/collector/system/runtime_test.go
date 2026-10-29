@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"slices"
 	"strings"
@@ -180,6 +181,67 @@ func TestSocketsFallBackToOwnNamespace(t *testing.T) {
 	res := collect[SocketsResult](t, Sockets{}, collector.Source{FS: fsys})
 	if res.Namespaces != 1 || len(res.Sockets) != 1 || res.Sockets[0].Local != "127.0.0.1:3306" {
 		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestSocketsBoundKeepsWhatRulesRead(t *testing.T) {
+	var udp strings.Builder
+	udp.WriteString(tcpHeader + "\n")
+	for i := range MaxSockets + 5000 {
+		fmt.Fprintf(&udp, "%d: 0100007F:%04X 00000000:0000 07 00000000:00000000 00:00000000 00000000 65534 0 %d 2 0\n", i, i%65536, 30000+i)
+	}
+	fsys := fstest.MapFS{
+		"proc/net/udp": text(udp.String()),
+		"proc/net/tcp": text(tcpHeader + "\n" +
+			"0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 1 1 0\n" +
+			"1: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 2 1 0\n"),
+		"proc/net/raw": text(tcpHeader + "\n" +
+			"0: 00000000:0001 00000000:0000 07 00000000:00000000 00:00000000 00000000 0 0 3 2 0\n"),
+	}
+	res := collect[SocketsResult](t, Sockets{}, collector.Source{FS: fsys})
+	if len(res.Sockets) != MaxSockets {
+		t.Fatalf("%d sockets, want %d", len(res.Sockets), MaxSockets)
+	}
+	for _, local := range []string{"0.0.0.0:22", "0.0.0.0:8080", "0.0.0.0:1"} {
+		if !slices.ContainsFunc(res.Sockets, func(s Socket) bool { return s.Local == local }) {
+			t.Errorf("%s left out", local)
+		}
+	}
+	want := fmt.Sprintf("5003 sockets left out over the limit of %d: 5003 of UID 65534", MaxSockets)
+	if !slices.Equal(res.Issues, collector.Issues{want}) {
+		t.Errorf("issues = %q, want %q", res.Issues, want)
+	}
+}
+
+func TestProcessesBoundKeepsWhatRulesRead(t *testing.T) {
+	long := strings.Repeat("a", maxProcessText)
+	res := ProcessesResult{}
+	for i := range MaxProcesses + 100 {
+		res.Processes = append(res.Processes, Process{PID: 1000 + i, UID: 65534, EUID: 65534, Exe: "/usr/bin/sleep", Cmdline: "sleep " + long})
+	}
+	res.Processes = append(res.Processes,
+		Process{PID: 2, UID: 0, Exe: "/usr/sbin/sshd", Cmdline: "sshd: /usr/sbin/sshd", Tracer: 3},
+		Process{PID: 3, UID: 1000, EUID: 1000, Exe: "/usr/bin/gdb", Cmdline: "gdb -p 2"},
+		Process{PID: 4, UID: 1000, EUID: 1000, Exe: "/dev/shm/x", Cmdline: "x"},
+		Process{PID: 5, UID: 0, Exe: "/usr/sbin/cron", Cmdline: "/usr/sbin/cron -f"},
+	)
+	boundProcesses(&res)
+	if len(res.Processes) != MaxProcesses {
+		t.Fatalf("%d processes, want %d", len(res.Processes), MaxProcesses)
+	}
+	if pids := []int{res.Processes[0].PID, res.Processes[1].PID, res.Processes[2].PID, res.Processes[3].PID}; !slices.Equal(pids, []int{2, 3, 4, 5}) {
+		t.Errorf("first processes = %v, want the traced, its tracer, the unusual one, then root's", pids)
+	}
+	text := 0
+	for _, p := range res.Processes {
+		text += len(p.Cmdline)
+	}
+	if text > maxCommandLineBytes+MaxProcesses*(shortCommandLine+len("…")) || res.Processes[0].Cmdline != "sshd: /usr/sbin/sshd" {
+		t.Errorf("command lines take %d bytes", text)
+	}
+	if len(res.Issues) != 2 || res.Issues[0] != fmt.Sprintf("104 processes left out over the limit of %d: 104 of UID 65534", MaxProcesses) ||
+		!strings.HasPrefix(res.Issues[1], "command lines of ") {
+		t.Errorf("issues = %q", res.Issues)
 	}
 }
 

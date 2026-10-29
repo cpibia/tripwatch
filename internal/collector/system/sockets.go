@@ -48,8 +48,91 @@ type Sockets struct{}
 
 func (Sockets) Name() string { return "sockets" }
 
+// MaxSockets bounds the sockets one result reports. Any user can open tens of thousands of
+// sockets, and a result past the verifier's budget is refused whole, taking the listening,
+// raw and packet sockets its rules read with it. Over the bound those come first, and what is
+// left out is counted by owner.
+const MaxSockets = 20_000
+
+// socketRank orders sockets by what they tell: raw and packet sockets, which only privileged
+// processes open, then root's sockets, then any listener, then the rest.
+func socketRank(s Socket) int {
+	switch {
+	case s.Proto == "packet" || strings.HasPrefix(s.Proto, "raw"):
+		return 0
+	case s.UID == 0:
+		return 1
+	case s.State == "listen":
+		return 2
+	}
+	return 3
+}
+
+// socketBound keeps at most MaxSockets of each rank as they are read, so memory stays bounded
+// whatever the number of sockets, and counts the ones dropped by owner.
+type socketBound struct {
+	ranks   [4][]Socket
+	total   int
+	dropped map[int]int
+	order   []int
+}
+
+func (b *socketBound) add(s Socket) {
+	r := socketRank(s)
+	if len(b.ranks[r]) < MaxSockets {
+		b.ranks[r] = append(b.ranks[r], s)
+		b.order = append(b.order, r)
+		b.total++
+		return
+	}
+	b.drop(s.UID)
+}
+
+// maxDroppedOwners bounds the owners named in an issue; the others are summed.
+const maxDroppedOwners = 32
+
+func (b *socketBound) drop(uid int) {
+	if b.dropped == nil {
+		b.dropped = map[int]int{}
+	}
+	b.dropped[uid]++
+}
+
+// result returns the sockets in the order they were read when they fit, the most telling ones
+// first when they do not, and an issue naming who opened the ones left out.
+func (b *socketBound) result(res *SocketsResult) {
+	switch {
+	case b.total == 0:
+	case b.total <= MaxSockets:
+		next := [4]int{}
+		res.Sockets = make([]Socket, 0, b.total)
+		for _, r := range b.order {
+			res.Sockets = append(res.Sockets, b.ranks[r][next[r]])
+			next[r]++
+		}
+	default:
+		res.Sockets = make([]Socket, 0, MaxSockets)
+		for _, rank := range b.ranks {
+			room := MaxSockets - len(res.Sockets)
+			res.Sockets = append(res.Sockets, rank[:min(len(rank), room)]...)
+			for _, s := range rank[min(len(rank), room):] {
+				b.drop(s.UID)
+			}
+		}
+	}
+	if len(b.dropped) == 0 {
+		return
+	}
+	sum := 0
+	for _, n := range b.dropped {
+		sum += n
+	}
+	res.Issues = append(res.Issues, fmt.Sprintf("%d sockets left out over the limit of %d: %s", sum, MaxSockets, byOwner(b.dropped)))
+}
+
 func (Sockets) Collect(ctx context.Context, src collector.Source) (any, error) {
 	var res SocketsResult
+	var bound socketBound
 
 	owners := map[string]int{}
 	comms := map[int]string{}
@@ -112,7 +195,7 @@ func (Sockets) Collect(ctx context.Context, src collector.Source) (any, error) {
 						s.Exe = exeOf(src.FS, pid)
 					}
 				}
-				res.Sockets = append(res.Sockets, s)
+				bound.add(s)
 			}
 		}
 		lines, err := collector.ReadLines(src.FS, dir+"packet")
@@ -126,9 +209,10 @@ func (Sockets) Collect(ctx context.Context, src collector.Source) (any, error) {
 			if pid, found := owners[inode]; found {
 				s.PID, s.Process, s.Exe = pid, comms[pid], exeOf(src.FS, pid)
 			}
-			res.Sockets = append(res.Sockets, s)
+			bound.add(s)
 		}
 	}
+	bound.result(&res)
 	return res, nil
 }
 
