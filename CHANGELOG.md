@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- In a document, a PHP block is read for at most 64 KiB: a `<?=` its compressed streams hold by
+  chance, never closed, opened a block that ran to the end of the file and spent a megabyte of
+  the run's budget for code in data files per PDF. Code planted in a document is short and is
+  still read whole.
+- A database dump whose tool writes a header of its own is told by its content: a statement on
+  a backticked table (`INSERT INTO`, `CREATE TABLE`, `DROP TABLE`, `LOCK TABLES`) in its first
+  4 KiB, before any open tag. Its backticks are then no longer "code inside a data file".
+
 ## [0.1.38] - 2026-10-29
 
 Update the verifier, then the sensors.

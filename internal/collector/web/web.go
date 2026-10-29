@@ -936,7 +936,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	case inUploads && !script && containsCode(content):
 		// An archive or a document holding PHP (a plugin backed up as a zip) runs nothing; one
 		// named by a signature is still reported.
-		if sigs := matchSignatures(content, false); !mediaOrDocument(content) || len(strongInDocuments(content, sigs)) > 0 {
+		if sigs := matchSignatures(content, false); !documentLike(content) || len(strongInDocuments(content, sigs)) > 0 {
 			s.add(KindCodeInUploads, name, e, sigs)
 		}
 	case inData && !script && !image:
@@ -1089,8 +1089,8 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) (sigs []string
 	for c == nil || !c.exhausted() {
 		n, err := io.ReadFull(r, buf)
 		if head == nil {
-			head = slices.Clone(buf[:min(n, 16)])
-			c = newDataSearch(&s.budget.codeLeft, mediaOrDocument(head))
+			head = slices.Clone(buf[:min(n, documentHead)])
+			c = newDataSearch(&s.budget.codeLeft, documentLike(head))
 		}
 		last := err != nil
 		c.feed(buf[:n], last)
@@ -1158,6 +1158,30 @@ func appleDouble(head []byte) bool {
 	return bytes.HasPrefix(head, []byte("\x00\x05\x16\x07"))
 }
 
+// documentHead is how much of a file is read to tell a document: enough for a database dump's
+// first statements after the comments of whatever tool wrote it.
+const documentHead = 4096
+
+// documentLike reports a document, an archive or a database dump, where only the signatures
+// that name planted code count. A dump is told by its content when its first bytes do not say:
+// a statement on a backticked table in its head, before any open tag (posts quoting code come
+// after their INSERT).
+func documentLike(head []byte) bool {
+	if mediaOrDocument(head) {
+		return true
+	}
+	head = head[:min(len(head), documentHead)]
+	loc := sqlStatement.FindIndex(head)
+	if loc == nil {
+		return false
+	}
+	tag := bytes.Index(head, []byte("<?"))
+	return tag < 0 || loc[0] < tag
+}
+
+// sqlStatement is a dump's statement on a table, at the start of a line.
+var sqlStatement = regexp.MustCompile("(?m)^(?:INSERT INTO|CREATE TABLE(?: IF NOT EXISTS)?|DROP TABLE(?: IF EXISTS)?|LOCK TABLES) `")
+
 // polyglot reports an image carrying server-side code. The full open tag cannot come from
 // compressed pixels by chance; the short echo tag can, every few megabytes, so it counts only
 // with code a signature names.
@@ -1187,7 +1211,7 @@ var weakCodeSignals = []string{"backtick_exec", "dangerous_call"}
 // archive: their compressed streams hold an open tag and a backtick by chance every few
 // megabytes, in text PHP would compile, while code planted to run is named by a signature.
 func strongInDocuments(head []byte, sigs []string) []string {
-	if !mediaOrDocument(head) {
+	if !documentLike(head) {
 		return sigs
 	}
 	return slices.DeleteFunc(sigs, func(s string) bool { return slices.Contains(weakCodeSignals, s) })

@@ -195,3 +195,37 @@ func TestDocumentsSkipShortBlocks(t *testing.T) {
 		t.Errorf("code planted in a document with a full tag: %v", sigs)
 	}
 }
+
+// A block a document's streams open by chance, never closed, stops at documentBlockCode instead
+// of spending the budget to the end of the file; a short planted block is still read whole.
+func TestDocumentBlocksAreCut(t *testing.T) {
+	noise := make([]byte, 2<<20)
+	for i := range noise {
+		noise[i] = byte('a' + i%23)
+	}
+	pdf := append([]byte("%PDF-1.7\n<?= "), noise...)
+	left := int64(16 << 20)
+	if _, exhausted := codeInData(pdf, &left); exhausted || 16<<20-left > documentBlockCode+4096 {
+		t.Errorf("an unclosed block of a document spent %d bytes", 16<<20-left)
+	}
+	left = 16 << 20
+	planted := append(append([]byte("%PDF-1.7\n"), noise[:1<<20]...), "<?= system($_GET['c']); ?>"...)
+	if sigs, _ := codeInData(planted, &left); len(strongInDocuments(planted, sigs)) == 0 {
+		t.Errorf("a short block planted in a document: %v", sigs)
+	}
+}
+
+// A database dump whose tool wrote its own header is told by its statements on backticked
+// tables; text that opens a PHP block before them is not.
+func TestDumpToldByItsStatements(t *testing.T) {
+	dump := []byte("# Dump of database shop\n# ------------------------\n\nDROP TABLE IF EXISTS `wp_posts`;\nINSERT INTO `wp_posts` VALUES (1,'<?php echo `ls -la`; ?>');\n")
+	if !documentLike(dump) {
+		t.Error("a dump with a tool's header is not told")
+	}
+	if sigs, _ := codeInData(dump, nil); len(strongInDocuments(dump, sigs)) != 0 {
+		t.Errorf("a dump's quoted code reported: %v", sigs)
+	}
+	if documentLike([]byte("<?php `id`; ?>\nINSERT INTO `x` VALUES (1);\n")) {
+		t.Error("a PHP file with a statement taken for a dump")
+	}
+}

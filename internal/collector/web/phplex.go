@@ -22,10 +22,15 @@ type codeSearch struct {
 	// shortTags opens a block on "<?" whatever follows, as PHP does with short_open_tag on.
 	// Under it a block that cannot compile makes the whole file fail, so it is dropped unread.
 	shortTags bool
-	mode      int
-	heredoc   []byte // identifier closing the open heredoc or nowdoc
-	nowdoc    bool   // the open heredoc is a nowdoc, which interpolates nothing
-	atLine    bool   // in a heredoc, nothing but indentation seen on this line yet
+	// document ends a block at documentBlockCode: in a document's compressed streams "<?="
+	// comes by chance every few megabytes, and the block it opens, never closed, would run to
+	// the end of the file, while code planted there is short. blockLen counts the open block.
+	document bool
+	blockLen int
+	mode     int
+	heredoc  []byte // identifier closing the open heredoc or nowdoc
+	nowdoc   bool   // the open heredoc is a nowdoc, which interpolates nothing
+	atLine   bool   // in a heredoc, nothing but indentation seen on this line yet
 	// nested are the strings an interpolation ("{$" or "${") left for code, innermost last:
 	// the code runs to its matching brace, and may hold strings of its own.
 	nested   []interpolation
@@ -68,9 +73,11 @@ const (
 )
 
 const (
-	maxBlockCode     = 1 << 20
-	blockOverlap     = 4 << 10
-	maxHeredocIDSize = 128
+	maxBlockCode = 1 << 20
+	// documentBlockCode is the longest block read in a document, far more than any payload.
+	documentBlockCode = 64 << 10
+	blockOverlap      = 4 << 10
+	maxHeredocIDSize  = 128
 	// maxNested bounds interpolations inside interpolations; deeper nesting has no use in a
 	// data file and is reported rather than followed.
 	maxNested = 64
@@ -79,7 +86,7 @@ const (
 // codeInData returns the signatures of the PHP content would run if included, and whether the
 // budget of code ran out before the end.
 func codeInData(content []byte, codeLeft *int64) (sigs []string, exhausted bool) {
-	d := newDataSearch(codeLeft, mediaOrDocument(content))
+	d := newDataSearch(codeLeft, documentLike(content))
 	d.feed(content, true)
 	return d.signatures(), d.exhausted()
 }
@@ -88,17 +95,18 @@ func codeInData(content []byte, codeLeft *int64) (sigs []string, exhausted bool)
 // them off a "<?" followed by code is text, with them on it opens a block that can swallow, up
 // to its "?>", a block that the other setting runs.
 //
-// A document or an archive (by its first bytes) gets the first pass only: its compressed streams
-// hold "<?" and a blank every few kilobytes, each opening a short block that runs to the next
-// "?>" and spends the run's budget on noise, while only signatures count in documents, and code
-// planted to run there opens with "<?php" or "<?=", which compression does not make by chance.
+// A document or an archive (by its first bytes) gets the first pass only, with its blocks cut at
+// documentBlockCode: its compressed streams hold "<?" and a blank every few kilobytes and "<?="
+// every few megabytes, each opening a block that runs to the next "?>" and spends the run's
+// budget on noise, while only signatures count in documents, code planted to run there opens
+// with a full tag, and it is short.
 type dataSearch struct {
 	long, short codeSearch
 	document    bool
 }
 
 func newDataSearch(codeLeft *int64, document bool) *dataSearch {
-	return &dataSearch{long: codeSearch{codeLeft: codeLeft}, short: codeSearch{codeLeft: codeLeft, shortTags: true}, document: document}
+	return &dataSearch{long: codeSearch{codeLeft: codeLeft, document: document}, short: codeSearch{codeLeft: codeLeft, shortTags: true}, document: document}
 }
 
 func (d *dataSearch) feed(p []byte, final bool) {
@@ -524,6 +532,11 @@ func (c *codeSearch) emit(p []byte) {
 		return
 	}
 	c.code = append(c.code, p...)
+	c.blockLen += len(p)
+	if c.document && c.blockLen > documentBlockCode {
+		c.endBlock()
+		return
+	}
 	if len(c.code) > maxBlockCode {
 		c.match()
 		c.code = append(c.code[:0], c.code[len(c.code)-blockOverlap:]...)
@@ -545,7 +558,7 @@ func (c *codeSearch) endBlock() {
 		}
 	}
 	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken, c.glued, c.loose = lexText, c.code[:0], false, nil, false, false, false, false
-	c.nested, c.nowdoc = c.nested[:0], false
+	c.nested, c.nowdoc, c.blockLen = c.nested[:0], false, 0
 }
 
 func (c *codeSearch) add(sig string) {
