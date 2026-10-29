@@ -11,6 +11,17 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A failed probe logged by several proxy sites (the same path tried over http and https, each
   scheme with its own log) no longer raises an alert: requests seen in more than one log are
   judged against the sites of every one of them, instead of being left open.
+- Each requested script in the log events names the host files it would be (`files`), and
+  whether one exists (`file_exists`): behind a proxy, in the site answering the same name, such
+  as a container's web server.
+- The `._` files macOS leaves in the zips it makes are no hidden files in the data directories.
+- The data files searched to their end and found free of code are remembered while unchanged:
+  a host with more documents than one run can search gets through them in a few runs, and
+  "Data files not searched for code" no longer comes back every hour for the same files.
+
+### Verifier
+
+- Log alerts give the host path of the requested script and say whether it exists.
 
 ## [0.1.30] - 2026-10-29
 

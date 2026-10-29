@@ -119,6 +119,8 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 		event("/uploads/gone.php", 200, "missing"),
 		event("/uploads/proxied.php", 404, "elsewhere"),
 		event("/uploads/proxied-ok.php", 200, "elsewhere"),
+		{Rule: "sensitive_file", Severity: "high", Method: "GET", Status: 200, Log: "/var/log/nginx/proxy.log", OnDisk: "elsewhere",
+			Files: []string{"/srv/shop/test.php"}, FileExists: true, Evidence: logs.AttackerControlled{Request: "/test.php"}},
 		{Rule: "command_in_parameters", Severity: "high", Method: "GET", Status: 404, Log: "/var/log/nginx/access.log", OnDisk: "missing",
 			Evidence: logs.AttackerControlled{Request: "/uploads/used-then-deleted.php?cmd=id"}},
 	}}
@@ -129,10 +131,13 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 			if strings.Contains(f.Detail, "shell.php") && !strings.Contains(f.Detail, "The script exists on the server.") {
 				t.Errorf("detail does not say the script exists: %s", f.Detail)
 			}
+			if strings.Contains(f.Detail, "/test.php") && !strings.Contains(f.Detail, "The script exists on the server: /srv/shop/test.php") {
+				t.Errorf("detail does not name the file behind the proxy: %s", f.Detail)
+			}
 		}
 	}
 	slices.Sort(got)
-	if want := []string{"GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?cmd=id"}; !slices.Equal(got, want) {
+	if want := []string{"GET /test.php", "GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?cmd=id"}; !slices.Equal(got, want) {
 		t.Errorf("alerts for %v, want %v", got, want)
 	}
 }

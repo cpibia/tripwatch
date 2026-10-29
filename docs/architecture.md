@@ -266,7 +266,11 @@ from its tag; the code matched is bounded to 64 MB a run, since hostile code is 
 megabytes a second. Past either budget an issue names the file, and the result's `code_search`
 lists the files left unsearched (20 at most, then a count) with the five that spent the most code
 and their owners: the verifier raises "Data files not searched for code" (high), so files stuffed
-with code to hide a payload behind them point at themselves. Obfuscated function
+with code to hide a payload behind them point at themselves. The sensor remembers, in memory
+and for 65,536 files at most, the data files a run searched to their end and found free of code,
+by path, size, inode, modification and change time: later runs skip them while unchanged, so
+a host with more documents than one run can search gets through them in a few runs instead of
+stopping at the same ones every hour, and a file rewritten is searched again. Obfuscated function
 names are found by one hand-written pass over each script, without regular expressions: chains
 of quoted literals and `chr()` calls joined by `.` or `^` are decoded as PHP would and compared
 with the names a webshell calls (decoders only next to an `eval`).

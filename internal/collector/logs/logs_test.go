@@ -544,6 +544,41 @@ func TestSourceOf(t *testing.T) {
 	}
 }
 
+// A request a proxy passed on names the file it reached in the site behind the proxy answering
+// the same name, and whether it is there.
+func TestScriptsBehindProxyNamed(t *testing.T) {
+	h := newHost(t)
+	write := func(name, content string) {
+		t.Helper()
+		p := filepath.Join(h.root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("etc/nginx/nginx.conf", `http {
+		include /etc/nginx/conf.d/*.conf;
+		server { listen 8081; server_name shop.example.com; root /srv/shop; access_log /var/log/nginx/shop.log; location ~ \.php$ { fastcgi_pass php:9000; } }
+	}`)
+	write("etc/nginx/conf.d/proxy.conf", `server { listen 443; server_name shop.example.com; access_log /var/log/nginx/proxy.log; location / { proxy_pass http://127.0.0.1:8081; } }`)
+	write("srv/shop/test.php", "<?php")
+	write("var/log/nginx/proxy.log", logLine("203.0.113.7", "GET", "/test.php", 200)+
+		logLine("203.0.113.7", "GET", "/assets/images/x.php", 404))
+
+	got := map[string]Event{}
+	for _, e := range h.run().Events {
+		got[e.Evidence.Request] = e
+	}
+	if e := got["/test.php"]; e.OnDisk != "elsewhere" || !e.FileExists || !slices.Equal(e.Files, []string{"/srv/shop/test.php"}) {
+		t.Errorf("/test.php: on disk %q, files %v, exists %v", e.OnDisk, e.Files, e.FileExists)
+	}
+	if e := got["/assets/images/x.php"]; e.FileExists || !slices.Contains(e.Files, "/srv/shop/assets/images/x.php") {
+		t.Errorf("/assets/images/x.php: files %v, exists %v", e.Files, e.FileExists)
+	}
+}
+
 // A requested script is looked up in the document roots of the sites writing the log; a log no
 // configuration names, or a site that may proxy the request, leaves the answer open.
 func TestScriptsLookedUpOnDisk(t *testing.T) {

@@ -111,6 +111,11 @@ type Event struct {
 	// sites writing the log: "present", "missing", "elsewhere" when every site answers it
 	// itself or passes it to a proxy, or empty when that cannot be told.
 	OnDisk string `json:"on_disk,omitempty"`
+	// Files are the host paths the requested script would be at, up to maxEventFiles: in the
+	// sites writing the log, or, for a proxy, in the sites behind it answering the same names.
+	// FileExists says one of them is there, and then Files names only it.
+	Files      []string `json:"files,omitempty"`
+	FileExists bool     `json:"file_exists,omitempty"`
 
 	path   string
 	ipSeen map[string]struct{}
@@ -126,6 +131,7 @@ const (
 	maxEventsPerRule = maxEvents / 4
 	// A request is usually logged once per scheme a site listens on: a few logs per event.
 	maxLogsPerEvent = 4
+	maxEventFiles   = 4
 )
 
 func (e *Event) addLog(log string) {
@@ -232,8 +238,8 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 	}
 	run.positions = loadPositions(c.StateDir, &run.res.Issues)
 
-	access, errorLogs, sites := logFiles(src)
-	run.sites = sites
+	access, errorLogs, sites, backends := logFiles(src)
+	run.sites, run.backends = sites, backends
 	for _, name := range access {
 		if err := run.read(ctx, name, "access"); err != nil {
 			return nil, err
@@ -310,12 +316,23 @@ func loadPositions(dir string, issues *collector.Issues) map[string]position {
 }
 
 // logFiles lists the logs to read: those named in the web server configurations, then the
-// standard locations, and the sites writing each access log. Paths still holding variables are
-// skipped.
-func logFiles(src collector.Source) (access, errorLogs []string, sites map[string][]discovery.Site) {
+// standard locations, the sites writing each access log, and the sites a proxy writing it hands
+// requests to. Paths still holding variables are skipped.
+func logFiles(src collector.Source) (access, errorLogs []string, sites, backends map[string][]discovery.Site) {
 	fsys := src.FS
 	inv := discovery.InspectWithContainers(src)
-	sites = map[string][]discovery.Site{}
+	sites, backends = map[string][]discovery.Site{}, map[string][]discovery.Site{}
+	// The sites serving files from a root, by name: behind a proxy, the one answering the same
+	// name in another web server (often a container's) is where a request ended up.
+	served := map[string][]int{}
+	for i, s := range inv.Sites {
+		if s.Root == "" {
+			continue
+		}
+		for _, n := range s.Names {
+			served[n] = append(served[n], i)
+		}
+	}
 	add := func(list []string, p string) []string {
 		if p == "" || strings.Contains(p, "$") {
 			return list
@@ -329,8 +346,23 @@ func logFiles(src collector.Source) (access, errorLogs []string, sites map[strin
 	for _, s := range inv.Sites {
 		for _, p := range s.AccessLogs {
 			access = add(access, p)
-			if rel := collector.Rel(p); slices.Contains(access, rel) {
-				sites[rel] = append(sites[rel], s)
+			rel := collector.Rel(p)
+			if !slices.Contains(access, rel) {
+				continue
+			}
+			sites[rel] = append(sites[rel], s)
+			if len(s.Upstreams) == 0 {
+				continue
+			}
+			for _, n := range s.Names {
+				for _, i := range served[n] {
+					b := inv.Sites[i]
+					if b.Container != s.Container || b.Config != s.Config {
+						if !slices.ContainsFunc(backends[rel], func(x discovery.Site) bool { return x.Config == b.Config && x.Root == b.Root }) && len(backends[rel]) < maxBackends {
+							backends[rel] = append(backends[rel], b)
+						}
+					}
+				}
 			}
 		}
 		for _, p := range s.ErrorLogs {
@@ -349,8 +381,11 @@ func logFiles(src collector.Source) (access, errorLogs []string, sites map[strin
 			}
 		}
 	}
-	return access, errorLogs, sites
+	return access, errorLogs, sites, backends
 }
+
+// maxBackends bounds the sites behind the proxies writing one log.
+const maxBackends = 16
 
 type postTally struct {
 	requests int
@@ -377,6 +412,7 @@ type runState struct {
 	ruleRanks  map[string][5]int
 	// sites lists the sites writing each access log; statsLeft bounds the files looked up.
 	sites     map[string][]discovery.Site
+	backends  map[string][]discovery.Site
 	statsLeft int
 }
 
@@ -901,6 +937,9 @@ func (r *runState) finish() {
 	r.statsLeft = maxScriptStats
 	for _, e := range r.events {
 		e.OnDisk = r.onDisk(e)
+		if e.OnDisk == "elsewhere" {
+			r.behindProxy(e)
+		}
 		r.res.Events = append(r.res.Events, *e)
 	}
 	slices.SortFunc(r.res.Events, func(a, b Event) int {
@@ -964,18 +1003,53 @@ func (r *runState) onDisk(e *Event) string {
 		}
 		files = append(files, f...)
 	}
+	switch found, ok := r.lookUp(e, files); {
+	case !ok:
+		return ""
+	case found:
+		return "present"
+	}
+	return "missing"
+}
+
+// behindProxy names the files a request a proxy passed on would have reached in the sites
+// behind it, when the configuration tells them: the log the event came from cannot.
+func (r *runState) behindProxy(e *Event) {
+	script := weblog.ScriptPath(e.path)
+	var files []string
+	for _, log := range append([]string{strings.TrimPrefix(e.Log, "/")}, e.logs...) {
+		for i := range r.backends[log] {
+			f, ok := r.backends[log][i].ScriptFiles(script)
+			if !ok {
+				return
+			}
+			for _, p := range f {
+				if !slices.Contains(files, p) {
+					files = append(files, p)
+				}
+			}
+		}
+	}
+	r.lookUp(e, files)
+}
+
+// lookUp checks which of files exist, within the run's bound, and records them in the event: the
+// one found, or the places looked at. False when one could not be checked.
+func (r *runState) lookUp(e *Event, files []string) (found, ok bool) {
 	for _, f := range files {
 		if r.statsLeft == 0 {
-			return ""
+			return false, false
 		}
 		r.statsLeft--
 		_, err := fs.Stat(r.src.FS, collector.Rel(f))
 		switch {
 		case err == nil:
-			return "present"
+			e.Files, e.FileExists = []string{f}, true
+			return true, true
 		case !errors.Is(err, fs.ErrNotExist):
-			return ""
+			return false, false
 		}
 	}
-	return "missing"
+	e.Files = files[:min(len(files), maxEventFiles)]
+	return false, true
 }

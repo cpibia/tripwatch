@@ -1203,8 +1203,13 @@ func Evaluate(prev *State, cur State) []Finding {
 			// scripts does not crowd out the one that matters.
 			script := weblog.ScriptPath(path.Clean("/" + strings.SplitN(e.Evidence.Request, "?", 2)[0]))
 			onDisk := ""
-			if e.OnDisk == "present" {
-				onDisk = " The script exists on the server."
+			switch {
+			case e.FileExists && len(e.Files) > 0:
+				onDisk = "\nThe script exists on the server: " + e.Files[0]
+			case e.OnDisk == "present":
+				onDisk = "\nThe script exists on the server."
+			case len(e.Files) > 0:
+				onDisk = "\nNo such script on the server, looked for at: " + strings.Join(e.Files, ", ")
 			}
 			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Log: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.%s\nRequest text, written by whoever sent it: %s",
 				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, onDisk, e.Evidence.Request)})

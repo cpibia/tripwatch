@@ -456,7 +456,8 @@ For each application the `web` collector produces:
   delivered snapshot; each script added or changed is a high alert of its own (one alert for
   more than 20, as a deploy makes), and the change of a directory's hash lists its files;
 - **hidden files** among scripts and in data directories, except the tool configurations and
-  test fixtures that libraries ship on purpose (signatures are still searched in those);
+  test fixtures that libraries ship on purpose and the `._` metadata files macOS puts in the zips
+  it makes (signatures are still searched in those);
 - per-directory configuration files (`.htaccess`, `.user.ini`, `web.config`) with their hash,
   and a finding when they sit in an upload directory, naming the directives that make files run
   as scripts;
@@ -551,7 +552,9 @@ in none of them ran no code, and raises no alert (scanners probe thousands of su
 does a failed request on an nginx site that answers every request itself (`return`, the redirect
 to HTTPS) or hands that path to a proxy: the backend's own log, read when it is on the host,
 judges what ran there. The same probe often lands in several logs (http and https logged apart):
-it raises nothing only when every site writing any of them ran no code. When the request may reach a proxy otherwise (`ProxyPass`, a rewrite with
+it raises nothing only when every site writing any of them ran no code. The alert names the
+file on the host the script would be (behind a proxy, in the site answering the same domain,
+often a container's) and says whether it is there. When the request may reach a proxy otherwise (`ProxyPass`, a rewrite with
 the `P` flag, a named location a fallback leads to), a root
 holds a variable, a mapping is not modelled (`AliasMatch`), or the server is Caddy, the answer is
 left open and the request is judged as before. A web
