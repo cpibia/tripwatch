@@ -1140,11 +1140,16 @@ func mediaOrDocument(head []byte) bool {
 // sync) write next to the uploads they copy: a hidden name made of a UUID.
 var migrationManifestName = regexp.MustCompile(`^\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(?:wpmdb-scandir-)?manifest$`)
 
-// migrationManifest reports a migration plugin's manifest: its name, and JSON with no open tag
-// in what was read. Code hidden in one is still searched for as in any data file.
+// serializedArray is how PHP's serialize() writes an array, the format WP Migrate used for its
+// manifests before it moved to JSON in 2024.
+var serializedArray = regexp.MustCompile(`^a:\d{1,9}:\{`)
+
+// migrationManifest reports a migration plugin's manifest: its name, and JSON or a serialized
+// PHP array with no open tag in what was read. Code hidden in one is still searched for as in any
+// data file.
 func migrationManifest(name string, head []byte) bool {
 	head = bytes.TrimLeft(head, " \t\r\n")
-	return migrationManifestName.MatchString(name) && len(head) > 0 && (head[0] == '[' || head[0] == '{') && !bytes.Contains(head, []byte("<?"))
+	return migrationManifestName.MatchString(name) && len(head) > 0 && (head[0] == '[' || head[0] == '{' || serializedArray.Match(head)) && !bytes.Contains(head, []byte("<?"))
 }
 
 // appleDouble reports the metadata file macOS writes as ._name next to every file it zips: a

@@ -539,6 +539,8 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	tr.file(up+".secret", "notes")
 	tr.file(up+".bd6328c0-28ee-4aac-a0ff-ab2555cc6e3e-wpmdb-scandir-manifest", `{"2026\/10":["a.jpg"]}`)
 	tr.file(up+".595d0e1a-9175-41b0-8aae-781a79f2e0d9-manifest", `["2026\/10\/a.jpg"]`)
+	tr.file(up+".22222222-3333-4444-5555-666666666666-wpmdb-scandir-manifest", `a:1:{s:30:"/var/www/blog/wp-content/uploads";a:2:{s:6:"offset";i:0;s:9:"completed";b:1;}}`)
+	tr.file(up+".33333333-4444-5555-6666-777777777777-manifest", `a:1:{i:0;s:3:"x";}<?php system($_GET['c']);`)
 	tr.file(up+".11111111-2222-3333-4444-555555555555-manifest", `<?php system($_GET['c']);`)
 	tr.file(up+"pixels.png", "\x89PNG\r\n\x1a\nIDAT<?=$x random")
 	tr.file(up+"shell.png", "\x89PNG\r\n\x1a\nIDAT<?php echo 1;")
@@ -562,6 +564,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 		KindCodeInUploads + " /" + up + "backup/dump-with-shell",
 		KindHiddenInData + " /" + up + ".secret",
 		KindHiddenInData + " /" + up + ".11111111-2222-3333-4444-555555555555-manifest",
+		KindHiddenInData + " /" + up + ".33333333-4444-5555-6666-777777777777-manifest",
 		KindPolyglotImage + " /" + up + "shell.png",
 		KindHiddenScript + " /var/www/blog/.loader.php",
 	} {
@@ -569,7 +572,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "bare-dump", "table-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", "._pin.ico", ".dbVersion.php", "wpmdb-scandir-manifest", "e2d9-manifest"} {
+	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "bare-dump", "table-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", "._pin.ico", ".dbVersion.php", "wpmdb-scandir-manifest", "e2d9-manifest", "6666-wpmdb-scandir-manifest"} {
 		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
 			t.Errorf("%s reported: %v", name, got)
 		}

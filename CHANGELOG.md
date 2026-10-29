@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- WP Migrate manifests written as serialized PHP arrays, as the plugin did before it moved to
+  JSON in 2024, are recognised like the JSON ones instead of reported as hidden files.
+
 ## [0.1.37] - 2026-10-29
 
 Update the verifier, then the sensors: the verifier has no changes of its own, but sensors are
