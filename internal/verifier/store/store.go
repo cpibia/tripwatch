@@ -167,6 +167,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 	email      TEXT NOT NULL REFERENCES users(email),
 	expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_tokens (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	token_hash BLOB NOT NULL UNIQUE,
+	name       TEXT NOT NULL,
+	owner      TEXT NOT NULL,
+	write      INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	last_used  INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS recovery_codes (
 	code_hash BLOB PRIMARY KEY,
 	email     TEXT NOT NULL

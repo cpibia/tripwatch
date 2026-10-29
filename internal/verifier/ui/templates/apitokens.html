@@ -1,0 +1,43 @@
+{{define "content"}}{{$d := .Data}}{{$csrf := .CSRF}}
+<header class="head">
+  <h1>API tokens</h1>
+  <p class="aside">Programs read the console's data with a token, as the person who made it, the servers they may see included; a token allowed to handle alerts can also acknowledge and resolve them.</p>
+</header>
+{{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+{{with $d.New}}<section class="panel issued" aria-labelledby="new-h">
+  <div class="panel-head"><h2 id="new-h">Token {{$d.NewName}}</h2><p class="panel-note">shown only now: only its hash is kept</p></div>
+  <pre class="datum command" id="new-token">{{.}}</pre>
+  <div class="actions"><button type="button" data-copy="new-token">Copy the token</button></div>
+  <p class="note">Send it as <span class="mono">Authorization: Bearer &lt;token&gt;</span> to <span class="mono">/api/v1/alerts</span>, <span class="mono">/api/v1/alerts/{id}</span>, <span class="mono">/api/v1/hosts</span>; with write access also <span class="mono">POST /api/v1/alerts/{id}/ack</span> and <span class="mono">/resolve</span>.</p>
+</section>{{end}}
+
+<section class="panel" aria-labelledby="tok-h">
+  <div class="panel-head"><h2 id="tok-h">Tokens</h2></div>
+  {{if $d.Tokens}}
+  <table class="grid">
+    <thead><tr><th scope="col">Name</th><th scope="col">Access</th><th scope="col">Made by</th><th scope="col" class="num">Expires</th><th scope="col" class="num">Last used</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+    <tbody>{{range $d.Tokens}}
+    <tr><td>{{.Name}}</td><td>{{if .Write}}read, handle alerts{{else}}read{{end}}</td><td>{{.Owner}}</td>
+      <td class="num"><time datetime="{{iso .ExpiresAt}}" title="{{stamp .ExpiresAt}}">{{clock .ExpiresAt}}</time></td>
+      <td class="num">{{if .LastUsed.IsZero}}<span class="quiet">never</span>{{else}}<time datetime="{{iso .LastUsed}}" title="{{stamp .LastUsed}}">{{clock .LastUsed}}</time>{{end}}</td>
+      <td class="act"><details class="confirm"><summary>Revoke<span class="sr">: {{.Name}}</span></summary>
+        <form method="post" action="/settings/api/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$csrf}}"><p>What uses {{.Name}} stops working at once.</p><button type="submit" class="danger">Revoke the token</button></form>
+      </details></td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="empty">No token yet.</p>{{end}}
+</section>
+
+<section class="panel" aria-labelledby="mk-h">
+  <div class="panel-head"><h2 id="mk-h">Make a token</h2></div>
+  <form method="post" action="/settings/api" class="form">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="tk-name">What uses it</label>
+    <input id="tk-name" name="name" type="text" required maxlength="60" placeholder="SIEM import">
+    <label for="tk-days">Valid for</label>
+    <select id="tk-days" name="days">{{range $d.Lifetimes}}<option value="{{.}}"{{if eq . 90}} selected{{end}}>{{.}} days</option>{{end}}</select>
+    <label class="check"><input type="checkbox" name="write"> Also acknowledge and resolve alerts</label>
+    <button class="primary" type="submit">Make the token</button>
+  </form>
+</section>
+{{end}}

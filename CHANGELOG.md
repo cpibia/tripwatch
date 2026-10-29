@@ -28,6 +28,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   `client=acme`) and a note from its page. The name shows wherever the server appears, its
   identity (the name in its certificate) stays and shows beside it, and the searches find names,
   labels and notes.
+- An API for programs (Settings, API tokens): administrators make tokens, valid 30, 90 or 365
+  days, shown once and kept as a hash, that read as their owner (`GET /api/v1/alerts` with
+  `status`, `severity`, `host`, `limit`; `GET /api/v1/alerts/{id}`; `GET /api/v1/hosts`) and,
+  when allowed, acknowledge and resolve alerts (`POST /api/v1/alerts/{id}/ack|resolve`),
+  recorded in the audit log as `api:<name>`. A token sees the servers its owner sees, stops when
+  revoked or when its owner is removed, and a browser session never counts as one.
 - Who sees what: a viewer or an operator can be limited to the servers carrying one label
   (Settings, Users). They then see nothing of the others: lists, counts, charts, searches and
   the tab icon leave them out, their pages answer not found, and their alerts cannot be changed,

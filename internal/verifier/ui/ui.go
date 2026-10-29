@@ -127,7 +127,7 @@ func New(c Config) (http.Handler, error) {
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
-	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite", "account", "secondfactor"} {
+	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite", "account", "secondfactor", "apitokens"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "hostname": s.hostName, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
@@ -174,6 +174,13 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("POST /users", s.as(store.RoleAdmin, s.invite))
 	mux.HandleFunc("POST /users/{action}", s.as(store.RoleAdmin, s.userAction))
 	mux.HandleFunc("GET /audit", s.as(store.RoleAdmin, s.auditLog))
+	mux.HandleFunc("GET /settings/api", s.as(store.RoleAdmin, s.apiTokens))
+	mux.HandleFunc("POST /settings/api", s.as(store.RoleAdmin, s.createAPIToken))
+	mux.HandleFunc("POST /settings/api/{id}/revoke", s.as(store.RoleAdmin, s.revokeAPIToken))
+	mux.HandleFunc("GET /api/v1/alerts", s.api(false, s.apiAlerts))
+	mux.HandleFunc("GET /api/v1/alerts/{id}", s.api(false, s.apiAlert))
+	mux.HandleFunc("GET /api/v1/hosts", s.api(false, s.apiHosts))
+	mux.HandleFunc("POST /api/v1/alerts/{id}/{action}", s.api(true, s.apiTransition))
 	mux.HandleFunc("GET /invite", s.inviteForm)
 	mux.HandleFunc("POST /invite", s.acceptInvite)
 	mux.HandleFunc("GET /enroll", s.as(store.RoleAdmin, s.enrollForm))

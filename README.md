@@ -844,6 +844,11 @@ is needed too, which closes them all.
   left. A viewer or an operator can be limited to the servers carrying one label: everything
   else stays out of their lists, counts, charts and searches, and out of reach. The audit log
   keeps who did what in the console, newest first.
+- **API.** Administrators make tokens (Settings, API tokens) that programs send as
+  `Authorization: Bearer twk_...`: `GET /api/v1/alerts` (filters `status`, `severity`, `host`,
+  `limit`), `GET /api/v1/alerts/{id}`, `GET /api/v1/hosts`, and with write access
+  `POST /api/v1/alerts/{id}/ack` and `/resolve`. A token acts as the person who made it, the
+  servers they may see included, is shown once, expires, and can be revoked.
 - **Account.** Each user can set up a second factor (an authenticator app, with ten single-use
   recovery codes): signing in then asks a code after the password, five wrong codes end the
   attempt, and a code works once. The page lists the sessions of the account and signs out any
