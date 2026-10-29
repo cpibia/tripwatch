@@ -538,6 +538,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 	tr.file(up+"shell.png", "\x89PNG\r\n\x1a\nIDAT<?php echo 1;")
 	tr.file(up+"clip.mp4", "\x00\x00\x00\x18ftypmp42<?php `x`")
 	tr.file("var/www/blog/wp-content/plugins/kit/__MACOSX/._kit.php", "\x00\x05\x16\x07Mac OS X        ATTR")
+	tr.file(up+"icons/pin.ico/__MACOSX/._pin.ico", "\x00\x05\x16\x07Mac OS X        ATTR")
 	tr.file("var/www/blog/.dbVersion.php", "<?php $dbVersion = '8.0'; ?>")
 	tr.file("var/www/blog/.loader.php", "<?php include $_GET['f'];")
 
@@ -560,7 +561,7 @@ func TestFilesThatLookLikeCodeButRunNothing(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", ".dbVersion.php"} {
+	for _, name := range []string{"debug-log.php", "plugin/index.php", "dance.php", "layouts/function.php", "layouts/function-params.php", "layouts/function-hooked.php", "prices.php", "guarded.php", ".redirects.php", "site-dump", "backup-plugin.zip", "uploads/.png", ".empty", "pixels.png", "clip.mp4", "._kit.php", "._pin.ico", ".dbVersion.php"} {
 		if slices.ContainsFunc(got, func(f string) bool { return strings.HasSuffix(f, name) }) {
 			t.Errorf("%s reported: %v", name, got)
 		}
@@ -1150,6 +1151,52 @@ func TestCodeSearchBudgetSpentByDecoys(t *testing.T) {
 	}
 	if run(t, compromisedShop()).CodeSearch != nil {
 		t.Error("a run within its budget reports a code search")
+	}
+}
+
+// Files a run searched and found clean are not searched again while unchanged: later runs' budget
+// reaches every file the decoys held back, and a decoy rewritten with code is searched anew.
+func TestCodeSearchRemembersCleanFiles(t *testing.T) {
+	saved := MaxDataCodeBytesPerRun
+	MaxDataCodeBytesPerRun = 64 << 10
+	defer func() { MaxDataCodeBytesPerRun = saved }()
+
+	tr := newTree(t)
+	for p, f := range compromisedShop() {
+		tr.file(p, string(f.Data))
+	}
+	decoy := "<?php " + strings.Repeat("$a = 1; ", 3<<10)
+	for i := range 12 {
+		tr.file(fmt.Sprintf("var/www/commerce/var/report/a%02d", i), decoy)
+	}
+	tr.file("var/www/commerce/var/report/z", "<?php system($_GET['c']);")
+	c := &Collector{}
+	collect := func() Result {
+		t.Helper()
+		out, err := c.Collect(context.Background(), collector.NewSource(tr.root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.(Result)
+	}
+	found := func(res Result, p string) bool {
+		return slices.ContainsFunc(commerceReport(t, res).Findings, func(f Finding) bool { return f.Kind == KindCodeInData && f.Path == p })
+	}
+	if collect().CodeSearch == nil {
+		t.Fatal("the first run is not cut short by the decoys")
+	}
+	var res Result
+	for range 16 {
+		if res = collect(); res.CodeSearch == nil {
+			break
+		}
+	}
+	if res.CodeSearch != nil || !found(res, "/var/www/commerce/var/report/z") {
+		t.Fatalf("later runs never reach the hidden file: %+v", res.CodeSearch)
+	}
+	tr.file("var/www/commerce/var/report/a03", decoy+" system($_GET['c']);")
+	if !found(collect(), "/var/www/commerce/var/report/a03") {
+		t.Error("a remembered file rewritten with code is not searched again")
 	}
 }
 

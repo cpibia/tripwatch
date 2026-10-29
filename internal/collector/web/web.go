@@ -181,6 +181,7 @@ const (
 type Collector struct {
 	StateDir string
 	pending  pendingManifests
+	searched searchedFiles
 }
 
 func (*Collector) Name() string { return "web" }
@@ -194,6 +195,8 @@ func (c *Collector) Commit() error { return c.pending.commit() }
 func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := Result{Inventory: discovery.InspectWithContainers(src)}
 	budget := newHashBudget()
+	c.searched.begin()
+	budget.searched = &c.searched
 	mounts, err := collector.NetworkMounts(src)
 	if err != nil {
 		res.Issues.Add(err)
@@ -275,6 +278,8 @@ type hashBudget struct {
 	dataLeft      int64
 	codeLeft      int64
 	search        CodeSearch
+	// searched is nil when nothing is remembered between runs.
+	searched *searchedFiles
 }
 
 // unsearched records a data file not fully searched for code.
@@ -935,7 +940,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 			s.add(KindCodeInUploads, name, e, sigs)
 		}
 	case inData && !script && !image:
-		if sigs := s.codeInData(name, e, content); len(sigs) > 0 {
+		if sigs := s.codeInData(name, e, content, complete); len(sigs) > 0 {
 			s.add(KindCodeInData, name, e, sigs)
 		}
 	case script:
@@ -960,7 +965,7 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	switch {
 	case script && hidden && !inDependencyTests(name) && !runsNothing:
 		s.add(KindHiddenScript, name, e, nil)
-	case inData && hidden && !script && (complete && len(content) == 0 || mediaOrDocument(content)):
+	case inData && hidden && !script && (complete && len(content) == 0 || mediaOrDocument(content) || appleDouble(content)):
 	case inData && hidden:
 		s.add(KindHiddenInData, name, e, nil)
 	}
@@ -1058,7 +1063,10 @@ const dataScanChunk = 1 << 20
 
 // streamCodeInData reads a data file too large to load, piece after piece, and searches it for
 // code within the run's budget; past it, an issue says the file was read at its edges.
-func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
+func (s *scanner) streamCodeInData(name string, info fs.FileInfo) (sigs []string) {
+	if s.budget.searched.clean(name, info) {
+		return nil
+	}
 	if s.budget.dataLeft < info.Size() {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: %d bytes, read for code at its edges only: budget of %d bytes a run spent", name, info.Size(), MaxDataScanBytesPerRun))
 		s.budget.unsearched(name)
@@ -1092,8 +1100,12 @@ func (s *scanner) streamCodeInData(name string, info fs.FileInfo) []string {
 	if c.exhausted() {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
 		s.budget.unsearched(name)
+		return strongInDocuments(head, c.signatures())
 	}
-	return strongInDocuments(head, c.signatures())
+	if sigs = strongInDocuments(head, c.signatures()); len(sigs) == 0 {
+		s.budget.searched.add(name, info)
+	}
+	return sigs
 }
 
 // maxDataOnlyNotes bounds the issues saying why a PHP file in the uploads is code.
@@ -1121,6 +1133,12 @@ func mediaOrDocument(head []byte) bool {
 	starts := func(m []byte) bool { return bytes.HasPrefix(head, m) }
 	return slices.ContainsFunc(documentMagic, starts) || slices.ContainsFunc(mediaMagic, starts) ||
 		len(head) >= 12 && bytes.Equal(head[4:8], []byte("ftyp"))
+}
+
+// appleDouble reports the metadata file macOS writes as ._name next to every file it zips: a
+// header of its own, with attributes and a resource fork, never anything a server runs.
+func appleDouble(head []byte) bool {
+	return bytes.HasPrefix(head, []byte("\x00\x05\x16\x07"))
 }
 
 // polyglot reports an image carrying server-side code. The full open tag cannot come from
@@ -1154,13 +1172,22 @@ func strongInDocuments(head []byte, sigs []string) []string {
 	return slices.DeleteFunc(sigs, func(s string) bool { return slices.Contains(weakCodeSignals, s) })
 }
 
-// codeInData searches data for code within the run's budget, and says when it ran out.
-func (s *scanner) codeInData(name string, e fs.DirEntry, content []byte) []string {
+// codeInData searches data for code within the run's budget, and says when it ran out. Only a
+// complete content searched to its end is remembered as clean: the edges of a large file say
+// nothing about its middle.
+func (s *scanner) codeInData(name string, e fs.DirEntry, content []byte, complete bool) []string {
+	info, err := e.Info()
+	if err == nil && complete && s.budget.searched.clean(name, info) {
+		return nil
+	}
 	before := s.budget.codeLeft
 	sigs, exhausted := codeInData(content, &s.budget.codeLeft)
 	sigs = strongInDocuments(content, sigs)
-	if info, err := e.Info(); err == nil {
+	if err == nil {
 		s.budget.spent(name, info, before-s.budget.codeLeft)
+		if complete && !exhausted && len(sigs) == 0 {
+			s.budget.searched.add(name, info)
+		}
 	}
 	if exhausted {
 		s.issues = append(s.issues, fmt.Sprintf("/%s: not fully searched for code: budget of %d bytes of code in data files a run spent", name, MaxDataCodeBytesPerRun))
