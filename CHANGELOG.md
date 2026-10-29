@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A start-up hook that is a symlink takes the later of its own change time and its target's,
+  and says where it leads: a link made in `/etc/profile.d` to a file written before the previous
+  snapshot is now a new hook, not one that was there all along.
+
 ## [0.1.41] - 2026-10-29
 
 Back up the verifier (`tripwatch-verifier backup`), update it, then the sensors. Its first start

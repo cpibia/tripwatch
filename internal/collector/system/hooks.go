@@ -114,10 +114,19 @@ func (Hooks) Collect(ctx context.Context, src collector.Source) (any, error) {
 		}
 		for _, name := range names {
 			res.Files = appendDescribed(res.Files, &res.Issues, src, name)
-			// The verifier tells a file there all along from one written and dated back by it.
+			// The verifier tells a file there all along from one written and dated back by it. A
+			// link takes the later of its own change time and its target's: a link made now to a
+			// file written long ago is new, and so is an old link whose target was just rewritten.
 			if info, err := fs.Stat(src.FS, name); err == nil && len(res.Files) > 0 && res.Files[len(res.Files)-1].Path == "/"+name {
+				f := &res.Files[len(res.Files)-1]
 				if ns, ok := collector.ChangeTime(info); ok {
-					res.Files[len(res.Files)-1].ChangeTime = time.Unix(0, ns).UTC()
+					f.ChangeTime = time.Unix(0, ns).UTC()
+				}
+				if link, err := fs.Lstat(src.FS, name); err == nil && link.Mode()&fs.ModeSymlink != 0 {
+					if ns, ok := collector.ChangeTime(link); ok && time.Unix(0, ns).After(f.ChangeTime) {
+						f.ChangeTime = time.Unix(0, ns).UTC()
+					}
+					f.Link, _ = fs.ReadLink(src.FS, name)
 				}
 			}
 		}

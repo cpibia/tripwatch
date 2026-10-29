@@ -650,6 +650,9 @@ func hookChanges(prev *State, cur State) []Finding {
 		}
 		detail := fmt.Sprintf("%s was %s since the previous snapshot: %d bytes, SHA-256 %s, mode %s. Code here runs at each login, boot, network change or library load, as whoever triggers it; no real-time event reported this content.",
 			f.Path, what, f.Size, orNone(f.SHA256), f.Mode)
+		if f.Link != "" {
+			detail += " It is a link to " + f.Link + ": the size, hash and mode are the target's."
+		}
 		if upgraded {
 			sev = "low"
 			detail += " Packages were installed, upgraded or removed in the same interval: one of them may have made this change."

@@ -90,6 +90,9 @@ type File struct {
 	// clock: set where telling an old file from one dated back matters.
 	ChangeTime time.Time `json:"ctime,omitzero"`
 	SHA256     string    `json:"sha256,omitempty"`
+	// Link is where the path leads when it is a symlink, set where it matters: the rest of
+	// the description is then the target's.
+	Link string `json:"link,omitempty"`
 	// Mount names, for a file on a filesystem an unprivileged user mounted (FUSE), its type and
 	// the user: the owner and mode it reports are whatever that user chose.
 	Mount string `json:"mount,omitempty"`
