@@ -528,10 +528,10 @@ func (s *scanner) listNames(ctx context.Context, dir string, depth int, verify b
 	}
 }
 
-// withdraw removes a finding recorded by an earlier pass. Withdrawn findings are dropped when
-// the scan ends.
-func (s *scanner) withdraw(kind, name string) {
-	key := kind + "\x00" + name
+// withdraw removes the script the names pass reported in an upload directory, once its content
+// shows it runs nothing. Withdrawn findings are dropped when the scan ends.
+func (s *scanner) withdraw(name string) {
+	key := KindScriptInUploads + "\x00" + name
 	if i, seen := s.findings[key]; seen {
 		s.report.Findings[i].Kind = ""
 		delete(s.findings, key)
@@ -911,18 +911,18 @@ func (s *scanner) classify(name string, e fs.DirEntry, content []byte, complete,
 	case script && inUploads && complete && php && !bytes.Contains(content, []byte("<?")):
 		// No open tag at all: PHP sends the file as it is ("Silence is golden.") and runs
 		// nothing.
-		s.withdraw(KindScriptInUploads, name)
+		s.withdraw(name)
 	case script && inUploads && complete && php && (exitGuarded(content) || s.dataOnly(name, content)):
 		// A plugin's log kept under a .php name with an exit in front, so that requesting it
 		// shows nothing, or a theme's layouts kept as a returned array: nothing in either runs.
-		s.withdraw(KindScriptInUploads, name)
+		s.withdraw(name)
 	case script && inUploads && complete && isPlaceholder(content):
 		// The names pass reported it; the content shows an empty placeholder.
-		s.withdraw(KindScriptInUploads, name)
+		s.withdraw(name)
 	case script && inUploads && complete && compiledTwig(name, content):
 		// Drupal writes the templates it compiles under its public files; a webshell given that
 		// header is still matched against the signatures.
-		s.withdraw(KindScriptInUploads, name)
+		s.withdraw(name)
 		if sigs := matchSignatures(content, php); len(sigs) > 0 && !slices.Equal(sigs, []string{"encoded_blob"}) {
 			s.add(KindSignature, name, e, sigs)
 		}
