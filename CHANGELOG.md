@@ -28,6 +28,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   `client=acme`) and a note from its page. The name shows wherever the server appears, its
   identity (the name in its certificate) stays and shows beside it, and the searches find names,
   labels and notes.
+- Who sees what: a viewer or an operator can be limited to the servers carrying one label
+  (Settings, Users). They then see nothing of the others: lists, counts, charts, searches and
+  the tab icon leave them out, their pages answer not found, and their alerts cannot be changed,
+  even by a form made by hand. The limit is applied by the store to every query of the request.
 - A second factor for signing in: each user sets up an authenticator app from their account page
   (QR code or key, RFC 6238 codes of six digits), confirmed with a first code, with ten
   single-use recovery codes shown once. After the password, or a one-time sign-in link, the

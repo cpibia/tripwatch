@@ -86,6 +86,16 @@ func (s *server) userAction(w http.ResponseWriter, r *http.Request, se session) 
 		if err == nil {
 			s.audit(r, se, "user removed", email, "")
 		}
+	case "scope":
+		label := strings.TrimSpace(r.PostFormValue("scope"))
+		if label != "" && !labelPattern.MatchString(label) {
+			s.renderUsers(w, r, se, http.StatusBadRequest, usersData{Error: "The servers someone sees are named by one label, key=value, such as client=acme."})
+			return
+		}
+		err = s.Store.SetScope(r.Context(), email, label)
+		if err == nil {
+			s.audit(r, se, "visibility changed", email, "servers with "+orDash(label))
+		}
 	case "reset-2fa":
 		// For someone who lost their phone and their recovery codes: they sign in with the
 		// password only, and set a new second factor up.

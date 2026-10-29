@@ -278,7 +278,7 @@ func migrate(db *sql.DB) error {
 	}
 	// Users before roles were all administrators; sessions before 0.1.35 carry no history.
 	for table, cols := range map[string]map[string]string{
-		"users": {"role": "TEXT NOT NULL DEFAULT 'admin'", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_last": "INTEGER NOT NULL DEFAULT 0"}, //nolint:gosec // column definitions, not credentials
+		"users": {"role": "TEXT NOT NULL DEFAULT 'admin'", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_last": "INTEGER NOT NULL DEFAULT 0", "scope": "TEXT NOT NULL DEFAULT ''"}, //nolint:gosec // column definitions, not credentials
 		"sessions": {"created_at": "INTEGER NOT NULL DEFAULT 0", "last_seen": "INTEGER NOT NULL DEFAULT 0", "agent": "TEXT NOT NULL DEFAULT ''",
 			"mfa_pending": "INTEGER NOT NULL DEFAULT 0", "mfa_failures": "INTEGER NOT NULL DEFAULT 0"},
 	} {
@@ -448,6 +448,15 @@ func (s *Store) Hosts(ctx context.Context) ([]Host, error) {
 }
 
 func (s *Store) hosts(ctx context.Context, where string, args ...any) ([]Host, error) {
+	// The scope goes in front of the clause, which may hold an ORDER BY: WHERE 1 = 1 starts it.
+	scope, more := scopeClause(ctx, "id")
+	if scope != "" {
+		where = strings.Replace(where, "WHERE ", "WHERE 1 = 1"+scope+" AND ", 1)
+		if !strings.Contains(where, "WHERE") {
+			where = "WHERE 1 = 1" + scope + " " + where
+		}
+		args = append(more, args...)
+	}
 	//nolint:gosec // where is a constant clause from this package; values are bound
 	rows, err := s.db.QueryContext(ctx, `SELECT id, public_key, enrolled_at, revoked, last_seq, last_digest,
 		last_seen, last_heartbeat, last_snapshot, cert_serial, prev_serial, peer_addr, name, labels, note FROM hosts `+where, args...)

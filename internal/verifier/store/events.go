@@ -165,8 +165,9 @@ func (s *Store) SearchEvents(ctx context.Context, text string, limit int) ([]Eve
 		return nil, nil
 	}
 	like := likePattern(strings.ToValidUTF8(text[:min(len(text), maxQueryLen)], ""))
+	scope, args := scopeClause(ctx, "host_id")
 	return s.events(ctx, `SELECT id, host_id, seq, at, received_at, class, op, path, package_manager, data FROM events
-		WHERE path LIKE ? ESCAPE '\' OR data LIKE ? ESCAPE '\' ORDER BY id DESC LIMIT ?`, like, like, limit)
+		WHERE (path LIKE ? ESCAPE '\' OR data LIKE ? ESCAPE '\')`+scope+` ORDER BY id DESC LIMIT ?`, append(append([]any{like, like}, args...), limit)...)
 }
 
 func (s *Store) events(ctx context.Context, q string, args ...any) ([]Event, error) {

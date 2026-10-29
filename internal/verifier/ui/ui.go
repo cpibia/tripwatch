@@ -207,6 +207,8 @@ func (s *server) serveStatic(w http.ResponseWriter, r *http.Request) {
 type session struct {
 	Email string
 	Role  string
+	// Scope is the label of the servers the user may see; empty for all.
+	Scope string
 	token string
 }
 
@@ -236,8 +238,10 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 			return
 		}
 		if err == nil {
-			se.Role, err = s.Store.UserRole(r.Context(), se.Email)
+			se.Role, se.Scope, err = s.Store.UserAccess(r.Context(), se.Email)
 		}
+		// Every query of the request sees only the user's servers.
+		r = r.WithContext(store.WithScope(r.Context(), se.Scope))
 		if err == nil {
 			if terr := s.Store.TouchSession(r.Context(), se.token, r.UserAgent(), s.Now()); terr != nil {
 				s.Log.Error("touch session", "err", terr)
@@ -868,6 +872,11 @@ func (s *server) revoke(w http.ResponseWriter, r *http.Request, se session) {
 // withdraw puts a finding accepted on a host back under watch.
 func (s *server) withdraw(w http.ResponseWriter, r *http.Request, se session) {
 	id, fp := r.PathValue("id"), r.PostFormValue("fingerprint")
+	// Read through the user's scope: a server they may not see is one they cannot change.
+	if _, err := s.Store.Host(r.Context(), id); err != nil {
+		s.fail(w, r, http.StatusNotFound, "Unknown server", "No server is enrolled with this name.")
+		return
+	}
 	if err := s.Store.Withdraw(r.Context(), id, fp); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.internal(w, r, err)
 		return
@@ -1332,6 +1341,11 @@ func (s *server) bulk(w http.ResponseWriter, r *http.Request, se session) {
 	for _, raw := range ids {
 		id, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
+			continue
+		}
+		// Read through the user's scope first: an alert they may not see is one they cannot
+		// change, whatever ids the form carries.
+		if _, err := s.Store.Alert(r.Context(), id); err != nil {
 			continue
 		}
 		// As for a single alert, one changed meanwhile by a colleague is not an error.

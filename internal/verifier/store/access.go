@@ -37,11 +37,31 @@ type User struct {
 	Email     string
 	Role      string
 	CreatedAt time.Time
+	// Scope is the label a user's servers carry: they see only those. Empty sees every server,
+	// and administrators always do.
+	Scope string
+}
+
+// SetScope limits what a user sees to the servers carrying a label; empty lifts the limit.
+func (s *Store) SetScope(ctx context.Context, email, label string) error {
+	return s.one(ctx, `UPDATE users SET scope = ? WHERE email = ?`, label, normalEmail(email))
+}
+
+// UserAccess returns a user's role and scope; an administrator's scope is always empty.
+func (s *Store) UserAccess(ctx context.Context, email string) (role, scope string, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT role, scope FROM users WHERE email = ?`, normalEmail(email)).Scan(&role, &scope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	if role == RoleAdmin {
+		scope = ""
+	}
+	return role, scope, err
 }
 
 // Users lists the users, administrators first.
 func (s *Store) Users(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT email, role, created_at FROM users
+	rows, err := s.db.QueryContext(ctx, `SELECT email, role, created_at, scope FROM users
 		ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'operator' THEN 1 ELSE 2 END, email`)
 	if err != nil {
 		return nil, err
@@ -51,7 +71,7 @@ func (s *Store) Users(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var created int64
-		if err := rows.Scan(&u.Email, &u.Role, &created); err != nil {
+		if err := rows.Scan(&u.Email, &u.Role, &created, &u.Scope); err != nil {
 			return nil, err
 		}
 		u.CreatedAt = unix(created)

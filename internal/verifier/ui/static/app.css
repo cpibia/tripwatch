@@ -691,3 +691,4 @@ a.notify.off:hover { outline: var(--hair) solid var(--amber); }
 .host-note { margin: 0; max-width: 70ch; color: var(--ink-2); white-space: pre-line; }
 textarea { width: 100%; font: 400 var(--fs-md)/1.45 var(--sans); color: var(--ink); background: var(--raised); border: var(--hair) solid var(--rule-strong); border-radius: var(--radius-sm); padding: 9px 11px; resize: vertical; }
 textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.role-form input.scope { width: 11rem; min-height: 34px; padding: 6px 10px; font-size: var(--fs-sm); color: var(--ink); background: var(--raised); border: var(--hair) solid var(--rule-strong); border-radius: var(--radius-sm); }

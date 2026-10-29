@@ -841,7 +841,9 @@ is needed too, which closes them all.
   administrators also enroll and revoke servers, order sensor updates, set up notifications and
   manage users. Administrators invite people with a one-time link (three days) in which they
   choose their password, change roles and remove accounts; there is always one administrator
-  left. The audit log keeps who did what in the console, newest first.
+  left. A viewer or an operator can be limited to the servers carrying one label: everything
+  else stays out of their lists, counts, charts and searches, and out of reach. The audit log
+  keeps who did what in the console, newest first.
 - **Account.** Each user can set up a second factor (an authenticator app, with ten single-use
   recovery codes): signing in then asks a code after the password, five wrong codes end the
   attempt, and a code works once. The page lists the sessions of the account and signs out any

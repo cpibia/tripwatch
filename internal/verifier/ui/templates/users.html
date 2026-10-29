@@ -1,7 +1,7 @@
 {{define "content"}}{{$d := .Data}}{{$csrf := .CSRF}}
 <header class="head">
   <h1>Users</h1>
-  <p class="aside">Viewers read the console; operators also handle alerts; administrators also enroll and revoke servers, set up notifications and manage users.</p>
+  <p class="aside">Viewers read the console; operators also handle alerts; administrators also enroll and revoke servers, set up notifications and manage users. A viewer or an operator can be limited to the servers carrying one label (set it on each server's page): they see nothing of the others.</p>
 </header>
 
 {{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
@@ -15,7 +15,7 @@
 <section class="panel" aria-labelledby="users-h">
   <div class="panel-head"><h2 id="users-h">People</h2><p class="panel-note">{{len $d.Users}} {{plural (len $d.Users) "account" "accounts"}}</p></div>
   <table class="grid users">
-    <thead><tr><th scope="col">Email</th><th scope="col">Role</th><th scope="col" class="num">Since</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+    <thead><tr><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Sees</th><th scope="col" class="num">Since</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
     <tbody>{{range $d.Users}}
     <tr>
       <td>{{.Email}}{{if eq .Email $d.Self}} <span class="quiet">(you)</span>{{end}}</td>
@@ -23,6 +23,10 @@
         <label class="sr" for="role-{{.Email}}">Role of {{.Email}}</label>
         <select id="role-{{.Email}}" name="role">{{$role := .Role}}{{range $d.Roles}}<option value="{{.}}"{{if eq . $role}} selected{{end}}>{{.}}</option>{{end}}</select>
         <button type="submit">Change<span class="sr"> the role of {{.Email}}</span></button></form></td>
+      <td>{{if eq .Role "admin"}}<span class="quiet">every server</span>{{else}}<form method="post" action="/users/scope" class="role-form"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="email" value="{{.Email}}">
+        <label class="sr" for="scope-{{.Email}}">Servers {{.Email}} sees</label>
+        <input id="scope-{{.Email}}" name="scope" type="text" class="mono scope" value="{{.Scope}}" placeholder="every server" title="one label, key=value: only the servers carrying it">
+        <button type="submit">Set<span class="sr"> what {{.Email}} sees</span></button></form>{{end}}</td>
       <td class="num"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
       <td class="act"><div class="actions"><details class="confirm"><summary>Reset 2FA<span class="sr">: {{.Email}}</span></summary>
         <form method="post" action="/users/reset-2fa"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="email" value="{{.Email}}"><p>For a lost phone: {{.Email}} signs in with the password only until they set a new second factor up.</p><button type="submit" class="danger">Reset the second factor</button></form>

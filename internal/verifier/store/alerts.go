@@ -402,6 +402,10 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 	if f.Current {
 		q += ` AND ` + currentHosts
 	}
+	if clause, more := scopeClause(ctx, "host_id"); clause != "" {
+		q += clause
+		args = append(args, more...)
+	}
 	if len(f.Statuses) > 0 {
 		q += ` AND status IN (?` + repeat(",?", len(f.Statuses)-1) + `)` //nolint:gosec // placeholders only; values are bound
 		for _, st := range f.Statuses {
@@ -487,12 +491,14 @@ type HostSummary struct {
 // Summaries returns the summary of every host with unresolved alerts, computed in the database
 // so that one host's thousands of alerts cannot hide the others.
 func (s *Store) Summaries(ctx context.Context) (map[string]HostSummary, error) {
+	scope, args := scopeClause(ctx, "host_id")
+	//nolint:gosec // the scope is a constant clause of this package; its label is bound
 	rows, err := s.db.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at,
 		occurrences, COALESCE(acked_by, ''), notified_at, n FROM (
 			SELECT *, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY status = 'open' DESC, `+severityOrder+`, created_at, id) AS rn,
 				COUNT(*) OVER (PARTITION BY host_id) AS n
-			FROM alerts WHERE status != 'resolved' AND `+currentHosts+`
-		) WHERE rn = 1`)
+			FROM alerts WHERE status != 'resolved' AND `+currentHosts+scope+`
+		) WHERE rn = 1`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -521,8 +527,10 @@ type Tally struct {
 // Tallies counts unresolved alerts of enrolled hosts: "acknowledged" for those someone took, and
 // otherwise by severity; silence alerts are left out, the overview counts silent hosts itself.
 func (s *Store) Tallies(ctx context.Context) (map[string]Tally, error) {
+	scope, args := scopeClause(ctx, "host_id")
+	//nolint:gosec // the scope is a constant clause of this package; its label is bound
 	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN status = 'acknowledged' THEN 'acknowledged' ELSE severity END AS k,
-		COUNT(*), MIN(created_at) FROM alerts WHERE status != 'resolved' AND kind != 'silence' AND `+currentHosts+` GROUP BY k`)
+		COUNT(*), MIN(created_at) FROM alerts WHERE status != 'resolved' AND kind != 'silence' AND `+currentHosts+scope+` GROUP BY k`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +561,8 @@ func repeat(s string, n int) string {
 // tab icon red.
 func (s *Store) Alarming(ctx context.Context) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM alerts WHERE status = 'open' AND severity = 'critical' AND `+currentHosts+`)`).Scan(&n)
+	scope, args := scopeClause(ctx, "host_id")
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM alerts WHERE status = 'open' AND severity = 'critical' AND `+currentHosts+scope+`)`, args...).Scan(&n)
 	return n == 1, err
 }
 
@@ -575,9 +584,11 @@ type Raised struct {
 // RaisedSince lists the alerts raised since a time, whatever their status. Resolved medium and
 // low alerts are pruned after MinorResolvedRetention, so periods longer than that undercount them.
 func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, error) {
+	scope, args := scopeClause(ctx, "host_id")
+	//nolint:gosec // the scope is a constant clause of this package; its label is bound
 	rows, err := s.db.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title,
 		CASE WHEN kind = 'weblog' THEN detail ELSE '' END, status, created_at, occurrences
-		FROM alerts WHERE created_at >= ? AND `+currentHosts+` ORDER BY created_at`, since.Unix())
+		FROM alerts WHERE created_at >= ? AND `+currentHosts+scope+` ORDER BY created_at`, append([]any{since.Unix()}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +608,9 @@ func (s *Store) RaisedSince(ctx context.Context, since time.Time) ([]Raised, err
 
 // OpenBySeverity counts the unresolved alerts of every host by severity, silences included.
 func (s *Store) OpenBySeverity(ctx context.Context) (map[string]map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT host_id, severity, COUNT(*) FROM alerts WHERE status != 'resolved' AND `+currentHosts+` GROUP BY host_id, severity`)
+	scope, args := scopeClause(ctx, "host_id")
+	//nolint:gosec // the scope is a constant clause of this package; its label is bound
+	rows, err := s.db.QueryContext(ctx, `SELECT host_id, severity, COUNT(*) FROM alerts WHERE status != 'resolved' AND `+currentHosts+scope+` GROUP BY host_id, severity`, args...)
 	if err != nil {
 		return nil, err
 	}
