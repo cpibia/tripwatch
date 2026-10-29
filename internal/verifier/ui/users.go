@@ -86,6 +86,13 @@ func (s *server) userAction(w http.ResponseWriter, r *http.Request, se session) 
 		if err == nil {
 			s.audit(r, se, "user removed", email, "")
 		}
+	case "reset-2fa":
+		// For someone who lost their phone and their recovery codes: they sign in with the
+		// password only, and set a new second factor up.
+		err = s.Store.DisableTOTP(r.Context(), email)
+		if err == nil {
+			s.audit(r, se, "second factor reset", email, "")
+		}
 	default:
 		s.fail(w, r, http.StatusNotFound, "Unknown action", "This action does not exist.")
 		return

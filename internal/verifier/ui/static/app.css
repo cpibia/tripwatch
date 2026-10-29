@@ -675,3 +675,12 @@ a.notify.off:hover { outline: var(--hair) solid var(--amber); }
 .invite-form label { grid-column: auto; grid-row: 1; margin: 0; }
 .invite-form input, .invite-form select, .invite-form button { grid-row: 2; }
 .rail-foot .who .role { display: block; font-size: var(--fs-xs); color: var(--muted); }
+
+/* Account: the QR code beside its key and the confirmation; the account link in the menu. */
+.setup { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 24px; align-items: start; }
+.setup .qr { display: block; padding: 10px; background: #fff; border-radius: var(--radius-sm); image-rendering: pixelated; }
+.recovery { columns: 2; max-width: 30rem; }
+.agent { font-size: var(--fs-sm); color: var(--ink-2); overflow-wrap: anywhere; }
+.rail-foot a.who { display: block; color: var(--ink-2); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0; }
+.rail-foot a.who:hover, .rail-foot a.who[aria-current="page"] { color: var(--teal); }
+@media (max-width: 860px) { .setup { grid-template-columns: minmax(0, 1fr); } .rail-foot a.who { display: none; } }

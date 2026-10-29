@@ -113,7 +113,7 @@ func New(c Config) (http.Handler, error) {
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
 	}
-	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite"} {
+	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite", "account", "secondfactor"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "selecturl": selectURL, "version": func() string { return version }}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, err
@@ -150,6 +150,11 @@ func New(c Config) (http.Handler, error) {
 	mux.HandleFunc("GET /notifications", s.as(store.RoleAdmin, s.notifications))
 	mux.HandleFunc("POST /notifications", s.as(store.RoleAdmin, s.addChannel))
 	mux.HandleFunc("POST /notifications/{id}/{action}", s.as(store.RoleAdmin, s.channelAction))
+	mux.HandleFunc("GET /login/2fa", s.secondFactorForm)
+	mux.HandleFunc("POST /login/2fa", s.secondFactor)
+	mux.HandleFunc("GET /account", s.as(store.RoleViewer, s.account))
+	mux.HandleFunc("GET /account/2fa/qr.png", s.as(store.RoleViewer, s.totpQR))
+	mux.HandleFunc("POST /account/{action}", s.as(store.RoleViewer, s.accountAction))
 	mux.HandleFunc("GET /users", s.as(store.RoleAdmin, s.users))
 	mux.HandleFunc("POST /users", s.as(store.RoleAdmin, s.invite))
 	mux.HandleFunc("POST /users/{action}", s.as(store.RoleAdmin, s.userAction))
@@ -207,8 +212,21 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 			se.token = c.Value
 			se.Email, err = s.Store.Session(r.Context(), c.Value, s.Now())
 		}
+		if errors.Is(err, store.ErrSecondFactorRequired) {
+			if r.Method == http.MethodGet {
+				http.Redirect(w, r, "/login/2fa?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+			} else {
+				s.fail(w, r, http.StatusForbidden, "Code needed", "Give the code from your authenticator app first.")
+			}
+			return
+		}
 		if err == nil {
 			se.Role, err = s.Store.UserRole(r.Context(), se.Email)
+		}
+		if err == nil {
+			if terr := s.Store.TouchSession(r.Context(), se.token, r.UserAgent(), s.Now()); terr != nil {
+				s.Log.Error("touch session", "err", terr)
+			}
 		}
 		safe := r.Method == http.MethodGet || r.Method == http.MethodHead
 		if err != nil {
@@ -225,7 +243,8 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 				return
 			}
 			// Reading is every user's; changing anything starts at the operator's role.
-			if !store.RoleAtLeast(se.Role, store.RoleOperator) && r.URL.Path != "/logout" {
+			// A viewer still signs out and looks after their own account.
+			if !store.RoleAtLeast(se.Role, store.RoleOperator) && r.URL.Path != "/logout" && !strings.HasPrefix(r.URL.Path, "/account/") {
 				s.fail(w, r, http.StatusForbidden, "Not allowed", "Your role lets you read the console, not change it: ask an administrator.")
 				return
 			}
@@ -411,6 +430,10 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 			s.cookie(w, deviceCookie, device, store.DeviceLifetime)
 		}
 	}
+	if on, _ := s.Store.TOTPEnabled(r.Context(), email); on {
+		http.Redirect(w, r, "/login/2fa?next="+url.QueryEscape(data.Next), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, data.Next, http.StatusSeeOther) //nolint:gosec // data.Next went through localPath
 }
 
@@ -490,6 +513,10 @@ func (s *server) loginLink(w http.ResponseWriter, r *http.Request) {
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
 	if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
 		s.cookie(w, deviceCookie, device, store.DeviceLifetime)
+	}
+	if on, _ := s.Store.TOTPEnabled(r.Context(), email); on {
+		http.Redirect(w, r, "/login/2fa", http.StatusSeeOther)
+		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

@@ -35,7 +35,7 @@
   {{end}}
   <div class="rail-foot">
     {{if not .Notify}}{{if eq .Role "admin"}}<a class="notify off" href="/notifications" title="Alerts are not sent anywhere: add a channel">{{else}}<p class="notify off" title="Alerts are not sent anywhere: an administrator can add a channel">{{end}}{{shape "high" ""}}<span>Notifications <span class="long">not set up</span><span class="short">off</span></span>{{if eq .Role "admin"}}</a>{{else}}</p>{{end}}{{end}}
-    <p class="who" title="{{.User}}">{{.User}}<span class="role">{{.Role}}</span></p>
+    <a class="who" href="/account" title="Account of {{.User}}"{{if eq .Nav "account"}} aria-current="page"{{end}}>{{.User}}<span class="role">{{.Role}} · account</span></a>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <button class="link" type="submit">Sign out</button>

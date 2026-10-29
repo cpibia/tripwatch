@@ -831,6 +831,10 @@ is needed too, which closes them all.
   manage users. Administrators invite people with a one-time link (three days) in which they
   choose their password, change roles and remove accounts; there is always one administrator
   left. The audit log keeps who did what in the console, newest first.
+- **Account.** Each user can set up a second factor (an authenticator app, with ten single-use
+  recovery codes): signing in then asks a code after the password, five wrong codes end the
+  attempt, and a code works once. The page lists the sessions of the account and signs out any
+  of them; administrators can reset the second factor of someone who lost their phone.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 

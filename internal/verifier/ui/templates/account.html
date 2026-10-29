@@ -1,0 +1,58 @@
+{{define "content"}}{{$d := .Data}}{{$csrf := .CSRF}}
+<header class="head">
+  <h1>Account</h1>
+  <p class="tally"><span class="mono">{{$d.Email}}</span><span>{{$d.Role}}</span><span>{{if $d.TOTP}}second factor on{{else}}password only{{end}}</span></p>
+</header>
+{{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+{{with $d.Notice}}<p class="notice ok" role="status">{{.}}</p>{{end}}
+
+<section class="panel" aria-labelledby="mfa-h">
+  <div class="panel-head"><h2 id="mfa-h">Second factor</h2><p class="panel-note">a code from an authenticator app at each sign-in, besides the password</p></div>
+  {{if $d.Recovery}}
+  <p class="note">The second factor is on. These recovery codes each work once, in place of a code, if the phone is lost: keep them somewhere safe. They are shown only now.</p>
+  <pre class="datum recovery" id="recovery">{{range $d.Recovery}}{{.}}
+{{end}}</pre>
+  <div class="actions"><button type="button" data-copy="recovery">Copy the codes</button></div>
+  {{else if $d.Setup}}
+  <div class="setup">
+    <img class="qr" src="/account/2fa/qr.png" width="222" height="222" alt="QR code of the secret for the authenticator app">
+    <div>
+      <p class="note">Scan the code with an authenticator app (1Password, Bitwarden, Google Authenticator, Aegis...), or type this key in it:</p>
+      <pre class="datum mono">{{.Data.Setup}}</pre>
+      <form method="post" action="/account/2fa-confirm" class="form">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <label for="code">The code the app shows now</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" required class="mono" autofocus>
+        <button class="primary" type="submit">Turn the second factor on</button>
+      </form>
+    </div>
+  </div>
+  {{else if $d.TOTP}}
+  <p class="note">On. {{$d.Codes}} recovery {{plural $d.Codes "code" "codes"}} left.</p>
+  <form method="post" action="/account/2fa-off" class="form inline">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="off-code">A current code, or a recovery code, to turn it off</label>
+    <input id="off-code" name="code" type="text" autocomplete="one-time-code" required class="mono">
+    <button class="danger" type="submit">Turn off</button>
+  </form>
+  {{else}}
+  <p class="note">Off: a stolen password is enough to sign in as you.</p>
+  <form method="post" action="/account/2fa-begin"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="primary" type="submit">Set up the second factor</button></form>
+  {{end}}
+</section>
+
+<section class="panel" aria-labelledby="ses-h">
+  <div class="panel-head"><h2 id="ses-h">Sessions</h2><p class="panel-note">where this account is signed in, the most recent first</p></div>
+  {{if $d.Sessions}}
+  <table class="grid sessions">
+    <thead><tr><th scope="col">Browser</th><th scope="col" class="num">Signed in</th><th scope="col" class="num">Last used</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+    <tbody>{{range $d.Sessions}}
+    <tr><td>{{if .Agent}}<span class="agent">{{.Agent}}</span>{{else}}<span class="quiet">unknown</span>{{end}}{{if .Current}} <span class="new-tag">this one</span>{{end}}</td>
+      <td class="num">{{if .CreatedAt.IsZero}}<span class="quiet">before 0.1.35</span>{{else}}<time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time>{{end}}</td>
+      <td class="num">{{if .LastSeen.IsZero}}<span class="quiet">-</span>{{else}}<time datetime="{{iso .LastSeen}}" title="{{stamp .LastSeen}}">{{clock .LastSeen}}</time>{{end}}</td>
+      <td class="act">{{if not .Current}}<form method="post" action="/account/end-session"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Sign out there</button></form>{{end}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="empty">No other session.</p>{{end}}
+</section>
+{{end}}

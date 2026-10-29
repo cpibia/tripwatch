@@ -166,6 +166,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 	email      TEXT NOT NULL REFERENCES users(email),
 	expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS recovery_codes (
+	code_hash BLOB PRIMARY KEY,
+	email     TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS invites (
 	token_hash BLOB PRIMARY KEY,
 	email      TEXT NOT NULL,
@@ -273,8 +277,9 @@ func migrate(db *sql.DB) error {
 	}
 	// Users before roles were all administrators; sessions before 0.1.35 carry no history.
 	for table, cols := range map[string]map[string]string{
-		"users":    {"role": "TEXT NOT NULL DEFAULT 'admin'"},
-		"sessions": {"created_at": "INTEGER NOT NULL DEFAULT 0", "last_seen": "INTEGER NOT NULL DEFAULT 0", "agent": "TEXT NOT NULL DEFAULT ''"},
+		"users": {"role": "TEXT NOT NULL DEFAULT 'admin'", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_last": "INTEGER NOT NULL DEFAULT 0"}, //nolint:gosec // column definitions, not credentials
+		"sessions": {"created_at": "INTEGER NOT NULL DEFAULT 0", "last_seen": "INTEGER NOT NULL DEFAULT 0", "agent": "TEXT NOT NULL DEFAULT ''",
+			"mfa_pending": "INTEGER NOT NULL DEFAULT 0", "mfa_failures": "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		for col, def := range cols {
 			var have int

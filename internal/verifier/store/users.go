@@ -161,7 +161,8 @@ func (s *Store) Login(ctx context.Context, email, password string, now time.Time
 	return s.openSession(ctx, email, now)
 }
 
-// openSession stores a new session and returns its token, which is not stored.
+// openSession stores a new session and returns its token, which is not stored. A user with a
+// second factor gets a session that waits for its code: it opens nothing until then.
 func (s *Store) openSession(ctx context.Context, email string, now time.Time) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -169,17 +170,23 @@ func (s *Store) openSession(ctx context.Context, email string, now time.Time) (s
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at) VALUES (?, ?, ?)`, sum[:], email, now.Add(SessionLifetime).Unix())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at, created_at, last_seen, mfa_pending)
+		VALUES (?, ?, ?, ?, ?, (SELECT totp_secret != '' FROM users WHERE email = ?))`, sum[:], email, now.Add(SessionLifetime).Unix(), now.Unix(), now.Unix(), email)
 	return token, err
 }
 
-// Session returns the user of a valid session token.
+// Session returns the user of a valid session token; a session still waiting for its second
+// factor is ErrSecondFactorRequired.
 func (s *Store) Session(ctx context.Context, token string, now time.Time) (string, error) {
 	sum := sha256.Sum256([]byte(token))
 	var email string
-	err := s.db.QueryRowContext(ctx, `SELECT email FROM sessions WHERE token_hash = ? AND expires_at > ?`, sum[:], now.Unix()).Scan(&email)
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT email, mfa_pending FROM sessions WHERE token_hash = ? AND expires_at > ?`, sum[:], now.Unix()).Scan(&email, &pending)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
+	}
+	if err == nil && pending {
+		return email, ErrSecondFactorRequired
 	}
 	return email, err
 }
