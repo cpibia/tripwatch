@@ -12,6 +12,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   and says where it leads: a link made in `/etc/profile.d` to a file written before the previous
   snapshot is now a new hook, not one that was there all along.
 
+### Verifier
+
+- A new cron line is critical, with the reason, when it never runs on schedule (the 31st of
+  February, as CronRAT hides its code), downloads and runs what it fetched, decodes a base64
+  payload or starts a process under another name; other new lines stay high.
+
 ## [0.1.41] - 2026-10-29
 
 Back up the verifier (`tripwatch-verifier backup`), update it, then the sensors. Its first start

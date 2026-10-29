@@ -664,6 +664,41 @@ func hookChanges(prev *State, cur State) []Finding {
 	return out
 }
 
+// cronFetchRun is a download handed to an interpreter, cronDecode a payload decoded on the fly,
+// cronMasked a process started under another name: what a dropper's cron line does, and no
+// scheduled job a package installs.
+var (
+	cronFetchRun = regexp.MustCompile(`\b(curl|wget)\b[^;&]*\|\s*(sudo\s+)?(\S*/)?(ba|da|z|k)?sh\b|\b(curl|wget)\b[^;&]*\|\s*(\S*/)?(php|python[0-9.]*|perl|ruby)\b`)
+	cronDecode   = regexp.MustCompile(`\bbase64\s+(-d|--decode|-D)\b`)
+	cronMasked   = regexp.MustCompile(`\bexec\s+-a\b`)
+)
+
+// monthDays is the most days each month has.
+var monthDays = [13]int{0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
+// cronSuspicion says why a cron line looks planted, or "" when nothing does: a date that never
+// comes (the 31st of February, as CronRAT hides its payload behind), a download run by a shell,
+// a decoded payload, a process renamed as it starts.
+func cronSuspicion(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) >= 5 && !strings.HasPrefix(fields[0], "@") {
+		day, errDay := strconv.Atoi(fields[2])
+		month, errMonth := strconv.Atoi(fields[3])
+		if errDay == nil && errMonth == nil && month >= 1 && month <= 12 && day > monthDays[month] {
+			return fmt.Sprintf("Day %d of month %d never comes: a line that never runs on schedule only waits to be read or run by hand, the way CronRAT hides its code.", day, month)
+		}
+	}
+	switch {
+	case cronFetchRun.MatchString(line):
+		return "It downloads something and runs it at once: droppers re-install themselves this way."
+	case cronDecode.MatchString(line):
+		return "It decodes a base64 payload as it runs: what it does is hidden from whoever reads the line."
+	case cronMasked.MatchString(line):
+		return "It starts a process under another name (exec -a), which hides it in the process list."
+	}
+	return ""
+}
+
 // packagesChanged reports whether packages were installed, upgraded or removed between two
 // snapshots: their versions for dpkg, which marking a package held does not change; the
 // manager's status file elsewhere.
@@ -988,7 +1023,11 @@ func Evaluate(prev *State, cur State) []Finding {
 					if uid, ok := uids[owner]; ok && uid == 0 {
 						owner = "root"
 					}
-					changeBy(owner, "persistence-change", "cron:"+t.Path+"|"+e, "high", "New cron line", e+"\nin "+t.Path)
+					sev, detail := "high", e+"\nin "+t.Path
+					if why := cronSuspicion(e); why != "" {
+						sev, detail = "critical", detail+"\n"+why
+					}
+					changeBy(owner, "persistence-change", "cron:"+t.Path+"|"+e, sev, "New cron line", detail)
 				}
 			}
 		}

