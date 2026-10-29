@@ -305,8 +305,12 @@ func judgeExec(e watch.Event) (Finding, bool) {
 	switch e.Reason {
 	case watch.ReasonWebShell:
 		// One alert per command, not per shell: where the web server's user also runs scheduled
-		// jobs, each job can be accepted on its own, and any other command is new.
-		return event("webshell", e.Exe+"#"+processKey(proc+e.CommandSum), "critical", "The web server's user started "+path.Base(orUnknown(e.Exe)),
+		// jobs, each job can be accepted on its own, and any other command is new. A command fed
+		// a here-document is keyed on its head, the sensor's CommandSum covering the same part,
+		// so a tool that pipes a new script at every run is one alert, accepted once.
+		head, _ := watch.CommandHead(orUnknown(e.Cmdline))
+		key := fmt.Sprintf("%s (started by %s, as %s, in %s): %s", orUnknown(e.Exe), orUnknown(e.Parent), who, orUnknown(e.Cwd), head)
+		return event("webshell", e.Exe+"#"+processKey(key+e.CommandSum), "critical", "The web server's user started "+path.Base(orUnknown(e.Exe)),
 			"Process "+proc+". A web server has no reason to run a shell or a network tool; a webshell in use does. Check the web server's logs for the request that started it."), true
 	case watch.ReasonPrivilege:
 		return event("privilege-gain", e.Exe, "critical", "A process became root through "+path.Base(orUnknown(e.Exe)),

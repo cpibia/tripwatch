@@ -287,3 +287,24 @@ func TestWebUsers(t *testing.T) {
 		t.Errorf("web users = %v", got)
 	}
 }
+
+// A command with a here-document carries the sum of its raw head, the same whatever script it is
+// fed, and different for heads that differ only in what the redaction hides.
+func TestCommandSumOfHereDocument(t *testing.T) {
+	proc := func(args ...string) system.Process {
+		return system.Process{Args: args, Cmdline: strings.Join(args, " "), CommandSum: "full"}
+	}
+	run := func(secret, script string) string {
+		return commandSum(proc("sh", "-c", "ssh -o Password="+secret+" root@host sh -s << \\EOF\n"+script+"\nEOF"))
+	}
+	a := run("no", "uptime")
+	if b := run("no", "docker ps"); a != b || a == "full" {
+		t.Errorf("same head, other script: %s, %s", a, b)
+	}
+	if c := run("yes", "uptime"); c == a {
+		t.Error("heads that differ share a sum")
+	}
+	if s := commandSum(proc("sh", "-c", "id")); s != "full" {
+		t.Errorf("a command without a here-document: %s", s)
+	}
+}

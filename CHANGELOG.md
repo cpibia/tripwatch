@@ -6,6 +6,22 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A container health check or `docker exec` is recognised also when runc is caught exiting as
+  the command starts, its executable no longer readable: it counts when it runs as root and
+  its own parent is a verified runtime (the shim). These were reported as the web server's user
+  running a shell or curl, every few seconds on hosts whose containers have health checks.
+- A command fed a here-document carries the sum of the raw text before the `<<` only, so the
+  verifier can key its alert on what the command does rather than on the script it is fed.
+
+### Verifier
+
+- An alert for the web server's user starting a command fed a here-document is keyed on the
+  command before the `<<`: deploy and server management tools that pipe a new script, with a
+  random delimiter, to `ssh host sh -s` at every run raise one alert, which can be accepted,
+  instead of a new critical alert each time. The script stays in the alert's detail.
+
 ## [0.1.35] - 2026-10-29
 
 Update the verifier only: the sensor has no changes, sensors on 0.1.34 stay as they are. The

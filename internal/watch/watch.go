@@ -89,7 +89,9 @@ type Event struct {
 	Script  string `json:"script,omitempty"`
 	Cmdline string `json:"cmdline,omitempty"`
 	// CommandSum is a short hash of the command line before redaction, set when the redaction
-	// hid part of it: two commands shown alike are told apart.
+	// hid part of it: two commands shown alike are told apart. For a command with a
+	// here-document it covers only what comes before the "<<" (see CommandHead), so the alert
+	// key of a command stays the same whatever input it is fed.
 	CommandSum string `json:"command_sum,omitempty"`
 	Comm       string `json:"comm,omitempty"`
 	Parent     string `json:"parent,omitempty"`

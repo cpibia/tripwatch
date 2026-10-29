@@ -2,6 +2,7 @@ package watch
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"path"
 	"regexp"
 	"slices"
@@ -156,6 +157,25 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 		return ReasonUnusualPath, script
 	}
 	return "", script
+}
+
+// CommandHead cuts a shell command at its first here-document: what follows the "<<" is the
+// input the command reads, such as a script piped to "ssh host sh -s", which deploy and server
+// management tools change at every run (and with it a random delimiter). The head is what the
+// command does; its input stays in the event, shown with the alert.
+func CommandHead(command string) (string, bool) {
+	head, _, ok := strings.Cut(command, "<<")
+	return strings.TrimRight(head, " "), ok
+}
+
+// commandSum is the CommandSum an event carries: a hash of the raw head of a command with a
+// here-document, else the process's own, set when the redaction or the cut changed its text.
+func commandSum(p system.Process) string {
+	if head, ok := CommandHead(rawCommand(p)); ok {
+		sum := sha256.Sum256([]byte(head))
+		return hex.EncodeToString(sum[:6])
+	}
+	return p.CommandSum
 }
 
 // rawCommand is a process's command line as the kernel gives it: the redacted one hides the

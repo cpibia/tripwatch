@@ -283,7 +283,8 @@ var runtimeNames = []string{"runc", "crun", "youki", "containerd-shim", "contain
 // fromRuntime walks up to four ancestors of a process, through shells only, looking for a
 // container runtime, known like cron by its executable in the system's directories and by
 // running as root. runc exits once the command runs: a parent already gone is looked for again
-// in the process's current parent, the shim that adopts it.
+// in the process's current parent, the shim that adopts it, and a parent caught exiting, whose
+// executable can no longer be read, counts when it is a root runtime started by a verified one.
 func (x *Execs) fromRuntime(p system.Process) bool {
 	ppid := p.PPID
 	for range 4 {
@@ -301,8 +302,7 @@ func (x *Execs) fromRuntime(p system.Process) bool {
 				return false
 			}
 		}
-		if parent.UID == 0 && !parent.ExeDeleted && slices.Contains(runtimeNames, path.Base(parent.Exe)) &&
-			slices.ContainsFunc(systemBinDirs, func(d string) bool { return strings.HasPrefix(parent.Exe, d) }) {
+		if isRuntime(parent) || x.exitingRuntime(parent) {
 			return true
 		}
 		if !slices.Contains(shells, path.Base(parent.Exe)) {
@@ -311,6 +311,23 @@ func (x *Execs) fromRuntime(p system.Process) bool {
 		p, ppid = parent, parent.PPID
 	}
 	return false
+}
+
+// isRuntime reports a container runtime: its executable in the system's directories, run as root.
+func isRuntime(p system.Process) bool {
+	return p.UID == 0 && !p.ExeDeleted && slices.Contains(runtimeNames, path.Base(p.Exe)) &&
+		slices.ContainsFunc(systemBinDirs, func(d string) bool { return strings.HasPrefix(p.Exe, d) })
+}
+
+// exitingRuntime reports runc caught between starting a command and being reaped: a root process
+// with a runtime's name and no executable left to read, whose own parent is a verified runtime
+// (the shim that called it). Its name alone proves nothing, the shim above it does.
+func (x *Execs) exitingRuntime(p system.Process) bool {
+	if p.Exe != "" || p.UID != 0 || !slices.Contains(runtimeNames, p.Comm) || p.PPID <= 1 {
+		return false
+	}
+	shim, ok := system.ReadProcess(x.src.FS, p.PPID)
+	return ok && isRuntime(shim)
 }
 
 // parent reads the process that started p.
@@ -334,7 +351,7 @@ func (x *Execs) owner(p string) (int, bool) {
 func (x *Execs) event(reason string, p system.Process) Event {
 	uid, euid := p.UID, p.EUID
 	e := Event{At: x.now().UTC(), Class: ClassExec, Op: "exec", Reason: reason, PID: p.PID, PPID: p.PPID, User: &uid, EUser: &euid,
-		Exe: clipText(p.Exe), Cmdline: clipCmdline(p.Cmdline), CommandSum: p.CommandSum, Comm: clipText(p.Comm), Cwd: clipText(p.Cwd)}
+		Exe: clipText(p.Exe), Cmdline: clipCmdline(p.Cmdline), CommandSum: commandSum(p), Comm: clipText(p.Comm), Cwd: clipText(p.Cwd)}
 	if parent, ok := system.ReadProcess(x.src.FS, p.PPID); ok {
 		e.Parent = clipText(parent.Comm)
 	}

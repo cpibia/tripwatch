@@ -111,8 +111,9 @@ done:
 	}
 }
 
-// A health check is the runtime's child, through a shell; the same command under the PHP pool
-// is not, and neither is a process named runc that is not the system's, root-run runtime.
+// A health check is the runtime's child, through a shell, also while runc is caught exiting; the
+// same command under the PHP pool is not, and neither is a process named runc that is not the
+// system's, root-run runtime, nor an exiting "runc" that no verified runtime started.
 func TestFromRuntime(t *testing.T) {
 	proc := func(fsys fstest.MapFS, pid, ppid, uid int, exe string) {
 		dir := "proc/" + strconv.Itoa(pid) + "/"
@@ -128,6 +129,17 @@ func TestFromRuntime(t *testing.T) {
 	proc(fsys, 31, 30, 33, "/bin/busybox")
 	proc(fsys, 40, 1, 33, "/tmp/runc")
 	proc(fsys, 41, 40, 33, "/bin/busybox")
+	exiting := func(pid, ppid, uid int) {
+		dir := "proc/" + strconv.Itoa(pid) + "/"
+		fsys[dir+"status"] = &fstest.MapFile{Data: []byte("Name:\trunc\nState:\tZ (zombie)\nPPid:\t" + strconv.Itoa(ppid) + "\nUid:\t" + strings.Repeat(strconv.Itoa(uid)+"\t", 4) + "\n")}
+		fsys[dir+"comm"] = &fstest.MapFile{Data: []byte("runc\n")}
+	}
+	exiting(50, 10, 0)
+	proc(fsys, 51, 50, 33, "/bin/busybox")
+	exiting(60, 30, 0)
+	proc(fsys, 61, 60, 33, "/bin/busybox")
+	exiting(70, 10, 33)
+	proc(fsys, 71, 70, 33, "/bin/busybox")
 	x := &Execs{src: collector.Source{FS: fsys}}
 	read := func(pid int) system.Process {
 		p, ok := system.ReadProcess(fsys, pid)
@@ -141,5 +153,11 @@ func TestFromRuntime(t *testing.T) {
 	}
 	if x.fromRuntime(read(31)) || x.fromRuntime(read(41)) {
 		t.Error("a shell of the PHP pool or of a fake runtime is taken for the runtime's")
+	}
+	if !x.fromRuntime(read(51)) {
+		t.Error("a health check whose runc is exiting is not taken for the runtime's")
+	}
+	if x.fromRuntime(read(61)) || x.fromRuntime(read(71)) {
+		t.Error("an exiting runc not started by a runtime, or not root, is taken for the runtime's")
 	}
 }

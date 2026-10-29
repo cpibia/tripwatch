@@ -353,8 +353,12 @@ what changes there within two seconds, in signed event envelopes of the same cha
   `/dev/null` (`exec` in front and Laravel's background form included, BusyBox's `sh` too).
   What a container runtime starts (runc, crun, containerd's shim or conmon, from the system's
   directories and as root), directly or through shells, is a health check or a `docker exec`,
-  never a request to the web server inside the container. A start identical to one reported in the last hour
-  is counted instead of sent again, so a job that runs every minute does not fill the budget.
+  never a request to the web server inside the container; runc caught exiting as the command
+  starts counts when its own parent is such a runtime. Each command is an alert of its own, one
+  that can be accepted; a command fed a here-document (a script piped to `ssh host sh -s`, as
+  deploy and server management tools do) is keyed on what comes before the `<<`, so a new
+  script at every run does not make a new alert. A start identical to one reported in the last
+  hour is counted instead of sent again, so a job that runs every minute does not fill the budget.
 - **Containers**, by listing the state of Docker, containerd, Podman and CRI-O every second: a
   container that appears with power over the host (privileged mode, an administrative
   capability, the host's processes, the host's root, a system directory or a runtime socket

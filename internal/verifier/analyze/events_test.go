@@ -38,6 +38,33 @@ func TestWebShellAlertsPerCommand(t *testing.T) {
 	}
 }
 
+// A command fed a here-document is keyed on its head: a tool that pipes a new script, with a new
+// delimiter, at every run is one alert; another head, or the same head told apart by the
+// sensor's sum of the raw text, is another.
+func TestWebShellKeyedOnCommandHead(t *testing.T) {
+	uid := 9999
+	start := func(cmdline, sum string) string {
+		t.Helper()
+		e := watch.Event{Class: watch.ClassExec, Reason: watch.ReasonWebShell, Exe: "/bin/busybox", Parent: "php", Cwd: "/var/www/html", Cmdline: cmdline, CommandSum: sum, User: &uid}
+		fs := EvaluateEvents([]watch.Event{e}, false, nil)
+		if len(fs) != 1 {
+			t.Fatalf("findings %+v", fs)
+		}
+		return fs[0].Fingerprint
+	}
+	head := "sh -c timeout 300 ssh -i /srv/keys/deploy -o PasswordAuthentication=[redacted] root@host sh -s"
+	first := start(head+" << \\QUJD\nuptime\nQUJD", "aaaaaaaaaaaa")
+	if again := start(head+" << \\WFla\ndocker ps\nWFla", "aaaaaaaaaaaa"); again != first {
+		t.Errorf("the same command with another script: %s, then %s", first, again)
+	}
+	if other := start(head+" << \\QUJD\nuptime\nQUJD", "bbbbbbbbbbbb"); other == first {
+		t.Error("heads the redaction shows alike share a key")
+	}
+	if other := start("sh -c ssh root@elsewhere sh -s << X\nuptime\nX", "aaaaaaaaaaaa"); other == first {
+		t.Error("another command shares the key")
+	}
+}
+
 func TestEvaluateEvents(t *testing.T) {
 	t0 := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	uid := 33
