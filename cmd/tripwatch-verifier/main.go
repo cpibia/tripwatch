@@ -250,7 +250,7 @@ func serve(log *slog.Logger) error {
 	web, err := ui.New(ui.Config{
 		Store: st, CA: ca, IngestURL: ingestURL, Release: buildinfo.Version,
 		Notify: mailer.Enabled(), TestChannel: notifier.Test, SecureCookies: strings.HasPrefix(os.Getenv("TRIPWATCH_PUBLIC_UI_URL"), "https://"),
-		SilenceAfter: silence, Envelopes: in.Counts, Now: now, Log: log,
+		SilenceAfter: silence, Envelopes: in.Counts, Sends: notifier.Counts, Now: now, Log: log,
 	})
 	if err != nil {
 		return err

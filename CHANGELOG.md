@@ -23,7 +23,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   unchanged (30, 7, 90 and 7), and the console states the retention of events as configured.
 - `GET /metrics`, for an API token, in Prometheus' text format: servers by state, alerts not
   resolved by status and severity, the analysis queue and its oldest wait, the database's size,
-  and the sensors' requests by kind and answer.
+  the sensors' requests by kind and answer, and the notifications sent and failed by kind of
+  channel.
 - Notification channels' settings, passwords, bot tokens and webhook secrets among them, are
   sealed in the database with AES-256-GCM, those stored before at the first start. The key is
   `TRIPWATCH_SECRETS_KEY` or, without it, `pki/secrets.key` in the data volume, copied by

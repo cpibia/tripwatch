@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"mime/quotedprintable"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,9 @@ func TestRoundSendsOnceAndReportsFailures(t *testing.T) {
 	}
 	if open, _ := st.Alerts(ctx, store.AlertFilter{HostID: "verifier", Statuses: []string{store.StatusOpen}}); len(open) != 0 {
 		t.Fatalf("the mailer alert stayed open after a successful send: %+v", open)
+	}
+	if c := n.Counts(); !slices.Equal(c, []SendCount{{Kind: store.ChannelEmail, N: 1}, {Kind: store.ChannelEmail, Failed: true, N: 1}}) {
+		t.Errorf("counts = %+v", c)
 	}
 
 	disabled := &Notifier{Store: st, Now: n.Now, Log: n.Log, send: n.send}

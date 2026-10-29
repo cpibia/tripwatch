@@ -91,6 +91,16 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request, _ apiCaller) {
 			fmt.Fprintf(&b, "tripwatch_envelopes_total{kind=%q,code=%q} %d\n", c.Kind, code, c.N)
 		}
 	}
+	if s.Sends != nil {
+		metric("tripwatch_notifications_total", "counter", "Messages sent to the notification channels since the verifier started, by kind of channel and result, tests included.")
+		for _, c := range s.Sends() {
+			result := "sent"
+			if c.Failed {
+				result = "failed"
+			}
+			fmt.Fprintf(&b, "tripwatch_notifications_total{kind=%q,result=%q} %d\n", c.Kind, result, c.N)
+		}
+	}
 	metric("tripwatch_build_info", "gauge", "The verifier's release.")
 	fmt.Fprintf(&b, "tripwatch_build_info{version=%q} 1\n", s.release())
 

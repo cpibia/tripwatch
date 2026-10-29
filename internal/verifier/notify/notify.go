@@ -10,8 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/verifier/store"
@@ -40,6 +42,40 @@ type Notifier struct {
 	Log    *slog.Logger
 	send   func(m Mailer, subject, body string) error
 	post   func(ctx context.Context, url string, body []byte, header http.Header) error
+
+	mu    sync.Mutex
+	sends map[SendCount]uint64
+}
+
+// SendCount is how many messages went to channels of one kind, or failed to, since the start.
+type SendCount struct {
+	Kind   string
+	Failed bool
+	N      uint64
+}
+
+// Counts returns the messages sent and failed so far by kind of channel, in a stable order.
+func (n *Notifier) Counts() []SendCount {
+	n.mu.Lock()
+	out := make([]SendCount, 0, len(n.sends))
+	for k, v := range n.sends {
+		k.N = v
+		out = append(out, k)
+	}
+	n.mu.Unlock()
+	slices.SortFunc(out, func(a, b SendCount) int {
+		if c := strings.Compare(a.Kind, b.Kind); c != 0 {
+			return c
+		}
+		if a.Failed == b.Failed {
+			return 0
+		}
+		if a.Failed {
+			return 1
+		}
+		return -1
+	})
+	return out
 }
 
 // envChannel stands for the email configured in the environment: it receives critical and high
@@ -140,6 +176,12 @@ func (n *Notifier) Test(ctx context.Context, c store.Channel) error {
 }
 
 func (n *Notifier) record(ctx context.Context, c store.Channel, err error) {
+	n.mu.Lock()
+	if n.sends == nil {
+		n.sends = map[SendCount]uint64{}
+	}
+	n.sends[SendCount{Kind: c.Kind, Failed: err != nil}]++
+	n.mu.Unlock()
 	if c.ID == envChannel {
 		return
 	}

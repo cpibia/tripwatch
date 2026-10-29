@@ -896,8 +896,9 @@ is needed too, which closes them all.
 - **Metrics.** `GET /metrics` serves Prometheus' text format to an API token, sent the same
   way (`authorization` with `type: Bearer` in a scrape config): servers by state (reporting,
   silent, waiting for a first heartbeat, revoked), alerts not resolved by status and severity,
-  snapshots waiting for analysis and how long the oldest has waited, the database's size, and
-  the sensors' requests since the start by kind and answer. A token limited to some servers
+  snapshots waiting for analysis and how long the oldest has waited, the database's size, the
+  sensors' requests since the start by kind and answer, and the messages sent to or failed on
+  each kind of notification channel. A token limited to some servers
   counts only theirs.
 - **Account.** Each user can set up a second factor (an authenticator app, with ten single-use
   recovery codes): signing in then asks a code after the password, five wrong codes end the
