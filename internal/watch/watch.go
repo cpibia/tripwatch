@@ -20,7 +20,10 @@ const (
 	ClassService   = "service"
 	ClassHook      = "hook"
 	ClassUpload    = "upload"
-	ClassExec      = "exec"
+	// ClassWebRoot is the directory an application serves, watched without its subdirectories:
+	// only a script that appears there and goes is reported.
+	ClassWebRoot = "webroot"
+	ClassExec    = "exec"
 	// ClassScratch is the world-writable scratch directories, where only executable files are
 	// reported: a dropper written there, run and deleted lives too briefly for its process to
 	// be read, but its file is seen.
@@ -126,6 +129,9 @@ const (
 	UploadDepth = 8
 )
 
+// maxWebRootTargets bounds the web roots watched.
+const maxWebRootTargets = 512
+
 // ErrUnsupported is returned where the kernel interfaces the watcher needs do not exist.
 var ErrUnsupported = errors.New("watch: real-time events need Linux")
 
@@ -141,7 +147,7 @@ var rcFiles = []string{".bashrc", ".bash_profile", ".bash_login", ".bash_logout"
 
 // Targets lists what to watch on a host: the system's fixed places, the homes of its accounts
 // and the upload directories of its web applications.
-func Targets(homes []Home, uploads []string) []Target {
+func Targets(homes []Home, uploads []string, webRoots ...string) []Target {
 	t := []Target{
 		{Dir: "/etc", Class: ClassAccounts, Names: []string{"passwd", "shadow", "group", "gshadow"}},
 		{Dir: "/etc", Class: ClassPrivilege, Names: []string{"sudoers", "doas.conf"}},
@@ -189,6 +195,16 @@ func Targets(homes []Home, uploads []string) []Target {
 		}
 		seen[dir] = true
 		t = append(t, Target{Dir: dir, Class: ClassUpload, Recursive: true, Depth: UploadDepth})
+	}
+	roots := 0
+	for _, r := range webRoots {
+		dir := path.Clean(r)
+		if !strings.HasPrefix(dir, "/") || seen[dir] || roots == maxWebRootTargets {
+			continue
+		}
+		seen[dir] = true
+		roots++
+		t = append(t, Target{Dir: dir, Class: ClassWebRoot})
 	}
 	// Last, and with a small budget of their own: anyone can fill these with directories, which
 	// must never take the watches of the places above.

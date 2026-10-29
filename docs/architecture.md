@@ -114,6 +114,9 @@ event is described through the same confined view the collectors use, with `lsta
 following of the final component, so a planted link is reported and never read or opened, and
 hashed only up to 1 MB and 16 MB a second, on the goroutine that reads the kernel's queue.
 Directories the depth, count or watch limits leave out are reported in the watchers' status.
+Each application's web root is watched too, without its subdirectories and for scripts only: a
+script that appears there and is removed within the transient window is a probe that deletes
+itself, which no snapshot would show; one that stays is named by the next snapshot's manifest.
 After each snapshot the targets are set again from the
 accounts' homes and the applications' upload directories.
 

@@ -130,6 +130,9 @@ type AppReport struct {
 	// UploadDirs are the upload directories found in the application, for the sensor to watch
 	// between snapshots.
 	UploadDirs []string `json:"upload_dirs,omitempty"`
+	// WebRoot is the directory the application serves, for the sensor to watch, without its
+	// subdirectories, for a script put there and removed between two snapshots.
+	WebRoot string `json:"web_root,omitempty"`
 	// Changes names the code files added, changed or removed since the previous run whose
 	// snapshot was delivered, at most maxChanges of them; ChangeCount counts them all. Both are
 	// absent on a first run and when the sensor keeps no state.
@@ -436,6 +439,9 @@ func (s *scanner) expand(patterns []string) []string {
 }
 
 func (s *scanner) scan(ctx context.Context) {
+	if s.profile != nil && s.profile.WebRoot != "" {
+		s.report.WebRoot = "/" + path.Join(s.root, s.webRoot())
+	}
 	s.report.TreeHash = s.walk(ctx, s.root, 0, false, false)
 	s.report.Findings = slices.DeleteFunc(s.report.Findings, func(f Finding) bool { return f.Kind == "" })
 	if s.stopped {

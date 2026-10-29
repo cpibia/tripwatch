@@ -87,6 +87,19 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 	}
 	name := path.Base(e.Path)
 	switch e.Class {
+	case watch.ClassWebRoot:
+		// Deploys write the web root all the time, and the snapshots name what changes there;
+		// a script that appears and goes between two of them is a probe cleaning up after
+		// itself.
+		if !web.IsScript(name) || e.Op != watch.OpDelete {
+			return Finding{}, false
+		}
+		if first, ok := appeared(e, history); ok {
+			return event("webroot-transient", e.Path+occurrence(first), "critical", "A script appeared in a web root and was removed",
+				fmt.Sprintf("%s was created at %s and removed at %s, too soon for any snapshot to show it. A probe or a webshell that deletes itself does this: check the web server's logs for requests to it in that interval. %s",
+					e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))), true
+		}
+		return Finding{}, false
 	case watch.ClassUpload:
 		if !web.IsScript(name) && !web.IsOverride(name) {
 			return Finding{}, false

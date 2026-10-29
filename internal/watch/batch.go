@@ -381,7 +381,7 @@ func (b *Batcher) spoolOwner(e Event, name string) string {
 // files other than scripts and server configuration in the uploads, attribute changes there.
 func lowPriority(e Event) bool {
 	// A watched root moved away blinds the watch below it: never noise.
-	if e.Class != ClassUpload || e.Root {
+	if e.Class != ClassUpload && e.Class != ClassWebRoot || e.Root {
 		return false
 	}
 	return e.Dir || e.Op == OpAttrib || (!web.IsScript(e.Path) && !web.IsOverride(e.Path))

@@ -696,10 +696,13 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 		}
 		// In the uploads only scripts and server configuration files are judged: images and
 		// junk written by the thousand must not spend the budget a script then lacks.
-		if t.Class == ClassUpload && !isDir && !web.IsScript(name) && !web.IsOverride(name) {
+		if (t.Class == ClassUpload || t.Class == ClassWebRoot) && !isDir && !web.IsScript(name) && !web.IsOverride(name) {
 			continue
 		}
-		if (t.Class == ClassScratch || t.Class == ClassUpload) && !f.classEventBudget(t.Class) {
+		if t.Class == ClassWebRoot && isDir {
+			continue
+		}
+		if (t.Class == ClassScratch || t.Class == ClassUpload || t.Class == ClassWebRoot) && !f.classEventBudget(t.Class) {
 			if isDir && op == OpCreate {
 				f.mu.Lock()
 				f.gap(t.Class, fmt.Sprintf("watch: %s was created while events of class %s were over budget: not watched", full, t.Class))

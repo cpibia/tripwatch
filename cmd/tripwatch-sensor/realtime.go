@@ -166,9 +166,12 @@ func (r *realtime) update(snap collector.Snapshot) {
 	for _, a := range accounts.Accounts {
 		homes = append(homes, watch.Home{User: a.Name, Dir: a.Home, UID: a.UID})
 	}
-	var uploads []string
+	var uploads, webRoots []string
 	for _, app := range site.Apps {
 		uploads = append(uploads, app.UploadDirs...)
+		if app.WebRoot != "" {
+			webRoots = append(webRoots, app.WebRoot)
+		}
 	}
 	r.mu.Lock()
 	files, execs, batcher := r.files, r.execs, r.batcher
@@ -177,7 +180,7 @@ func (r *realtime) update(snap collector.Snapshot) {
 		batcher.SetHomes(homes)
 	}
 	if files != nil {
-		files.Set(watch.Targets(homes, uploads))
+		files.Set(watch.Targets(homes, uploads, webRoots...))
 		files.SetWebUsers(watch.WebUsers(&accounts, &processes))
 	}
 	if execs != nil {

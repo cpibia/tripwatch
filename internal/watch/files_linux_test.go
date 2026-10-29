@@ -821,3 +821,39 @@ func TestUploadJunkDoesNotStarveScripts(t *testing.T) {
 		t.Errorf("the script after the junk was not reported")
 	}
 }
+
+// A web root is watched for scripts at its top level only: a probe written there is seen, a
+// file below it or an image is not.
+func TestWebRootWatchedForScriptsOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv/app/public/assets"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, nil, "/srv/app/public"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	for _, name := range []string{"srv/app/public/logo.png", "srv/app/public/assets/x.php", "srv/app/public/health_check.php"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("<?php"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var paths []string
+	for _, e := range collect(t, ch, 1) {
+		if e.Class == ClassWebRoot {
+			paths = append(paths, e.Path)
+		}
+	}
+	slices.Sort(paths)
+	paths = slices.Compact(paths)
+	if !slices.Equal(paths, []string{"/srv/app/public/health_check.php"}) {
+		t.Errorf("web root events for %v", paths)
+	}
+}

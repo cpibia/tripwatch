@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- Each application's web root is watched in real time, without its subdirectories and for scripts
+  only (SEC-173, web root part).
+
+### Verifier
+
+- A script that appears in a web root and is removed within fifteen minutes raises a critical
+  alert: a probe that deletes itself leaves no trace in the snapshots (SEC-173).
+
 ## [0.1.26] - 2026-10-29
 
 Update the verifier, then the sensors.
