@@ -307,9 +307,21 @@ func revoke(args []string) error {
 func user(args []string) error {
 	fs := flag.NewFlagSet("user", flag.ExitOnError)
 	email := fs.String("email", "", "user to create or whose password to change")
+	resetSecond := fs.Bool("reset-2fa", false, "turn the user's second factor off instead, for a lost phone and lost recovery codes")
 	_ = fs.Parse(args)
 	if *email == "" {
 		return errors.New("user needs -email")
+	}
+	if *resetSecond {
+		st, err := openStore()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.DisableTOTP(context.Background(), *email); err != nil {
+			return err
+		}
+		return st.Audit(context.Background(), "command line", "second factor reset", *email, "", time.Now().UTC())
 	}
 	fmt.Fprint(os.Stderr, "password (12 characters or more): ")
 	password, _ := bufio.NewReader(os.Stdin).ReadString('\n')

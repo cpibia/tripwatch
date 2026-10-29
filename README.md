@@ -747,10 +747,18 @@ heartbeats and alerts weigh little. A server that exceeds 1 GB of snapshots in a
 kept in all, stays alive for the verifier, but the snapshots over quota are not kept and an alert
 appears; likewise a server cannot keep more than 2000 alerts open.
 
-More users or a new password:
+More users are invited from the console (Settings, Users). A new password, or a first
+administrator, from the command line:
 
 ```sh
 docker compose exec verifier /tripwatch-verifier user -email colleague@example.net
+```
+
+A user who lost both their phone and their recovery codes, when no administrator can reset it in
+the console, has their second factor turned off with:
+
+```sh
+docker compose exec verifier /tripwatch-verifier user -email colleague@example.net -reset-2fa
 ```
 
 To sign in from a new browser when normal sign-in is blocked by someone else's attempts, a

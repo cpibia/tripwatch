@@ -28,7 +28,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   (QR code or key, RFC 6238 codes of six digits), confirmed with a first code, with ten
   single-use recovery codes shown once. After the password, or a one-time sign-in link, the
   session opens nothing until a code is given; a code works once, and five wrong ones end the
-  session. Administrators can reset the second factor of someone who lost their phone.
+  session. Administrators can reset the second factor of someone who lost their phone, and
+  `tripwatch-verifier user -email ... -reset-2fa` does it from the server when none can.
 - The account page lists where the account is signed in (browser, sign-in, last use) and signs
   out any of them.
 - An audit log (Settings, Audit log) records who signed in, handled alerts, enrolled, revoked,
