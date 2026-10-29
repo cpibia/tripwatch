@@ -53,7 +53,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   administrator resetting it, signs the account out of its other sessions. Administrators can reset the second factor of someone who lost their phone, and
   `tripwatch-verifier user -email ... -reset-2fa` does it from the server when none can.
 - The account page lists where the account is signed in (browser, sign-in, last use) and signs
-  out any of them; only a session that existed is recorded in the audit log.
+  out any of them; only a session that existed is recorded in the audit log. A user keeps at
+  most 50 sessions, the oldest closed first, and expired sessions, known browsers, sign-in links
+  and invitations are deleted every minute instead of staying in the database.
 - Searches (the top search box and the alert list's text filter) run on read-only connections
   of their own, at most five seconds each, and the real-time events they look through are the
   newest 50,000: text a server chose can no longer make a search hold up what the servers send.

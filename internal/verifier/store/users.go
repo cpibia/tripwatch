@@ -170,9 +170,28 @@ func (s *Store) openSession(ctx context.Context, email string, now time.Time) (s
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at, created_at, last_seen, mfa_pending)
-		VALUES (?, ?, ?, ?, ?, (SELECT totp_secret != '' FROM users WHERE email = ?))`, sum[:], email, now.Add(SessionLifetime).Unix(), now.Unix(), now.Unix(), email)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at, created_at, last_seen, mfa_pending)
+		VALUES (?, ?, ?, ?, ?, (SELECT totp_secret != '' FROM users WHERE email = ?))`, sum[:], email, now.Add(SessionLifetime).Unix(), now.Unix(), now.Unix(), email); err != nil {
+		return "", err
+	}
+	// Whoever has a password can open sessions that wait for a code, as many as the sign-in
+	// lanes let through: the oldest go first past the cap.
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE email = ? AND rowid NOT IN
+		(SELECT rowid FROM sessions WHERE email = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)`, email, email, MaxSessions)
 	return token, err
+}
+
+// MaxSessions bounds the open sessions of a user.
+const MaxSessions = 50
+
+// PruneExpired deletes the sessions, known browsers, sign-in links and invitations that expired.
+func (s *Store) PruneExpired(ctx context.Context, now time.Time) error {
+	for _, table := range []string{"sessions", "devices", "login_links", "invites"} {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at <= ?`, now.Unix()); err != nil { //nolint:gosec // table names from the list above
+			return err
+		}
+	}
+	return nil
 }
 
 // Session returns the user of a valid session token; a session still waiting for its second

@@ -157,3 +157,29 @@ func TestSecondFactorLock(t *testing.T) {
 		t.Fatalf("a right code did not reset the count: %v", err)
 	}
 }
+
+// Sessions are capped per user, the oldest going first, and expired ones are pruned.
+func TestSessionsBounded(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	const user = "admin@example.net"
+	if err := s.SetUser(ctx, user, "a long enough password", t0); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := s.Login(ctx, user, "a long enough password", t0)
+	for i := range MaxSessions {
+		if _, err := s.Login(ctx, user, "a long enough password", t0.Add(time.Duration(i+1)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Session(ctx, first, t0.Add(time.Hour)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("oldest session past the cap: %v", err)
+	}
+	if err := s.PruneExpired(ctx, t0.Add(SessionLifetime+time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d sessions left after their expiry: %v", n, err)
+	}
+}

@@ -192,6 +192,9 @@ func serve(log *slog.Logger) error {
 				if err := st.PruneResolved(ctx, now()); err != nil {
 					log.Error("prune resolved alerts", "err", err)
 				}
+				if err := st.PruneExpired(ctx, now()); err != nil {
+					log.Error("prune expired sessions", "err", err)
+				}
 			}
 		}
 	}()
