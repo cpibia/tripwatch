@@ -208,7 +208,9 @@ func Targets(homes []Home, uploads []string, webRoots ...string) []Target {
 	}
 	// Last, and with a small budget of their own: anyone can fill these with directories, which
 	// must never take the watches of the places above.
-	for _, d := range []string{"/tmp", "/var/tmp", "/dev/shm", "/run/lock"} {
+	// The private /tmp of services and snaps sit below root-only directories, but their own
+	// processes write there as in /tmp: each is watched as a scratch directory of its own.
+	for _, d := range []string{"/tmp", "/var/tmp", "/dev/shm", "/run/lock", "/tmp/systemd-private-*/tmp", "/tmp/snap-private-tmp/*/tmp", "/var/tmp/systemd-private-*/tmp"} {
 		t = append(t, Target{Dir: d, Class: ClassScratch, Recursive: true, Depth: ScratchDepth})
 	}
 	return t

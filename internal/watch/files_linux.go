@@ -219,6 +219,7 @@ func (f *Files) Watches() int {
 func (f *Files) Set(targets []Target) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	targets = f.globTargets(targets)
 	f.targets = append([]Target(nil), targets...)
 	f.issues, f.unwatched = nil, nil
 	keep := map[string][]Target{}
@@ -680,6 +681,9 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 	default:
 		return
 	}
+	// A directory two targets of one class reach (a service's private /tmp, also below /tmp)
+	// reports each event once.
+	classes := map[string]bool{}
 	for _, t := range w.targets {
 		if spawned, ok := t.Spawn[name]; ok && isDir {
 			if op == OpCreate {
@@ -688,9 +692,10 @@ func (f *Files) event(wd int, mask uint32, cookie uint32, name string) {
 			f.emit(f.describe(spawned.Class, op, full, isDir))
 			continue
 		}
-		if !t.wants(name) {
+		if !t.wants(name) || classes[t.Class] {
 			continue
 		}
+		classes[t.Class] = true
 		if t.Class == ClassScratch && !isDir && f.deferRepeat(op, full) {
 			continue
 		}
@@ -979,6 +984,33 @@ func (f *Files) scratchOwnerBudget(uid uint32) bool {
 }
 
 // SetWebUsers replaces the web server's UIDs.
+// maxGlobTargets bounds the directories one target with a pattern stands for.
+const maxGlobTargets = 64
+
+// globTargets replaces a target whose directory is a pattern by one target per directory it
+// matches now: the private /tmp systemd and snapd give each service, found again at each Set.
+func (f *Files) globTargets(targets []Target) []Target {
+	out := make([]Target, 0, len(targets))
+	for _, t := range targets {
+		if !strings.ContainsAny(t.Dir, "*?[") {
+			out = append(out, t)
+			continue
+		}
+		matches, _ := fs.Glob(f.src.FS, collector.Rel(t.Dir))
+		for i, m := range matches {
+			if i == maxGlobTargets {
+				break
+			}
+			if info, err := fs.Lstat(f.src.FS, m); err == nil && info.IsDir() {
+				t := t
+				t.Dir = "/" + m
+				out = append(out, t)
+			}
+		}
+	}
+	return out
+}
+
 func (f *Files) SetWebUsers(uids []int) {
 	m := make(map[int]bool, len(uids))
 	for _, u := range uids {

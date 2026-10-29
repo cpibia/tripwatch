@@ -857,3 +857,41 @@ func TestWebRootWatchedForScriptsOnly(t *testing.T) {
 		t.Errorf("web root events for %v", paths)
 	}
 }
+
+// The private /tmp systemd gives a service lies below a root-only directory, deeper than the
+// scratch depth from /tmp: it is watched as a scratch directory of its own, and an executable
+// dropped in a subdirectory of it is reported once.
+func TestPrivateTmpIsWatched(t *testing.T) {
+	root := t.TempDir()
+	private := filepath.Join(root, "tmp/systemd-private-abc-php-fpm.service-x")
+	if err := os.MkdirAll(filepath.Join(private, "tmp/a/b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 16)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(private, "tmp/a/b/dropper"), []byte("\x7fELF"), 0o700); err != nil { //nolint:gosec // the test's executable
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range collect(t, ch, 1) {
+		if e.Class == ClassScratch && !e.Dir && e.Op != OpDelete {
+			got = append(got, e.Op+" "+e.Path)
+		}
+	}
+	slices.Sort(got)
+	if len(got) == 0 || got[0] != "create /tmp/systemd-private-abc-php-fpm.service-x/tmp/a/b/dropper" && got[0] != "write /tmp/systemd-private-abc-php-fpm.service-x/tmp/a/b/dropper" {
+		t.Errorf("events = %v", got)
+	}
+	if len(got) != len(slices.Compact(slices.Clone(got))) {
+		t.Errorf("duplicated events: %v", got)
+	}
+}

@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- The private `/tmp` systemd and snapd give services and snaps is watched as a scratch directory
+  of its own: it lies below root-only directories, deeper than the scratch depth from `/tmp`, and
+  its service writes there as in `/tmp` (SEC-193).
+
 ## [0.1.27] - 2026-10-29
 
 Update the verifier, then the sensors.
