@@ -162,7 +162,7 @@ func (a *Analyzer) Analyze(r *Request) []Hit {
 		case ok:
 			hit("script_in_upload_path", SeverityCritical)
 		case (r.Status == 301 || r.Status == 308) && (r.Method == "GET" || r.Method == "HEAD") && q == "" &&
-			!strings.Contains(r.URI, "?") && hasScriptSegment(path.Base(p)):
+			!strings.Contains(r.URI, "?") && scriptIsLast(uploaded) && !strings.HasSuffix(raw, "/"):
 			hit("script_in_upload_path", SeverityLow)
 		default:
 			hit("script_in_upload_path", SeverityHigh)
@@ -251,6 +251,15 @@ func evictOne[V any](m map[string]V, key string) {
 
 func isLogin(p string) bool {
 	return slices.ContainsFunc(loginEndpoints, func(e string) bool { return p == e || strings.HasPrefix(p, e+"/") })
+}
+
+// scriptIsLast reports whether the first segment a server could run as a script is the last
+// one: with PATH_INFO, /x.php/a.php, /x.php/ and /x.php/y.php.jpg all run x.php, which chooses
+// its own status.
+func scriptIsLast(p string) bool {
+	segs := strings.Split(strings.Trim(p, "/"), "/")
+	i := slices.IndexFunc(segs, func(seg string) bool { return hasScriptSegment(seg) })
+	return i >= 0 && i == len(segs)-1
 }
 
 // hasScriptSegment matches a script extension on any segment, and double extensions such as

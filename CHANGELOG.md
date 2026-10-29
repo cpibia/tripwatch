@@ -11,6 +11,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A start-up hook that is a symlink takes the later of its own change time and its target's,
   and says where it leads: a link made in `/etc/profile.d` to a file written before the previous
   snapshot is now a new hook, not one that was there all along.
+- A script in an upload path answered with a permanent redirect stays high unless the script is
+  the path's last segment with nothing after it: `x.php/a.php`, `x.php/` and `x.php/y.php.jpg`
+  run `x.php` through PATH_INFO, which chooses its own status.
 
 ### Verifier
 
