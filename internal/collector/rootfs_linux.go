@@ -88,9 +88,17 @@ func openPath(dir, name string) (*os.File, error) {
 	}
 	if !isDegraded() {
 		f, err := openat2InRoot(dir, name)
+		// With RESOLVE_IN_ROOT the kernel refuses a path with ".." with EAGAIN while a rename
+		// or a mount happens anywhere on the system, which any user can keep doing: after a few
+		// tries the path is resolved the userspace way, confined the same.
+		for try := 0; errors.Is(err, syscall.EAGAIN) && try < maxOpenat2Tries; try++ {
+			f, err = openat2InRoot(dir, name)
+		}
 		switch {
 		case err == nil:
 			return f, nil
+		case errors.Is(err, syscall.EAGAIN):
+			return openPathByDescriptors(dir, name)
 		case errors.Is(err, syscall.ENOSYS), errors.Is(err, syscall.EPERM):
 			// A container's root can refuse openat2 where the host's does not (a sandboxed
 			// runtime's filesystem): that container is read the userspace way, the host is not.
@@ -104,6 +112,10 @@ func openPath(dir, name string) (*os.File, error) {
 	}
 	return openPathByDescriptors(dir, name)
 }
+
+// maxOpenat2Tries bounds the attempts of openat2 refused with EAGAIN before the userspace
+// resolver takes over.
+const maxOpenat2Tries = 8
 
 func openat2InRoot(dir, name string) (*os.File, error) {
 	rootFD, err := rootDescriptor(dir)

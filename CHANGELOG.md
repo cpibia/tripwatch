@@ -14,6 +14,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A script in an upload path answered with a permanent redirect stays high unless the script is
   the path's last segment with nothing after it: `x.php/a.php`, `x.php/` and `x.php/y.php.jpg`
   run `x.php` through PATH_INFO, which chooses its own status.
+- A path with `..` read inside the observed root no longer fails while renames happen elsewhere
+  on the system: the kernel refuses it then with EAGAIN, which any user could keep causing with a
+  rename loop to stop the sensor following an application's shared upload link. It is tried
+  again, then resolved the userspace way, confined the same.
 - A batch of real-time events stays under the verifier's limit once in its envelope (it could
   pass it by a few bytes when full, as the web user can make it with long names in the uploads),
   and a batch refused for its size is no longer taken for delivered: its events go again in
