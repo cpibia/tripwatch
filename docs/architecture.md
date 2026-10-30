@@ -460,8 +460,9 @@ package's root, slug and version, read from the files `versionFile` already reco
 plugin header, `style.css`, `.info.yml`, `version.php`), clipped like every field. The verifier
 then judges each changed file under that root:
 
-- equal to the reference: an update, no "Script changed" alert, and the file is not counted as
-  a reason to leave the package out of the skimmer search;
+- equal to the reference, which means the same size and the same SHA-256 as the file of that
+  path in that release, never a path or a version alone: an update, no "Script changed" alert,
+  and not read for skimmers; the signature search still reads it;
 - different from it, or absent from it: a high alert naming the release it should match,
   "differs from <slug> <version> as published", and the file read for skimmers whatever the size
   of the change;
@@ -469,8 +470,8 @@ then judges each changed file under that root:
   vulnerable release passes every file check.
 
 **Effect on the skimmer search.** The rule that leaves out a package changed as a whole (SEC-171,
-decoys by the dozen at the same version) becomes: files that match their release are not read,
-the others always are. Decoys written next to a skimmer cannot match a published release, so
+decoys by the dozen at the same version) becomes: files that match their release are not read
+for skimmers, the others always are; every file still goes through the signature search. Decoys written next to a skimmer cannot match a published release, so
 they no longer protect it, and an update of sixty files costs sixty lookups instead of a
 judgement on its size.
 
@@ -480,12 +481,24 @@ release), with a cap on the total (for instance 2 GB) and the least recently use
 dropped first. A failed fetch is remembered for a day, so a host naming a release that does not
 exist cannot make the verifier ask again at every snapshot. Per fetch: a timeout, at most 64 MB
 downloaded and 256 MB and 50,000 entries uncompressed, read as a stream; an archive past a bound
-gives no reference. Per host: a budget of new releases fetched per day, so a compromised host
-naming thousands of slugs cannot turn the verifier into a crawler.
+gives no reference. Per round of the analysis queue, at most a few fetches (for instance 5),
+the releases not fetched yet judged as without a reference until a later round; per host, a
+budget of new releases fetched per day: a host that names a thousand plugins starts a handful of
+downloads, not a thousand, and cannot turn the verifier into a crawler.
+
+**Opt-in.** Fetching references tells the upstream hosts which components and versions the
+servers run. The feature is off by default and turned on with one setting of the verifier (for
+instance `TRIPWATCH_CONTENT_REFERENCES=on`), documented in the README with that disclosure when
+it ships.
 
 **Without network.** No reference means today's behaviour, stated in the alert ("not checked
-against a published release") and on the host page; nothing is lowered without a reference. A
-verifier that may not reach the internet turns the feature off with one setting.
+against a published release") and on the host page; nothing is lowered without a reference.
+
+**Tests.** No test reaches the network. The fetcher takes the base URL of each source from its
+configuration, which only tests change: they serve fixture checksum lists and small release
+archives from a local `httptest` server, including the hostile cases (an archive past the size
+or entry bounds, a redirect off the list, a slug outside the pattern, a 404 remembered, a round
+past its fetch budget).
 
 **Risks.**
 
@@ -498,7 +511,7 @@ verifier that may not reach the internet turns the feature off with one setting.
 - *Size and cost.* The bounds above, the per-host budget, and the cache shared by the fleet keep
   the work proportional to the releases in use, not to what a host claims.
 - *Disclosure.* The verifier tells the upstream hosts which releases the fleet runs, once per
-  release; operators who do not want that keep the feature off.
+  release: hence opt-in, off by default.
 - *Version lies.* A host can claim any version: the files must then match that release byte for
   byte, which an attacker's file cannot; a claimed downgrade is an alert of its own.
 
