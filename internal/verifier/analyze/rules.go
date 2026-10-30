@@ -1427,8 +1427,10 @@ func Evaluate(prev *State, cur State) []Finding {
 			// from ran no code: a probe, not an intrusion. Nor did one a proxy answered itself or
 			// passed on, whose backend's own log judges it. A web shell answers as it likes, so
 			// one that exists stays serious whatever its status, and so does a command passed in
-			// the request: a web shell used and deleted before the collection looks missing.
-			if (e.OnDisk == "missing" || e.OnDisk == "elsewhere") && (e.Status < 200 || e.Status >= 300) && e.Rule != "command_in_parameters" {
+			// the request: a web shell used and deleted before the collection looks missing. So
+			// does one sent its command in the body: probes read, they do not post.
+			probe := e.Method == "GET" || e.Method == "HEAD"
+			if (e.OnDisk == "missing" || e.OnDisk == "elsewhere") && (e.Status < 200 || e.Status >= 300) && e.Rule != "command_in_parameters" && probe {
 				continue
 			}
 			if e.Severity == "medium" && slices.Contains(attemptRules, e.Rule) {

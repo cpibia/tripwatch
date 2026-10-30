@@ -461,6 +461,27 @@ func TestFloodFromManyAddressesIsOneEvent(t *testing.T) {
 	}
 }
 
+// A web shell probed with a 404 and then used with a 200 is one event with the worse outcome: its
+// status is the 200, so the verifier does not take it for a probe of a missing script.
+func TestLaterSuccessRaisesTheEvent(t *testing.T) {
+	h := newHost(t)
+	h.writeLog(logLine("203.0.113.66", "GET", "/media/catalog/x.php", 404) + logLine("203.0.113.66", "GET", "/media/catalog/x.php", 200))
+	res := h.run()
+	if len(res.Events) != 1 || res.Events[0].Severity != "critical" || res.Events[0].Status != 200 || res.Events[0].Count != 2 {
+		t.Errorf("events = %+v", res.Events)
+	}
+}
+
+// A post after reads of the same script names the event: probes read, a web shell is posted to.
+func TestPostAfterReadsNamesTheEvent(t *testing.T) {
+	h := newHost(t)
+	h.writeLog(logLine("203.0.113.66", "GET", "/media/catalog/y.php", 404) + logLine("203.0.113.66", "POST", "/media/catalog/y.php", 404))
+	res := h.run()
+	if len(res.Events) != 1 || res.Events[0].Method != "POST" {
+		t.Errorf("events = %+v", res.Events)
+	}
+}
+
 // Path variants that nginx resolves to the same file are one event, so they cannot flood the
 // list and push out a real one.
 func TestPathVariantsAreOneEvent(t *testing.T) {

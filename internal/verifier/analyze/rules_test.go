@@ -105,7 +105,7 @@ func TestFirstSnapshot(t *testing.T) {
 }
 
 // A failed request for a script that is not on the server is a probe and raises nothing; one
-// for a script that exists, that succeeded, or that passed a command, still does.
+// for a script that exists, that succeeded, that passed a command or that posted, still does.
 func TestWeblogProbesOfMissingScripts(t *testing.T) {
 	event := func(request string, status int, onDisk string) logs.Event {
 		return logs.Event{Rule: "script_in_upload_path", Severity: "high", Method: "GET", Status: status, Log: "/var/log/nginx/access.log",
@@ -124,6 +124,8 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 			Files: []string{"/srv/shop/test.php"}, FileExists: true, Evidence: logs.AttackerControlled{Request: "/test.php"}},
 		{Rule: "command_in_parameters", Severity: "high", Method: "GET", Status: 404, Log: "/var/log/nginx/access.log", OnDisk: "missing",
 			Evidence: logs.AttackerControlled{Request: "/uploads/used-then-deleted.php?cmd=id"}},
+		{Rule: "script_in_upload_path", Severity: "high", Method: "POST", Status: 404, Log: "/var/log/nginx/access.log", OnDisk: "missing",
+			Evidence: logs.AttackerControlled{Request: "/uploads/posted-then-deleted.php"}},
 	}}
 	var got []string
 	for _, f := range Evaluate(nil, cur) {
@@ -138,7 +140,7 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 		}
 	}
 	slices.Sort(got)
-	if want := []string{"GET /test.php", "GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?cmd=id"}; !slices.Equal(got, want) {
+	if want := []string{"GET /test.php", "GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?cmd=id", "POST /uploads/posted-then-deleted.php"}; !slices.Equal(got, want) {
 		t.Errorf("alerts for %v, want %v", got, want)
 	}
 }

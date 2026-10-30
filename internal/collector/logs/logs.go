@@ -759,6 +759,11 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 			r.count(e.Rule, weblog.SeverityRank(h.Severity), 1)
 			e.Severity, e.Status, e.Evidence.Request = h.Severity, req.Status, weblog.RedactURI(req.URI)
 		}
+		// A request that sends something names the event over the reads before it: the verifier
+		// takes failed reads of a missing script for probes, not a post.
+		if (e.Method == "GET" || e.Method == "HEAD") && req.Method != "GET" && req.Method != "HEAD" {
+			e.Method = req.Method
+		}
 		e.Count++
 		e.Last = req.Time
 		e.addIP(req.IP)

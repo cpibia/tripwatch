@@ -11,7 +11,7 @@ const (
 	maxFoldTokens    = 1 << 20
 	maxFoldConstants = 4096
 	maxFoldValue     = 4 << 10
-	maxFoldDepth     = 32
+	maxFoldDepth     = 8
 )
 
 // jsToken is a token of a script as the folding reads it: a string (its value decoded), a name,
@@ -130,6 +130,13 @@ func foldedStrings(content []byte) []byte {
 		if name >= 0 {
 			start = name + 2
 		}
+		// An expression is tried only where a string can start: a literal, a name, an array of
+		// literals. Starting at every bracket of "((((" would descend as deep as allowed from
+		// each one.
+		if t := f.toks[start:]; len(t) == 0 || t[0].kind != 's' && t[0].kind != 'n' && (t[0].text != "[" || len(t) < 2 || t[1].kind != 's') {
+			i++
+			continue
+		}
 		v, next, ok := f.expr(start, 0)
 		if !ok {
 			i++
@@ -157,7 +164,10 @@ func (f *folder) expr(i, depth int) (string, int, bool) {
 		if !ok {
 			break
 		}
-		v, i = clipFold(v+w), next
+		if len(v) < maxFoldValue {
+			v = clipFold(v + w)
+		}
+		i = next
 	}
 	return v, i, true
 }
@@ -220,7 +230,10 @@ func (f *folder) calls(v string, i, depth int) (string, int, bool) {
 			if !ok {
 				return v, i, true
 			}
-			v, i = clipFold(v+strings.Join(parts, "")), next
+			if len(v) < maxFoldValue {
+				v = clipFold(v + strings.Join(parts, ""))
+			}
+			i = next
 		case "split":
 			// split("").reverse().join("")
 			if i+12 < len(f.toks) && f.toks[i+3].kind == 's' && f.toks[i+3].text == "" && f.toks[i+4].text == ")" &&

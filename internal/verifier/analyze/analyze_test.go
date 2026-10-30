@@ -260,6 +260,27 @@ func TestRepeatedEventDoesNotKeepEverySnapshot(t *testing.T) {
 	}
 }
 
+// Anyone reaching the site can make every snapshot raise a new critical weblog alert: those are
+// kept as evidence within the day's bound for their kind, not every snapshot for ever.
+func TestAnonymousCriticalsKeepABoundedProof(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	h.analyse()
+	for i := range 2 * 96 {
+		h.clock = h.clock.Add(15 * time.Minute)
+		h.deliver(protocol.KindSnapshot, gz(t, fmt.Sprintf(`{"snapshot":{"results":{"accounts":{"accounts":[{"name":"root","uid":0}]},"weblog":{"events":[{"rule":"command_in_parameters","severity":"critical","log":"/l","attacker_controlled":{"request":"/x%d.php?cmd=id"}}]}}}}`, i)))
+		h.analyse()
+	}
+	h.clock = h.clock.Add(40 * 24 * time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, rootOnly))
+	snaps, _ := h.store.SnapshotHeads(ctx, "web-01", 1000)
+	// Two days of proofs, each with the snapshot before it, the baseline and the last one.
+	if limit := 2*2*maxEvidencePerDay + 4; len(snaps) > limit {
+		t.Fatalf("%d snapshots kept after 40 days, at most %d: every anonymous critical keeps its snapshot", len(snaps), limit)
+	}
+}
+
 // An alert made to reopen at every snapshot keeps one proof a day, not one per snapshot.
 func TestFlappingAlertKeepsOneProofADay(t *testing.T) {
 	h := newHarness(t)

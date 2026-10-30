@@ -58,6 +58,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
   expressions a script builds from string literals only are folded by a bounded tokenizer:
   escapes, comments between the pieces, parentheses, `+`, `.concat()`, `[..].join()`, `atob()`,
   template literals with literal substitutions, and constants assigned earlier in the file.
+- A web log event takes the method of a request that sends something over the reads before it.
 - The `hooks` collector reads dpkg's file lists as streams and names the hooks a package owns.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
@@ -98,6 +99,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A container's mount that shows, on the host, a sensitive tree mounted elsewhere is a power:
   `-v /data:/h` where the host binds `/data/docker` at `/var/lib/docker` gives the runtime's
   state, and is judged as such.
+- A request that posted to a script missing at collection time is no longer dropped as a probe:
+  a web shell sent its command in the body and deleted before the run raises its alert. Failed
+  reads of a missing script stay probes; in a week of the fleet's logs every one was a GET.
 - A package update no longer lowers every new start-up script to low: where dpkg's file lists
   were read, only a new hook a package owns is; one no package names stays high or medium. A
   hook there before keeps being lowered, as maintainer scripts regenerate some. rpm and apk keep
