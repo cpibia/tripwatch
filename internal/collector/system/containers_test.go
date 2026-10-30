@@ -255,6 +255,22 @@ func TestBoundVolumeMissingFromTheKernel(t *testing.T) {
 	}
 }
 
+// A volume binds a directory when its options say so, whatever its device's path: /dev/shm bound
+// is a directory, a disk mounted as ext4 is not.
+func TestVolumeDeviceBound(t *testing.T) {
+	fsys := fstest.MapFS{
+		"var/lib/docker/volumes/shm/opts.json":  text(`{"MountType":"none","MountOpts":"bind","MountDevice":"/dev/shm"}`),
+		"var/lib/docker/volumes/disk/opts.json": text(`{"MountType":"ext4","MountOpts":"","MountDevice":"/dev/sdb1"}`),
+	}
+	var issues collector.Issues
+	if dev, bound, ok := volumeDevice(fsys, "var/lib/docker", "shm", "local", &issues); !ok || !bound || dev != "/dev/shm" {
+		t.Errorf("shm: %q %v %v", dev, bound, ok)
+	}
+	if dev, bound, ok := volumeDevice(fsys, "var/lib/docker", "disk", "local", &issues); !ok || bound || dev != "/dev/sdb1" {
+		t.Errorf("disk: %q %v %v", dev, bound, ok)
+	}
+}
+
 // The _data of a volume bound to a host directory is a mount point of its own on the host, the
 // volume under its runtime name; a managed volume's _data is a plain directory of the runtime.
 func TestVolumeMountPoint(t *testing.T) {

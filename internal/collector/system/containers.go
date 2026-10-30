@@ -389,7 +389,7 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 		if m.Type == "volume" {
 			// Named volumes live in the daemon's own directory, unless the local driver was told
 			// to bind a host path or mount a device there instead.
-			device, ok := volumeDevice(fsys, path.Dir(path.Dir(dir)), m.Name, m.Driver, issues)
+			device, bound, ok := volumeDevice(fsys, path.Dir(path.Dir(dir)), m.Name, m.Driver, issues)
 			if layers := volumeOverlay(fsys, path.Dir(path.Dir(dir)), m.Name, m.Driver); !ok && len(layers) > 0 {
 				for _, l := range layers {
 					c.Mounts = append(c.Mounts, resolveMount(fsys, Mount{Source: l.Source, Destination: m.Destination, RW: l.RW && m.RW, Volume: m.Name}))
@@ -403,7 +403,7 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 				continue
 			}
 			mount.Source, mount.Volume = device, m.Name
-			mount.boundVolume = !strings.HasPrefix(device, "/dev/")
+			mount.boundVolume = bound
 		} else if m.Type != "" && m.Type != "bind" || m.Source == "" {
 			continue
 		}
@@ -481,24 +481,27 @@ func clipNamed[T any](c *Container, name string, l []T) []T {
 
 // volumeDevice is the host path or device a local Docker volume is mounted from, from the
 // options its driver keeps in opts.json; false for an ordinary volume or another driver.
-func volumeDevice(fsys fs.FS, dockerRoot, name, driver string, issues *collector.Issues) (string, bool) {
+func volumeDevice(fsys fs.FS, dockerRoot, name, driver string, issues *collector.Issues) (string, bool, bool) {
 	if driver != "local" || name == "" || name != path.Base(name) || name == ".." {
-		return "", false
+		return "", false, false
 	}
 	data, err := fs.ReadFile(fsys, path.Join(dockerRoot, "volumes", name, "opts.json"))
 	if err != nil {
-		return "", false
+		return "", false, false
 	}
 	var opts struct{ MountType, MountOpts, MountDevice string }
 	if err := json.Unmarshal(data, &opts); err != nil {
 		issues.Add(err)
-		return "", false
+		return "", false, false
 	}
 	// Network filesystems name a remote ("host:/export"), never a path of this host.
 	if !path.IsAbs(opts.MountDevice) {
-		return "", false
+		return "", false, false
 	}
-	return opts.MountDevice, true
+	// The mount options say whether the device is a directory bound or a filesystem mounted:
+	// /dev/shm bound is a directory, whatever its path looks like.
+	bound := slices.ContainsFunc(strings.Split(opts.MountOpts, ","), func(o string) bool { return o == "bind" || o == "rbind" })
+	return opts.MountDevice, bound, true
 }
 
 // volumeOverlay is what a local Docker volume of type overlay is made of: the host directories
