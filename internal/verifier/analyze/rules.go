@@ -626,6 +626,7 @@ func hookChanges(prev *State, cur State) []Finding {
 		known[f.Path] = content(f)
 	}
 	upgraded := packagesChanged(prev.Packages, cur.Packages)
+	packaged := setOf(cur.Hooks.Packaged, func(p string) string { return p })
 	var out []Finding
 	for _, f := range cur.Hooks.Files {
 		if unjudgedHooks[path.Clean(f.Path)] {
@@ -653,7 +654,11 @@ func hookChanges(prev *State, cur State) []Finding {
 		if f.Link != "" {
 			detail += " It is a link to " + f.Link + ": the size, hash and mode are the target's."
 		}
-		if upgraded {
+		// A package update explains a hook a package owns. With the package lists read, a new
+		// one no package names was written by something else in the same interval; a hook there
+		// before may be one a maintainer script regenerates (pam-auth-update's common files,
+		// the kernel's autoremove list), which no list names.
+		if upgraded && (!cur.Hooks.PackageLists || seen || packaged.has(f.Path)) {
 			sev = "low"
 			detail += " Packages were installed, upgraded or removed in the same interval: one of them may have made this change."
 		}

@@ -404,7 +404,8 @@ since the previous snapshot is an alert (high for system files, medium in a home
 real-time event already reported that content, so a change made while the sensor was stopped or
 in a place left unwatched is still seen. A file collected for the first time but changed (by its
 inode change time, which cannot be dated back) before the previous snapshot is not new; if
-packages were installed, upgraded or removed in the same interval the alert is low. A home's
+packages were installed, upgraded or removed in the same interval the alert is low, except for a
+new file that dpkg's file lists, where the system has them, name in no package. A home's
 files are described up to 64 per pattern, the system's up to 1,024.
 
 The watchers are bounded against the users they guard against: files are hashed only up to 1 MB

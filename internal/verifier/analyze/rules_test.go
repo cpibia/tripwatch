@@ -927,6 +927,16 @@ func TestHookChanges(t *testing.T) {
 	if got := hooks(); len(got) != len(want) || slices.ContainsFunc(got, func(f string) bool { return !strings.HasPrefix(f, "low ") }) {
 		t.Errorf("with packages upgraded: %v", got)
 	}
+	// With dpkg's file lists read, an update explains a new hook only when a package owns it;
+	// a hook there before stays explained, as maintainer scripts regenerate some.
+	cur.Hooks.PackageLists, cur.Hooks.Packaged = true, []string{"/etc/network/if-up.d/y"}
+	got := hooks()
+	for _, w := range []string{"low persistence-change:hook:/etc/profile.d/a.sh|a2", "low persistence-change:hook:/etc/network/if-up.d/y|ff",
+		"high persistence-change:hook:/etc/network/if-up.d/x|dd"} {
+		if !slices.Contains(got, w) {
+			t.Errorf("with package lists, %s missing: %v", w, got)
+		}
+	}
 }
 
 // A directory in the loader's cache that no configuration names is an alert; the system's

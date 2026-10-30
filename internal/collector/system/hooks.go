@@ -72,8 +72,12 @@ type HooksResult struct {
 	Preload []string `json:"preload,omitempty"`
 	// Loader is where the dynamic loader looks for libraries, by its cache and its
 	// configuration.
-	Loader *LoaderPaths     `json:"loader,omitempty"`
-	Issues collector.Issues `json:"issues,omitempty"`
+	Loader *LoaderPaths `json:"loader,omitempty"`
+	// Packaged lists the hooks a package's file list names, and PackageLists says those lists
+	// were read whole: a hook no package names was not written by a package update.
+	Packaged     []string         `json:"packaged,omitempty"`
+	PackageLists bool             `json:"package_lists,omitempty"`
+	Issues       collector.Issues `json:"issues,omitempty"`
 }
 
 // Hooks collects startup, login and loader hooks, system-wide and in every home directory.
@@ -133,6 +137,7 @@ func (Hooks) Collect(ctx context.Context, src collector.Source) (any, error) {
 	}
 
 	res.Loader = readLoaderPaths(src.FS, &res.Issues)
+	res.Packaged, res.PackageLists = packagedHooks(src.FS, res.Files, &res.Issues)
 
 	preload, err := collector.ReadLines(src.FS, "etc/ld.so.preload")
 	res.Issues.Add(err)

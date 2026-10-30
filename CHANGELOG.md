@@ -52,6 +52,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
   reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded, and string
   literals are read as the browser builds them: escapes decoded, template literals, literals
   joined with `+` (`'payment[cc'+'_num'+'ber]'`, `'p\x61yment'`).
+- The `hooks` collector reads dpkg's file lists as streams and names the hooks a package owns.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
   It also reports the flags of its own architecture's libc, and a cache too large to read,
@@ -91,6 +92,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A container's mount that shows, on the host, a sensitive tree mounted elsewhere is a power:
   `-v /data:/h` where the host binds `/data/docker` at `/var/lib/docker` gives the runtime's
   state, and is judged as such.
+- A package update no longer lowers every new start-up script to low: where dpkg's file lists
+  were read, only a new hook a package owns is; one no package names stays high or medium. A
+  hook there before keeps being lowered, as maintainer scripts regenerate some. rpm and apk keep
+  their lists in binary databases, and there an update still lowers every hook.
 - A container start seen in real time on another image than the one of the same name, tag and
   powers before it raises the snapshot rule's medium "runs another image". The alert of a
   container with power over the host names the image digest in its detail, so accepting it never
