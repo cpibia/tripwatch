@@ -26,19 +26,38 @@ type jsToken struct {
 	kind byte // 's' string, 'n' name, '0' number, 'p' punctuation, 'r' regular expression
 	text string
 	at   int // where it starts in the piece
+	// closed is, for ")" and "}", what the bracket closed (see bracketContext).
+	closed byte
 }
+
+// What an open bracket started, as JavaScript tokenizers keep it (acorn's token contexts): it
+// decides whether a "/" after the closing bracket divides or starts a pattern.
+const (
+	ctxCondition = 'c' // ( of if, while, for, with: a statement follows, so a pattern
+	ctxParen     = 'e' // ( of an expression or a call: a division
+	ctxBlock     = 'b' // { of a block or a declared function or class: a pattern
+	ctxObject    = 'o' // { of an object, or of a function or class expression: a division
+	ctxArrow     = 'a' // { of an arrow function's body: either, past what a tokenizer knows
+	ctxSquare    = '['
+	ctxUnknown   = '?' // a bracket opened before the piece, or past the bound on the stack
+)
+
+// maxContexts bounds the open brackets whose context is kept.
+const maxContexts = 4096
 
 // jsTokens splits content into tokens, comments and blanks left out. A template literal with
 // substitutions of string literals only (`${”}`) is one string; one with any other
 // substitution is punctuation, so that nothing is folded across it.
 // A "/" after ")" or "}" divides or starts a pattern depending on what the bracket closed, which
-// a tokenizer that does not parse cannot always tell: regexAfterClose picks one reading, and the
-// folding reads the script both ways; ambiguous says whether such a "/" was met.
+// a stack of what each open bracket started decides. Where it cannot, after the body of an arrow
+// function or a bracket opened before the piece, regexAfterClose picks one reading, the folding
+// reads the script both ways, and ambiguous says such a "/" was met.
 func jsTokens(content []byte, regexAfterClose bool) (out []jsToken, scanned int, deep, ambiguous bool) {
 	depth := 0
+	var b brackets
 	for i := 0; i < len(content) && len(out) < maxFoldTokens; {
 		c := content[i]
-		if c == '/' && len(out) > 0 && (out[len(out)-1].text == ")" || out[len(out)-1].text == "}") {
+		if c == '/' && len(out) > 0 && (out[len(out)-1].closed == ctxArrow || out[len(out)-1].closed == ctxUnknown) {
 			ambiguous = true
 		}
 		at, start := len(out), i
@@ -90,19 +109,27 @@ func jsTokens(content []byte, regexAfterClose bool) (out []jsToken, scanned int,
 			if c >= '0' && c <= '9' {
 				kind = '0'
 			}
+			if w := string(content[i:j]); kind == 'n' && (w == "function" || w == "class") && !afterDot(out) {
+				b.declare(statementStart(out))
+			}
 			out = append(out, jsToken{kind: kind, text: string(content[i:j])})
 			i = j
 		default:
 			// Brackets nested past 64 levels are past what the folding follows, and said so.
+			t := jsToken{kind: 'p', text: string(c)}
 			switch c {
 			case '(', '{', '[':
 				if depth++; depth > maxBracketDepth {
 					deep = true
 				}
+				b.open(c, out)
 			case ')', '}', ']':
 				depth = max(depth-1, 0)
+				t.closed = b.close()
+			case ';':
+				b.endStatement()
 			}
-			out = append(out, jsToken{kind: 'p', text: string(c)})
+			out = append(out, t)
 			i++
 		}
 		if len(out) > at {
@@ -110,6 +137,143 @@ func jsTokens(content []byte, regexAfterClose bool) (out []jsToken, scanned int,
 		}
 	}
 	return out, scanned, deep, ambiguous
+}
+
+// brackets is the stack of what the open brackets started, and the function or class whose body
+// is the next "{" at the depth it was named.
+type brackets struct {
+	stack    []byte
+	overflow int
+	pending  byte // ctxBlock for a declaration, ctxObject for an expression, 0 for none
+	at       int
+}
+
+func (b *brackets) open(c byte, before []jsToken) {
+	ctx := byte(ctxSquare)
+	switch c {
+	case '(':
+		ctx = ctxParen
+		if n := len(before); n > 0 && before[n-1].kind == 'n' && !afterDot(before[:n-1]) {
+			switch before[n-1].text {
+			case "if", "while", "for", "with":
+				ctx = ctxCondition
+			}
+		}
+	case '{':
+		ctx = b.brace(before)
+	}
+	if len(b.stack) == maxContexts || b.overflow > 0 {
+		b.overflow++
+		return
+	}
+	b.stack = append(b.stack, ctx)
+}
+
+// brace decides what a "{" starts, from the token before it (acorn's braceIsBlock).
+func (b *brackets) brace(before []jsToken) byte {
+	if b.pending != 0 && b.at == len(b.stack)+b.overflow {
+		ctx := b.pending
+		b.pending = 0
+		return ctx
+	}
+	n := len(before)
+	if n == 0 {
+		return ctxBlock
+	}
+	p := before[n-1]
+	switch {
+	case p.kind == 'p' && p.text == ">" && n >= 2 && before[n-2].text == "=":
+		return ctxArrow
+	case p.kind == 'p' && (p.text == ")" || p.text == ";" || p.text == "}"):
+		return ctxBlock
+	case p.kind == 'p' && p.text == "{":
+		if top := b.top(); top == ctxObject || top == ctxUnknown {
+			return top
+		}
+		return ctxBlock
+	case p.kind == 'p' && p.text == ":":
+		// A label's or a case's block inside a block; a property's value inside an object.
+		if top := b.top(); top == ctxObject || top == ctxUnknown {
+			return top
+		}
+		return ctxBlock
+	case p.kind == 'n' && !afterDot(before[:n-1]):
+		switch p.text {
+		case "return", "typeof", "case", "in", "of", "new", "delete", "void", "throw", "yield", "await", "instanceof":
+			return ctxObject
+		}
+		return ctxBlock
+	}
+	return ctxObject
+}
+
+func (b *brackets) top() byte {
+	switch {
+	case b.overflow > 0:
+		return ctxUnknown
+	case len(b.stack) == 0:
+		return ctxBlock
+	}
+	return b.stack[len(b.stack)-1]
+}
+
+// close returns what the closing bracket closed; ctxUnknown when it opened before the piece.
+func (b *brackets) close() byte {
+	if b.overflow > 0 {
+		b.overflow--
+		return ctxUnknown
+	}
+	if len(b.stack) == 0 {
+		return ctxUnknown
+	}
+	ctx := b.stack[len(b.stack)-1]
+	b.stack = b.stack[:len(b.stack)-1]
+	if b.pending != 0 && b.at > len(b.stack) {
+		b.pending = 0
+	}
+	return ctx
+}
+
+// declare notes a function or class named here: its body is the next "{" at this depth.
+func (b *brackets) declare(statement bool) {
+	b.pending, b.at = ctxObject, len(b.stack)+b.overflow
+	if statement {
+		b.pending = ctxBlock
+	}
+}
+
+// endStatement forgets a function or class named in a statement that ended without its body.
+func (b *brackets) endStatement() {
+	if b.pending != 0 && b.at == len(b.stack)+b.overflow {
+		b.pending = 0
+	}
+}
+
+func afterDot(before []jsToken) bool {
+	n := len(before)
+	return n > 0 && before[n-1].text == "." || n > 1 && before[n-1].text == "?" && before[n-2].text == "."
+}
+
+// statementStart reports whether a function or class named after these tokens is a declaration:
+// at the start of the piece or of a statement, after "async", "export" or "default" there.
+func statementStart(before []jsToken) bool {
+	n := len(before)
+	for n > 0 && before[n-1].kind == 'n' && (before[n-1].text == "async" || before[n-1].text == "export" || before[n-1].text == "default") {
+		n--
+	}
+	if n == 0 {
+		return true
+	}
+	p := before[n-1]
+	switch {
+	case p.kind == 'p' && (p.text == ";" || p.text == "{"):
+		return true
+	case p.kind == 'p' && (p.text == "}" || p.text == ")"):
+		return p.closed == ctxBlock || p.closed == ctxCondition
+	case p.kind == 'n':
+		return p.text == "else" || p.text == "do"
+	}
+	return false
 }
 
 // regexAllowed reports whether a "/" after these tokens starts a regular expression rather than
@@ -125,8 +289,12 @@ func regexAllowed(toks []jsToken, regexAfterClose bool) bool {
 		if n := len(toks); n >= 2 && (t.text == "+" || t.text == "-") && toks[n-2].text == t.text {
 			return false
 		}
-		switch t.text {
-		case ")", "}":
+		switch t.closed {
+		case ctxCondition, ctxBlock:
+			return true
+		case ctxParen, ctxObject:
+			return false
+		case ctxArrow, ctxUnknown:
 			return regexAfterClose
 		}
 		return t.text != "]"
@@ -288,9 +456,10 @@ func foldStrings(content []byte, constants *foldConstants) []byte {
 
 // foldWork folds and says how much work it took: the tokens read and the terms evaluated.
 //
-// A "/" after ")" or "}" is read both ways, the whole piece once each way, and when the piece has
-// one, each statement again both ways, from its ";": a script can ask for one reading in one
-// statement and the other in the next, which neither whole reading follows past the first. The
+// A "/" after ")" or "}" is decided by what the bracket closed. One the tokenizer cannot decide,
+// after an arrow function's body or a bracket opened before the piece, is read both ways: the
+// whole piece once each way, and each statement again both ways from its ";", so that a script
+// asking for one reading in one statement and the other in the next is followed in both. The
 // work stays linear: each byte is read at most four times. The names' last uses come from the
 // whole readings, so that a constant one statement sets for a later one is kept.
 func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
