@@ -43,7 +43,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   word counts when the block also calls something it does not name: through a variable
   (`$f("PATH=...")`, `$a[0](`, `${"f"}(`), an expression or a string (`("put"."env")(`,
   `"putenv"(`), a callback (`array_map`, `call_user_func`...) or a method that calls what it is given
-  (`ReflectionFunction::invoke`, `Closure::fromCallable(...)->__invoke`), any of which can be putenv, so
+  (`ReflectionFunction::invoke`, `Closure::fromCallable(...)->__invoke`), a filter's
+  `FILTER_CALLBACK`, an anonymous class passed to `array_find` and the other PHP 8.4 callbacks, any of which can be putenv, so
   that the word runs from the attacker's directory.
 - `<?echo`, `<?print`, `<?const` and constants followed by an operator (`<?PHP_EOL>1;`) open
   code, not a processing instruction: only a lower-case target, an undefined constant on which
