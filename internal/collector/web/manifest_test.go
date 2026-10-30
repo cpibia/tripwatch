@@ -294,8 +294,8 @@ func TestTruncatedRunsCounted(t *testing.T) {
 		if len(apps) == 0 {
 			t.Fatal("no application")
 		}
-		if apps[0].BehindRuns != apps[0].TruncatedRuns {
-			t.Errorf("runs behind %d, cut %d", apps[0].BehindRuns, apps[0].TruncatedRuns)
+		if apps[0].BehindRuns != 0 {
+			t.Errorf("runs behind %d for a scan cut before its search", apps[0].BehindRuns)
 		}
 		return apps[0].TruncatedRuns
 	}

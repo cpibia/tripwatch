@@ -272,12 +272,16 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 			s.report.TruncatedRuns = c.truncatedRuns[s.report.Path]
 		}
 		// Runs that left a changed script unread, for any reason, add up until one reads every
-		// change: per application, so that no shuffling of files between runs starts it over.
+		// change: per application, so that no shuffling of files between runs starts it over. A
+		// scan cut before its search read nothing to judge: it neither adds nor starts over, and
+		// the count of cut scans speaks for it.
 		if c.behindRuns == nil {
 			c.behindRuns = map[string]int{}
 		}
 		switch {
-		case s.behind || s.report.Truncated:
+		case s.report.Truncated && !s.behind:
+			s.report.BehindRuns = c.behindRuns[s.report.Path]
+		case s.behind:
 			if _, ok := c.behindRuns[s.report.Path]; ok || len(c.behindRuns) < maxTruncatedApps {
 				c.behindRuns[s.report.Path]++
 				s.report.BehindRuns = c.behindRuns[s.report.Path]
