@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -594,7 +595,7 @@ func homeOwner(p string) string {
 }
 
 // StateKinds are the kinds whose alerts resolve themselves when the condition disappears.
-var StateKinds = []string{"accounts", "ssh", "persistence", "processes", "packages", "privileged", "web", "apps", "sensor", "kernel", "network"}
+var StateKinds = []string{"accounts", "ssh", "persistence", "processes", "packages", "privileged", "web", "apps", "sensor", "kernel", "network", "collector-issues"}
 
 // Places a legitimate program does not run from.
 var suspiciousDirs = []string{"/tmp/", "/var/tmp/", "/dev/shm/", "/run/user/", "/var/www/", "/home/", "/run/lock/"}
@@ -854,6 +855,18 @@ func Evaluate(prev *State, cur State) []Finding {
 		if prev != nil {
 			add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail, Owner: owner})
 		}
+	}
+
+	// What a collector could not do (a bound reached, a file not read, a search given up) is
+	// part of what the snapshot says: one low alert per collector, naming it, so that no limit
+	// stays where only the sensor sees it. It closes when the collector no longer reports it.
+	for _, name := range slices.Sorted(maps.Keys(cur.Issues)) {
+		list := cur.Issues[name]
+		detail := "The " + name + " collector could not do all of its work in the last snapshot, so part of what it watches was not checked:\n  " + strings.Join(list, "\n  ")
+		if more := cur.IssueCounts[name] - len(list); more > 0 {
+			detail += fmt.Sprintf("\n  and %d more", more)
+		}
+		state("collector-issues", name, "low", "Analysis incomplete: "+name, detail)
 	}
 
 	for name, msg := range cur.Errors {

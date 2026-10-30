@@ -641,3 +641,29 @@ func TestHookSeenInRealTimeIsNotRepeated(t *testing.T) {
 		t.Errorf("the change no event reported is not raised: %v", slices.Collect(maps.Keys(open)))
 	}
 }
+
+// What a collector could not do reaches the operator: one low alert per collector, naming its
+// issues within a bound, the rest counted.
+func TestCollectorIssuesRaiseAnAlert(t *testing.T) {
+	issues := make([]string, maxCollectorIssues+5)
+	for i := range issues {
+		issues[i] = fmt.Sprintf("/var/www/shop/f%d.js: strings built past what the skimmer search follows", i)
+	}
+	raw, err := json.Marshal(map[string]any{"snapshot": map[string]any{"results": map[string]any{"web": map[string]any{"issues": issues}, "kernel": map[string]any{"issues": []string{"hidden process search stopped at PID 9 of 99"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := Decode(gz(t, string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []Finding
+	for _, f := range Evaluate(nil, st) {
+		if f.Kind == "collector-issues" {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 2 || got[0].Severity != "low" || got[0].Fingerprint != "collector-issues:kernel" || !strings.Contains(got[1].Detail, "and 5 more") {
+		t.Errorf("findings = %+v", got)
+	}
+}

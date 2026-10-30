@@ -107,6 +107,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- What a collector could not do reaches the operator: the issues each collector reports (a bound
+  reached, a file not read, a search given up, a script named past what a rule follows) raise one
+  low alert per host and collector, naming twenty and counting the rest, closed when the collector
+  no longer reports them. Until now only the container issues raised one, and every limit
+  "named in the issues" stayed where only the sensor saw it. On the fleet today this is the
+  kernel's hidden process search stopping early on eight hosts and a few web limits on three.
+
 - A new cron line is critical, with the reason, when it never runs on schedule (the 31st of
   February, as CronRAT hides its code), downloads and runs what it fetched, decodes a base64
   payload or starts a process under another name; other new lines stay high.

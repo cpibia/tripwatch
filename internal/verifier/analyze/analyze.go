@@ -93,7 +93,14 @@ type State struct {
 	Containers  *system.ContainersResult
 	// Realtime is nil for sensors that predate the real-time watchers.
 	Realtime *watch.Status
+	// Issues are what each collector said it could not do, by collector, at most
+	// maxCollectorIssues of them each; IssueCounts counts them all.
+	Issues      map[string][]string
+	IssueCounts map[string]int
 }
+
+// maxCollectorIssues bounds the issues kept of one collector.
+const maxCollectorIssues = 20
 
 // Decode reads a payload as sent by the sensor: gzip-compressed JSON.
 func Decode(payload []byte) (State, error) {
@@ -155,6 +162,15 @@ func Decode(payload []byte) (State, error) {
 		}
 		if err := json.Unmarshal(r.Snapshot.Results[res.name], targets[res.name]); err != nil {
 			fail(res.name, "undecodable result: "+err.Error())
+			continue
+		}
+		var withIssues struct{ Issues []string }
+		if json.Unmarshal(r.Snapshot.Results[res.name], &withIssues) == nil && len(withIssues.Issues) > 0 {
+			if st.Issues == nil {
+				st.Issues, st.IssueCounts = map[string][]string{}, map[string]int{}
+			}
+			st.Issues[res.name] = withIssues.Issues[:min(len(withIssues.Issues), maxCollectorIssues)]
+			st.IssueCounts[res.name] = len(withIssues.Issues)
 		}
 	}
 	CleanHostText(&st)
