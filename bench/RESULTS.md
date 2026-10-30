@@ -1,6 +1,6 @@
 # Detection benchmark
 
-Commit `addcc66`, 2026-10-30, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+Commit `e227079`, 2026-10-30, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
 with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
 ## Method
@@ -109,9 +109,9 @@ Reported beyond the clean run; fewer is better.
 | Routine change | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
 | Update of a WordPress plugin, its version and sixty files rewritten | 1 | 0 | 0 | 0 |
-| Installation of a package that ships a login hook | 2 | 6 | 0 | 0 |
+| Installation of a package that ships a login hook | 1 | 6 | 0 | 0 |
 | Rotation of the system logs, as logrotate does every night | 0 | 4 | 0 | 0 |
-| Deploy that rewrites the site's code with a new release | 6 | 0 | 0 | 0 |
+| Deploy that rewrites the site's code with a new release | 1 | 0 | 0 | 0 |
 
 ## Cost of a full check
 
@@ -119,7 +119,7 @@ Measured on the control scenario, in the same container.
 
 | Tool | Time | Peak memory |
 |---|--:|--:|
-| tripwatch | 1.4 s | 31 MB |
-| AIDE | 50.6 s | 40 MB |
-| rkhunter | 153.2 s | 11 MB |
-| debsums | 1.1 s | 13 MB |
+| tripwatch | 0.8 s | 32 MB |
+| AIDE | 25.3 s | 40 MB |
+| rkhunter | 97.7 s | 11 MB |
+| debsums | 0.6 s | 13 MB |
