@@ -303,3 +303,40 @@ func TestTruncatedRunsCounted(t *testing.T) {
 		t.Errorf("after a whole run: %d", r)
 	}
 }
+
+// Past the bound on candidates a script left unread before takes the place of a new one; the
+// list of scripts unread longest keeps the longest; and a run whose hash budget ran out, leaving
+// an unhashed entry, does not clear a pending one.
+func TestPendingScriptsCannotBePushedOut(t *testing.T) {
+	var k skimmerCandidates
+	for i := range maxSkimmerCandidates {
+		k.add(FileChange{Path: fmt.Sprintf("/var/www/shop/d%05d.js", i), Change: ChangeAdded})
+	}
+	k.add(FileChange{Path: "/var/www/shop/zzz.js", Change: ChangeModified, pending: 2})
+	if !slices.ContainsFunc(k.others, func(c FileChange) bool { return c.Path == "/var/www/shop/zzz.js" }) {
+		t.Error("a pending script was left past the bound")
+	}
+
+	var long []UnreadScript
+	for i := range maxReportedUnread {
+		long = keepLongest(long, UnreadScript{Path: fmt.Sprintf("/d%d.js", i), Runs: 3})
+	}
+	if long = keepLongest(long, UnreadScript{Path: "/zzz.js", Runs: 9}); !slices.Contains(long, UnreadScript{Path: "/zzz.js", Runs: 9}) {
+		t.Error("decoys pushed out the script unread longest")
+	}
+
+	dir := t.TempDir()
+	prev, next := filepath.Join(dir, "prev"), filepath.Join(dir, "next")
+	if err := os.WriteFile(prev, []byte(`"var/www/shop/a.js" pending:2:`+strings.Repeat("a", 64)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(next, []byte(`"var/www/shop/a.js" unhashed:size:9:ctime:1:id:1`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := keepPending(prev, next, skimmerRun{read: map[string]bool{}, updating: map[string]bool{}}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(next); !strings.Contains(string(data), "pending:3:"+strings.Repeat("a", 64)) { //nolint:gosec // the test's own directory
+		t.Errorf("unhashed run cleared the pending entry:\n%s", data)
+	}
+}

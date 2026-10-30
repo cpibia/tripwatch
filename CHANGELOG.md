@@ -17,8 +17,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Changed scripts a run left unread for skimmers, for its time, its budget or past the 2,000 it
   reads, keep their old entry in the code manifest it hands on, marked pending: the next run finds
   them changed again and reads them first, then the smallest, so decoys go last; one script cannot
-  take more than 20 seconds of the run. A script left unread three runs in a row is named in the
-  result, and the verifier raises a medium alert for it until it is read.
+  take more than 20 seconds of the run. Past the 2,000 a pending script takes the place of a new
+  one, and a run whose hash budget ran out does not clear it. A script left unread three runs in a
+  row is named in the result (the hundred unread longest, the rest counted), and the verifier
+  raises a medium alert for it that the sensor cannot close by no longer naming it. Applications
+  whose scan was cut short go first at the next run.
 - The web collector counts the runs in a row each application's scan was cut short by its time
   limit, and the verifier raises one medium alert for the host when an application reaches three:
   in a week of a fleet of a hundred applications, cuts came alone or in pairs but on two hosts.

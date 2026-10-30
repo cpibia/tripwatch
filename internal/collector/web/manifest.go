@@ -224,25 +224,26 @@ const unreadRunsReported = 3
 // for skimmers, not by design, keeps the entry of the manifest before it, marked pending: the next
 // run finds it changed again and reads it. It returns the scripts left unread for several runs in
 // a row. The two manifests are read as streams, in walk order.
-func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, error) {
+func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, int, error) {
 	pf, err := os.Open(prev) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = pf.Close() }()
 	nf, err := os.Open(next) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = nf.Close() }()
 	tmp := next + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	w := bufio.NewWriterSize(out, 64<<10)
 	old, now := newManifestReader(pf), newManifestReader(nf)
 	var long []UnreadScript
+	longCount := 0
 	for ; !now.done; now.advance() {
 		for !old.done && comparePaths(old.path, now.path) < 0 {
 			old.advance()
@@ -253,27 +254,43 @@ func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, error) {
 		}
 		entry := now.sum
 		p := "/" + now.path
-		if slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(p))) && (before == "" || changedSum(before, now.sum)) && run.pending(p) {
+		// A pending entry stays pending until the script is read, whatever this run made of it:
+		// a run whose hash budget ran out leaves an unhashed entry that compares to nothing.
+		if slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(p))) && (before == "" || pendingRuns(before) > 0 || changedSum(before, now.sum)) && run.pending(p) {
 			runs := pendingRuns(before) + 1
 			base := before
 			if runs > 1 {
 				_, _, base = cutPending(before)
 			}
 			entry = fmt.Sprintf("%s%d:%s", pendingPrefix, runs, cmp.Or(base, "new"))
-			if runs >= unreadRunsReported && len(long) < maxReportedUnread {
-				long = append(long, UnreadScript{Path: p, Runs: runs})
+			if runs >= unreadRunsReported {
+				long = keepLongest(long, UnreadScript{Path: p, Runs: runs})
+				longCount++
 			}
 		}
 		if _, err := fmt.Fprintf(w, "%s %s\n", strconv.Quote(now.path), entry); err != nil {
 			_ = out.Close()
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	if err := errors.Join(old.err, now.err, w.Flush(), out.Sync(), out.Close()); err != nil {
 		_ = os.Remove(tmp)
-		return nil, err
+		return nil, 0, err
 	}
-	return long, os.Rename(tmp, next)
+	return long, longCount - len(long), os.Rename(tmp, next)
+}
+
+// keepLongest adds u to the scripts left unread longest, at most maxReportedUnread of them:
+// decoys left unread for fewer runs cannot push out a script pending for longer.
+func keepLongest(long []UnreadScript, u UnreadScript) []UnreadScript {
+	if len(long) < maxReportedUnread {
+		return append(long, u)
+	}
+	i := slices.IndexFunc(long, func(o UnreadScript) bool { return o.Runs < u.Runs })
+	if i >= 0 {
+		long[i] = u
+	}
+	return long
 }
 
 // cutPending splits a pending entry into its runs and the entry it kept.
@@ -327,6 +344,13 @@ func (k *skimmerCandidates) add(c FileChange) {
 	case len(k.others) < maxSkimmerCandidates:
 		k.others = append(k.others, c)
 	default:
+		// Past the bound a script left unread before takes the place of a new one, which stays
+		// pending in turn: the order of the walk cannot keep the old ones out for good.
+		if c.pending > 0 {
+			if i := slices.IndexFunc(k.others, func(o FileChange) bool { return o.pending == 0 }); i >= 0 {
+				k.others[i] = c
+			}
+		}
 		k.dropped++
 	}
 }
@@ -425,13 +449,13 @@ func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 			// changed and reads them: taken in as seen, a skimmer among them would never be read
 			// again. Those left unread for runs in a row are named in the result.
 			run := s.inspectCandidates(ctx, candidates)
-			long, err := keepPending(prev, m.next, run)
+			long, more, err := keepPending(prev, m.next, run)
 			if err != nil {
 				s.issues = append(s.issues, fmt.Sprintf("%s: manifest not written, scripts left unread would pass for seen: %v", s.report.Path, err))
 				_ = os.Remove(m.next)
 				return ""
 			}
-			s.report.UnreadScripts = long
+			s.report.UnreadScripts, s.report.UnreadScriptsMore = long, more
 		}
 	}
 	return m.next

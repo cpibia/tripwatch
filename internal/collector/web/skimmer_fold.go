@@ -215,6 +215,9 @@ type foldConstants struct {
 	values map[string]string
 	set    map[string]int64
 	clock  int64
+	// full counts the puts left to refuse after a look found no name to give up: one look,
+	// not one per name, when every name kept is used further on.
+	full int
 }
 
 func newFoldConstants() *foldConstants {
@@ -226,7 +229,8 @@ func (c *foldConstants) get(name string) string { return c.values[name] }
 // put keeps a constant; usedLater says whether the piece uses a name after this point.
 func (c *foldConstants) put(name, v string, usedLater func(string) bool) {
 	if _, ok := c.values[name]; !ok && len(c.values) >= maxFoldConstants {
-		if !usedLater(name) {
+		if !usedLater(name) || c.full > 0 {
+			c.full = max(c.full-1, 0)
 			return
 		}
 		// Half the table goes at once, the names the piece does not use again, the newest
@@ -238,6 +242,7 @@ func (c *foldConstants) put(name, v string, usedLater func(string) bool) {
 			}
 		}
 		if len(unused) == 0 {
+			c.full = maxFoldConstants / 8
 			return
 		}
 		slices.SortFunc(unused, func(a, b string) int { return cmp.Compare(c.set[b], c.set[a]) })

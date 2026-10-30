@@ -1436,12 +1436,17 @@ func Evaluate(prev *State, cur State) []Finding {
 				"The sensor's scan of these applications was cut short by its time limit run after run, so part of their code and data is not read: "+strings.Join(cut, ", ")+". Many files written in them can cause it; see what grew there.")
 		}
 		// A changed script the sensor had no time or budget to read for skimmers several runs in
-		// a row: decoys written next to a skimmer to keep it from being read look like this. The
-		// alert stays as long as the script is left unread.
+		// a row: decoys written next to a skimmer to keep it from being read look like this. It is
+		// raised as a change, which a sensor that stops naming the script cannot close: a person
+		// does, once the script is read.
 		for _, app := range w.Apps {
 			for _, u := range app.UnreadScripts {
-				state("web", "skimmer-unread:"+u.Path, "medium", "Changed script not read for skimmers: "+u.Path,
+				change("web-change", "skimmer-unread:"+u.Path, "medium", "Changed script not read for skimmers: "+u.Path,
 					fmt.Sprintf("%s changed and was left unread for skimmers by %d runs in a row, for lack of time or budget: other files changed with it took the run's share. Read it, and see what else changed in %s.", u.Path, u.Runs, app.Path))
+			}
+			if app.UnreadScriptsMore > 0 {
+				change("web-change", "skimmer-unread-more:"+app.Path, "medium", "More changed scripts not read for skimmers in "+app.Path,
+					fmt.Sprintf("%d more changed scripts of %s were left unread for skimmers three runs in a row or more, past the ones named.", app.UnreadScriptsMore, app.Path))
 			}
 		}
 	}

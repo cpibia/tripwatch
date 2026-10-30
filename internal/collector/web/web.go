@@ -141,6 +141,8 @@ type AppReport struct {
 	// UnreadScripts are changed scripts that runs in a row left unread for skimmers, for lack of
 	// time or budget: decoys written to keep a skimmer from being read show here.
 	UnreadScripts []UnreadScript `json:"unread_scripts,omitempty"`
+	// UnreadScriptsMore counts the scripts left unread as long that the list has no room for.
+	UnreadScriptsMore int `json:"unread_scripts_more,omitempty"`
 	// TruncatedRuns counts the runs in a row, this one included, whose scan of the application
 	// was cut short, since the sensor started.
 	TruncatedRuns int `json:"truncated_runs,omitempty"`
@@ -224,8 +226,11 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 	// A directory several applications reach through links (the uploads every release of a
 	// deploy shares) is scanned once, by the first: served applications go first, so what is
 	// found there is reported where it is served.
+	// Applications whose scan was cut short in earlier runs go first, so that the time limit
+	// does not leave the same ones unread run after run.
 	slices.SortStableFunc(scanners, func(a, b *scanner) int {
-		return cmp.Compare(min(len(b.report.Sites), 1), min(len(a.report.Sites), 1))
+		return cmp.Or(cmp.Compare(c.truncatedRuns[b.report.Path], c.truncatedRuns[a.report.Path]),
+			cmp.Compare(min(len(b.report.Sites), 1), min(len(a.report.Sites), 1)))
 	})
 	// Every application's uploads are listed before any file of any application is read.
 	for _, s := range scanners {

@@ -1082,14 +1082,22 @@ func TestDeployIsOneAlert(t *testing.T) {
 	}
 }
 
-// A changed script left unread for skimmers several runs in a row is a medium alert of its own.
+// A changed script left unread for skimmers several runs in a row is a medium alert of its own,
+// which the sensor cannot close by no longer naming the script.
 func TestUnreadScriptAlert(t *testing.T) {
 	cur := baseState()
 	cur.Web = &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/var/www/shop"},
 		UnreadScripts: []web.UnreadScript{{Path: "/var/www/shop/pub/zzz/skim.js", Runs: 3}}}}}
-	got := fingerprints(Evaluate(nil, cur))
-	if !slices.Contains(got, "medium web:skimmer-unread:/var/www/shop/pub/zzz/skim.js") {
+	prev := baseState()
+	got := fingerprints(Evaluate(&prev, cur))
+	if !slices.Contains(got, "medium web-change:skimmer-unread:/var/www/shop/pub/zzz/skim.js") {
 		t.Errorf("findings = %v", got)
+	}
+	// Raised as a change, not a state: a later snapshot without it does not close it.
+	for _, f := range Evaluate(&prev, cur) {
+		if strings.Contains(f.Fingerprint, "skimmer-unread") && f.State {
+			t.Errorf("a state finding: %+v", f)
+		}
 	}
 }
 
