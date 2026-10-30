@@ -274,7 +274,12 @@ brace, with its own strings, so a quote or a `?>` inside it closes nothing (64 l
 most; deeper is itself a finding, `nested_interpolation`). Whether short open tags are on is
 php.ini's choice, so the content is lexed twice: once with the tags above, once with `<?`
 opening a block whatever follows (but `xml`, and `php` glued to more text, which stops on the
-undefined constant `php`); in that second pass a block PHP 8 cannot compile makes the whole file
+undefined constant `php`, and a character no statement starts with, as in `<?>`). There a block
+opened by a processing instruction (a target such as `mso-application` followed by `?>`, `>` or
+a pseudo-attribute) counts only the named signatures; one opened by `<?` glued to anything else
+(`<?$c=`, `<?@`, `<?(`, `<?PHP_EOL.`) is code, with the weak signals, a backtick counting only
+when it interpolates a variable, and "=> {" or "[^", which PHP never compiles and the scripts a
+cache holds are full of, make it uncompilable. In that second pass a block PHP 8 cannot compile makes the whole file
 fail, so it is dropped unread and costs nothing of the budget. The
 lexer (`phplex.go`) keeps its state from one piece of a file to the next: data files over 4 MB
 are read through 1 MB at a time, within 4 GB a run, and code is judged with its block however far

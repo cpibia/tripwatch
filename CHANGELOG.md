@@ -18,6 +18,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   pass it by a few bytes when full, as the web user can make it with long names in the uploads),
   and a batch refused for its size is no longer taken for delivered: its events go again in
   smaller batches, root's first, and the counts of lost events it carried are kept.
+- With short open tags, `<?` glued to code other than an XML processing instruction opens a
+  block searched with the weak signals: `<?$c=$_GET["c"];system($c);`, `<?@`, `<?(function`,
+  `<?/**/`, `<?echo"`, `<?PHP_EOL.$c=` and `<?E_ALL|` in a data file are now found. Only a
+  target followed by `?>`, `>` or a pseudo-attribute (`<?mso-application progid=`) counts named
+  signatures alone. `<?>` opens nothing, and syntax PHP never compiles (`=> {`, `[^`) keeps the
+  minified scripts a cache holds from being taken for code.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
 - The container watcher keys a container also by its image digest and forgets a key an hour

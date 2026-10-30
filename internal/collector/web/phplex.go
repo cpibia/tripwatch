@@ -47,6 +47,10 @@ type codeSearch struct {
 	// loose says the block was opened by "<?" alone or glued as above, as SQL dumps and logs
 	// quote it: there a backtick around a bare word is how SQL quotes a name.
 	loose bool
+	// named says the block was opened by "<?" glued to code rather than by a real open tag: as
+	// the minified scripts a cache holds quote "<?(" in a regular expression, and run on through
+	// their template literals, a backtick there counts only when it interpolates a variable.
+	named bool
 	carry []byte
 	sigs  []string
 	// codeLeft, when set, is the budget of code matched; exhausted says it ran out.
@@ -174,7 +178,7 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 		}
 		if i+1 < len(d) && d[i+1] == '?' {
 			if n, kind := openTagLen(d[i+2:], c.shortTags); kind != tagNone {
-				c.mode, c.glued, c.loose = lexCode, kind == tagGlued, kind == tagGlued || kind == tagShort
+				c.mode, c.glued, c.loose, c.named = lexCode, kind == tagGlued, kind == tagGlued || kind == tagShort, kind == tagName
 				return 2 + n
 			}
 		}
@@ -185,8 +189,16 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 		quote := map[int]byte{lexSingle: '\'', lexDouble: '"', lexBacktick: '`'}[c.mode]
 		// A backtick around a bare word is how SQL quotes a name (a dump's `wp_posts`); one that
 		// runs a command worth planting there passes it input or arguments.
-		if c.mode == lexBacktick && b != '`' && !identByte(b) {
+		if c.mode == lexBacktick && b != '`' && !identByte(b) && !c.named {
 			c.backtick = true
+		}
+		if c.mode == lexBacktick && c.named && (b == '$' || b == '{') {
+			if !more(3) {
+				return 0
+			}
+			if v := d[i+1:]; b == '$' && len(v) > 0 && identStart(v[0]) || b == '{' && len(v) > 1 && v[0] == '$' && identStart(v[1]) {
+				c.backtick = true
+			}
 		}
 		if b == '\\' {
 			if !more(2) {
@@ -276,7 +288,7 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		c.mode = map[byte]int{'\'': lexSingle, '"': lexDouble, '`': lexBacktick}[b]
 		// In a block a real open tag started, any backtick runs a command: one word is enough
 		// after putenv() has pointed PATH at the attacker's directory.
-		if b == '`' && !c.loose {
+		if b == '`' && !c.loose && !c.named {
 			c.backtick = true
 		}
 	case '/':
@@ -326,11 +338,19 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		c.emit([]byte(" "))
 		return 1
 	}
-	if uncompilable(d[i]) {
+	if uncompilable(d[i]) || c.named && neverCompiles(c.code, d[i]) {
 		c.broken = true
 	}
 	c.emit(d[i : i+1])
 	return 1
+}
+
+// neverCompiles reports whether PHP refuses b after code: "{" after "=>" and "^" after "[",
+// where it needs an expression, as in the arrow functions and regular expressions of the
+// scripts a cache holds, which a "<?(" quoted in them can open as a block.
+func neverCompiles(code []byte, b byte) bool {
+	code = bytes.TrimSuffix(code, []byte(" "))
+	return b == '{' && bytes.HasSuffix(code, []byte("=>")) || b == '^' && bytes.HasSuffix(code, []byte("["))
 }
 
 // interpolates starts the code of an interpolation at i ("{$" or "${") in a string that
@@ -427,12 +447,13 @@ const (
 	tagFull
 	// tagShort is "<?" and a blank, which only short_open_tag opens.
 	tagShort
-	// tagName is a name glued to "<?" that PHP goes on from: a constant ("<?PHP_EOL;"), a call,
-	// a namespaced class ("<?php\\x::class;"), a goto label ("<?phpinfo:").
+	// tagName is code glued to "<?" that PHP goes on from: a constant ("<?PHP_EOL;"), a call,
+	// a namespaced class ("<?php\\x::class;"), a goto label ("<?phpinfo:"), a variable
+	// ("<?$c=..."), an operator, a comment, anything but a processing instruction.
 	tagName
-	// tagGlued is anything else glued to "<?", as XML processing instructions are
-	// ("<?mso-application", "<?xml-stylesheet"): PHP stops on it, so the block counts only for
-	// named signatures.
+	// tagGlued is an XML processing instruction glued to "<?" ("<?mso-application progid=",
+	// "<?xml-stylesheet href=", "<?mso-application>"): PHP stops on it, so the block counts only
+	// for named signatures.
 	tagGlued
 )
 
@@ -454,6 +475,9 @@ func openTagLen(t []byte, short bool) (int, int) {
 		return 0, tagNone
 	case len(t) > 0 && blank(t[0]):
 		return 1, tagShort
+	case len(t) > 0 && strings.IndexByte(">)]},*|^%:", t[0]) >= 0:
+		// No statement starts with these: "<?>" is a parse error, not a block.
+		return 0, tagNone
 	}
 	j := 0
 	for j < len(t) && (identByte(t[j]) || t[j] == '\\') {
@@ -479,7 +503,50 @@ func openTagLen(t []byte, short bool) (int, int) {
 	case goesOn:
 		return 0, tagName
 	}
-	return 0, tagGlued
+	if processingInstruction(t) {
+		return 0, tagGlued
+	}
+	return 0, tagName
+}
+
+// processingInstruction reports whether what follows "<?" is shaped as an XML processing
+// instruction: a target, a name starting with a letter, then "?>", ">" or a blank and a
+// pseudo-attribute ("name=" or "name ="). No target starts with "$", "@", "(", "/" or a quote, and
+// PHP runs whatever does; a target followed by anything else ("<?PHP_EOL.$c", "<?E_ALL|$c") is
+// code PHP goes on from. Data that ends within the target is left as an instruction, as before
+// the rest of it is seen.
+func processingInstruction(t []byte) bool {
+	piByte := func(c byte) bool { return identByte(c) || c == '-' || c == '.' }
+	blank := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+	if len(t) == 0 || !identStart(t[0]) {
+		return false
+	}
+	i := 0
+	for i < len(t) && i < openTagLook && piByte(t[i]) {
+		i++
+	}
+	switch {
+	case i == len(t):
+		return true
+	case t[i] == '>' || bytes.HasPrefix(t[i:], []byte("?>")):
+		return true
+	case !blank(t[i]):
+		return false
+	}
+	for i < len(t) && i < 2*openTagLook && blank(t[i]) {
+		i++
+	}
+	if bytes.HasPrefix(t[i:], []byte("?>")) {
+		return true
+	}
+	start := i
+	for i < len(t) && i < 3*openTagLook && piByte(t[i]) {
+		i++
+	}
+	for i < len(t) && i < 3*openTagLook && blank(t[i]) {
+		i++
+	}
+	return i > start && i < len(t) && t[i] == '=' || i == len(t)
 }
 
 // openTagLook bounds how far after "<?" the short pass reads to judge a word glued to the tag.
@@ -527,6 +594,9 @@ func heredocStart(d []byte) (id []byte, n int, ok bool) {
 
 func identByte(c byte) bool { return isWordByte(c) || c >= 0x80 }
 
+// identStart reports a byte a PHP name can start with.
+func identStart(c byte) bool { return identByte(c) && (c < '0' || c > '9') }
+
 // emit adds code of the current block, matching it in parts when it grows too long.
 func (c *codeSearch) emit(p []byte) {
 	if c.broken && c.shortTags {
@@ -558,7 +628,7 @@ func (c *codeSearch) endBlock() {
 			}
 		}
 	}
-	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken, c.glued, c.loose = lexText, c.code[:0], false, nil, false, false, false, false
+	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken, c.glued, c.loose, c.named = lexText, c.code[:0], false, nil, false, false, false, false, false
 	c.nested, c.nowdoc, c.blockLen = c.nested[:0], false, 0
 }
 
