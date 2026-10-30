@@ -132,7 +132,9 @@ func jsLiteral(b []byte, i int) ([]byte, int, bool) {
 		case c == quote:
 			return out, j + 1, true
 		case c == '\n' && quote != '`':
-			return nil, i, false
+			// A quote left open at the end of its line is a syntax error: the line is passed
+			// over, not read again from each quote in it.
+			return nil, j, false
 		case c == '$' && quote == '`' && j+1 < len(b) && b[j+1] == '{':
 			return nil, i, false
 		case c == '\\' && j+1 < len(b):

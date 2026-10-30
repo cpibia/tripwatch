@@ -30,8 +30,9 @@ type jsToken struct {
 // jsTokens splits content into tokens, comments and blanks left out. A template literal with
 // substitutions of string literals only (`${”}`) is one string; one with any other
 // substitution is punctuation, so that nothing is folded across it.
-func jsTokens(content []byte) []jsToken {
+func jsTokens(content []byte) ([]jsToken, int) {
 	var out []jsToken
+	scanned := 0
 	var parens []bool
 	lastControl := false
 	for i := 0; i < len(content) && len(out) < maxFoldTokens; {
@@ -53,15 +54,22 @@ func jsTokens(content []byte) []jsToken {
 			}
 		// "*/" ends a comment whose start lay in an earlier piece, never starts a pattern.
 		case c == '/' && (i == 0 || content[i-1] != '*') && regexAllowed(out, len(out) > 0 && out[len(out)-1].text == ")" && lastControl):
-			if end := regexEnd(content, i); end > i {
+			end, closed := regexEnd(content, i)
+			scanned += max(end-i, 1)
+			switch {
+			case closed:
 				out = append(out, jsToken{'r', ""})
 				i = end
-			} else {
+			default:
+				// Not closed on its line within the window: as for an open literal, the window
+				// it read is passed over rather than read again from the next byte.
 				out = append(out, jsToken{'p', "/"})
-				i++
+				i = max(i+1, end)
 			}
 		case c == '\'' || c == '"' || c == '`':
-			if lit, next, ok := jsFoldLiteral(content, i); ok {
+			lit, next, ok := jsFoldLiteral(content, i)
+			scanned += max(next-i, 1)
+			if ok {
 				out = append(out, jsToken{'s', string(lit)})
 				i = next
 			} else {
@@ -98,7 +106,7 @@ func jsTokens(content []byte) []jsToken {
 			i++
 		}
 	}
-	return out
+	return out, scanned
 }
 
 // regexAllowed reports whether a "/" after these tokens starts a regular expression rather than
@@ -127,16 +135,17 @@ func regexAllowed(toks []jsToken, controlParen bool) bool {
 	return false
 }
 
-// regexEnd returns where the regular expression literal starting at i ends, with its flags, or
-// i when there is none on the line: a quote inside one is no string.
-func regexEnd(b []byte, i int) int {
+// regexEnd returns where the regular expression literal starting at i ends, with its flags, and
+// true; or false with i when the line ends first, or the end of the window read when the window
+// ends first: a quote inside a pattern is no string.
+func regexEnd(b []byte, i int) (int, bool) {
 	inClass := false
 	for j := i + 1; j < len(b) && j-i < maxLiteral; j++ {
 		switch b[j] {
 		case '\\':
 			j++
 		case '\n', '\r':
-			return i
+			return i, false
 		case '[':
 			inClass = true
 		case ']':
@@ -147,11 +156,11 @@ func regexEnd(b []byte, i int) int {
 				for j < len(b) && (b[j] >= 'a' && b[j] <= 'z') {
 					j++
 				}
-				return j
+				return j, true
 			}
 		}
 	}
-	return i
+	return min(i+maxLiteral, len(b)), false
 }
 
 // jsFoldLiteral is jsLiteral that also takes a template literal whose substitutions are string
@@ -251,7 +260,8 @@ func foldStrings(content []byte, constants *foldConstants) []byte {
 
 // foldWork folds and says how much work it took: the tokens read and the terms evaluated.
 func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
-	f := folder{toks: jsTokens(content), constants: constants, lastName: map[string]int{}}
+	toks, scanned := jsTokens(content)
+	f := folder{toks: toks, constants: constants, lastName: map[string]int{}, steps: scanned / 16}
 	for k, t := range f.toks {
 		if t.kind == 'n' {
 			f.lastName[t.text] = k

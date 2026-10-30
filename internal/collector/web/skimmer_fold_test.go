@@ -26,9 +26,12 @@ func TestFoldingHostileScripts(t *testing.T) {
 		"replace all":       x4 + strings.Repeat("c.replaceAll('x',c);", 1<<20/20),
 		"replace all empty": x4 + strings.Repeat("c.replaceAll('',c);", 1<<20/19),
 		"replace chain":     x4 + "c" + strings.Repeat(".replaceAll('',c)", 1<<20/17),
+		"open classes":      strings.Repeat("/[", 1<<19),
+		"open quotes":       strings.Repeat(`"`+strings.Repeat(`\"`, 2000)+"\n", 1<<20/4002),
 	} {
 		_, tokens, steps := foldWork([]byte(src), newFoldConstants())
-		if steps > 8*tokens || steps >= maxFoldSteps {
+		// Eight terms a token, and the bytes scanned at most twice over.
+		if steps > 8*tokens+len(src)/8 || steps >= maxFoldSteps {
 			t.Errorf("%s: %d terms for %d tokens", name, steps, tokens)
 		}
 	}
