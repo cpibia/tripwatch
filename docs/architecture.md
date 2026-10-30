@@ -152,7 +152,7 @@ root matched against the host's own table to every host path that shows that par
 filesystem. They only add powers to those of the configuration; an entry at a point the
 configuration does not list is judged as a declared one, except the runtime's own files (image
 layers and snapshots, the volumes it manages, the container's own state directory with its hosts
-file); a table that cannot be read, is empty, or lacks the host path of a directory or file the
+file) when no host path of the entry is a source the configuration binds; a table that cannot be read, is empty, or lacks the host path of a directory or file the
 configuration binds (swapped after the start, or the process chrooted away from it; a file
 replaced since its mount still counts) is `kernel_unverified`, a power of its own) is reported as a `container` event with its name, image, runtime
 and powers, on root's channel, unless a container with the same name, image, image digest and powers

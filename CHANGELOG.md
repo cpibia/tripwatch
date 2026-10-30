@@ -40,6 +40,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
+- The powers in a container's real-time event are clipped like its other fields: binds of long
+  paths can no longer make the event too large for the verifier and lose it.
 - The container watcher keys a container also by its image digest and forgets a key an hour
   after its last container is gone: an image swapped under the same name, tag and powers is
   reported with the digest it replaces (the digest last seen for a key is kept as long as the
@@ -65,7 +67,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A mount in a container's table at a point its configuration does not list is judged as a
   declared one: a link in the image moving a bind of `/root` or `/etc/cron.d` elsewhere is a
   power. Only the runtime's own image layers, volumes and the container's own state directory
-  are left out.
+  are left out, and not when the entry is a directory the configuration binds: another
+  container's layer bound through an alias of the data root counts under every path it shows.
 - A container start seen in real time on another image than the one of the same name, tag and
   powers before it raises the snapshot rule's medium "runs another image". The alert of a
   container with power over the host names the image digest in its detail, so accepting it never

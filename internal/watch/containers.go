@@ -202,7 +202,13 @@ func (c *Containers) read(ref system.ContainerRef, t *tracked, host *system.Host
 		return
 	}
 	info := &ContainerInfo{ID: clipText(ct.ID), Name: clipText(ct.Name), Image: clipText(ct.Image), ImageID: clipText(ct.ImageID),
-		Runtime: ref.Runtime, Created: clipText(ct.Created), Powers: powers[:min(len(powers), maxPowers)]}
+		Runtime: ref.Runtime, Created: clipText(ct.Created)}
+	// A power names the host path behind it, which whoever starts the container chooses: each is
+	// clipped like the other fields, so that the event of a container stays far below what the
+	// verifier accepts and is never lost for its size.
+	for _, p := range powers[:min(len(powers), maxPowers)] {
+		info.Powers = append(info.Powers, clipText(p))
+	}
 	if t.info != nil && imageKey(t.info) == imageKey(info) {
 		return
 	}

@@ -828,10 +828,28 @@ func mountPower(m Mount) string {
 // own state directory, which holds its hosts, hostname and resolv.conf.
 func kernelMountPower(c Container, m Mount) string {
 	src := path.Clean("/" + m.Source)
-	if m.Undeclared && (under(src, layerStores) || ownState(c, src)) {
+	if m.Undeclared && (under(src, layerStores) || ownState(c, src)) && !boundAt(c, m.Destination) {
 		return ""
 	}
 	return mountPower(m)
+}
+
+// boundAt reports whether the kernel's entry at point is a directory or file the configuration
+// binds, under any of the host paths it shows: a bind of another container's layer through an
+// alias of the data root, moved by a link in the image, is judged as what it is, not left out
+// as the runtime's own.
+func boundAt(c Container, point string) bool {
+	for _, k := range c.KernelMounts {
+		if k.Destination != point {
+			continue
+		}
+		for _, d := range c.Mounts {
+			if d.Volume == "" && path.Clean("/"+cmp.Or(d.Resolved, d.Source)) == path.Clean("/"+k.Source) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // layerStores are where runtimes keep the image layers and snapshots they mount as containers'

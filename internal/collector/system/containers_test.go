@@ -216,6 +216,8 @@ func TestRunningContainerMountsFromTheKernel(t *testing.T) {
 			[]string{"the host's /etc/cron.d, writable", unverified}},
 		{"another container's state", rootfs + "503 500 8:16 /docker/containers/ffff00001111/config.v2.json /c rw - ext4 /dev/vdb1 rw\n", "",
 			[]string{"the host's /var/lib/docker/containers/ffff00001111/config.v2.json, writable"}},
+		{"another container's layer through an alias, moved by a link in the image", rootfs + "503 500 8:16 /docker/overlay2/ffff/diff /y rw - ext4 /dev/vdb1 rw\n",
+			bind("/data/docker/overlay2/ffff/diff", "/h"), []string{"the host's /var/lib/docker/overlay2/ffff/diff, writable"}},
 		{"chrooted into a tmpfs", "503 500 0:70 / / rw - tmpfs tmpfs rw\n", bind("/", "/h"), []string{"the host's /, writable", unverified}},
 		{"file replaced since its mount", rootfs + "503 500 8:1 /etc/localtime//deleted /etc/localtime ro - ext4 /dev/vda1 rw\n", bind("/etc/localtime", "/etc/localtime"), nil},
 		{"chrooted elsewhere", "", bind("/tmp/x", "/h"), []string{"mounts not verified by the kernel"}},

@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -168,6 +169,34 @@ func TestContainersImagesBounded(t *testing.T) {
 	proxy := ContainerInfo{Name: "proxy", Image: "alpine:3.20", Powers: []string{"privileged"}}
 	if len(c.images) != maxContainerKeys || c.Forgotten.Load() != 11 || c.images[proxy.Key()].at.IsZero() || len(c.Issues()) != 1 {
 		t.Fatalf("%d images, %d forgotten, proxy kept %v, issues %v", len(c.images), c.Forgotten.Load(), !c.images[proxy.Key()].at.IsZero(), c.Issues())
+	}
+}
+
+// Powers named after paths of any length keep the event of a container small: 32 binds of long
+// paths full of characters JSON escapes stay far below the ingest's limit for an event.
+func TestContainerEventPowersClipped(t *testing.T) {
+	fsys := fstest.MapFS{}
+	out := make(chan Event, 4)
+	c := NewContainers(collector.Source{FS: fsys}, out)
+	c.look()
+	var binds []string
+	for i := range maxPowers + 4 {
+		src := "/etc/" + strings.Repeat("<", 4000) + fmt.Sprint(i)
+		binds = append(binds, fmt.Sprintf(`"/a%02d": {"Source": %q, "Destination": "/a%02d", "RW": true, "Type": "bind"}`, i, src, i))
+	}
+	dockerContainer(fsys, "big1", "big", `{}`)
+	fsys["var/lib/docker/containers/big1/config.v2.json"].Data = []byte(`{"ID": "big1", "Name": "/big", "MountPoints": {` + strings.Join(binds, ",") + `}}`)
+	c.look()
+	got := drain(out)
+	if len(got) != 1 {
+		t.Fatalf("events: %d", len(got))
+	}
+	raw, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[0].Container.Powers) != maxPowers || len(raw) > 64<<10 {
+		t.Errorf("%d powers, event of %d bytes", len(got[0].Container.Powers), len(raw))
 	}
 }
 
