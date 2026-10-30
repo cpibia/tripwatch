@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/base64"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -30,6 +31,8 @@ type jsToken struct {
 // substitution is punctuation, so that nothing is folded across it.
 func jsTokens(content []byte) []jsToken {
 	var out []jsToken
+	var parens []bool
+	lastControl := false
 	for i := 0; i < len(content) && len(out) < maxFoldTokens; {
 		c := content[i]
 		switch {
@@ -48,7 +51,7 @@ func jsTokens(content []byte) []jsToken {
 				i = len(content)
 			}
 		// "*/" ends a comment whose start lay in an earlier piece, never starts a pattern.
-		case c == '/' && (i == 0 || content[i-1] != '*') && regexAllowed(out):
+		case c == '/' && (i == 0 || content[i-1] != '*') && regexAllowed(out, len(out) > 0 && out[len(out)-1].text == ")" && lastControl):
 			if end := regexEnd(content, i); end > i {
 				out = append(out, jsToken{'r', ""})
 				i = end
@@ -76,6 +79,20 @@ func jsTokens(content []byte) []jsToken {
 			out = append(out, jsToken{kind, string(content[i:j])})
 			i = j
 		default:
+			// Brackets are matched to know whether a ")" closes the condition of an if, a
+			// while or a for, after which a "/" starts a pattern.
+			switch c {
+			case '(':
+				control := len(out) > 0 && out[len(out)-1].kind == 'n' && slices.Contains([]string{"if", "while", "for", "with"}, out[len(out)-1].text)
+				if len(parens) < maxFoldDepth*8 {
+					parens = append(parens, control)
+				}
+			case ')':
+				lastControl = len(parens) > 0 && parens[len(parens)-1]
+				if len(parens) > 0 {
+					parens = parens[:len(parens)-1]
+				}
+			}
 			out = append(out, jsToken{'p', string(c)})
 			i++
 		}
@@ -84,16 +101,22 @@ func jsTokens(content []byte) []jsToken {
 }
 
 // regexAllowed reports whether a "/" after these tokens starts a regular expression rather than
-// a division: after punctuation other than a closing bracket, or after a keyword that takes an
-// expression.
-func regexAllowed(toks []jsToken) bool {
+// a division: after punctuation other than a closing bracket or "++"/"--", after the ")" of an
+// if, while or for, after a block's "}", or after a keyword that takes an expression.
+func regexAllowed(toks []jsToken, controlParen bool) bool {
 	if len(toks) == 0 {
 		return true
 	}
 	t := toks[len(toks)-1]
 	switch t.kind {
 	case 'p':
-		return t.text != ")" && t.text != "]" && t.text != "}"
+		if n := len(toks); n >= 2 && (t.text == "+" || t.text == "-") && toks[n-2].text == t.text {
+			return false
+		}
+		if t.text == ")" {
+			return controlParen
+		}
+		return t.text != "]"
 	case 'n':
 		switch t.text {
 		case "return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await":
@@ -168,21 +191,66 @@ func jsFoldLiteral(b []byte, i int) ([]byte, int, bool) {
 // names a var, let, const or plain assignment gave such a value earlier in the file.
 type folder struct {
 	toks      []jsToken
-	constants map[string]string
+	constants *foldConstants
 	steps     int
+	// lastName is the last position of each name in the piece's tokens.
+	lastName map[string]int
+}
+
+// foldConstants are the string constants of a script, kept from one piece to the next. Past the
+// bound a new name is kept only when the piece uses it further on, and takes the place of one the
+// piece does not use again: decoys set in bulk, never used, neither get in nor push out the name
+// a skimmer builds and uses.
+type foldConstants struct {
+	values map[string]string
+	set    map[string]int64
+	clock  int64
+}
+
+func newFoldConstants() *foldConstants {
+	return &foldConstants{values: map[string]string{}, set: map[string]int64{}}
+}
+
+func (c *foldConstants) get(name string) string { return c.values[name] }
+
+// put keeps a constant; usedLater says whether the piece uses a name after this point.
+func (c *foldConstants) put(name, v string, usedLater func(string) bool) {
+	if _, ok := c.values[name]; !ok && len(c.values) >= maxFoldConstants {
+		if !usedLater(name) {
+			return
+		}
+		victim, at := "", int64(-1)
+		for k, t := range c.set {
+			if !usedLater(k) && t > at {
+				victim, at = k, t
+			}
+		}
+		if victim == "" {
+			return
+		}
+		delete(c.values, victim)
+		delete(c.set, victim)
+	}
+	c.clock++
+	c.values[name], c.set[name] = v, c.clock
 }
 
 // foldStrings returns every value of length 4 or more that an expression of the script's
 // string literals builds, each preceded by a space, with the constants of the pieces read
 // before, which it adds to.
-func foldStrings(content []byte, constants map[string]string) []byte {
+func foldStrings(content []byte, constants *foldConstants) []byte {
 	out, _, _ := foldWork(content, constants)
 	return out
 }
 
 // foldWork folds and says how much work it took: the tokens read and the terms evaluated.
-func foldWork(content []byte, constants map[string]string) ([]byte, int, int) {
-	f := folder{toks: jsTokens(content), constants: constants}
+func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
+	f := folder{toks: jsTokens(content), constants: constants, lastName: map[string]int{}}
+	for k, t := range f.toks {
+		if t.kind == 'n' {
+			f.lastName[t.text] = k
+		}
+	}
 	var out []byte
 	for i := 0; i < len(f.toks) && len(out) < maxNormalised && f.steps < maxFoldSteps; {
 		// var x = ..., x = ...: the value is kept for the uses of x after it.
@@ -201,17 +269,26 @@ func foldWork(content []byte, constants map[string]string) ([]byte, int, int) {
 		// An expression is tried only where a string can start: a literal, a name, an array of
 		// literals. Starting at every bracket of "((((" would descend as deep as allowed from
 		// each one.
-		if t := f.toks[start:]; len(t) == 0 || t[0].kind != 's' && t[0].kind != 'n' && (t[0].text != "[" || len(t) < 2 || t[1].kind != 's') {
-			i++
+		// A run of opening brackets before a literal starts one too, tried once from its first
+		// bracket: a failure skips the run, so "((((" costs one try, not one per bracket.
+		t := f.toks[start:]
+		parens := 0
+		for parens < len(t) && t[parens].text == "(" {
+			parens++
+		}
+		if len(t) == 0 || parens < len(t) && parens > 0 && t[parens].kind != 's' && t[parens].kind != 'n' ||
+			parens == 0 && t[0].kind != 's' && t[0].kind != 'n' && (t[0].text != "[" || len(t) < 2 || t[1].kind != 's') {
+			i = max(start+parens, i+1)
 			continue
 		}
 		v, next, ok := f.expr(start, 0)
 		if !ok {
-			i++
+			i = max(start+parens, i+1)
 			continue
 		}
 		if name >= 0 {
-			f.set(f.toks[name].text, v)
+			after := next
+			f.constants.put(f.toks[name].text, v, func(n string) bool { return f.lastName[n] >= after })
 		}
 		if len(v) >= 4 {
 			out = append(append(out, ' '), v...)
@@ -219,18 +296,6 @@ func foldWork(content []byte, constants map[string]string) ([]byte, int, int) {
 		i = max(next, i+1)
 	}
 	return out, len(f.toks), f.steps
-}
-
-// set keeps a constant. Past the bound one already kept goes: a script cannot fill the table
-// with early names to make a later one forgotten.
-func (f *folder) set(name, v string) {
-	if _, ok := f.constants[name]; !ok && len(f.constants) >= maxFoldConstants {
-		for k := range f.constants {
-			delete(f.constants, k)
-			break
-		}
-	}
-	f.constants[name] = v
 }
 
 // expr folds a sum of terms at i.
@@ -291,8 +356,8 @@ func (f *folder) term(i, depth int) (string, int, bool) {
 			return "", i, false
 		}
 		v, i = clipFold(string(b)), next+1
-	case t.kind == 'n' && f.constants[t.text] != "":
-		v, i = f.constants[t.text], i+1
+	case t.kind == 'n' && f.constants.get(t.text) != "":
+		v, i = f.constants.get(t.text), i+1
 	case t.text == "(":
 		w, next, ok := f.expr(i+1, depth+1)
 		if !ok || next >= len(f.toks) || f.toks[next].text != ")" {
