@@ -649,7 +649,11 @@ func TestCollectorIssuesRaiseAnAlert(t *testing.T) {
 	for i := range issues {
 		issues[i] = fmt.Sprintf("/var/www/shop/f%d.js: strings built past what the skimmer search follows", i)
 	}
-	raw, err := json.Marshal(map[string]any{"snapshot": map[string]any{"results": map[string]any{"web": map[string]any{"issues": issues}, "kernel": map[string]any{"issues": []string{"hidden process search stopped at PID 9 of 99"}}}}})
+	raw, err := json.Marshal(map[string]any{"snapshot": map[string]any{"results": map[string]any{
+		"web":        map[string]any{"issues": issues},
+		"kernel":     map[string]any{"issues": []string{"hidden process search stopped at PID 9 of 99: 4 runs have not probed every PID"}},
+		"privileged": map[string]any{"issues": []string{"/mnt/share: nfs4 network filesystem mounted without nosuid, not walked"}},
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,5 +669,29 @@ func TestCollectorIssuesRaiseAnAlert(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Severity != "low" || got[0].Fingerprint != "collector-issues:kernel" || !strings.Contains(got[1].Detail, "and 5 more") {
 		t.Errorf("findings = %+v", got)
+	}
+	f := Facts(st)
+	if len(f.Limits) != 3 || f.Limits[1].Collector != "privileged" || len(f.Limits[1].Notes) != 1 || len(f.Limits[1].Incomplete) != 0 || f.Limits[2].More != 5 {
+		t.Errorf("limits = %+v", f.Limits)
+	}
+}
+
+// Notes, skipped by design or explained, stay off the alert; an issue of work left undone stays
+// one even when a path an attacker names imitates a note.
+func TestIssueNotes(t *testing.T) {
+	for issue, note := range map[string]bool{
+		"hidden process search stopped at PID 2035712 of 4194304":                                            true,
+		"hidden process search stopped at PID 2035712 of 4194304: 4 runs have not probed every PID":          false,
+		"/home/u/dav: fuse network filesystem, not scanned":                                                  true,
+		"/mnt/share: nfs4 network filesystem mounted without nosuid, not walked":                             true,
+		`/var/www/up/a.php: PHP in an upload directory is code: word "use" at 6`:                             true,
+		"/var/www/up/a.php: PHP in an upload directory is code: no <?php at the start":                       true,
+		`/var/www/x: PHP in an upload directory is code: word "a" at 1: not fully searched for code: budget`: false,
+		"/var/www/x: fuse network filesystem, not scanned/a.js: not read for skimmers, budget spent":         false,
+		"/var/www/shop: content not scanned: context deadline exceeded":                                      false,
+	} {
+		if issueNote(issue) != note {
+			t.Errorf("%q: note %v", issue, !note)
+		}
 	}
 }

@@ -690,6 +690,22 @@ func Facts(st State) store.HostFacts {
 	if p := st.Packages; p != nil {
 		f.PackageManager, f.Packages = p.Manager, p.Packages
 	}
+	for _, name := range slices.Sorted(maps.Keys(st.Issues)) {
+		l := store.LimitFact{Collector: name, More: st.IssueCounts[name] - len(st.Issues[name])}
+		for _, issue := range st.Issues[name] {
+			note := issueNote(issue)
+			if len(issue) > 300 {
+				issue = strings.ToValidUTF8(issue[:300], "")
+			}
+			if note {
+				l.Notes = append(l.Notes, issue)
+			} else {
+				l.Incomplete = append(l.Incomplete, issue)
+			}
+		}
+		f.Limits = append(f.Limits, l)
+	}
+
 	if w := st.Web; w != nil {
 		// Served applications first: those on disk alone cannot push them past the bound.
 		for _, served := range []bool{true, false} {

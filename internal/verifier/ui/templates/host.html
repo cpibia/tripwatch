@@ -59,6 +59,19 @@
 {{end}}
 
 
+{{with $d.Facts}}{{with .Limits}}
+<section class="panel" aria-labelledby="limits-h">
+  <div class="panel-head"><h2 id="limits-h">What the sensor could not check</h2><p class="panel-note">in the last snapshot, by collector: work left undone raises a low alert, notes stay here. Data from the server</p></div>
+  <dl class="limits">{{range .}}
+    <div><dt><span class="kind-tag">{{.Collector}}</span></dt><dd>
+      {{if .Incomplete}}<ul class="limit-list undone">{{range .Incomplete}}<li class="mono">{{.}}</li>{{end}}</ul>{{end}}
+      {{if .Notes}}<p class="limit-kind">Skipped by design or explained</p><ul class="limit-list">{{range .Notes}}<li class="mono">{{.}}</li>{{end}}</ul>{{end}}
+      {{if .More}}<p class="quiet">and {{.More}} more {{plural .More "issue" "issues"}}, in the snapshot</p>{{end}}
+    </dd></div>{{end}}
+  </dl>
+</section>
+{{end}}{{end}}
+
 {{if $d.Notes}}
 <section aria-labelledby="notes-h">
   <div class="section-head"><h2 id="notes-h">Health notes</h2><p class="aside">low: worth a look when there is time, never mailed</p></div>

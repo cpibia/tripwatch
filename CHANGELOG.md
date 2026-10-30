@@ -27,8 +27,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   neither adds nor starts over. From the third, the verifier raises a high alert naming the
   application and the scripts unread longest. Rebuilt from a week of a fleet of 99 applications,
   it would have raised for none: their only unread runs were scans cut on two hosts, which the cut
-  scan alert names. Past the 2,000,
-  candidates are kept by how long they have been pending.
+  scan alert names. The count starts over only after three runs in a row read every change, so a
+  script taken away for one run does not reset it. Past the 2,000, candidates are kept by how
+  long they have been pending, and among those pending as long by a random draw, so the order of
+  the walk cannot keep the same scripts out run after run.
 - The web collector counts the runs in a row each application's scan was cut short by its time
   limit, and the verifier raises one medium alert for the host when an application reaches three:
   in a week of a fleet of a hundred applications, cuts came alone or in pairs but on two hosts.
@@ -102,6 +104,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   reported with the digest it replaces (the digest last seen for a key is kept as long as the
   sensor runs), and the same container started again hours later is reported again instead of
   never until the sensor restarts. CRI-O containers carry their image's ID.
+- The search for hidden processes goes on from where the previous run stopped: with `pid_max`
+  in the millions its ten seconds a run reached about half the PIDs, the same half every time, on
+  eight hosts of the fleet. Every PID is now probed within two or three hourly runs, and only a
+  sweep that takes more than three runs is reported as an issue.
+- `header_register_callback` and `mb_ereg_replace_callback` count among the callbacks that can
+  call `putenv` before a backtick in a data file.
 - Directories renamed in a loop by any user no longer put off the sensor's next plan of its
   watches: a watched root moved away and back is watched again within a couple of seconds, while
   the loop runs, instead of staying blind until it stops.
@@ -112,8 +120,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
   reached, a file not read, a search given up, a script named past what a rule follows) raise one
   low alert per host and collector, naming twenty and counting the rest, closed when the collector
   no longer reports them. Until now only the container issues raised one, and every limit
-  "named in the issues" stayed where only the sensor saw it. On the fleet today this is the
-  kernel's hidden process search stopping early on eight hosts and a few web limits on three.
+  "named in the issues" stayed where only the sensor saw it. Notes do not raise it: a network
+  filesystem skipped by design, why a PHP file of the uploads counts as code, and the hidden
+  process search of older sensors, which stopped at the same PID every run. On the fleet today
+  every issue is one of these, so no host gets the alert. The host page lists every collector's
+  issues in a panel, work left undone apart from the notes.
 
 - A new cron line is critical, with the reason, when it never runs on schedule (the 31st of
   February, as CronRAT hides its code), downloads and runs what it fetched, decodes a base64

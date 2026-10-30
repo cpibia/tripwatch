@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -39,11 +40,14 @@ type BPFProgram struct {
 	Tag  string `json:"tag,omitempty"`
 }
 
-// PIDScan says how far the search for hidden processes went.
+// PIDScan says how far the search for hidden processes went: from which PID, how many it probed,
+// and how many runs the sweep of every PID has taken so far, this one included.
 type PIDScan struct {
 	Probed    int  `json:"probed"`
 	Limit     int  `json:"limit"`
 	Truncated bool `json:"truncated,omitempty"`
+	From      int  `json:"from,omitempty"`
+	SweepRuns int  `json:"sweep_runs,omitempty"`
 }
 
 type KernelResult struct {
@@ -66,7 +70,7 @@ type KernelResult struct {
 const (
 	maxModules       = 2000
 	maxPIDProbe      = 1 << 22
-	pidScanBudget    = 10 * time.Second
+	maxSweepRuns     = 3
 	maxHidden        = 100
 	maxFDsPerProcess = 4096
 	maxFDs           = 200_000
@@ -80,11 +84,21 @@ const taintLetters = "PFSRMBUDAWCIOELKXT"
 
 // Kernel collects what a rootkit changes in the running kernel: modules, taint, processes hidden
 // from /proc's listing, eBPF programs and dynamic probes.
-type Kernel struct{}
+// pidScanBudget is the time one run gives the search for hidden processes. A var for the tests.
+var pidScanBudget = 10 * time.Second
 
-func (Kernel) Name() string { return "kernel" }
+// Kernel keeps where the search for hidden processes stopped: with pid_max in the millions it
+// takes more than one run's budget, and the next run goes on from there, so that every PID is
+// probed within a few runs instead of the same low half every time.
+type Kernel struct {
+	mu        sync.Mutex
+	next      int
+	sweepRuns int
+}
 
-func (Kernel) Collect(ctx context.Context, src collector.Source) (any, error) {
+func (*Kernel) Name() string { return "kernel" }
+
+func (k *Kernel) Collect(ctx context.Context, src collector.Source) (any, error) {
 	res := KernelResult{Modules: []Module{}}
 	if b, err := fs.ReadFile(src.FS, "proc/sys/kernel/osrelease"); err == nil {
 		res.Release = clipField(strings.TrimSpace(string(b)))
@@ -105,7 +119,7 @@ func (Kernel) Collect(ctx context.Context, src collector.Source) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	res.HiddenProcesses, res.PIDScan = hiddenProcesses(ctx, src.FS, &res.Issues)
+	res.HiddenProcesses, res.PIDScan = k.searchHidden(ctx, src.FS, &res.Issues)
 	res.BPFPrograms = bpfPrograms(ctx, src.FS, &res.Issues)
 	res.BPFPinned = pinned(src.FS)
 	if b, err := fs.ReadFile(src.FS, "sys/kernel/tracing/kprobe_events"); err == nil {
@@ -215,27 +229,50 @@ func moduleTree(fsys fs.FS, release string) map[string]string {
 	return tree
 }
 
+// searchHidden runs the search for hidden processes from where the last run stopped. Only a sweep
+// that takes more than maxSweepRuns runs is an issue: below that, every PID is still probed every
+// few hours.
+func (k *Kernel) searchHidden(ctx context.Context, fsys fs.FS, issues *collector.Issues) ([]Process, PIDScan) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	out, scan, next := hiddenProcesses(ctx, fsys, k.next, issues)
+	k.sweepRuns++
+	scan.SweepRuns = k.sweepRuns
+	if !scan.Truncated {
+		k.next, k.sweepRuns = 0, 0
+		return out, scan
+	}
+	k.next = next
+	if k.sweepRuns > maxSweepRuns {
+		issues.Add(fmt.Errorf("hidden process search stopped at PID %d of %d: %d runs have not probed every PID", next, scan.Limit, k.sweepRuns))
+	}
+	return out, scan
+}
+
 // hiddenProcesses probes /proc/<pid> for every PID up to the highest one the kernel can have
 // handed out, and reports those that exist but are missing from /proc's listing: a rootkit that
 // filters getdents hides a process from ps and from the processes collector, not from a direct
 // lookup. Threads are reachable the same way without being listed; they are told apart by Tgid.
-func hiddenProcesses(ctx context.Context, fsys fs.FS, issues *collector.Issues) ([]Process, PIDScan) {
+// The probe starts at from, where an earlier run stopped, and next is where this one stopped.
+func hiddenProcesses(ctx context.Context, fsys fs.FS, from int, issues *collector.Issues) (out []Process, scan PIDScan, next int) {
 	before := pids(fsys)
 	if len(before) == 0 {
-		return nil, PIDScan{}
+		return nil, PIDScan{}, 0
 	}
 	listed := map[int]bool{}
 	for _, p := range before {
 		listed[p] = true
 	}
 	limit := scanLimit(fsys, before)
-	scan := PIDScan{Limit: limit}
+	if from < 1 || from > limit {
+		from = 1
+	}
+	scan = PIDScan{Limit: limit, From: from}
 	var candidates []int
 	start := time.Now()
-	for pid := 1; pid <= limit; pid++ {
-		if pid%4096 == 0 && (ctx.Err() != nil || time.Since(start) > pidScanBudget) {
-			scan.Truncated = true
-			issues.Add(fmt.Errorf("hidden process search stopped at PID %d of %d", pid, limit))
+	for pid := from; pid <= limit; pid++ {
+		if pid > from && (pid-from)%4096 == 0 && (ctx.Err() != nil || time.Since(start) > pidScanBudget) {
+			scan.Truncated, next = true, pid
 			break
 		}
 		scan.Probed++
@@ -248,13 +285,12 @@ func hiddenProcesses(ctx context.Context, fsys fs.FS, issues *collector.Issues) 
 		candidates = append(candidates, pid)
 	}
 	if len(candidates) == 0 {
-		return nil, scan
+		return nil, scan, next
 	}
 	// A process born during the search is listed now; one hidden is still not.
 	for _, p := range pids(fsys) {
 		listed[p] = true
 	}
-	var out []Process
 	for _, pid := range candidates {
 		if listed[pid] || len(out) == maxHidden {
 			continue
@@ -267,7 +303,7 @@ func hiddenProcesses(ctx context.Context, fsys fs.FS, issues *collector.Issues) 
 			out = append(out, p)
 		}
 	}
-	return out, scan
+	return out, scan, next
 }
 
 // scanLimit is the highest PID worth probing: the last one handed out, unless PIDs have wrapped

@@ -860,11 +860,21 @@ func Evaluate(prev *State, cur State) []Finding {
 	// What a collector could not do (a bound reached, a file not read, a search given up) is
 	// part of what the snapshot says: one low alert per collector, naming it, so that no limit
 	// stays where only the sensor sees it. It closes when the collector no longer reports it.
+	// Notes, what is skipped by design or explained, stay on the host page: raised on most hosts
+	// they would make the alert background noise.
 	for _, name := range slices.Sorted(maps.Keys(cur.Issues)) {
-		list := cur.Issues[name]
+		var list []string
+		for _, issue := range cur.Issues[name] {
+			if !issueNote(issue) {
+				list = append(list, issue)
+			}
+		}
+		if len(list) == 0 {
+			continue
+		}
 		detail := "The " + name + " collector could not do all of its work in the last snapshot, so part of what it watches was not checked:\n  " + strings.Join(list, "\n  ")
-		if more := cur.IssueCounts[name] - len(list); more > 0 {
-			detail += fmt.Sprintf("\n  and %d more", more)
+		if more := cur.IssueCounts[name] - len(cur.Issues[name]); more > 0 {
+			detail += fmt.Sprintf("\n  and %d more issues", more)
 		}
 		state("collector-issues", name, "low", "Analysis incomplete: "+name, detail)
 	}
@@ -1989,6 +1999,23 @@ func vendorPreload(exe, preload string) bool {
 func vendorConfig(p string) bool {
 	parts := strings.Split(p, "/")
 	return len(parts) > 4 && parts[1] == "opt" && parts[3] == "etc"
+}
+
+// issueNotes are the shapes of the issues that do not say work was left undone: a network
+// filesystem skipped by design, why a PHP file of the uploads counts as code, and the search for
+// hidden processes of sensors before 0.1.42, which stopped at the same PID every run and now goes
+// on from there. Each is anchored at its end, which the sensor writes, so that a path an
+// attacker names cannot make an issue of work left undone pass for a note.
+var issueNotes = []*regexp.Regexp{
+	regexp.MustCompile(`^/.*: \S+ network filesystem, not scanned$`),
+	regexp.MustCompile(`^/.*: \S+ network filesystem mounted without nosuid, not walked$`),
+	regexp.MustCompile(`^/.*: PHP in an upload directory is code: (too large to check|no <\?php at the start|unclosed string|unclosed function|(interpolated string|function head .*|word .*|call after .*|byte .*) at \d+)$`),
+	regexp.MustCompile(`^hidden process search stopped at PID \d+ of \d+$`),
+}
+
+// issueNote reports an issue that is a note rather than work left undone.
+func issueNote(issue string) bool {
+	return slices.ContainsFunc(issueNotes, func(re *regexp.Regexp) bool { return re.MatchString(issue) })
 }
 
 // stoppedMidway reports a collector error that only says the sensor was stopping, for an update

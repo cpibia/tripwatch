@@ -30,7 +30,17 @@ type HostFacts struct {
 	Apps              []AppFact     `json:"apps,omitempty"`
 	Listening         int           `json:"listening,omitempty"`
 	Realtime          *RealtimeFact `json:"realtime,omitempty"`
+	Limits            []LimitFact   `json:"limits,omitempty"`
 	SeenAt            time.Time     `json:"seen_at"`
+}
+
+// LimitFact is what one collector said it could not do in the last snapshot: Incomplete the
+// work it left undone, Notes what it skipped by design or explained, More those past the bound.
+type LimitFact struct {
+	Collector  string   `json:"collector"`
+	Incomplete []string `json:"incomplete,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
+	More       int      `json:"more,omitempty"`
 }
 
 // RealtimeFact says whether the sensor's real-time watchers run, and why not when they do not.

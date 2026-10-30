@@ -1009,6 +1009,33 @@ func TestServersPage(t *testing.T) {
 	}
 }
 
+// The host page lists what each collector could not check, work left undone apart from notes,
+// and the sensor's text stays data.
+func TestHostPageLimits(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.store.Enroll(ctx, "web-01", make([]byte, 32), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetFacts(ctx, "web-01", store.HostFacts{Limits: []store.LimitFact{
+		{Collector: "kernel", Incomplete: []string{"hidden process search stopped at PID 9 of 99: 4 runs have not probed every PID"}},
+		{Collector: "web", Incomplete: []string{"/var/www/<script>x</script>.js: not read for skimmers"}, Notes: []string{"/mnt/dav: fuse network filesystem, not scanned"}, More: 3},
+	}, SeenAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	h.login()
+	_, body := h.get("/hosts/web-01")
+	for _, want := range []string{"What the sensor could not check", `<span class="kind-tag">kernel</span>`, "4 runs have not probed every PID",
+		"/var/www/&lt;script&gt;x&lt;/script&gt;.js", "Skipped by design or explained", "fuse network filesystem", "and 3 more issues"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("host page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "<script>x") {
+		t.Error("the sensor's text reached the page as markup")
+	}
+}
+
 // Only paths on this site are followed after the login; what a browser would read as another
 // host is not.
 func TestLocalPath(t *testing.T) {

@@ -15,7 +15,7 @@ func All() []collector.Collector {
 		Sockets{},
 		Packages{},
 		Privileged{Skip: DefaultSkip, Extra: DefaultExtra},
-		Kernel{},
+		&Kernel{},
 		Containers{},
 	}
 }

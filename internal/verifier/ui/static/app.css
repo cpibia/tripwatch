@@ -470,6 +470,14 @@ input[type="checkbox"] { accent-color: var(--teal); margin: 0; }
 .facts dt { font-size: var(--fs-xs); color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .facts.small { margin-top: 16px; }
+.limits { display: grid; gap: 14px; margin: 0; }
+.limits > div { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 6px 16px; align-items: start; }
+.limits dd { display: grid; gap: 6px; margin: 0; min-width: 0; }
+.limit-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.limit-list li { padding-left: 10px; overflow-wrap: anywhere; color: var(--muted); border-left: 2px solid var(--rule-strong); }
+.limit-list.undone li { color: var(--ink); border-left-color: var(--amber); }
+.limit-kind { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
+@media (max-width: 639px) { .limits > div { grid-template-columns: minmax(0, 1fr); } }
 
 .datum {
   margin: 12px 0 0; padding: 12px 14px;

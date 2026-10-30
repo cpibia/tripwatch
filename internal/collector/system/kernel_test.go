@@ -65,7 +65,7 @@ func TestKernel(t *testing.T) {
 		}
 	}
 	src := collector.Source{FS: listed{MapFS: fsys, hide: map[string]bool{"290": true}}}
-	r, err := Kernel{}.Collect(context.Background(), src)
+	r, err := (&Kernel{}).Collect(context.Background(), src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +95,49 @@ func TestKernel(t *testing.T) {
 	}
 	if len(res.BPFPinned) != 1 || res.BPFPinned[0] != "/sys/fs/bpf/tc/globals/hidden_map" {
 		t.Errorf("pinned = %v", res.BPFPinned)
+	}
+}
+
+// A search for hidden processes cut by its budget goes on from where it stopped in the next run,
+// so that a process hidden at a high PID is found within a few runs; only a sweep longer than
+// maxSweepRuns runs is an issue.
+func TestHiddenProcessSearchResumes(t *testing.T) {
+	saved := pidScanBudget
+	pidScanBudget = -1
+	t.Cleanup(func() { pidScanBudget = saved })
+	fsys := fstest.MapFS{
+		"proc/sys/kernel/pid_max": text("4194304\n"),
+		"proc/loadavg":            text("0.00 0.01 0.05 1/120 10000\n"),
+	}
+	for _, p := range []fstest.MapFS{proc("1", "1", "systemd"), proc("10000", "10000", "sshd"), proc("9000", "9000", "miner")} {
+		for k, v := range p {
+			fsys[k] = v
+		}
+	}
+	src := collector.Source{FS: listed{MapFS: fsys, hide: map[string]bool{"9000": true}}}
+	k := &Kernel{}
+	for run, want := range []struct {
+		from, sweep int
+		found       bool
+	}{{1, 1, false}, {4097, 2, false}, {8193, 3, true}, {1, 1, false}} {
+		r, err := k.Collect(context.Background(), src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := r.(KernelResult)
+		if res.PIDScan.From != want.from || res.PIDScan.SweepRuns != want.sweep || (len(res.HiddenProcesses) == 1) != want.found || len(res.Issues) != 0 {
+			t.Errorf("run %d: scan %+v, hidden %+v, issues %q", run+1, res.PIDScan, res.HiddenProcesses, res.Issues)
+		}
+	}
+
+	slow := &Kernel{}
+	fsys["proc/loadavg"] = text("0.00 0.01 0.05 1/120 100000\n")
+	var issues collector.Issues
+	for range maxSweepRuns + 1 {
+		_, _ = slow.searchHidden(context.Background(), src.FS, &issues)
+	}
+	if len(issues) != 1 || !strings.Contains(issues[0], "4 runs have not probed every PID") {
+		t.Errorf("issues = %q", issues)
 	}
 }
 
