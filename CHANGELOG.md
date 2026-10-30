@@ -108,6 +108,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   in the millions its ten seconds a run reached about half the PIDs, the same half every time, on
   eight hosts of the fleet. Every PID is now probed within two or three hourly runs, and only a
   sweep that takes more than three runs is reported as an issue.
+- When a script has a "/" after ")" or "}", which divides or starts a pattern depending on what
+  the bracket closed, each statement is read again both ways from its ";", besides the whole
+  script: a script that asks for one reading in one statement and the other in the next no longer
+  hides the strings it builds after both. A script without such a "/" is read once, not twice.
 - An application's findings are bounded by the alert they raise: those that raise none (a link
   out of the application, an `.htaccess` with no handler, an encoded blob) have a bound of 200
   of their own, and past the bound of 1,000 a finding takes the place of a less severe one. A

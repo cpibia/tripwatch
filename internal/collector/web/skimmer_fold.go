@@ -25,6 +25,7 @@ const (
 type jsToken struct {
 	kind byte // 's' string, 'n' name, '0' number, 'p' punctuation, 'r' regular expression
 	text string
+	at   int // where it starts in the piece
 }
 
 // jsTokens splits content into tokens, comments and blanks left out. A template literal with
@@ -32,13 +33,15 @@ type jsToken struct {
 // substitution is punctuation, so that nothing is folded across it.
 // A "/" after ")" or "}" divides or starts a pattern depending on what the bracket closed, which
 // a tokenizer that does not parse cannot always tell: regexAfterClose picks one reading, and the
-// folding reads the script both ways.
-func jsTokens(content []byte, regexAfterClose bool) ([]jsToken, int, bool) {
-	var out []jsToken
-	scanned := 0
-	depth, deep := 0, false
+// folding reads the script both ways; ambiguous says whether such a "/" was met.
+func jsTokens(content []byte, regexAfterClose bool) (out []jsToken, scanned int, deep, ambiguous bool) {
+	depth := 0
 	for i := 0; i < len(content) && len(out) < maxFoldTokens; {
 		c := content[i]
+		if c == '/' && len(out) > 0 && (out[len(out)-1].text == ")" || out[len(out)-1].text == "}") {
+			ambiguous = true
+		}
+		at, start := len(out), i
 		switch {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			i++
@@ -60,22 +63,22 @@ func jsTokens(content []byte, regexAfterClose bool) ([]jsToken, int, bool) {
 			scanned += max(end-i, 1)
 			switch {
 			case closed:
-				out = append(out, jsToken{'r', ""})
+				out = append(out, jsToken{kind: 'r', text: ""})
 				i = end
 			default:
 				// Not closed on its line within the window: as for an open literal, the window
 				// it read is passed over rather than read again from the next byte.
-				out = append(out, jsToken{'p', "/"})
+				out = append(out, jsToken{kind: 'p', text: "/"})
 				i = max(i+1, end)
 			}
 		case c == '\'' || c == '"' || c == '`':
 			lit, next, ok := jsFoldLiteral(content, i)
 			scanned += max(next-i, 1)
 			if ok {
-				out = append(out, jsToken{'s', string(lit)})
+				out = append(out, jsToken{kind: 's', text: string(lit)})
 				i = next
 			} else {
-				out = append(out, jsToken{'p', string(c)})
+				out = append(out, jsToken{kind: 'p', text: string(c)})
 				i = max(i+1, next)
 			}
 		case identByte(c) || c == '$':
@@ -87,7 +90,7 @@ func jsTokens(content []byte, regexAfterClose bool) ([]jsToken, int, bool) {
 			if c >= '0' && c <= '9' {
 				kind = '0'
 			}
-			out = append(out, jsToken{kind, string(content[i:j])})
+			out = append(out, jsToken{kind: kind, text: string(content[i:j])})
 			i = j
 		default:
 			// Brackets nested past 64 levels are past what the folding follows, and said so.
@@ -99,11 +102,14 @@ func jsTokens(content []byte, regexAfterClose bool) ([]jsToken, int, bool) {
 			case ')', '}', ']':
 				depth = max(depth-1, 0)
 			}
-			out = append(out, jsToken{'p', string(c)})
+			out = append(out, jsToken{kind: 'p', text: string(c)})
 			i++
 		}
+		if len(out) > at {
+			out[at].at = start
+		}
 	}
-	return out, scanned, deep
+	return out, scanned, deep, ambiguous
 }
 
 // regexAllowed reports whether a "/" after these tokens starts a regular expression rather than
@@ -208,8 +214,10 @@ type folder struct {
 	toks      []jsToken
 	constants *foldConstants
 	steps     int
-	// lastName is the last position of each name in the piece's tokens.
+	// lastName is the last place of each name in the piece, in bytes; base is where these
+	// tokens start in it.
 	lastName map[string]int
+	base     int
 }
 
 // foldConstants are the string constants of a script, kept from one piece to the next. Past the
@@ -279,27 +287,68 @@ func foldStrings(content []byte, constants *foldConstants) []byte {
 }
 
 // foldWork folds and says how much work it took: the tokens read and the terms evaluated.
+//
+// A "/" after ")" or "}" is read both ways, the whole piece once each way, and when the piece has
+// one, each statement again both ways, from its ";": a script can ask for one reading in one
+// statement and the other in the next, which neither whole reading follows past the first. The
+// work stays linear: each byte is read at most four times. The names' last uses come from the
+// whole readings, so that a constant one statement sets for a later one is kept.
 func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
-	// Both readings of an ambiguous "/" are folded, one after the other, and their strings
-	// joined: whichever is right, the names built in it are found.
-	out, tokens, steps := foldReading(content, constants, true)
-	more, tokens2, steps2 := foldReading(content, constants, false)
-	return append(out, more...), tokens + tokens2, steps + steps2
-}
-
-// foldReading folds the script read with one reading of an ambiguous "/".
-func foldReading(content []byte, constants *foldConstants, regexAfterClose bool) ([]byte, int, int) {
-	toks, scanned, deep := jsTokens(content, regexAfterClose)
-	constants.deep = constants.deep || deep
-	f := folder{toks: toks, constants: constants, lastName: map[string]int{}, steps: scanned / 16}
-	for k, t := range f.toks {
-		if t.kind == 'n' {
-			f.lastName[t.text] = k
+	pattern, scanned, deep, ambiguous := jsTokens(content, true)
+	lastName := map[string]int{}
+	readings := []tokenReading{{toks: pattern, scanned: scanned, deep: deep}}
+	if ambiguous {
+		division, scanned, deep, _ := jsTokens(content, false)
+		readings = append(readings, tokenReading{toks: division, scanned: scanned, deep: deep})
+		for start := 0; start < len(content); {
+			end := bytes.IndexByte(content[start:], ';')
+			if end < 0 {
+				end = len(content)
+			} else {
+				end += start
+			}
+			for _, regexAfterClose := range []bool{true, false} {
+				toks, scanned, deep, _ := jsTokens(content[start:end], regexAfterClose)
+				readings = append(readings, tokenReading{toks: toks, scanned: scanned, deep: deep, base: start})
+			}
+			start = end + 1
 		}
 	}
+	for _, rd := range readings {
+		for _, t := range rd.toks {
+			if t.kind == 'n' {
+				lastName[t.text] = max(lastName[t.text], rd.base+t.at)
+			}
+		}
+	}
+	// What is folded never outgrows the piece more than four times over, all readings together.
 	var out []byte
-	// What is folded never outgrows the piece more than four times over.
-	for i := 0; i < len(f.toks) && len(out) < min(maxNormalised, 4*len(content)) && f.steps < maxFoldSteps; {
+	tokens, steps := 0, 0
+	for _, rd := range readings {
+		if steps >= maxFoldSteps {
+			break
+		}
+		more, n := foldReading(rd, min(maxNormalised, 4*len(content))-len(out), constants, lastName)
+		out = append(out, more...)
+		tokens, steps = tokens+len(rd.toks), steps+n
+	}
+	return out, tokens, steps
+}
+
+// tokenReading is one reading of a piece, or of one of its statements starting at base.
+type tokenReading struct {
+	toks    []jsToken
+	scanned int
+	deep    bool
+	base    int
+}
+
+// foldReading folds one reading into at most room bytes.
+func foldReading(rd tokenReading, room int, constants *foldConstants, lastName map[string]int) ([]byte, int) {
+	constants.deep = constants.deep || rd.deep
+	f := folder{toks: rd.toks, constants: constants, lastName: lastName, base: rd.base, steps: rd.scanned / 16}
+	var out []byte
+	for i := 0; i < len(f.toks) && len(out) < room && f.steps < maxFoldSteps; {
 		// var x = ..., x = ...: the value is kept for the uses of x after it.
 		name := -1
 		switch {
@@ -334,7 +383,10 @@ func foldReading(content []byte, constants *foldConstants, regexAfterClose bool)
 			continue
 		}
 		if name >= 0 {
-			after := next
+			after := f.base + f.toks[len(f.toks)-1].at + 1
+			if next < len(f.toks) {
+				after = f.base + f.toks[next].at
+			}
 			f.constants.put(f.toks[name].text, v, func(n string) bool { return f.lastName[n] >= after })
 		}
 		if len(v) >= 4 {
@@ -342,7 +394,7 @@ func foldReading(content []byte, constants *foldConstants, regexAfterClose bool)
 		}
 		i = max(next, i+1)
 	}
-	return out, len(f.toks), f.steps
+	return out, f.steps
 }
 
 // expr folds a sum of terms at i.
