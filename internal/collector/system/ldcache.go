@@ -19,8 +19,22 @@ import (
 type LoaderPaths struct {
 	CacheDirs  []string `json:"cache_dirs"`
 	ConfigDirs []string `json:"config_dirs"`
-	// Truncated says the cache or the configuration held more than the bounds read.
-	Truncated bool `json:"truncated,omitempty"`
+	// Libc lists where the cache puts libc.so.6, once per architecture on a sane system: the
+	// verifier takes the system's own library directories from it rather than from a pattern a
+	// directory created for the occasion can match. Never nil, so that an empty list is told
+	// apart from a sensor that did not report it.
+	Libc []LibcCopy `json:"libc"`
+	// Truncated says the cache or the configuration held more than the bounds read;
+	// ConfigTruncated that the configuration did, so that what it names is incomplete.
+	Truncated       bool `json:"truncated,omitempty"`
+	ConfigTruncated bool `json:"config_truncated,omitempty"`
+}
+
+// LibcCopy is a libc.so.6 the cache lists: its directory and the entry's flags, which carry
+// the library's type and architecture.
+type LibcCopy struct {
+	Dir   string `json:"dir"`
+	Flags uint32 `json:"flags"`
 }
 
 // Bounds on what is read of the loader's cache and configuration: real caches list a few
@@ -56,36 +70,37 @@ func readLoaderPaths(fsys fs.FS, issues *collector.Issues) *LoaderPaths {
 		return nil
 	}
 	lp := &LoaderPaths{}
-	lp.CacheDirs, lp.Truncated, err = cacheDirs(data)
+	lp.CacheDirs, lp.Libc, lp.Truncated, err = cacheDirs(data)
 	if err != nil {
 		issues.Add(err)
 		return nil
 	}
 	seen := map[string]bool{}
 	files := 0
-	lp.Truncated = loaderConfig(fsys, "etc/ld.so.conf", 0, &files, seen, &lp.ConfigDirs) || lp.Truncated
+	lp.ConfigTruncated = loaderConfig(fsys, "etc/ld.so.conf", 0, &files, seen, &lp.ConfigDirs)
+	lp.Truncated = lp.Truncated || lp.ConfigTruncated
 	slices.Sort(lp.ConfigDirs)
 	return lp
 }
 
 // cacheDirs lists the directories of the libraries in a cache of glibc's new format, alone or
-// after the old one. Integers are in the machine's order: the sensor runs where the cache was
-// written, and only on little-endian architectures.
-func cacheDirs(data []byte) (dirs []string, truncated bool, err error) {
+// after the old one, and the copies of libc.so.6 in it. Integers are in the machine's order:
+// the sensor runs where the cache was written, and only on little-endian architectures.
+func cacheDirs(data []byte) (dirs []string, libc []LibcCopy, truncated bool, err error) {
 	base := 0
 	if bytes.HasPrefix(data, oldCacheMagic) {
 		if len(data) < oldHeaderSize {
-			return nil, false, errCache
+			return nil, nil, false, errCache
 		}
 		n := int(binary.LittleEndian.Uint32(data[12:]))
 		if n > maxCacheEntries {
-			return nil, false, errCache
+			return nil, nil, false, errCache
 		}
 		base = oldHeaderSize + n*oldEntrySize
 		base = (base + 7) &^ 7
 	}
 	if base+newHeaderSize > len(data) || !bytes.Equal(data[base:base+len(newCacheMagic)], newCacheMagic) {
-		return nil, false, errCache
+		return nil, nil, false, errCache
 	}
 	n := int(binary.LittleEndian.Uint32(data[base+20:]))
 	if n > maxCacheEntries {
@@ -94,31 +109,38 @@ func cacheDirs(data []byte) (dirs []string, truncated bool, err error) {
 	// String offsets count from the start of the new header.
 	strs := data[base:]
 	seen := map[string]bool{}
+	libc = []LibcCopy{}
 	for i := range n {
 		at := base + newHeaderSize + i*newEntrySize
 		if at+newEntrySize > len(data) {
-			return nil, false, errCache
+			return nil, nil, false, errCache
 		}
 		off := int(binary.LittleEndian.Uint32(data[at+8:]))
 		if off <= 0 || off >= len(strs) {
-			return nil, false, errCache
+			return nil, nil, false, errCache
 		}
 		end := bytes.IndexByte(strs[off:], 0)
 		if end < 0 {
-			return nil, false, errCache
+			return nil, nil, false, errCache
 		}
-		dir := path.Dir(string(strs[off : off+end]))
+		file := string(strs[off : off+end])
+		dir := path.Dir(file)
+		// Past the bound on directories the entries are still read for libc: a cache padded
+		// with directories must not hide where the system's libraries are.
+		if path.Base(file) == "libc.so.6" && len(libc) < maxLoaderDirs {
+			libc = append(libc, LibcCopy{Dir: dir, Flags: binary.LittleEndian.Uint32(data[at:])})
+		}
 		if !seen[dir] {
 			if len(dirs) == maxLoaderDirs {
 				truncated = true
-				break
+				continue
 			}
 			seen[dir] = true
 			dirs = append(dirs, dir)
 		}
 	}
 	slices.Sort(dirs)
-	return dirs, truncated, nil
+	return dirs, libc, truncated, nil
 }
 
 // loaderConfig collects the directories a configuration file names, following its includes as

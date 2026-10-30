@@ -949,6 +949,47 @@ func TestLoaderCacheDirs(t *testing.T) {
 	}
 }
 
+// With the copies of libc a sensor reports, only the directories holding them count as the
+// system's: a directory of the same shape added with ldconfig is an alert, and so is a second
+// libc for the same architecture. A cache padded past the bound is an alert of its own.
+func TestLoaderCacheDirsFromLibc(t *testing.T) {
+	loader := func(l *system.LoaderPaths) []string {
+		cur := baseState()
+		cur.Hooks = &system.HooksResult{Loader: l}
+		return slices.DeleteFunc(fingerprints(Evaluate(nil, cur)), func(f string) bool { return !strings.Contains(f, "loader-cache") })
+	}
+	debian := []system.LibcCopy{{Dir: "/lib/x86_64-linux-gnu", Flags: 0x0303}, {Dir: "/usr/lib32", Flags: 0x0003}}
+	for _, c := range []struct {
+		name string
+		l    system.LoaderPaths
+		want []string
+	}{
+		{"debian", system.LoaderPaths{Libc: debian,
+			CacheDirs:  []string{"/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3", "/usr/lib", "/lib/tls", "/lib32", "/usr/local/lib", "/usr/lib64", "/usr/lib/x-linux-y", "/opt/x"},
+			ConfigDirs: []string{"/usr/local/lib"}},
+			[]string{"high persistence:loader-cache:/opt/x", "high persistence:loader-cache:/usr/lib/x-linux-y", "high persistence:loader-cache:/usr/lib64"}},
+		{"rhel", system.LoaderPaths{Libc: []system.LibcCopy{{Dir: "/lib64", Flags: 0x0303}, {Dir: "/usr/lib", Flags: 0x0003}},
+			CacheDirs: []string{"/lib64", "/usr/lib64", "/usr/lib", "/usr/lib64/glibc-hwcaps/x86-64-v2"}},
+			nil},
+		{"second libc", system.LoaderPaths{Libc: []system.LibcCopy{{Dir: "/usr/lib/x86_64-linux-gnu", Flags: 0x0303}, {Dir: "/usr/lib64", Flags: 0x0303}, {Dir: "/opt/x", Flags: 0x0303}},
+			CacheDirs: []string{"/usr/lib/x86_64-linux-gnu", "/usr/lib64"}},
+			[]string{"high persistence:loader-cache:/usr/lib/x86_64-linux-gnu", "high persistence:loader-cache:/usr/lib64"}},
+		{"padded", system.LoaderPaths{Libc: debian, Truncated: true,
+			CacheDirs: []string{"/lib/x86_64-linux-gnu", "/opt/x"}},
+			[]string{"high persistence:loader-cache-unread", "high persistence:loader-cache:/opt/x"}},
+		{"many", system.LoaderPaths{Libc: debian,
+			CacheDirs: append([]string{"/lib/x86_64-linux-gnu"}, strings.Fields(strings.Repeat("/opt/p ", maxLoaderAlerts+1))...)},
+			[]string{"high persistence:loader-cache:many"}},
+		{"configuration cut", system.LoaderPaths{Libc: debian, Truncated: true, ConfigTruncated: true,
+			CacheDirs: []string{"/lib/x86_64-linux-gnu", "/opt/x"}},
+			[]string{"high persistence:loader-cache-unread"}},
+	} {
+		if got := loader(&c.l); !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // Container runtimes add a scope and its limits for every container, and Docker's resolver a
 // port on 127.0.0.11 at every start: neither is a new service or a new listener. A program
 // listening there that is not Docker's is.

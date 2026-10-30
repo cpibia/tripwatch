@@ -720,9 +720,45 @@ func packagesChanged(prev, cur *system.PackagesResult) bool {
 	return prev.StatusSHA256 != "" && cur.StatusSHA256 != "" && prev.StatusSHA256 != cur.StatusSHA256
 }
 
-// trustedLoaderDir matches the directories ldconfig searches whatever the configuration says:
-// /lib and /usr/lib, their 32 and 64-bit variants, and their multiarch subdirectories.
-var trustedLoaderDir = regexp.MustCompile(`^/(?:usr/)?lib(?:32|64|x32)?(?:/[a-z0-9_]+-linux-[a-z0-9_]+)?$`)
+// systemLibDir matches the shape of the directories ldconfig searches whatever the
+// configuration says: /lib and /usr/lib, their 32 and 64-bit variants, and their multiarch
+// subdirectories. Anyone with root can create a directory of that shape for the occasion, so
+// which of them a system really uses is taken from where its libc is.
+var systemLibDir = regexp.MustCompile(`^/(?:usr/)?lib(?:32|64|x32)?(?:/[a-z0-9_]+-linux-[a-z0-9_]+)?$`)
+
+// loaderDefaults returns the test for the directories ldconfig searches on this system whatever
+// the configuration says: /lib and /usr/lib, and for each architecture the one directory of the
+// system's shape that holds its libc, with its twin in or out of /usr. An architecture with
+// libc in two such directories trusts neither: one of them was put there. Sensors that do not
+// report libc leave the shape alone to decide.
+func loaderDefaults(l *system.LoaderPaths) func(string) bool {
+	if l.Libc == nil {
+		return systemLibDir.MatchString
+	}
+	byArch := map[uint32]map[string]bool{}
+	for _, c := range l.Libc {
+		d := strings.TrimPrefix(path.Clean(c.Dir), "/usr")
+		if !systemLibDir.MatchString(d) {
+			continue
+		}
+		if byArch[c.Flags] == nil {
+			byArch[c.Flags] = map[string]bool{}
+		}
+		byArch[c.Flags][d] = true
+	}
+	trusted := map[string]bool{"/lib": true, "/usr/lib": true}
+	for _, dirs := range byArch {
+		if len(dirs) == 1 {
+			for d := range dirs {
+				trusted[d], trusted["/usr"+d] = true, true
+			}
+		}
+	}
+	return func(d string) bool { return trusted[d] }
+}
+
+// maxLoaderAlerts is how many directories of the loader's cache get an alert each.
+const maxLoaderAlerts = 16
 
 // legacyHwcaps are the subdirectories older glibc versions searched for optimised builds.
 var legacyHwcaps = []string{"tls", "haswell", "avx512_1", "x86_64", "i686", "i586", "sse2", "v2", "v3", "v4"}
@@ -732,16 +768,17 @@ var legacyHwcaps = []string{"tls", "haswell", "avx512_1", "x86_64", "i686", "i58
 // as that one.
 func unconfiguredLoaderDirs(l *system.LoaderPaths) []string {
 	named := setOf(l.ConfigDirs, func(d string) string { return d })
+	trusted := loaderDefaults(l)
 	var out []string
 	for _, dir := range l.CacheDirs {
 		d := path.Clean(dir)
 		if i := strings.Index(d, "/glibc-hwcaps/"); i > 0 {
 			d = d[:i]
 		}
-		for slices.Contains(legacyHwcaps, path.Base(d)) && !named.has(d) && !trustedLoaderDir.MatchString(d) {
+		for slices.Contains(legacyHwcaps, path.Base(d)) && !named.has(d) && !trusted(d) {
 			d = path.Dir(d)
 		}
-		if !named.has(d) && !trustedLoaderDir.MatchString(d) {
+		if !named.has(d) && !trusted(d) {
 			out = append(out, dir)
 		}
 	}
@@ -1074,8 +1111,24 @@ func Evaluate(prev *State, cur State) []Finding {
 		for _, lib := range h.Preload {
 			state("persistence", "preload:"+lib, "critical", "Library loaded into every process", lib+" is in /etc/ld.so.preload: the technique of userspace rootkits.")
 		}
-		if l := h.Loader; l != nil && !l.Truncated {
-			for _, dir := range unconfiguredLoaderDirs(l) {
+		l := h.Loader
+		// Sensors that report libc read the whole cache for it and say which bound was hit: a
+		// cache padded past the bound is an alert of its own, and the directories read are
+		// still compared unless the configuration was cut short.
+		if l != nil && l.Truncated && l.Libc != nil {
+			state("persistence", "loader-cache-unread", "high", "Library cache too large to compare with its configuration",
+				"/etc/ld.so.cache lists more directories than tripwatch reads, or ld.so.conf and its includes more files or directories: real systems use a few dozen. A directory added with \"ldconfig /dir\" can hide among the ones left unread. Compare ldconfig -p with the configuration; running ldconfig without arguments rebuilds the cache from the configuration.")
+		}
+		if l != nil && (!l.Truncated || l.Libc != nil && !l.ConfigTruncated) {
+			dirs := unconfiguredLoaderDirs(l)
+			// Past a few, one alert names them: a cache padded with hundreds of directories
+			// must not turn into as many alerts.
+			if len(dirs) > maxLoaderAlerts {
+				state("persistence", "loader-cache:many", "high", fmt.Sprintf("Library cache searches %d directories no configuration names", len(dirs)),
+					"/etc/ld.so.cache holds "+strings.Join(dirs[:maxLoaderAlerts], ", ")+fmt.Sprintf(" and %d more", len(dirs)-maxLoaderAlerts)+", so programs load libraries from them, but neither ld.so.conf nor its includes name them: \"ldconfig <dir>\" puts them there, and a library in one with the name of a system one is loaded instead. Compare ldconfig -p with the configuration; running ldconfig without arguments rebuilds the cache from the configuration.")
+				dirs = nil
+			}
+			for _, dir := range dirs {
 				state("persistence", "loader-cache:"+dir, "high", "Library cache searches a directory no configuration names: "+dir,
 					dir+" is in /etc/ld.so.cache, so programs load libraries from it, but neither ld.so.conf nor its includes name it: \"ldconfig "+dir+"\" puts it there, and a library in it with the name of a system one is loaded instead. Compare ldconfig -p with the configuration; running ldconfig without arguments rebuilds the cache from the configuration.")
 			}

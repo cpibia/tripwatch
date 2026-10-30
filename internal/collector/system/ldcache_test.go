@@ -1,6 +1,8 @@
 package system
 
 import (
+	"encoding/binary"
+	"fmt"
 	"os"
 	"slices"
 	"testing"
@@ -32,10 +34,48 @@ func TestLoaderPaths(t *testing.T) {
 	if !slices.Contains(lp.CacheDirs, "/opt/x") || !slices.Contains(lp.CacheDirs, "/lib/aarch64-linux-gnu") {
 		t.Errorf("cache dirs %v", lp.CacheDirs)
 	}
+	if want := []LibcCopy{{Dir: "/lib/aarch64-linux-gnu", Flags: 0x0a03}}; !slices.Equal(lp.Libc, want) {
+		t.Errorf("libc %v, want %v", lp.Libc, want)
+	}
 	want := []string{"/lib/aarch64-linux-gnu", "/opt/vendor/lib", "/usr/lib/aarch64-linux-gnu", "/usr/local/lib", "/usr/local/lib/aarch64-linux-gnu"}
 	if !slices.Equal(lp.ConfigDirs, want) {
 		t.Errorf("config dirs %v, want %v", lp.ConfigDirs, want)
 	}
+}
+
+// A cache padded with more directories than are read is truncated, and libc is still found
+// after the last directory kept.
+func TestLoaderCachePadded(t *testing.T) {
+	var files []string
+	for i := range maxLoaderDirs + 8 {
+		files = append(files, fmt.Sprintf("/opt/pad%04d/libz.so.1", i))
+	}
+	dirs, libc, truncated, err := cacheDirs(newCache(append(files, "/usr/lib64/libc.so.6")))
+	if err != nil || !truncated || len(dirs) != maxLoaderDirs {
+		t.Fatalf("dirs %d, truncated %v, err %v", len(dirs), truncated, err)
+	}
+	if want := []LibcCopy{{Dir: "/usr/lib64", Flags: 0x0303}}; !slices.Equal(libc, want) {
+		t.Errorf("libc %v, want %v", libc, want)
+	}
+}
+
+// newCache writes a cache in glibc's new format listing files, as x86-64 libc6 libraries.
+func newCache(files []string) []byte {
+	head := make([]byte, newHeaderSize)
+	copy(head, newCacheMagic)
+	binary.LittleEndian.PutUint32(head[20:], uint32(len(files))) //nolint:gosec // a few hundred test entries
+	strs := newHeaderSize + len(files)*newEntrySize
+	var entries, text []byte
+	for _, f := range files {
+		e := make([]byte, newEntrySize)
+		binary.LittleEndian.PutUint32(e, 0x0303)
+		at := uint32(strs + len(text)) //nolint:gosec // a few kilobytes of test strings
+		binary.LittleEndian.PutUint32(e[4:], at)
+		binary.LittleEndian.PutUint32(e[8:], at)
+		entries = append(entries, e...)
+		text = append(append(text, f...), 0)
+	}
+	return append(append(head, entries...), text...)
 }
 
 // The cache comes from a host that may be compromised: cut or damaged, it is an error, never a
@@ -46,15 +86,15 @@ func TestLoaderCacheDamaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	for n := range len(cache) {
-		_, _, _ = cacheDirs(cache[:n])
+		_, _, _, _ = cacheDirs(cache[:n])
 	}
 	for i := 20; i < 200; i++ {
 		bad := slices.Clone(cache)
 		bad[i] ^= 0xff
-		_, _, _ = cacheDirs(bad)
+		_, _, _, _ = cacheDirs(bad)
 	}
 	old := append(append([]byte("ld.so-1.7.0\x00"), 0, 0, 0, 0), make([]byte, 0)...)
-	if _, _, err := cacheDirs(append(old, cache...)); err != nil {
+	if _, _, _, err := cacheDirs(append(old, cache...)); err != nil {
 		t.Errorf("old header before the new format: %v", err)
 	}
 }
