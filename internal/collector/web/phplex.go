@@ -751,6 +751,6 @@ func (c *codeSearch) match() {
 // anonymous class's __invoke).
 var variableCall = regexp.MustCompile(`\$[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]* ?(?:\[[^\]]*\] ?)*\(|\$\{[^}]*\} ?\(|\) ?\(|['"] ?\(|` +
 	`(?i)\b(?:array_map|array_filter|array_walk(?:_recursive)?|array_reduce|call_user_func(?:_array)?|forward_static_call(?:_array)?|usort|uasort|uksort|` +
-	`register_shutdown_function|register_tick_function|iterator_apply|ob_start|set_error_handler|set_exception_handler|spl_autoload_register|preg_replace_callback(?:_array)?) ?\(|` +
+	`register_shutdown_function|register_tick_function|header_register_callback|iterator_apply|ob_start|set_error_handler|set_exception_handler|spl_autoload_register|preg_replace_callback(?:_array)?|mb_ereg_replace_callback) ?\(|` +
 	`(?i)\bReflection(?:Function|Method)\b|-> ?(?:invoke(?:Args)?|__invoke|call|bindTo) ?\(|:: ?fromCallable ?\(|` +
 	`\bFILTER_CALLBACK\b|\bnew class\b|(?i)\barray_(?:find(?:_key)?|any|all) ?\(`)

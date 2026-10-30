@@ -5,7 +5,9 @@ import (
 	"cmp"
 	"container/heap"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -55,6 +57,8 @@ type FileChange struct {
 	SHA256 string `json:"sha256,omitempty"`
 	// pending counts the runs before this one that left the script unread for skimmers.
 	pending int
+	// draw breaks ties between candidates pending as long, past the bound on candidates.
+	draw uint64
 }
 
 // manifestWriter writes the manifest of one application's run next to the one in use.
@@ -333,11 +337,22 @@ type skimmerCandidates struct {
 	heaped    bool
 }
 
+// draw is a number the scripts written to a host cannot predict.
+func draw() uint64 {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return binary.LittleEndian.Uint64(b[:])
+}
+
+func pendingLess(a, b FileChange) bool {
+	return a.pending < b.pending || a.pending == b.pending && a.draw < b.draw
+}
+
 // byPending orders candidates as a min-heap of their runs pending.
 type byPending []FileChange
 
 func (h byPending) Len() int           { return len(h) }
-func (h byPending) Less(i, j int) bool { return h[i].pending < h[j].pending }
+func (h byPending) Less(i, j int) bool { return pendingLess(h[i], h[j]) }
 func (h byPending) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 func (h *byPending) Push(x any)        { *h = append(*h, x.(FileChange)) }
 func (h *byPending) Pop() any {
@@ -368,6 +383,7 @@ func (k *skimmerCandidates) add(c FileChange) {
 			k.generated = append(k.generated, c)
 		}
 	case len(k.others) < maxSkimmerCandidates:
+		c.draw = draw()
 		k.others = append(k.others, c)
 	default:
 		// Past the bound the candidates are kept by how long they have been pending, in a heap:
@@ -377,7 +393,10 @@ func (k *skimmerCandidates) add(c FileChange) {
 			heap.Init((*byPending)(&k.others))
 			k.heaped = true
 		}
-		if c.pending > k.others[0].pending {
+		// At the same number of runs pending a random draw decides, so that the order of the
+		// walk, which whoever writes the files can arrange, cannot keep the same scripts out run
+		// after run: those kept are a uniform sample of the ties.
+		if c.draw = draw(); pendingLess(k.others[0], c) {
 			k.others[0] = c
 			heap.Fix((*byPending)(&k.others), 0)
 		}

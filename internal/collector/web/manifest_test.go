@@ -310,6 +310,47 @@ func TestTruncatedRunsCounted(t *testing.T) {
 	}
 }
 
+// The count of runs behind starts over only after three runs in a row read every change: a clean
+// run between two that left scripts unread does not reset it, and a cut run neither adds nor
+// counts as clean.
+func TestBehindRunsStartOverAfterThreeCleanRuns(t *testing.T) {
+	c := &Collector{}
+	const app = "/var/www/shop"
+	for i, step := range []struct {
+		truncated, behind bool
+		want              int
+	}{
+		{false, true, 1}, {false, false, 1}, {false, true, 2}, {true, false, 2},
+		{false, false, 2}, {false, false, 2}, {false, false, 0}, {false, true, 1},
+	} {
+		if got := c.countBehind(app, step.truncated, step.behind); got != step.want {
+			t.Errorf("run %d: %d runs behind, want %d", i+1, got, step.want)
+		}
+	}
+	if len(c.cleanRuns) != 0 {
+		t.Errorf("clean runs kept: %v", c.cleanRuns)
+	}
+}
+
+// Past the bound, among candidates pending as long, the walk's order does not decide which are
+// kept: those met last have as much chance as those met first.
+func TestTiedCandidatesKeptAtRandom(t *testing.T) {
+	var k skimmerCandidates
+	for i := range 2 * maxSkimmerCandidates {
+		k.add(FileChange{Path: fmt.Sprintf("/var/www/shop/d%05d.js", i), Change: ChangeModified, pending: 1})
+	}
+	late := 0
+	for _, c := range k.others {
+		if c.Path >= fmt.Sprintf("/var/www/shop/d%05d.js", maxSkimmerCandidates) {
+			late++
+		}
+	}
+	// Half are expected; the bounds are far beyond any chance deviation.
+	if late < maxSkimmerCandidates/4 || late > 3*maxSkimmerCandidates/4 {
+		t.Errorf("%d of %d kept were met in the second half of the walk", late, maxSkimmerCandidates)
+	}
+}
+
 // Past the bound candidates are kept by how long they have been pending; a pending script gone
 // from the tree is reported, so the application's runs behind do not start over for it.
 func TestCandidatesByPendingAndVanished(t *testing.T) {

@@ -198,7 +198,46 @@ type Collector struct {
 	// behindRuns those that left changed scripts unread for skimmers.
 	truncatedRuns map[string]int
 	behindRuns    map[string]int
+	// cleanRuns counts the runs in a row that read every change of an application behind.
+	cleanRuns map[string]int
 }
+
+// countBehind returns how many runs left a changed script of the application unread, for any
+// reason: counted per application, so that no shuffling of files between runs starts it over. A
+// scan cut before its search read nothing to judge: it neither adds nor starts over, and the count
+// of cut scans speaks for it. The count starts over only after cleanRunsReset runs in a row read
+// every change, so that a script taken away for one run, between two that leave it unread, does
+// not reset it.
+func (c *Collector) countBehind(app string, truncated, behind bool) int {
+	if c.behindRuns == nil {
+		c.behindRuns = map[string]int{}
+		c.cleanRuns = map[string]int{}
+	}
+	switch {
+	case truncated && !behind:
+		return c.behindRuns[app]
+	case behind:
+		delete(c.cleanRuns, app)
+		if _, ok := c.behindRuns[app]; ok || len(c.behindRuns) < maxTruncatedApps {
+			c.behindRuns[app]++
+		}
+		return c.behindRuns[app]
+	}
+	n, ok := c.behindRuns[app]
+	if !ok {
+		return 0
+	}
+	if c.cleanRuns[app]++; c.cleanRuns[app] >= cleanRunsReset {
+		delete(c.behindRuns, app)
+		delete(c.cleanRuns, app)
+		return 0
+	}
+	return n
+}
+
+// cleanRunsReset is how many runs in a row must read every change for an application's count of
+// runs behind to start over.
+const cleanRunsReset = 3
 
 // maxTruncatedApps bounds the applications whose cut scans are counted.
 const maxTruncatedApps = 1024
@@ -271,24 +310,7 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 			c.truncatedRuns[s.report.Path]++
 			s.report.TruncatedRuns = c.truncatedRuns[s.report.Path]
 		}
-		// Runs that left a changed script unread, for any reason, add up until one reads every
-		// change: per application, so that no shuffling of files between runs starts it over. A
-		// scan cut before its search read nothing to judge: it neither adds nor starts over, and
-		// the count of cut scans speaks for it.
-		if c.behindRuns == nil {
-			c.behindRuns = map[string]int{}
-		}
-		switch {
-		case s.report.Truncated && !s.behind:
-			s.report.BehindRuns = c.behindRuns[s.report.Path]
-		case s.behind:
-			if _, ok := c.behindRuns[s.report.Path]; ok || len(c.behindRuns) < maxTruncatedApps {
-				c.behindRuns[s.report.Path]++
-				s.report.BehindRuns = c.behindRuns[s.report.Path]
-			}
-		default:
-			delete(c.behindRuns, s.report.Path)
-		}
+		s.report.BehindRuns = c.countBehind(s.report.Path, s.report.Truncated, s.behind)
 		res.Apps = append(res.Apps, s.report)
 		res.Issues = append(res.Issues, s.issues...)
 	}

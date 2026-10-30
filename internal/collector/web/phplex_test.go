@@ -200,6 +200,8 @@ func TestCodeInDataInterpolation(t *testing.T) {
 		"log <? filter_var(\"PATH=/w/bin\", FILTER_CALLBACK, [\"options\"=>\"put\".\"env\"]); echo `x`; ?>":                                      "backtick_exec",
 		"log <? filter_var_array([\"PATH=/w/bin\"], [\"options\"=>\"put\".\"env\", \"filter\"=>FILTER_CALLBACK]); echo `x`; ?>":                  "backtick_exec",
 		"log <? array_find([\"PATH=/w/bin\"], new class{function __invoke($v){return (\"put\".\"env\")($v);}}); echo `x`; ?>":                    "backtick_exec",
+		"log <? header_register_callback(\"put\".\"env\"); echo `x`; ?>":                                                                         "backtick_exec",
+		"log <? mb_ereg_replace_callback(\".+\", \"put\".\"env\", \"PATH=/w/bin\"); echo `x`; ?>":                                                "backtick_exec",
 		"INSERT INTO `wp_options` VALUES ('<? `x` $a ?>');":                                                                                      "",
 		"log <?php>1;$c=$_GET[\"c\"];system($c);":                                                                                                "",
 		"log <?x a=\"b\";$c=$_GET[\"c\"];system($c);":                                                                                            "",
