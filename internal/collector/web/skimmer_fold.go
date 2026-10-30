@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/base64"
+	"strconv"
 	"strings"
 )
 
@@ -20,7 +21,7 @@ const (
 // jsToken is a token of a script as the folding reads it: a string (its value decoded), a name,
 // a number, or one character of punctuation.
 type jsToken struct {
-	kind byte // 's' string, 'n' name, '0' number, 'p' punctuation
+	kind byte // 's' string, 'n' name, '0' number, 'p' punctuation, 'r' regular expression
 	text string
 }
 
@@ -45,6 +46,15 @@ func jsTokens(content []byte) []jsToken {
 				i += j + 4
 			} else {
 				i = len(content)
+			}
+		// "*/" ends a comment whose start lay in an earlier piece, never starts a pattern.
+		case c == '/' && (i == 0 || content[i-1] != '*') && regexAllowed(out):
+			if end := regexEnd(content, i); end > i {
+				out = append(out, jsToken{'r', ""})
+				i = end
+			} else {
+				out = append(out, jsToken{'p', "/"})
+				i++
 			}
 		case c == '\'' || c == '"' || c == '`':
 			if lit, next, ok := jsFoldLiteral(content, i); ok {
@@ -71,6 +81,53 @@ func jsTokens(content []byte) []jsToken {
 		}
 	}
 	return out
+}
+
+// regexAllowed reports whether a "/" after these tokens starts a regular expression rather than
+// a division: after punctuation other than a closing bracket, or after a keyword that takes an
+// expression.
+func regexAllowed(toks []jsToken) bool {
+	if len(toks) == 0 {
+		return true
+	}
+	t := toks[len(toks)-1]
+	switch t.kind {
+	case 'p':
+		return t.text != ")" && t.text != "]" && t.text != "}"
+	case 'n':
+		switch t.text {
+		case "return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await":
+			return true
+		}
+	}
+	return false
+}
+
+// regexEnd returns where the regular expression literal starting at i ends, with its flags, or
+// i when there is none on the line: a quote inside one is no string.
+func regexEnd(b []byte, i int) int {
+	inClass := false
+	for j := i + 1; j < len(b) && j-i < maxLiteral; j++ {
+		switch b[j] {
+		case '\\':
+			j++
+		case '\n', '\r':
+			return i
+		case '[':
+			inClass = true
+		case ']':
+			inClass = false
+		case '/':
+			if !inClass {
+				j++
+				for j < len(b) && (b[j] >= 'a' && b[j] <= 'z') {
+					j++
+				}
+				return j
+			}
+		}
+	}
+	return i
 }
 
 // jsFoldLiteral is jsLiteral that also takes a template literal whose substitutions are string
@@ -118,7 +175,12 @@ type folder struct {
 // foldedStrings returns every value of length 4 or more that an expression of the script's
 // string literals builds, each preceded by a space.
 func foldedStrings(content []byte) []byte {
-	f := folder{toks: jsTokens(content), constants: map[string]string{}}
+	return foldStrings(content, map[string]string{})
+}
+
+// foldStrings is foldedStrings with the constants of the pieces read before, which it adds to.
+func foldStrings(content []byte, constants map[string]string) []byte {
+	f := folder{toks: jsTokens(content), constants: constants}
 	var out []byte
 	for i := 0; i < len(f.toks) && len(out) < maxNormalised && f.steps < maxFoldSteps; {
 		// var x = ..., x = ...: the value is kept for the uses of x after it.
@@ -146,8 +208,8 @@ func foldedStrings(content []byte) []byte {
 			i++
 			continue
 		}
-		if name >= 0 && len(f.constants) < maxFoldConstants {
-			f.constants[f.toks[name].text] = v
+		if name >= 0 {
+			f.set(f.toks[name].text, v)
 		}
 		if len(v) >= 4 {
 			out = append(append(out, ' '), v...)
@@ -155,6 +217,18 @@ func foldedStrings(content []byte) []byte {
 		i = max(next, i+1)
 	}
 	return out
+}
+
+// set keeps a constant. Past the bound one already kept goes: a script cannot fill the table
+// with early names to make a later one forgotten.
+func (f *folder) set(name, v string) {
+	if _, ok := f.constants[name]; !ok && len(f.constants) >= maxFoldConstants {
+		for k := range f.constants {
+			delete(f.constants, k)
+			break
+		}
+	}
+	f.constants[name] = v
 }
 
 // expr folds a sum of terms at i.
@@ -239,6 +313,36 @@ func (f *folder) calls(v string, i, depth int) (string, int, bool) {
 				v = clipFold(v + strings.Join(parts, ""))
 			}
 			i = next
+		case "slice", "substring", "substr":
+			// .slice(a) and .slice(a, b) with literal numbers.
+			a, b, next, ok := f.numbers(i + 3)
+			if !ok {
+				return v, i, true
+			}
+			r := []rune(v)
+			from, to := clampIndex(a, len(r)), len(r)
+			if b != nil {
+				to = clampIndex(*b, len(r))
+			}
+			if f.toks[i+1].text == "substr" && b != nil {
+				to = min(len(r), from+max(*b, 0))
+			}
+			if from > to {
+				from, to = to, from
+			}
+			v, i = string(r[from:to]), next
+		case "replace", "replaceAll":
+			// .replace("a", "b") with literal strings.
+			parts, next, ok := f.list(i+3, ")", depth)
+			if !ok || len(parts) != 2 {
+				return v, i, true
+			}
+			if f.toks[i+1].text == "replace" {
+				v = strings.Replace(v, parts[0], parts[1], 1)
+			} else {
+				v = strings.ReplaceAll(v, parts[0], parts[1])
+			}
+			v, i = clipFold(v), next
 		case "split":
 			// split("").reverse().join("")
 			if i+12 < len(f.toks) && f.toks[i+3].kind == 's' && f.toks[i+3].text == "" && f.toks[i+4].text == ")" &&
@@ -277,6 +381,50 @@ func (f *folder) list(i int, end string, depth int) ([]string, int, bool) {
 		}
 	}
 	return nil, i, false
+}
+
+// numbers reads one or two literal integers, separated by a comma and closed by ")".
+func (f *folder) numbers(i int) (int, *int, int, bool) {
+	num := func(j int) (int, int, bool) {
+		neg := false
+		if j < len(f.toks) && f.toks[j].text == "-" {
+			neg, j = true, j+1
+		}
+		if j >= len(f.toks) || f.toks[j].kind != '0' {
+			return 0, j, false
+		}
+		n, err := strconv.Atoi(f.toks[j].text)
+		if err != nil || n > maxFoldValue {
+			return 0, j, false
+		}
+		if neg {
+			n = -n
+		}
+		return n, j + 1, true
+	}
+	a, j, ok := num(i)
+	if !ok || j >= len(f.toks) {
+		return 0, nil, i, false
+	}
+	if f.toks[j].text == ")" {
+		return a, nil, j + 1, true
+	}
+	if f.toks[j].text != "," {
+		return 0, nil, i, false
+	}
+	b, j, ok := num(j + 1)
+	if !ok || j >= len(f.toks) || f.toks[j].text != ")" {
+		return 0, nil, i, false
+	}
+	return a, &b, j + 1, true
+}
+
+// clampIndex turns a slice index, negative from the end, into one within n.
+func clampIndex(i, n int) int {
+	if i < 0 {
+		i += n
+	}
+	return min(max(i, 0), n)
 }
 
 func clipFold(s string) string {

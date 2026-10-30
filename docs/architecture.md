@@ -325,10 +325,13 @@ with `+` decoded together), strings turned around with `split("").reverse().join
 `String.fromCharCode` lists and runs of `\x`/`\u00` escapes are decoded first, and the script's
 expressions built of string literals only are folded by a bounded tokenizer (escapes decoded,
 comments skipped, parentheses, `+`, `.concat()`, `[..].join()`, `.split("").reverse().join("")`,
-`atob()`, template literals whose substitutions are literals, and the names a `var`, `let`,
-`const` or assignment gave such a value earlier in the file); names built at run time (from the
-page, through functions, loops, spread or aliases of functions) are past what a search without
-running the script can follow, a limit of the rule, and a file is read in 1 MB pieces with the families
+`atob()`, `.slice()` and `.replace()` with literal arguments, template literals whose
+substitutions are literals, and the names a `var`, `let`, `const` or assignment gave such a value
+earlier in the file, kept from one piece to the next, the latest past the bound; regular
+expression literals are skipped whole); names built at run time (from the page, through
+functions, loops, spread or aliases of functions), object properties (`o.a`), a pattern's
+`.source` and `String.raw` are past what a search without running the script can follow, a limit
+of the rule, and a file is read in 1 MB pieces with the families
 gathered across them, so padding cannot separate the fields from the exit. When more than 50
 scripts and templates changed at once, generated bundles (`pub/static`, `var/view_preprocessed`,
 `wp-content/cache`) and packages with more than 10 changed scripts whose version file changed too (`style.css`,
