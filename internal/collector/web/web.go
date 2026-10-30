@@ -233,7 +233,7 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 				}
 			}
 			s.scan(ctx)
-			if next := s.finishManifest(c.StateDir); next != "" {
+			if next := s.finishManifest(ctx, c.StateDir); next != "" {
 				manifests = append(manifests, next)
 			}
 		}

@@ -12,6 +12,9 @@ const (
 	maxFoldConstants = 4096
 	maxFoldValue     = 4 << 10
 	maxFoldDepth     = 8
+	// maxFoldSteps bounds the terms read in a piece, whatever its shape: past it the piece is
+	// left unfolded rather than read slowly.
+	maxFoldSteps = 4 << 20
 )
 
 // jsToken is a token of a script as the folding reads it: a string (its value decoded), a name,
@@ -109,6 +112,7 @@ func jsFoldLiteral(b []byte, i int) ([]byte, int, bool) {
 type folder struct {
 	toks      []jsToken
 	constants map[string]string
+	steps     int
 }
 
 // foldedStrings returns every value of length 4 or more that an expression of the script's
@@ -116,7 +120,7 @@ type folder struct {
 func foldedStrings(content []byte) []byte {
 	f := folder{toks: jsTokens(content), constants: map[string]string{}}
 	var out []byte
-	for i := 0; i < len(f.toks) && len(out) < maxNormalised; {
+	for i := 0; i < len(f.toks) && len(out) < maxNormalised && f.steps < maxFoldSteps; {
 		// var x = ..., x = ...: the value is kept for the uses of x after it.
 		name := -1
 		switch {
@@ -175,7 +179,8 @@ func (f *folder) expr(i, depth int) (string, int, bool) {
 // term folds a literal, a parenthesised expression, a known name or an array joined, followed
 // by the calls that keep it a string.
 func (f *folder) term(i, depth int) (string, int, bool) {
-	if i >= len(f.toks) || depth > maxFoldDepth {
+	f.steps++
+	if i >= len(f.toks) || depth > maxFoldDepth || f.steps > maxFoldSteps {
 		return "", i, false
 	}
 	var v string

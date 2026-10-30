@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -293,7 +294,7 @@ func contentHash(sum string) string {
 
 // finishManifest closes the manifest of a complete scan, names what changed since the one in
 // use, and returns the new one for Commit. A scan cut short leaves the one in use as it was.
-func (s *scanner) finishManifest(stateDir string) string {
+func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 	m := s.manifest
 	if m == nil {
 		return ""
@@ -316,7 +317,7 @@ func (s *scanner) finishManifest(stateDir string) string {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
 			s.report.Changes, s.report.ChangeCount = changes, count
-			s.inspectCandidates(candidates)
+			s.inspectCandidates(ctx, candidates)
 		}
 	}
 	return m.next

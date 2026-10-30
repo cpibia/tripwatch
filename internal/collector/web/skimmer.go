@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -243,7 +244,7 @@ func svgSignals(content []byte) []string {
 // rebuilds bundles and replaces whole packages whose admin scripts hold payment field names
 // with exits and eval: generated bundles and packages with many changed files are left out
 // then, and the files changed elsewhere, a few at a time, are still read.
-func (s *scanner) inspectCandidates(k skimmerCandidates) {
+func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) {
 	files := k.others
 	if k.count <= maxSkimmerChanges {
 		files = append(files, k.generated...)
@@ -275,8 +276,12 @@ func (s *scanner) inspectCandidates(k skimmerCandidates) {
 	if k.dropped > 0 {
 		s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers past the first %d", s.report.Path, k.dropped, maxSkimmerCandidates))
 	}
-	for _, c := range files {
-		s.inspectChanged(c)
+	for i, c := range files {
+		if s.expired(ctx) {
+			s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers: %v", s.report.Path, len(files)-i, ctx.Err()))
+			return
+		}
+		s.inspectChanged(ctx, c)
 	}
 }
 
@@ -317,7 +322,7 @@ func packageOf(p string) string {
 
 // inspectChanged reads one changed script or template for a skimmer, piece after piece when it
 // is large, gathering the families across the pieces: padding cannot push them apart.
-func (s *scanner) inspectChanged(c FileChange) {
+func (s *scanner) inspectChanged(ctx context.Context, c FileChange) {
 	name := strings.TrimPrefix(c.Path, "/")
 	info, err := fs.Stat(s.src.FS, name)
 	if err != nil || !info.Mode().IsRegular() {
@@ -345,7 +350,7 @@ func (s *scanner) inspectChanged(c FileChange) {
 		if strings.EqualFold(path.Ext(name), ".svg") && svg == nil {
 			svg = svgSignals(piece)
 		}
-		if err != nil {
+		if err != nil || s.expired(ctx) {
 			break
 		}
 		// The end of a piece is read again with the next, so a pattern cut in two is whole once.

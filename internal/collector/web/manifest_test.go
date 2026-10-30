@@ -135,7 +135,7 @@ func TestManifestFailuresAndStaleManifests(t *testing.T) {
 	m.add("var/www/shop/b.php", "x")
 	m.add("var/www/shop/a.php", "x")
 	s := &scanner{manifest: m, report: AppReport{Application: discovery.Application{Path: "/var/www/shop"}}}
-	if next := s.finishManifest(state); next != "" || len(s.issues) != 1 || !strings.Contains(s.issues[0], "manifest not written, changed files not named: files listed out of order") {
+	if next := s.finishManifest(context.Background(), state); next != "" || len(s.issues) != 1 || !strings.Contains(s.issues[0], "manifest not written, changed files not named: files listed out of order") {
 		t.Errorf("next %q, issues %v", next, s.issues)
 	}
 

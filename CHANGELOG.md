@@ -57,7 +57,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded, and the
   expressions a script builds from string literals only are folded by a bounded tokenizer:
   escapes, comments between the pieces, parentheses, `+`, `.concat()`, `[..].join()`, `atob()`,
-  template literals with literal substitutions, and constants assigned earlier in the file.
+  template literals with literal substitutions, and constants assigned earlier in the file. The
+  folding stops concatenating at its bound, starts only where a string can, reads at most a few
+  million terms a piece, and the skimmer search stops with the run's time, naming what it left.
 - A web log event takes the method of a request that sends something over the reads before it.
 - The `hooks` collector reads dpkg's file lists as streams and names the hooks a package owns.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
