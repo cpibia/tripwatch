@@ -419,8 +419,9 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 		s.issues = append(s.issues, fmt.Sprintf("%s: strings built past what the skimmer search follows: %d constants used, brackets deeper than %d: %v", c.Path, len(k.used), maxBracketDepth, k.deep))
 	}
 	sigs := append(fam.verdict(), svg...)
-	if len(sigs) > 0 {
-		s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs)
+	// A skimmer the bound on findings left out leaves its script pending, read again next run.
+	if len(sigs) > 0 && s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs) == nil {
+		return false
 	}
 	return !s.expired(ctx) && fileCtx.Err() == nil
 }

@@ -2002,7 +2002,8 @@ func vendorConfig(p string) bool {
 }
 
 // issueNotes are the shapes of the issues that do not say work was left undone: a network
-// filesystem skipped by design, why a PHP file of the uploads counts as code, and the search for
+// filesystem skipped by design, why a PHP file of the uploads counts as code, findings that
+// raise no alert left out past their own bound, and the search for
 // hidden processes of sensors before 0.1.42, which stopped at the same PID every run and now goes
 // on from there. Each is anchored at its end, which the sensor writes, so that a path an
 // attacker names cannot make an issue of work left undone pass for a note.
@@ -2011,6 +2012,7 @@ var issueNotes = []*regexp.Regexp{
 	regexp.MustCompile(`^/.*: \S+ network filesystem mounted without nosuid, not walked$`),
 	regexp.MustCompile(`^/.*: PHP in an upload directory is code: (too large to check|no <\?php at the start|unclosed string|unclosed function|(interpolated string|function head .*|word .*|call after .*|byte .*) at \d+)$`),
 	regexp.MustCompile(`^hidden process search stopped at PID \d+ of \d+$`),
+	regexp.MustCompile(`^/.*: \d+ findings that raise no alert left out past \d+$`),
 }
 
 // issueNote reports an issue that is a note rather than work left undone.

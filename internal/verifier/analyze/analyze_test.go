@@ -676,6 +676,21 @@ func TestCollectorIssuesRaiseAnAlert(t *testing.T) {
 	}
 }
 
+// The sensor keeps findings past its bound by the severity the verifier gives them: the two
+// orders must agree for every kind.
+func TestFindingRankMatchesSeverity(t *testing.T) {
+	rank := map[string]int{"critical": 3, "high": 2, "medium": 1, "": 0}
+	for _, kind := range []string{web.KindSkimmer, web.KindActiveSVG, web.KindScriptInUploads, web.KindCodeInUploads, web.KindPolyglotImage, web.KindSignature,
+		web.KindHiddenScript, web.KindHiddenInData, web.KindEncodedBlob, web.KindSuspiciousSymlink, web.KindExternalSymlink, web.KindAppInData, web.KindOverrideInData, web.KindCodeInData} {
+		for _, sigs := range [][]string{nil, {"eval"}, {"obfuscation"}, {"handler_directive"}} {
+			sev, _ := webFinding(web.Finding{Kind: kind, Signatures: sigs})
+			if got := web.FindingRank(kind, sigs); got != rank[sev] {
+				t.Errorf("%s %v: rank %d, severity %q", kind, sigs, got, sev)
+			}
+		}
+	}
+}
+
 // Notes, skipped by design or explained, stay off the alert; an issue of work left undone stays
 // one even when a path an attacker names imitates a note.
 func TestIssueNotes(t *testing.T) {
@@ -689,6 +704,8 @@ func TestIssueNotes(t *testing.T) {
 		`/var/www/x: PHP in an upload directory is code: word "a" at 1: not fully searched for code: budget`: false,
 		"/var/www/x: fuse network filesystem, not scanned/a.js: not read for skimmers, budget spent":         false,
 		"/var/www/shop: content not scanned: context deadline exceeded":                                      false,
+		"/var/www/shop: 5 findings that raise no alert left out past 200":                                    true,
+		"/var/www/shop: 1 findings that raise an alert left out past 1000, the least severe first":           false,
 	} {
 		if issueNote(issue) != note {
 			t.Errorf("%q: note %v", issue, !note)

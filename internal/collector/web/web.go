@@ -65,8 +65,11 @@ const (
 	maxInMemory       = 4 << 20
 	edgeScanSize      = 256 << 10
 	maxFindingsPerApp = 1000
-	maxReachableList  = 500
-	dirHashDepth      = 2
+	// maxQuietFindings bounds, apart, the findings that raise no alert of their own, so that a
+	// thousand harmless .htaccess or links never take the place of one that does.
+	maxQuietFindings = 200
+	maxReachableList = 500
+	dirHashDepth     = 2
 	// maxFindingHashSize bounds hashing for the file attached to a finding.
 	maxFindingHashSize = 64 << 20
 )
@@ -310,6 +313,12 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 			c.truncatedRuns[s.report.Path]++
 			s.report.TruncatedRuns = c.truncatedRuns[s.report.Path]
 		}
+		if s.dropped > 0 {
+			s.issues = append(s.issues, fmt.Sprintf("%s: %d findings that raise an alert left out past %d, the least severe first", s.report.Path, s.dropped, maxFindingsPerApp))
+		}
+		if s.droppedQuiet > 0 {
+			s.issues = append(s.issues, fmt.Sprintf("%s: %d findings that raise no alert left out past %d", s.report.Path, s.droppedQuiet, maxQuietFindings))
+		}
 		s.report.BehindRuns = c.countBehind(s.report.Path, s.report.Truncated, s.behind)
 		res.Apps = append(res.Apps, s.report)
 		res.Issues = append(res.Issues, s.issues...)
@@ -411,7 +420,14 @@ type scanner struct {
 	deployRoots []string
 	stopped     bool
 	findings    map[string]int
-	manifest    *manifestWriter
+	// quiet and alerting count the findings recorded by whether they raise an alert, dropped
+	// those the bounds left out.
+	quiet, alerting int
+	// dropped counts the findings the bounds left out, those that raise an alert and those
+	// that do not.
+	dropped, droppedQuiet int
+	byRank                [4]int
+	manifest              *manifestWriter
 }
 
 func newScanner(src collector.Source, app discovery.Application, sites []discovery.Site, apps []discovery.Application) *scanner {
@@ -614,6 +630,7 @@ func (s *scanner) listNames(ctx context.Context, dir string, depth int, verify b
 func (s *scanner) withdraw(name string) {
 	key := KindScriptInUploads + "\x00" + name
 	if i, seen := s.findings[key]; seen {
+		s.count(s.report.Findings[i], -1)
 		s.report.Findings[i].Kind = ""
 		delete(s.findings, key)
 	}
@@ -1438,26 +1455,116 @@ func (s *scanner) describe(name string, e fs.DirEntry) collector.File {
 }
 
 // add records a finding, or adds signatures to the same finding already recorded by an earlier
-// pass, and returns it; nil when the list is full.
+// pass, and returns it; nil when the bound left it out. Past the bound a finding takes the place
+// of the least severe one recorded, if it is more severe: what the walk meets first, which
+// whoever writes the files arranges, does not decide what is kept.
 func (s *scanner) add(kind, name string, e fs.DirEntry, sigs []string) *Finding {
 	key := kind + "\x00" + name
 	if i, seen := s.findings[key]; seen {
 		f := &s.report.Findings[i]
+		s.count(*f, -1)
 		for _, sig := range sigs {
 			if !slices.Contains(f.Signatures, sig) {
 				f.Signatures = append(f.Signatures, sig)
 			}
 		}
+		s.count(*f, 1)
 		return f
 	}
-	if len(s.report.Findings) >= maxFindingsPerApp {
-		s.report.Truncated = true
+	rank := FindingRank(kind, sigs)
+	slot := len(s.report.Findings)
+	switch {
+	case rank == 0 && s.quiet >= maxQuietFindings:
+		slot = -1
+	case rank > 0 && s.alerting >= maxFindingsPerApp:
+		slot = s.leastSevere(rank)
+	}
+	if slot < 0 {
+		// Only the loss of a finding that raises an alert makes the scan partial.
+		if rank == 0 {
+			s.droppedQuiet++
+		} else {
+			s.report.Truncated = true
+			s.dropped++
+		}
 		return nil
 	}
-	f := s.describe(name, e)
-	s.findings[key] = len(s.report.Findings)
-	s.report.Findings = append(s.report.Findings, Finding{Kind: kind, Signatures: sigs, Reachable: s.reachable(name), File: f})
-	return &s.report.Findings[len(s.report.Findings)-1]
+	f := Finding{Kind: kind, Signatures: sigs, Reachable: s.reachable(name), File: s.describe(name, e)}
+	if slot < len(s.report.Findings) {
+		old := s.report.Findings[slot]
+		delete(s.findings, old.Kind+"\x00"+strings.TrimPrefix(old.Path, "/"))
+		s.count(old, -1)
+		s.report.Findings[slot] = f
+		s.report.Truncated = true
+		s.dropped++
+	} else {
+		s.report.Findings = append(s.report.Findings, f)
+	}
+	s.findings[key] = slot
+	s.count(f, 1)
+	return &s.report.Findings[slot]
+}
+
+// count adds a recorded finding to the count of its kind of bound, or takes it away.
+func (s *scanner) count(f Finding, n int) {
+	if f.Kind == "" {
+		return
+	}
+	r := FindingRank(f.Kind, f.Signatures)
+	s.byRank[r] += n
+	if r == 0 {
+		s.quiet += n
+	} else {
+		s.alerting += n
+	}
+}
+
+// leastSevere returns the slot of a recorded finding less severe than rank, the least severe
+// one, or -1 when none is.
+func (s *scanner) leastSevere(rank int) int {
+	least := 1
+	for least < rank && s.byRank[least] == 0 {
+		least++
+	}
+	if least == rank {
+		return -1
+	}
+	for i, f := range s.report.Findings {
+		if f.Kind != "" && FindingRank(f.Kind, f.Signatures) == least {
+			return i
+		}
+	}
+	return -1
+}
+
+// findingRank orders finding kinds by the alert the verifier raises for them: 3 critical, 2
+// high, 1 medium, 0 none (a link out of the application, an encoded blob, an .htaccess with no
+// handler), which only give context to the others.
+func FindingRank(kind string, sigs []string) int {
+	switch kind {
+	case KindSkimmer, KindSignature, KindCodeInUploads, KindPolyglotImage, KindCodeInData:
+		return 3
+	case KindScriptInUploads:
+		if len(sigs) > 0 {
+			return 3
+		}
+		return 2
+	case KindActiveSVG:
+		if slices.Contains(sigs, "obfuscation") {
+			return 3
+		}
+		return 2
+	case KindOverrideInData:
+		if slices.Contains(sigs, "handler_directive") {
+			return 3
+		}
+		return 0
+	case KindHiddenScript, KindSuspiciousSymlink, KindAppInData:
+		return 2
+	case KindHiddenInData:
+		return 1
+	}
+	return 0
 }
 
 // reachable reports whether some site serving this application would execute name.

