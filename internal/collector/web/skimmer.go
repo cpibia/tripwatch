@@ -177,7 +177,7 @@ func jsEscape(b []byte) ([]byte, int) {
 	case b[0] == '\r' && len(b) >= 2 && b[1] == '\n':
 		// A backslash at the end of a line continues the literal on the next.
 		return nil, 2
-	case b[0] == '\n' || b[0] == '\r':
+	case b[0] == '\n' || b[0] == '\r' || b[0] == lineSeparator:
 		return nil, 1
 	case b[0] >= '0' && b[0] <= '7':
 		n := 1

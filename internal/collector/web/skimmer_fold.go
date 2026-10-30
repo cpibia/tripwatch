@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Bounds of the folding of a script's string expressions.
@@ -60,10 +62,12 @@ const maxContexts = 4096
 // could not tell, regexAfterClose picks one reading, the folding reads the script both ways, and
 // ambiguous says such a "/" was met. The stack starts as from, and carry is what it was at the
 // first token at or past carryAt, for the piece that goes on from there.
-func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int) (out []jsToken, scanned int, deep, ambiguous bool, carry *brackets) {
+// A module reads "<!--" and "-->" as operators, a script as comments: module picks one.
+func jsTokens(content []byte, regexAfterClose, module bool, from *brackets, carryAt int) (out []jsToken, scanned int, deep, ambiguous bool, carry *brackets) {
 	depth := 0
 	b := from.clone()
-	newline := false
+	// A file starts a line; a piece goes on from where the one before left the line.
+	newline := from == nil || from.lineStart
 	i := 0
 	// The piece starts inside what the one before left open there.
 	inside := b.inside
@@ -104,21 +108,18 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 		}
 		if carry == nil && i >= carryAt {
 			carry = b.clone()
+			carry.lineStart = newline || len(out) == 0 && from == nil
 		}
 		at, start := len(out), i
 		switch {
 		case c == ' ' || c == '\t':
 			i++
-		case c == '\n' || c == '\r':
+		case c == '\n' || c == '\r' || c == lineSeparator:
 			newline = true
 			i++
-		case c == 0xe2 && terminatorAt(content, i) == 3:
-			// U+2028 and U+2029 end a line as "\n" does.
-			newline = true
-			i += 3
 		case c == '/' && i+1 < len(content) && content[i+1] == '/',
-			c == '<' && bytes.HasPrefix(content[i:], []byte("<!--")),
-			c == '-' && bytes.HasPrefix(content[i:], []byte("-->")) && (newline || len(out) == 0 && from == nil),
+			!module && c == '<' && bytes.HasPrefix(content[i:], []byte("<!--")),
+			!module && c == '-' && bytes.HasPrefix(content[i:], []byte("-->")) && newline,
 			c == '#' && i == 0 && from == nil && bytes.HasPrefix(content, []byte("#!")):
 			// A line comment, also in the forms a browser's script reads as one: "<!--"
 			// anywhere, "-->" first on its line, and the "#!" line that starts a file.
@@ -297,8 +298,8 @@ func regexRest(b []byte, i int) (int, bool) {
 	return end, !closed && end == len(b)
 }
 
-// lineEnd returns where the line that i is on ends, at its terminator ("\n", "\r", U+2028 or
-// U+2029), and true; the end of b and false when it has none.
+// lineEnd returns where the line that i is on ends, at its terminator, and true; the end of b and
+// false when it has none.
 func lineEnd(b []byte, i int) (int, bool) {
 	for ; i < len(b); i++ {
 		if terminatorAt(b, i) > 0 {
@@ -310,13 +311,60 @@ func lineEnd(b []byte, i int) (int, bool) {
 
 // terminatorAt returns the length of the line terminator at i, 0 when there is none.
 func terminatorAt(b []byte, i int) int {
-	switch {
-	case b[i] == '\n' || b[i] == '\r':
+	if b[i] == '\n' || b[i] == '\r' || b[i] == lineSeparator {
 		return 1
-	case b[i] == 0xe2 && i+2 < len(b) && b[i+1] == 0x80 && (b[i+2] == 0xa8 || b[i+2] == 0xa9):
-		return 3
 	}
 	return 0
+}
+
+// lineSeparator stands for U+2028 and U+2029 once a piece is normalized: they end a line in code
+// but are text inside a string, unlike "\n".
+const lineSeparator = 0x1e
+
+// jsNormalize maps JavaScript's white space (tab, vertical tab, form feed, no-break space, the byte
+// order mark and every space separator of Unicode) to a space, its line terminators to "\n" (a
+// carriage return and line feed to one), and U+2028 and U+2029 to lineSeparator, in one pass, so
+// that the tokenizer needs to know only those; at is an offset of b, returned as its place in the
+// result. Text of strings changes with it, which no search here depends on.
+func jsNormalize(b []byte, at int) ([]byte, int) {
+	out := make([]byte, 0, len(b))
+	mapped := -1
+	for i := 0; i < len(b); {
+		if mapped < 0 && i >= at {
+			mapped = len(out)
+		}
+		c := b[i]
+		if c < utf8.RuneSelf {
+			switch c {
+			case '\t', '\v', '\f', lineSeparator:
+				c = ' '
+			case '\r':
+				c = '\n'
+				if i+1 < len(b) && b[i+1] == '\n' {
+					i++
+				}
+			}
+			out = append(out, c)
+			i++
+			continue
+		}
+		r, n := utf8.DecodeRune(b[i:])
+		switch {
+		case r == '\ufeff' && i == 0:
+			// A byte order mark before a file's first line is no part of it.
+		case r == '\u2028' || r == '\u2029':
+			out = append(out, lineSeparator)
+		case r == '\u00a0' || r == '\ufeff' || unicode.Is(unicode.Zs, r):
+			out = append(out, ' ')
+		default:
+			out = append(out, b[i:i+n]...)
+		}
+		i += n
+	}
+	if mapped < 0 {
+		mapped = len(out)
+	}
+	return out, mapped
 }
 
 // templateToken returns the token that stands for a template's text up to a substitution, which
@@ -338,6 +386,8 @@ type brackets struct {
 	// inside says the next piece starts inside a literal or a comment: '`' a template's text,
 	// a quote a string, '*' a block comment, '\n' a line comment or a pattern, 0 none.
 	inside byte
+	// lineStart says the next piece starts a line: no token before it on its line.
+	lineStart bool
 }
 
 type pendingBody struct {
@@ -349,7 +399,7 @@ func (b *brackets) clone() *brackets {
 	if b == nil {
 		return &brackets{}
 	}
-	return &brackets{stack: slices.Clone(b.stack), overflow: b.overflow, pending: slices.Clone(b.pending), inside: b.inside}
+	return &brackets{stack: slices.Clone(b.stack), overflow: b.overflow, pending: slices.Clone(b.pending), inside: b.inside, lineStart: b.lineStart}
 }
 
 func (b *brackets) depth() int { return len(b.stack) + b.overflow }
@@ -760,13 +810,20 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 	if carryAt <= 0 {
 		carryAt = len(content)
 	}
+	content, carryAt = jsNormalize(content, carryAt)
 	from := constants.brackets
-	pattern, scanned, deep, ambiguous, carry := jsTokens(content, true, from, carryAt)
+	pattern, scanned, deep, ambiguous, carry := jsTokens(content, true, false, from, carryAt)
 	constants.brackets = carry
 	lastName := map[string]int{}
 	readings := []tokenReading{{toks: pattern, scanned: scanned, deep: deep}}
+	// Whether the file is a script or a module is not in its text: where it decides what
+	// "<!--" and "-->" are, the piece is read as a module too.
+	if bytes.Contains(content, []byte("<!--")) || bytes.Contains(content, []byte("-->")) {
+		toks, scanned, deep, _, _ := jsTokens(content, true, true, from, len(content))
+		readings = append(readings, tokenReading{toks: toks, scanned: scanned, deep: deep})
+	}
 	if ambiguous {
-		division, scanned, deep, _, _ := jsTokens(content, false, from, len(content))
+		division, scanned, deep, _, _ := jsTokens(content, false, false, from, len(content))
 		readings = append(readings, tokenReading{toks: division, scanned: scanned, deep: deep})
 		for start := 0; start < len(content); {
 			end := bytes.IndexByte(content[start:], ';')
@@ -776,7 +833,7 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 				end += start
 			}
 			for _, regexAfterClose := range []bool{true, false} {
-				toks, scanned, deep, _, _ := jsTokens(content[start:end], regexAfterClose, &brackets{}, end-start)
+				toks, scanned, deep, _, _ := jsTokens(content[start:end], regexAfterClose, false, &brackets{}, end-start)
 				readings = append(readings, tokenReading{toks: toks, scanned: scanned, deep: deep, base: start})
 			}
 			start = end + 1

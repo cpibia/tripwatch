@@ -142,9 +142,13 @@ What changes for an operator, in short; the details follow by component.
   its text passed over and each substitution read as code: its closing backtick no longer opens a
   template that hid the next 4 KB. Strings, templates and patterns longer than the 4 KB the
   folding keeps are passed over to their real end, never read as code from the middle; the
-  comments a browser reads in a script (`<!--`, `-->` first on its line, a first line `#!`) are
-  comments, and U+2028, U+2029 and a lone carriage return end a line as a line feed does. The
-  clean corpus reads faster (71 s, was 83).
+  comments a browser reads in a script (`<!--`, `-->` first on its line, a first line `#!`,
+  after a byte order mark too) are comments, and read as operators too, as a module reads them.
+  A pass before the tokenizer maps every white space of JavaScript (Unicode's space separators,
+  the no-break space, the byte order mark, vertical tab, form feed) to a space and every line
+  terminator to one, U+2028 and U+2029 staying text inside a string, where a backslash before
+  them continues the line. Whether a piece starts a line goes on from the piece before. The
+  clean corpus reads faster (74 s, was 83).
 - An application's findings are bounded by the alert they raise: those that raise none (a link
   out of the application, an `.htaccess` with no handler, an encoded blob) have a bound of 200
   of their own, and past the bound of 1,000 a finding takes the place of a less severe one. A

