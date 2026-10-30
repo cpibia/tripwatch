@@ -69,6 +69,8 @@ BEGIN {
     for (t = 1; t <= ntools; t++) { control[t] = $(3 + t); cost_s[t] = $(6 + 2 * t); cost_m[t] = $(7 + 2 * t) }
     next
   }
+  # Routine changes are no attacks: they are counted apart, in the noise table.
+  if (cat == "noise") next
   n++; catcount[cat]++
   row[n] = "| " $3 " |"
   rowcat[n] = cat

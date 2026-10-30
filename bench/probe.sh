@@ -21,8 +21,10 @@ run_tool() {
   case $tool in
     tripwatch)
       # The state kept from the baseline, as on a server: log positions and code manifests.
-      tripwatch-sensor -app-db=false -state-dir=/bench/state >"$out" 2>/dev/null
-      if [ -f "$EVENTS" ]; then judge <"$EVENTS" >>"$out"; fi
+      tripwatch-sensor -app-db=false -state-dir=/bench/state >"$out.snap" 2>/dev/null
+      : >"$out.events"
+      if [ -f "$EVENTS" ]; then judge <"$EVENTS" >"$out.events"; fi
+      cat "$out.snap" "$out.events" >"$out"
       ;;
     aide) aide --config=/etc/aide/aide.conf --check >"$out" 2>/dev/null ;;
     rkhunter)
@@ -66,6 +68,63 @@ mention() {
   else
     grep -F -- "$indicator" "$file" | sort
   fi
+}
+
+# alerts lists the alerts the verifier raises after a scenario: on the snapshot, compared with
+# the baseline's, and on what the watchers saw while it ran.
+alerts() {
+  judge -snapshots "$BEFORE/tripwatch.out.snap" "$AFTER/tripwatch.out.snap" 2>/dev/null
+  cat "$AFTER/tripwatch.out.events"
+}
+
+# named says whether a tool's output names the technique of the attack, beyond reporting its
+# artifact added, changed or removed. For tripwatch: an alert of high or critical severity that
+# mentions the artifact. For the others: a new line that mentions the artifact and carries the
+# tool's own judgement of it, a warning of rkhunter; AIDE and debsums only report changes.
+named() {
+  local tool=$1 indicators=$2 state indicator
+  read -r state _ <"$AFTER/$tool.stat"
+  if [ "$state" = blocked ]; then echo blocked; return; fi
+  while IFS= read -r indicator; do
+    [ -n "$indicator" ] && [ "$(named_one "$tool" "$indicator")" = yes ] && { echo yes; return; }
+  done <<<"$indicators"
+  echo no
+}
+
+named_one() {
+  local tool=$1 indicator=$2
+  case $tool in
+    tripwatch)
+      if alerts | jq -c --arg i "$indicator" 'select((.severity == "high" or .severity == "critical") and ([.title, .detail, .fingerprint] | map(. // "") | any(contains($i))))' 2>/dev/null | grep -q .; then
+        echo yes
+      else
+        echo no
+      fi
+      ;;
+    rkhunter)
+      if comm -13 <(sort "$BEFORE/$tool.out") <(sort "$AFTER/$tool.out") | grep -F -- "$indicator" | grep -q 'Warning'; then
+        echo yes
+      else
+        echo no
+      fi
+      ;;
+    *) echo no ;;
+  esac
+}
+
+# noise counts what a tool reports after a routine change beyond what it reported on the clean
+# system: tripwatch's alerts, AIDE's added, removed and changed entries, rkhunter's new warnings,
+# debsums' new failed files.
+noise() {
+  local tool=$1 state
+  read -r state _ <"$AFTER/$tool.stat"
+  if [ "$state" = blocked ]; then echo blocked; return; fi
+  case $tool in
+    tripwatch) alerts | grep -c '"severity"' ;;
+    aide) sed -nE 's/^[[:space:]]*(Added|Removed|Changed) entries:[[:space:]]*([0-9]+).*/\2/p' "$AFTER/$tool.out" | awk '{n += $1} END {print n + 0}' ;;
+    rkhunter) comm -13 <(grep 'Warning' "$BEFORE/$tool.out" | sort) <(grep 'Warning' "$AFTER/$tool.out" | sort) | wc -l | tr -d ' ' ;;
+    debsums) comm -13 <(sort "$BEFORE/$tool.out") <(sort "$AFTER/$tool.out") | wc -l | tr -d ' ' ;;
+  esac
 }
 
 verdict() {
@@ -112,11 +171,21 @@ run() {
   line=$(basename "$scenario" .sh)
   for tool in "${TOOLS[@]}"; do
     measure "$tool" "$AFTER"
+  done
+  for tool in "${TOOLS[@]}"; do
     line+=$'\t'"$(verdict "$tool" "$indicator")"
   done
   for tool in "${TOOLS[@]}"; do
     read -r _ seconds rss <"$AFTER/$tool.stat"
     line+=$'\t'"$seconds"$'\t'"$rss"
+  done
+  # Then whether the tool named the attack, and what it reported in all: on the control and on
+  # routine changes, less is better.
+  for tool in "${TOOLS[@]}"; do
+    line+=$'\t'"$(named "$tool" "$indicator")"
+  done
+  for tool in "${TOOLS[@]}"; do
+    line+=$'\t'"$(noise "$tool")"
   done
   echo "$line"
 }
