@@ -4,6 +4,7 @@ package analyze
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -169,6 +170,9 @@ func Decode(payload []byte) (State, error) {
 			if st.Issues == nil {
 				st.Issues, st.IssueCounts = map[string][]string{}, map[string]int{}
 			}
+			// The most serious work left undone first, so that a flood of minor issues cannot push
+			// a skimmer search left unfinished out of the twenty kept.
+			slices.SortStableFunc(withIssues.Issues, func(a, b string) int { return cmp.Compare(issueOrder(a), issueOrder(b)) })
 			st.Issues[res.name] = withIssues.Issues[:min(len(withIssues.Issues), maxCollectorIssues)]
 			st.IssueCounts[res.name] = len(withIssues.Issues)
 		}

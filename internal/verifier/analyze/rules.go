@@ -2015,6 +2015,28 @@ var issueNotes = []*regexp.Regexp{
 	regexp.MustCompile(`^/.*: \d+ findings that raise no alert left out past \d+$`),
 }
 
+// skimmerIssues are the shapes of the issues that say the search for skimmers, or a finding that
+// raises an alert, was left unfinished: the most serious work left undone. Anchored at the end
+// the sensor writes, like issueNotes.
+var skimmerIssues = []*regexp.Regexp{
+	regexp.MustCompile(`^/.*: \d+ changed scripts not read for skimmers in this run, kept pending for the next$`),
+	regexp.MustCompile(`^/.*: not read for skimmers, budget of \d+ bytes a run spent; read at the next run$`),
+	regexp.MustCompile(`^/.*: strings built past what the skimmer search follows: \d+ constants used, brackets deeper than \d+: (true|false)$`),
+	regexp.MustCompile(`^/.*: \d+ findings that raise an alert left out past \d+, the least severe first$`),
+}
+
+// issueOrder ranks an issue: the skimmer search left unfinished first, then other work left
+// undone, notes last.
+func issueOrder(issue string) int {
+	switch {
+	case slices.ContainsFunc(skimmerIssues, func(re *regexp.Regexp) bool { return re.MatchString(issue) }):
+		return 0
+	case issueNote(issue):
+		return 2
+	}
+	return 1
+}
+
 // issueNote reports an issue that is a note rather than work left undone.
 func issueNote(issue string) bool {
 	return slices.ContainsFunc(issueNotes, func(re *regexp.Regexp) bool { return re.MatchString(issue) })

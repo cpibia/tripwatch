@@ -676,6 +676,27 @@ func TestCollectorIssuesRaiseAnAlert(t *testing.T) {
 	}
 }
 
+// The skimmer search left unfinished is kept among the twenty issues however many minor ones come
+// before it, and notes go last.
+func TestIssuesOrderedBySeverity(t *testing.T) {
+	issues := []string{"/mnt/dav: fuse network filesystem, not scanned"}
+	for i := range 40 {
+		issues = append(issues, fmt.Sprintf("/var/www/shop/f%d.bin not hashed: 99 bytes, over 9", i))
+	}
+	issues = append(issues, "/var/www/shop: 3 changed scripts not read for skimmers in this run, kept pending for the next")
+	raw, err := json.Marshal(map[string]any{"snapshot": map[string]any{"results": map[string]any{"web": map[string]any{"issues": issues}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := Decode(gz(t, string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Issues["web"]; len(got) != maxCollectorIssues || !strings.Contains(got[0], "not read for skimmers") || slices.Contains(got, issues[0]) {
+		t.Errorf("issues kept: %q", got)
+	}
+}
+
 // The sensor keeps findings past its bound by the severity the verifier gives them: the two
 // orders must agree for every kind.
 func TestFindingRankMatchesSeverity(t *testing.T) {

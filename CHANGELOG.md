@@ -130,7 +130,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   filesystem skipped by design, why a PHP file of the uploads counts as code, and the hidden
   process search of older sensors, which stopped at the same PID every run. On the fleet today
   every issue is one of these, so no host gets the alert. The host page lists every collector's
-  issues in a panel, work left undone apart from the notes.
+  issues in a panel, work left undone apart from the notes. The twenty issues kept of a collector are the most
+  serious: the skimmer search left unfinished first, then other work left undone, notes last, so
+  a flood of minor issues cannot push it out.
 - The names dpkg, rpm and apk stage a file under are skipped while a package manager runs only
   outside the scratch directories and for no other user's file, and a package manager lowers
   only root's files in the scratch directories: the web server's user, who can read when apt
