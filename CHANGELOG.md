@@ -137,10 +137,14 @@ What changes for an operator, in short; the details follow by component.
   label's "{", a line break after `return`, `of`, `await` or `yield`, which can be names) the
   "/" is still read both ways, the whole script and each statement again. A function
   expression's body holds statements, so a label inside one is a label. The stack goes on from
-  one 1 MB piece to the next, with the template, string or comment left open where the next
-  piece starts. A template literal with a real substitution is read as JavaScript reads it, its
-  text passed over (at most 4 KB) and each substitution read as code: its closing backtick no
-  longer opens a template that hid the next 4 KB. The clean corpus reads faster (71 s, was 83).
+  one 1 MB piece to the next, with the template, string, pattern or comment left open where the
+  next piece starts. A template literal with a real substitution is read as JavaScript reads it,
+  its text passed over and each substitution read as code: its closing backtick no longer opens a
+  template that hid the next 4 KB. Strings, templates and patterns longer than the 4 KB the
+  folding keeps are passed over to their real end, never read as code from the middle; the
+  comments a browser reads in a script (`<!--`, `-->` first on its line, a first line `#!`) are
+  comments, and U+2028, U+2029 and a lone carriage return end a line as a line feed does. The
+  clean corpus reads faster (71 s, was 83).
 - An application's findings are bounded by the alert they raise: those that raise none (a link
   out of the application, an `.htaccess` with no handler, an encoded blob) have a bound of 200
   of their own, and past the bound of 1,000 a finding takes the place of a less severe one. A

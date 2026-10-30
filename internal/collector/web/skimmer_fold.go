@@ -68,28 +68,35 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 	// The piece starts inside what the one before left open there.
 	inside := b.inside
 	b.inside = 0
+	open := false
 	switch inside {
 	case '`':
-		next, sub := templateText(content, 0)
-		i = next
+		var sub bool
+		i, sub, open = templateText(content, 0)
 		out = append(out, b.templateToken(sub))
 	case '\'', '"':
-		i = stringRest(content, inside)
+		i, _, open = stringEnd(content, 0, inside)
 		out = append(out, jsToken{kind: 's'})
+	case 'r':
+		i, open = regexRest(content, 0)
+		out = append(out, jsToken{kind: 'r'})
 	case '*':
 		if j := bytes.Index(content, []byte("*/")); j >= 0 {
 			i = j + 2
 		} else {
-			i = len(content)
+			i, open = len(content), true
 		}
 	case '\n':
-		if j := bytes.IndexByte(content, '\n'); j >= 0 {
-			i = j + 1
-		} else {
-			i = len(content)
-		}
+		i, _ = lineEnd(content, 0)
+		open = i == len(content)
+	}
+	if open && carryAt < len(content) {
+		// Still open at the end of this piece too.
+		carry = b.clone()
+		carry.inside = inside
 	}
 	scanned += i
+	regexFailedUntil := 0
 	for i < len(content) && len(out) < maxFoldTokens {
 		c := content[i]
 		if c == '/' && len(out) > 0 && uncertainBefore(out) {
@@ -100,36 +107,46 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 		}
 		at, start := len(out), i
 		switch {
-		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
-			newline = newline || c == '\n'
+		case c == ' ' || c == '\t':
 			i++
-		case c == '/' && i+1 < len(content) && content[i+1] == '/':
+		case c == '\n' || c == '\r':
 			newline = true
-			if j := bytes.IndexByte(content[i:], '\n'); j >= 0 {
-				i += j + 1
-			} else {
-				i = len(content)
-			}
+			i++
+		case c == 0xe2 && terminatorAt(content, i) == 3:
+			// U+2028 and U+2029 end a line as "\n" does.
+			newline = true
+			i += 3
+		case c == '/' && i+1 < len(content) && content[i+1] == '/',
+			c == '<' && bytes.HasPrefix(content[i:], []byte("<!--")),
+			c == '-' && bytes.HasPrefix(content[i:], []byte("-->")) && (newline || len(out) == 0 && from == nil),
+			c == '#' && i == 0 && from == nil && bytes.HasPrefix(content, []byte("#!")):
+			// A line comment, also in the forms a browser's script reads as one: "<!--"
+			// anywhere, "-->" first on its line, and the "#!" line that starts a file.
+			i, _ = lineEnd(content, i)
 		case c == '/' && i+1 < len(content) && content[i+1] == '*':
 			j := bytes.Index(content[i+2:], []byte("*/"))
 			if j < 0 {
 				j = len(content) - i - 2
 			}
-			newline = newline || bytes.IndexByte(content[i+2:i+2+j], '\n') >= 0
+			if _, ok := lineEnd(content[i+2:i+2+j], 0); ok {
+				newline = true
+			}
 			i = min(i+j+4, len(content))
 		// "*/" ends a comment whose start lay in an earlier piece, never starts a pattern.
-		case c == '/' && (i == 0 || content[i-1] != '*') && regexAllowed(out, regexAfterClose):
+		case c == '/' && (i == 0 || content[i-1] != '*') && i >= regexFailedUntil && regexAllowed(out, regexAfterClose):
 			end, closed := regexEnd(content, i)
 			scanned += max(end-i, 1)
 			switch {
-			case closed:
+			case closed || end == len(content):
+				// Past the end of the piece the pattern goes on in the next.
 				out = append(out, jsToken{kind: 'r', text: ""})
 				i = end
 			default:
-				// Not closed on its line within the window: as for an open literal, the window
-				// it read is passed over rather than read again from the next byte.
+				// Not closed on its line: no "/" before the line's end starts a pattern any more,
+				// so the line is scanned once, and read on as code from the next byte.
+				regexFailedUntil = end
 				out = append(out, jsToken{kind: 'p', text: "/"})
-				i = max(i+1, end)
+				i++
 			}
 		case c == '`':
 			if lit, next, ok := jsFoldLiteral(content, i); ok {
@@ -138,7 +155,7 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 				i = next
 				break
 			}
-			next, sub := templateText(content, i+1)
+			next, sub, _ := templateText(content, i+1)
 			scanned += max(next-i, 1)
 			if carry == nil && i+1 <= carryAt && carryAt < next {
 				carry = b.clone()
@@ -152,15 +169,22 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 			}
 			out = append(out, b.templateToken(sub))
 		case c == '\'' || c == '"':
-			lit, next, ok := jsFoldLiteral(content, i)
-			scanned += max(next-i, 1)
-			if ok {
+			if lit, next, ok := jsFoldLiteral(content, i); ok {
+				scanned += max(next-i, 1)
 				out = append(out, jsToken{kind: 's', text: string(lit)})
 				i = next
+				break
+			}
+			// Longer than what is kept, or open at the end of its line: never read as code. The
+			// rest of a long one is passed over to its end, its text not kept.
+			next, closed, open := stringEnd(content, i+1, c)
+			scanned += max(next-i, 1)
+			if closed || open {
+				out = append(out, jsToken{kind: 's'})
 			} else {
 				out = append(out, jsToken{kind: 'p', text: string(c)})
-				i = max(i+1, next)
 			}
+			i = max(i+1, next)
 		case identByte(c) || c == '$':
 			j := i
 			for j < len(content) && (identByte(content[j]) || content[j] == '$') {
@@ -193,7 +217,7 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 			i++
 			if t.closed == ctxTemplate {
 				// The substitution is over: the template's text goes on.
-				next, sub := templateText(content, i)
+				next, sub, _ := templateText(content, i)
 				scanned += max(next-i, 1)
 				if carry == nil && i <= carryAt && carryAt < next {
 					carry = b.clone()
@@ -215,7 +239,9 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 				carry.inside = c
 			case c == '/' && content[start+1] == '*':
 				carry.inside = '*'
-			case c == '/':
+			case c == '/' && len(out) > at && out[at].kind == 'r':
+				carry.inside = 'r'
+			default:
 				carry.inside = '\n'
 			}
 		}
@@ -231,35 +257,66 @@ func jsTokens(content []byte, regexAfterClose bool, from *brackets, carryAt int)
 }
 
 // templateText passes over the text of a template literal from i: it returns where the template
-// ends, past its closing backtick, or where a substitution starts, past its "${", and true. Past
-// maxLiteral bytes the text is taken as ended: an unclosed backtick cannot hide the piece.
-func templateText(b []byte, i int) (int, bool) {
-	for limit := min(len(b), i+maxLiteral); i < limit; i++ {
+// ends, past its closing backtick, or where a substitution starts, past its "${", and true; open
+// when the piece ends first. Its text is never read as code, however long.
+func templateText(b []byte, i int) (next int, sub, open bool) {
+	for ; i < len(b); i++ {
 		switch {
 		case b[i] == '\\':
 			i++
 		case b[i] == '`':
-			return i + 1, false
+			return i + 1, false, false
 		case b[i] == '$' && i+1 < len(b) && b[i+1] == '{':
-			return i + 2, true
+			return i + 2, true, false
 		}
 	}
-	return min(len(b), i), false
+	return len(b), false, true
 }
 
-// stringRest passes over the rest of a string whose quote is open at the start of b.
-func stringRest(b []byte, quote byte) int {
-	for i := 0; i < len(b) && i < maxLiteral; i++ {
+// stringEnd passes over a string from i, its quote open before: it returns where the string ends,
+// past its quote, and closed, or where its line ends, which leaves it unclosed; open when the
+// piece ends first.
+func stringEnd(b []byte, i int, quote byte) (next int, closed, open bool) {
+	for ; i < len(b); i++ {
 		switch b[i] {
 		case '\\':
 			i++
 		case quote:
-			return i + 1
-		case '\n':
-			return i
+			return i + 1, true, false
+		case '\n', '\r':
+			return i, false, false
 		}
 	}
-	return min(len(b), maxLiteral)
+	return len(b), false, true
+}
+
+// regexRest passes over the rest of a pattern open at i, to its "/" and flags, or to its line's
+// end; open when the piece ends first.
+func regexRest(b []byte, i int) (int, bool) {
+	end, closed := regexEnd(b, i-1)
+	return end, !closed && end == len(b)
+}
+
+// lineEnd returns where the line that i is on ends, at its terminator ("\n", "\r", U+2028 or
+// U+2029), and true; the end of b and false when it has none.
+func lineEnd(b []byte, i int) (int, bool) {
+	for ; i < len(b); i++ {
+		if terminatorAt(b, i) > 0 {
+			return i, true
+		}
+	}
+	return len(b), false
+}
+
+// terminatorAt returns the length of the line terminator at i, 0 when there is none.
+func terminatorAt(b []byte, i int) int {
+	switch {
+	case b[i] == '\n' || b[i] == '\r':
+		return 1
+	case b[i] == 0xe2 && i+2 < len(b) && b[i+1] == 0x80 && (b[i+2] == 0xa8 || b[i+2] == 0xa9):
+		return 3
+	}
+	return 0
 }
 
 // templateToken returns the token that stands for a template's text up to a substitution, which
@@ -546,16 +603,17 @@ func regexAllowed(toks []jsToken, regexAfterClose bool) bool {
 const maxBracketDepth = 64
 
 // regexEnd returns where the regular expression literal starting at i ends, with its flags, and
-// true; or false with i when the line ends first, or the end of the window read when the window
-// ends first: a quote inside a pattern is no string.
+// true; or false with where its line ends, or the end of b, when either comes first: a quote
+// inside a pattern is no string.
 func regexEnd(b []byte, i int) (int, bool) {
 	inClass := false
-	for j := i + 1; j < len(b) && j-i < maxLiteral; j++ {
+	for j := i + 1; j < len(b); j++ {
+		if terminatorAt(b, j) > 0 {
+			return j, false
+		}
 		switch b[j] {
 		case '\\':
 			j++
-		case '\n', '\r':
-			return i, false
 		case '[':
 			inClass = true
 		case ']':
@@ -570,7 +628,7 @@ func regexEnd(b []byte, i int) (int, bool) {
 			}
 		}
 	}
-	return min(i+maxLiteral, len(b)), false
+	return len(b), false
 }
 
 // jsFoldLiteral is jsLiteral that also takes a template literal whose substitutions are string
@@ -718,7 +776,7 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 				end += start
 			}
 			for _, regexAfterClose := range []bool{true, false} {
-				toks, scanned, deep, _, _ := jsTokens(content[start:end], regexAfterClose, nil, end-start)
+				toks, scanned, deep, _, _ := jsTokens(content[start:end], regexAfterClose, &brackets{}, end-start)
 				readings = append(readings, tokenReading{toks: toks, scanned: scanned, deep: deep, base: start})
 			}
 			start = end + 1
