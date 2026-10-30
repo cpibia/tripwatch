@@ -1,6 +1,6 @@
 # Detection benchmark
 
-Commit `9f49cfa`, 2026-10-30, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+Commit `addcc66`, 2026-10-30, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
 with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
 ## Method
@@ -33,74 +33,85 @@ The control scenario, with no attack, produces no differences for any tool.
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| SSH key added to root | ✅ | ✅ | ❌ | ❌ |
-| New account with UID 0 | ✅ | ✅ | ✅ | ❌ |
-| NOPASSWD sudo rule for www-data | ✅ | ✅ | ❌ | ❌ |
-| Job in /etc/cron.d | ✅ | ✅ | ❌ | ❌ |
-| Crontab of the web user | ✅ | ✅ | ❌ | ❌ |
-| Enabled systemd service | ✅ | ✅ | ❌ | ❌ |
-| systemd generator (runs as root at every boot) | ✅ | ✅ | ❌ | ❌ |
-| Library injected through /etc/ld.so.preload | ✅ | ✅ | ✅ | ❌ |
-| Login script in /etc/profile.d | ✅ | ✅ | ❌ | ❌ |
-| Line added to root's .bashrc | ✅ | ✅ | ❌ | ❌ |
-| Command planted in the SSH login script sshrc | ✅ | ✅ | ❌ | ❌ |
-| Root hook run when a network interface comes up | ✅ | ✅ | ❌ | ❌ |
-| Backdoor sourced from a bash completion fragment | ✅ | ✅ | ❌ | ❌ |
+| SSH key added to root | ✅ named | ✅ | ❌ | ❌ |
+| New account with UID 0 | ✅ named | ✅ | ✅ named | ❌ |
+| NOPASSWD sudo rule for www-data | ✅ named | ✅ | ❌ | ❌ |
+| Job in /etc/cron.d | ✅ named | ✅ | ❌ | ❌ |
+| Crontab of the web user | ✅ named | ✅ | ❌ | ❌ |
+| Enabled systemd service | ✅ named | ✅ | ❌ | ❌ |
+| systemd generator (runs as root at every boot) | ✅ named | ✅ | ❌ | ❌ |
+| Library injected through /etc/ld.so.preload | ✅ named | ✅ | ✅ | ❌ |
+| Login script in /etc/profile.d | ✅ named | ✅ | ❌ | ❌ |
+| Line added to root's .bashrc | ✅ named | ✅ | ❌ | ❌ |
+| Command planted in the SSH login script sshrc | ✅ named | ✅ | ❌ | ❌ |
+| Root hook run when a network interface comes up | ✅ named | ✅ | ❌ | ❌ |
+| Backdoor sourced from a bash completion fragment | ✅ named | ✅ | ❌ | ❌ |
 
 ### Privileges
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Setuid shell in /var/tmp | ✅ | ✅ | ❌ | ❌ |
-| Setuid shell in /run/lock (world-writable tmpfs) | ✅ | ✅ | ❌ | ❌ |
-| cap_setuid capability on a copy of a binary | ✅ | ✅ | ❌ | ❌ |
-| Backdoor protected with chattr +i | ✅ | ✅ | ❌ | ❌ |
+| Setuid shell in /var/tmp | ✅ named | ✅ | ❌ | ❌ |
+| Setuid shell in /run/lock (world-writable tmpfs) | ✅ named | ✅ | ❌ | ❌ |
+| cap_setuid capability on a copy of a binary | ✅ named | ✅ | ❌ | ❌ |
+| Backdoor protected with chattr +i | ✅ named | ✅ | ❌ | ❌ |
 
 ### System integrity
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Modified package binary | ✅ | ✅ | ❌ | ✅ |
-| PermitRootLogin enabled in sshd_config | ✅ | ✅ | ❌ | ❌ |
+| Modified package binary | ✅ named | ✅ | ❌ | ✅ |
+| PermitRootLogin enabled in sshd_config | ✅ named | ✅ | ❌ | ❌ |
 | Executable owned by no package in /usr/local/bin | ✅ | ✅ | ❌ | ❌ |
-| Link hijacking sudo from /usr/local/bin | ✅ | ✅ | ✅ | ❌ |
-| Hidden directory under /usr/lib | ✅ | ✅ | ❌ | ❌ |
+| Link hijacking sudo from /usr/local/bin | ✅ | ✅ | ✅ named | ❌ |
+| Hidden directory under /usr/lib | ✅ named | ✅ | ❌ | ❌ |
 
 ### Processes and network
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Process started from an executable later deleted | ✅ | ❌ | ❌ | ❌ |
-| Backdoor listening on port 31337 | ✅ | ❌ | ✅ | ❌ |
+| Process started from an executable later deleted | ✅ named | ❌ | ❌ | ❌ |
+| Backdoor listening on port 31337 | ✅ | ❌ | ✅ named | ❌ |
 | Process with LD_PRELOAD in its environment | ✅ | ❌ | ❌ | ❌ |
-| Backdoor waiting on a packet socket, no port open | ✅ | ✅ | ❌ | ❌ |
-| Fileless implant run from memory (memfd) | ✅ | ❌ | ❌ | ❌ |
+| Backdoor waiting on a packet socket, no port open | ✅ named | ✅ | ❌ | ❌ |
+| Fileless implant run from memory (memfd) | ✅ named | ❌ | ❌ | ❌ |
 | Program running under a kernel thread's name | ✅ | ❌ | ❌ | ❌ |
 
 ### Web applications
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Webshell in WordPress uploads | ✅ | ✅ | ❌ | ❌ |
-| GIF image with PHP code appended | ✅ | ✅ | ❌ | ❌ |
-| Backdoor injected into an existing PHP file | ✅ | ✅ | ❌ | ❌ |
-| .htaccess that runs images as PHP | ✅ | ✅ | ❌ | ❌ |
-| PHP saved by the application in a cache file, to be included later | ✅ | ✅ | ❌ | ❌ |
-| Card skimmer added to the site's JavaScript | ✅ | ✅ | ❌ | ❌ |
-| Backdoor in the web root with its function name split and escaped | ✅ | ✅ | ❌ | ❌ |
-| Core file changed to include remote code when a cookie is set | ✅ | ✅ | ❌ | ❌ |
-| Web shell opened by a bare short tag in a data file the application includes | ✅ | ✅ | ❌ | ❌ |
-| Code in a data file hidden behind a heredoc whose label is longer than usual | ✅ | ✅ | ❌ | ❌ |
-| Card skimmer in a theme with the field's name split into pieces | ✅ | ✅ | ❌ | ❌ |
+| Webshell in WordPress uploads | ✅ named | ✅ | ❌ | ❌ |
+| GIF image with PHP code appended | ✅ named | ✅ | ❌ | ❌ |
+| Backdoor injected into an existing PHP file | ✅ named | ✅ | ❌ | ❌ |
+| .htaccess that runs images as PHP | ✅ named | ✅ | ❌ | ❌ |
+| PHP saved by the application in a cache file, to be included later | ✅ named | ✅ | ❌ | ❌ |
+| Card skimmer added to the site's JavaScript | ✅ named | ✅ | ❌ | ❌ |
+| Backdoor in the web root with its function name split and escaped | ✅ named | ✅ | ❌ | ❌ |
+| Core file changed to include remote code when a cookie is set | ✅ named | ✅ | ❌ | ❌ |
+| Web shell opened by a bare short tag in a data file the application includes | ✅ named | ✅ | ❌ | ❌ |
+| Code in a data file hidden behind a heredoc whose label is longer than usual | ✅ named | ✅ | ❌ | ❌ |
+| Card skimmer in a theme with the field's name split into pieces | ✅ named | ✅ | ❌ | ❌ |
 
 ### Limits: attacks between two checks, and traps
 
 | Scenario | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Dropper run and deleted between two checks | ✅ | ❌ | ❌ | ❌ |
-| SSH key added, used and removed between two checks | ✅ | ❌ | ❌ | ❌ |
-| FIFO in place of the web user's authorized_keys | ✅ | ✅ | ❌ | ❌ |
-| Loader search path poisoned via ld.so.conf.d, then the config removed | ✅ | ❌ | ❌ | ❌ |
+| Dropper run and deleted between two checks | ✅ named | ❌ | ❌ | ❌ |
+| SSH key added, used and removed between two checks | ✅ named | ❌ | ❌ | ❌ |
+| FIFO in place of the web user's authorized_keys | ✅ named | ✅ | ❌ | ❌ |
+| Loader search path poisoned via ld.so.conf.d, then the config removed | ✅ named | ❌ | ❌ | ❌ |
+
+## Noise from routine changes
+
+Reported beyond the clean run; fewer is better.
+
+| Routine change | tripwatch | AIDE | rkhunter | debsums |
+|---|:-:|:-:|:-:|:-:|
+| Update of a WordPress plugin, its version and sixty files rewritten | 1 | 0 | 0 | 0 |
+| Installation of a package that ships a login hook | 2 | 6 | 0 | 0 |
+| Rotation of the system logs, as logrotate does every night | 0 | 4 | 0 | 0 |
+| Deploy that rewrites the site's code with a new release | 6 | 0 | 0 | 0 |
 
 ## Cost of a full check
 
@@ -108,7 +119,7 @@ Measured on the control scenario, in the same container.
 
 | Tool | Time | Peak memory |
 |---|--:|--:|
-| tripwatch | 1.5 s | 27 MB |
-| AIDE | 49.5 s | 40 MB |
-| rkhunter | 147.5 s | 11 MB |
+| tripwatch | 1.4 s | 31 MB |
+| AIDE | 50.6 s | 40 MB |
+| rkhunter | 153.2 s | 11 MB |
 | debsums | 1.1 s | 13 MB |

@@ -31,5 +31,5 @@ svg { --surface: #fcfcfb; --track: #ebeae6; --bar: #2a78d6; --text: #0b0b0b; --m
 <rect class="bar" x="132" y="228" width="11" height="18" rx="4"/>
 <rect class="bar" x="132" y="228" width="4" height="18"/>
 <text class="value" x="606" y="242">1 of 43</text>
-<text class="foot" x="28" y="280">Commit 9f49cfa, Debian GNU/Linux 12 (bookworm). Method and per-scenario detail in bench/RESULTS.md</text>
+<text class="foot" x="28" y="280">Commit addcc66, Debian GNU/Linux 12 (bookworm). Method and per-scenario detail in bench/RESULTS.md</text>
 </svg>

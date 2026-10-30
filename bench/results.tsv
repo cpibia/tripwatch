@@ -1,44 +1,48 @@
-00-control	no	no	no	no	1.48	27636	49.52	40784	147.49	11388	1.09	13676
-01-ssh-key	yes	yes	no	no	1.39	31756	49.60	40848	147.07	11400	1.07	13412
-02-uid0-account	yes	yes	yes	no	1.34	30464	49.82	40540	146.66	11336	1.05	13304
-03-sudoers	yes	yes	no	no	1.29	29768	49.26	40944	147.12	11364	1.00	13380
-04-cron-d	yes	yes	no	no	1.04	22272	48.43	40928	148.64	11312	1.03	13500
-05-user-crontab	yes	yes	no	no	1.28	39388	48.38	40788	149.51	11304	1.05	13424
-06-systemd-unit	yes	yes	no	no	1.29	28432	49.79	40712	149.57	11400	0.90	13468
-07-systemd-generator	yes	yes	no	no	1.44	27432	49.35	40656	149.93	11392	0.91	13308
-08-ld-preload	yes	yes	yes	no	0.94	23412	44.92	40872	155.87	11404	0.88	13772
-09-profile-d	yes	yes	no	no	0.96	23336	46.73	40788	149.89	11332	1.06	13532
-10-root-bashrc	yes	yes	no	no	1.27	29616	45.05	40820	149.67	11412	1.03	13344
-11-setuid-var-tmp	yes	yes	no	no	1.37	29384	46.91	40772	150.23	11444	0.85	13580
-12-setuid-run-lock	yes	yes	no	no	0.98	23024	45.95	40944	148.51	11288	1.04	13280
-13-file-capability	yes	yes	no	no	1.02	23116	46.23	40928	147.99	11356	1.01	13432
-14-immutable	yes	yes	no	no	1.30	31576	46.04	41052	148.86	11448	0.77	13316
-15-package-binary	yes	yes	no	yes	1.33	31088	46.05	40780	148.61	11168	0.77	13444
-16-sshd-config	yes	yes	no	no	0.99	23172	45.83	40732	148.90	11292	1.05	13440
-17-unowned-binary	yes	yes	no	no	1.01	24124	45.57	40800	148.89	11188	1.03	13392
-18-path-hijack	yes	yes	yes	no	1.36	34436	45.74	40612	148.86	11276	0.87	13420
-19-hidden-usr	yes	yes	no	no	1.39	30592	45.88	40536	148.79	11252	0.84	13488
-20-deleted-exe	yes	no	no	no	1.02	23432	46.64	40808	149.87	11404	1.08	13300
-21-listen-port	yes	no	yes	no	0.98	23064	46.27	40860	149.43	11232	1.04	13516
-22-ld-preload-env	yes	no	no	no	1.32	29924	46.40	40924	149.64	11340	1.01	13348
-23-webshell-uploads	yes	yes	no	no	1.35	30596	46.70	40752	150.02	11304	0.92	13688
-24-polyglot-image	yes	yes	no	no	0.90	22516	45.94	40808	148.85	11292	1.04	13296
-25-injected-core	yes	yes	no	no	0.96	24420	46.06	40900	149.02	11336	1.05	13576
-26-htaccess-uploads	yes	yes	no	no	1.29	31460	49.38	40944	148.48	11292	0.84	13424
-27-transient-dropper	yes	no	no	no	1.38	32860	48.87	40748	148.26	11372	0.77	13480
-28-transient-ssh-key	yes	no	no	no	1.21	24624	40.16	40836	149.01	11204	1.03	13604
-29-fifo-trap	yes	yes	no	no	1.15	26380	41.16	40780	149.82	11408	0.96	13512
-30-packet-backdoor	yes	yes	no	no	1.32	30012	41.36	40984	148.20	11448	0.89	13736
-31-fileless-memfd	yes	no	no	no	1.45	34048	41.75	40832	148.05	11292	0.92	13916
-32-php-in-data-file	yes	yes	no	no	1.27	24476	40.20	41016	148.39	11332	1.02	13792
-33-js-skimmer	yes	yes	no	no	1.15	28716	42.37	40920	148.58	11332	0.96	13316
-34-obfuscated-webroot-backdoor	yes	yes	no	no	1.26	28916	41.33	40748	148.50	11292	0.95	13644
-35-core-remote-include	yes	yes	no	no	1.33	29748	42.97	40744	147.14	11448	0.94	13516
-40-fake-kthread-name	yes	no	no	no	1.31	23904	40.53	40836	149.14	11332	1.04	13352
-41-ssh-login-script	yes	yes	no	no	0.95	22904	40.60	40880	148.85	11208	0.96	13604
-42-ifupdown-hook	yes	yes	no	no	1.23	25060	46.56	40848	146.91	11300	1.00	13372
-43-bash-completion-backdoor	yes	yes	no	no	1.36	29348	46.28	40748	146.91	11324	1.00	13708
-44-ldso-conf-transient	yes	no	no	no	1.21	24436	35.54	40804	148.99	11372	1.03	13556
-45-short-tag-data-file	yes	yes	no	no	1.39	33512	39.74	41064	148.37	11388	0.96	13432
-46-heredoc-long-label	yes	yes	no	no	1.26	29060	36.14	40860	147.45	11328	0.80	13724
-47-skimmer-split-name	yes	yes	no	no	1.41	29640	39.27	40728	145.87	11400	0.74	13736
+00-control	no	no	no	no	1.41	31344	50.65	40876	153.15	11296	1.12	13528	no	no	no	no	76	4715	53	0
+01-ssh-key	yes	yes	no	no	1.41	30268	49.49	40912	153.64	11392	1.17	13620	yes	no	no	no	79	4716	53	0
+02-uid0-account	yes	yes	yes	no	1.37	31212	49.40	40924	153.81	11292	1.17	13180	yes	no	yes	no	85	4719	56	0
+03-sudoers	yes	yes	no	no	1.38	29840	50.76	40856	153.88	11464	1.20	13336	yes	no	no	no	79	4716	53	0
+04-cron-d	yes	yes	no	no	1.23	24604	49.14	41112	152.98	11248	1.01	13516	yes	no	no	no	79	4716	53	0
+05-user-crontab	yes	yes	no	no	1.18	23668	49.39	40988	152.77	11412	1.02	13572	yes	no	no	no	80	4716	53	0
+06-systemd-unit	yes	yes	no	no	1.38	28976	49.03	41264	154.31	11400	1.04	13716	yes	no	no	no	80	4717	53	0
+07-systemd-generator	yes	yes	no	no	1.45	32940	49.24	41120	153.50	11344	1.07	13316	yes	no	no	no	77	4717	53	0
+08-ld-preload	yes	yes	yes	no	1.00	23404	47.21	41168	158.84	11356	0.75	13524	yes	no	no	no	79	4716	55	0
+09-profile-d	yes	yes	no	no	1.02	24884	47.72	41188	152.81	11332	1.04	13444	yes	no	no	no	79	4717	53	0
+10-root-bashrc	yes	yes	no	no	1.38	30280	47.46	41088	153.39	11360	1.08	13464	yes	no	no	no	78	4716	53	0
+11-setuid-var-tmp	yes	yes	no	no	1.39	31744	47.77	41008	153.40	11276	1.25	13544	yes	no	no	no	81	4716	53	0
+12-setuid-run-lock	yes	yes	no	no	1.03	24148	46.67	41412	153.96	11364	1.05	13176	yes	no	no	no	81	4716	53	0
+13-file-capability	yes	yes	no	no	1.12	24416	45.84	41184	153.84	11212	1.08	13324	yes	no	no	no	78	4716	53	0
+14-immutable	yes	yes	no	no	1.23	24556	48.87	41012	153.84	11376	0.78	13716	yes	no	no	no	79	4716	53	0
+15-package-binary	yes	yes	no	yes	1.37	31452	47.88	41140	152.99	11360	0.86	13932	yes	no	no	no	77	4716	53	1
+16-sshd-config	yes	yes	no	no	1.11	25416	43.30	41100	152.93	11372	1.04	13400	yes	no	no	no	78	4715	54	0
+17-unowned-binary	yes	yes	no	no	1.05	24096	44.91	40964	153.60	11344	1.00	13460	no	no	no	no	77	4716	53	0
+18-path-hijack	yes	yes	yes	no	1.29	31440	44.86	40980	153.06	11256	0.87	13708	no	no	yes	no	76	4716	55	0
+19-hidden-usr	yes	yes	no	no	1.44	29544	44.72	41096	153.18	11388	0.85	13700	yes	no	no	no	77	4717	53	0
+20-deleted-exe	yes	no	no	no	1.26	25676	44.61	41272	153.59	11300	1.05	13464	yes	no	no	no	81	4715	53	0
+21-listen-port	yes	no	yes	no	0.97	23608	44.39	41260	153.87	11368	1.06	13368	no	no	yes	no	77	4715	55	0
+22-ld-preload-env	yes	no	no	no	1.47	28632	48.38	40988	152.74	11248	0.86	13780	no	no	no	no	77	4715	53	0
+23-webshell-uploads	yes	yes	no	no	1.56	29916	48.15	40924	152.04	11288	0.95	13616	yes	no	no	no	80	4716	53	0
+24-polyglot-image	yes	yes	no	no	1.32	24216	40.06	41128	153.67	11356	1.05	13516	yes	no	no	no	77	4716	53	0
+25-injected-core	yes	yes	no	no	1.51	26348	42.44	40980	153.45	11404	0.96	13588	yes	no	no	no	79	4715	53	0
+26-htaccess-uploads	yes	yes	no	no	1.40	29336	42.58	40976	152.87	11280	0.95	13740	yes	no	no	no	79	4716	53	0
+27-transient-dropper	yes	no	no	no	1.42	32944	40.58	40968	153.40	11412	0.95	13664	yes	no	no	no	78	4715	53	0
+28-transient-ssh-key	yes	no	no	no	1.35	24008	39.02	41128	152.73	11356	1.06	13196	yes	no	no	no	79	4715	53	0
+29-fifo-trap	yes	yes	no	no	1.17	27092	39.32	40888	152.80	11272	1.03	13552	yes	no	no	no	78	4717	53	0
+30-packet-backdoor	yes	yes	no	no	1.19	24468	46.56	41008	151.75	11344	1.01	13612	yes	no	no	no	78	4716	53	0
+31-fileless-memfd	yes	no	no	no	1.40	30612	46.22	41068	151.95	11348	0.96	13652	yes	no	no	no	78	4715	53	0
+32-php-in-data-file	yes	yes	no	no	1.31	24364	31.51	41080	152.66	11332	1.03	13336	yes	no	no	no	78	4719	53	0
+33-js-skimmer	yes	yes	no	no	1.47	25352	38.28	41368	152.95	11164	1.01	13572	yes	no	no	no	79	4717	53	0
+34-obfuscated-webroot-backdoor	yes	yes	no	no	1.18	24944	37.26	40936	151.56	11312	0.95	13540	yes	no	no	no	78	4716	53	0
+35-core-remote-include	yes	yes	no	no	1.43	31852	31.25	41076	152.28	11452	0.91	13400	yes	no	no	no	79	4715	53	0
+40-fake-kthread-name	yes	no	no	no	1.49	24560	33.48	41248	152.40	11292	1.04	13408	no	no	no	no	78	4717	53	0
+41-ssh-login-script	yes	yes	no	no	1.31	24700	42.77	40952	151.21	11412	1.01	13528	yes	no	no	no	79	4716	53	0
+42-ifupdown-hook	yes	yes	no	no	1.20	27876	31.16	41028	152.31	11348	0.99	13416	yes	no	no	no	77	4718	53	0
+43-bash-completion-backdoor	yes	yes	no	no	1.38	34180	40.06	41236	151.05	11164	0.94	13444	yes	no	no	no	79	4717	53	0
+44-ldso-conf-transient	yes	no	no	no	1.54	24876	29.81	41252	152.61	11252	1.05	13660	yes	no	no	no	79	4718	53	0
+45-short-tag-data-file	yes	yes	no	no	1.45	28136	32.35	40980	152.54	11484	0.97	13756	yes	no	no	no	77	4719	53	0
+46-heredoc-long-label	yes	yes	no	no	1.52	32712	38.90	41108	152.31	11392	1.15	13436	yes	no	no	no	77	4719	53	0
+47-skimmer-split-name	yes	yes	no	no	1.41	31768	37.52	41140	151.60	11240	1.04	13580	yes	no	no	no	78	4719	53	0
+90-noise-plugin-update	yes	yes	no	no	1.48	25148	29.62	41120	150.28	11340	1.05	13364	yes	no	no	no	77	4715	53	0
+91-noise-package-hook	yes	yes	no	no	1.44	26520	31.29	41140	149.07	11416	0.95	13428	no	no	no	no	78	4721	53	0
+92-noise-log-rotation	no	yes	no	no	1.20	23812	35.51	40796	144.29	11416	0.78	13480	no	no	no	no	76	4719	53	0
+93-noise-deploy	yes	yes	no	no	1.37	30904	35.62	40960	143.09	11308	0.78	13740	yes	no	no	no	82	4715	53	0

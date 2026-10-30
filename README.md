@@ -627,7 +627,7 @@ Positions advance only after the snapshot has been delivered.
 ## Detection compared
 
 <!-- bench:start -->
-Across 43 attack scenarios reproduced in a Debian container (commit `9f49cfa`), how many each
+Across 43 attack scenarios reproduced in a Debian container (commit `addcc66`), how many each
 tool detects with its default configuration:
 
 ![Scenarios detected out of 43: tripwatch 43, AIDE 35, rkhunter 4, debsums 1](bench/detection.svg)
@@ -641,6 +641,18 @@ tool detects with its default configuration:
 | Web applications | 11 | 11 | 11 | 0 | 0 |
 | Limits: attacks between two checks, and traps | 4 | 4 | 1 | 0 | 0 |
 | **Total** | **43** | **43** | **35** | **4** | **1** |
+| **Named** | | 38 | 0 | 3 | 0 |
+
+Named means the output identifies the technique, not only the changed file; method in bench/RESULTS.md.
+
+Noise on routine changes (a plugin update, a package with a hook, log rotation, a deploy), reported beyond the clean run:
+
+| Routine change | tripwatch | AIDE | rkhunter | debsums |
+|---|:-:|:-:|:-:|:-:|
+| Update of a WordPress plugin, its version and sixty files rewritten | 1 | 0 | 0 | 0 |
+| Installation of a package that ships a login hook | 2 | 6 | 0 | 0 |
+| Rotation of the system logs, as logrotate does every night | 0 | 4 | 0 | 0 |
+| Deploy that rewrites the site's code with a new release | 6 | 0 | 0 | 0 |
 
 Detects means the data about the attack appears in the output of the tool; for tripwatch the
 judgement stays with the verifier: its real-time rules run on what the watchers of the sensor saw while the
