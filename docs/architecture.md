@@ -283,7 +283,8 @@ opened by a processing instruction (a lower-case target such as `mso-application
 `?>`, `>` or a pseudo-attribute, which PHP 8 stops on as an undefined constant before anything
 after it runs) counts only the named signatures; a keyword, `true`, `false`, `null` or a name
 with upper case or an underscore, the shape of the constants PHP defines (`<?echo`, `<?const`,
-`<?PHP_EOL>1;`), is code; one opened by `<?` glued to anything else
+`<?PHP_EOL>1;`), is code, and so is any name glued to the tag (`php` and `xml` included) after a
+block PHP runs, which could have defined it; one opened by `<?` glued to anything else
 (`<?$c=`, `<?@`, `<?(`, `<?PHP_EOL.`) is code, with the weak signals, a backtick counting only
 when it interpolates a variable, and "=> {" or "[^", which PHP never compiles and the scripts a
 cache holds are full of, make it uncompilable. In that second pass a block PHP 8 cannot compile makes the whole file

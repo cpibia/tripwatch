@@ -47,6 +47,8 @@ type codeSearch struct {
 	// loose says the block was opened by "<?" alone or glued as above, as SQL dumps and logs
 	// quote it: there a backtick around a bare word is how SQL quotes a name.
 	loose bool
+	// ran says a block PHP runs was opened earlier in the file: it may have defined any constant.
+	ran bool
 	// named says the block was opened by "<?" glued to code rather than by a real open tag: as
 	// the minified scripts a cache holds quote "<?(" in a regular expression, and run on through
 	// their template literals, a backtick there counts only when it interpolates a variable.
@@ -178,8 +180,19 @@ func (c *codeSearch) step(d []byte, i int, final bool) int {
 			return 0
 		}
 		if i+1 < len(d) && d[i+1] == '?' {
-			if n, kind := openTagLen(d[i+2:], c.shortTags); kind != tagNone {
+			n, kind := openTagLen(d[i+2:], c.shortTags)
+			// A name PHP stops on as an undefined constant can be defined by a block that ran
+			// before it in the same file ("<?php define('foo', 1); ?>" and then "<?foo>1;"):
+			// after one, every name glued to the tag is code.
+			switch {
+			case kind == tagExact && c.ran, kind == tagGlued && c.ran:
+				kind = tagName
+			case kind == tagExact:
+				kind = tagNone
+			}
+			if kind != tagNone {
 				c.mode, c.glued, c.loose, c.named = lexCode, kind == tagGlued, kind == tagGlued || kind == tagShort, kind == tagName
+				c.ran = c.ran || kind != tagGlued
 				return 2 + n
 			}
 		}
@@ -462,6 +475,9 @@ const (
 	// "<?xml-stylesheet href=", "<?mso-application>"): PHP stops on it, so the block counts only
 	// for named signatures.
 	tagGlued
+	// tagExact is "php" or "xml" glued to "<?" and to what follows ("<?php>", "<?php;"): PHP
+	// stops on the undefined constant, and opens nothing for the search.
+	tagExact
 )
 
 // openTagLen returns the length of what follows "<?" in an open tag, and its kind. With
@@ -505,6 +521,8 @@ func openTagLen(t []byte, short bool) (int, int) {
 	switch {
 	case exact && goesOn && t[k] != ';':
 		return 0, tagName
+	case exact && k == j && k < len(t):
+		return 0, tagExact
 	case exact:
 		return 0, tagNone
 	case goesOn:
