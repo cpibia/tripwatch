@@ -169,3 +169,20 @@ func TestEvaluateEvents(t *testing.T) {
 		})
 	}
 }
+
+// Each account's drops in the scratch directories are a group of their own, whatever the file is
+// named: a "|" in a user's file name does not land the alert in root's group.
+func TestScratchGroupsByOwner(t *testing.T) {
+	user, root := uint32(1000), uint32(0)
+	fp := func(uid uint32, name string) string {
+		f, ok := judgeEvent(watch.Event{Class: watch.ClassScratch, Op: watch.OpAttrib, Path: "/tmp/" + name, Mode: "-rwxr-xr-x", UID: &uid}, nil)
+		if !ok {
+			t.Fatalf("no finding for %s", name)
+		}
+		return f.Fingerprint
+	}
+	groupOf := func(f string) string { g, _, _ := strings.Cut(f, "|"); return g }
+	if u, r := groupOf(fp(user, "x|uid0|y")), groupOf(fp(root, "x")); u == r || !strings.HasSuffix(u, "uid1000") || !strings.HasSuffix(r, "uid0") {
+		t.Errorf("groups: user %q, root %q", u, r)
+	}
+}

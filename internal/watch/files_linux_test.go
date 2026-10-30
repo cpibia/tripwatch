@@ -346,6 +346,39 @@ func TestFilesScratchReportsExecutablesOnly(t *testing.T) {
 	}
 }
 
+// A program written executable at once, without a chmod after it, and removed once it ran is
+// reported, its creation and its removal. A file gone before the watcher reads its mode cannot
+// be told executable: the process watcher sees it run.
+func TestFilesScratchDropperWrittenExecutable(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	dropper := filepath.Join(root, "tmp/.x")
+	if err := os.WriteFile(dropper, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // the test's dropper
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := os.Remove(dropper); err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, ch, 2)
+	if !slices.ContainsFunc(got, func(e Event) bool { return e.Path == "/tmp/.x" && e.Op != OpDelete }) || !has(got, ClassScratch, OpDelete, "/tmp/.x") {
+		t.Fatalf("events = %+v", got)
+	}
+}
+
 // Directories created in /tmp by anyone never take the watches of the system, the homes or the
 // uploads; places those lose to the bounds are listed for the verifier.
 func TestFilesScratchCannotStarveSystemWatches(t *testing.T) {
@@ -995,5 +1028,24 @@ func TestReplanNotPutOff(t *testing.T) {
 	f.replanSoon()
 	if want := now.Add(time.Second); !f.replanAt.Equal(want) {
 		t.Errorf("plan at %v, want %v", f.replanAt, want)
+	}
+}
+
+// Hashing is budgeted apart for root's files: other users spending theirs to the last byte leave
+// root's changes hashed, and the budget comes back every second.
+func TestHashBudgetApartForRoot(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	f := &Files{now: func() time.Time { return now }}
+	for f.spend(1<<20, false) {
+	}
+	if !f.spend(1<<20, true) {
+		t.Fatal("other users spent root's hashing budget")
+	}
+	if f.spend(1, false) {
+		t.Fatal("the users' budget was not spent")
+	}
+	now = now.Add(time.Second)
+	if !f.spend(1<<20, false) {
+		t.Fatal("the budget did not come back after a second")
 	}
 }

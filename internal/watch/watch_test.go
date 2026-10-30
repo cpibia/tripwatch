@@ -19,3 +19,18 @@ func TestTargetsHomes(t *testing.T) {
 		}
 	}
 }
+
+// Every directory anyone may drop a program in is watched as scratch, /run/lock included.
+func TestTargetsScratch(t *testing.T) {
+	scratch := map[string]bool{}
+	for _, tg := range Targets(nil, nil) {
+		if tg.Class == ClassScratch {
+			scratch[tg.Dir] = true
+		}
+	}
+	for _, d := range []string{"/tmp", "/var/tmp", "/dev/shm", "/run/lock"} {
+		if !scratch[d] {
+			t.Errorf("%s is not watched as scratch", d)
+		}
+	}
+}
