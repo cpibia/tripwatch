@@ -764,6 +764,10 @@ func loaderDefaults(l *system.LoaderPaths) func(string) bool {
 	return func(d string) bool { return trusted[d] }
 }
 
+// truncatedRunsAlert is from how many scans in a row cut short an application is an alert: in a
+// week of a fleet of a hundred applications, cuts came alone or in pairs but for two hosts.
+const truncatedRunsAlert = 3
+
 // maxLoaderAlerts is how many directories of the loader's cache get an alert each.
 const maxLoaderAlerts = 16
 
@@ -1417,6 +1421,19 @@ func Evaluate(prev *State, cur State) []Finding {
 				}
 			}
 			state("web", "code-search-incomplete", "high", "Data files not searched for code", b.String())
+		}
+		// Scans cut short run after run leave applications' code unread: one alert for the host,
+		// naming them, from the third run in a row (a sensor's update or a slow hour cuts one or
+		// two).
+		var cut []string
+		for _, app := range w.Apps {
+			if app.TruncatedRuns >= truncatedRunsAlert {
+				cut = append(cut, fmt.Sprintf("%s (%d runs)", app.Path, app.TruncatedRuns))
+			}
+		}
+		if len(cut) > 0 {
+			state("web", "scan-cut", "medium", "Web applications not scanned whole for runs in a row",
+				"The sensor's scan of these applications was cut short by its time limit run after run, so part of their code and data is not read: "+strings.Join(cut, ", ")+". Many files written in them can cause it; see what grew there.")
 		}
 		// A changed script the sensor had no time or budget to read for skimmers several runs in
 		// a row: decoys written next to a skimmer to keep it from being read look like this. The

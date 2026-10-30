@@ -275,3 +275,31 @@ func TestUnreadScriptsStayPending(t *testing.T) {
 		t.Errorf("issues %q", s.issues)
 	}
 }
+
+// A scan cut short counts the runs in a row it was, and one run scanned whole starts over.
+func TestTruncatedRunsCounted(t *testing.T) {
+	tr := newTree(t)
+	tr.file("var/www/shop/index.php", "<?php")
+	tr.file("var/www/shop/wp-includes/version.php", "<?php $wp_version = '6.6';")
+	c := &Collector{}
+	cut, cancel := context.WithCancel(context.Background())
+	cancel()
+	runs := func(ctx context.Context) int {
+		t.Helper()
+		out, err := c.Collect(ctx, collector.NewSource(tr.root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range out.(Result).Apps {
+			return a.TruncatedRuns
+		}
+		t.Fatal("no application")
+		return 0
+	}
+	if r1, r2 := runs(cut), runs(cut); r1 != 1 || r2 != 2 {
+		t.Errorf("runs cut: %d then %d", r1, r2)
+	}
+	if r := runs(context.Background()); r != 0 {
+		t.Errorf("after a whole run: %d", r)
+	}
+}

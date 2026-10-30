@@ -141,6 +141,9 @@ type AppReport struct {
 	// UnreadScripts are changed scripts that runs in a row left unread for skimmers, for lack of
 	// time or budget: decoys written to keep a skimmer from being read show here.
 	UnreadScripts []UnreadScript `json:"unread_scripts,omitempty"`
+	// TruncatedRuns counts the runs in a row, this one included, whose scan of the application
+	// was cut short, since the sensor started.
+	TruncatedRuns int `json:"truncated_runs,omitempty"`
 }
 
 // maxUploadDirs bounds the upload directories listed for one application.
@@ -185,7 +188,12 @@ type Collector struct {
 	StateDir string
 	pending  pendingManifests
 	searched searchedFiles
+	// truncatedRuns counts, per application, the runs in a row its scan was cut short.
+	truncatedRuns map[string]int
 }
+
+// maxTruncatedApps bounds the applications whose cut scans are counted.
+const maxTruncatedApps = 1024
 
 func (*Collector) Name() string { return "web" }
 
@@ -239,6 +247,18 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 			if next := s.finishManifest(ctx, c.StateDir); next != "" {
 				manifests = append(manifests, next)
 			}
+		}
+		// A scan cut short once is a slow run; one cut run after run leaves the application's
+		// code unread, which whoever fills it with files can cause: the count goes to the
+		// verifier.
+		if c.truncatedRuns == nil {
+			c.truncatedRuns = map[string]int{}
+		}
+		if !s.report.Truncated {
+			delete(c.truncatedRuns, s.report.Path)
+		} else if _, ok := c.truncatedRuns[s.report.Path]; ok || len(c.truncatedRuns) < maxTruncatedApps {
+			c.truncatedRuns[s.report.Path]++
+			s.report.TruncatedRuns = c.truncatedRuns[s.report.Path]
 		}
 		res.Apps = append(res.Apps, s.report)
 		res.Issues = append(res.Issues, s.issues...)

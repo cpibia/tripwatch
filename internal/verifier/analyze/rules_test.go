@@ -1092,3 +1092,22 @@ func TestUnreadScriptAlert(t *testing.T) {
 		t.Errorf("findings = %v", got)
 	}
 }
+
+// Scans cut short three runs in a row are one alert for the host, naming the applications; one
+// or two cut runs are not.
+func TestScansCutRunAfterRun(t *testing.T) {
+	cur := baseState()
+	cur.Web = &web.Result{Apps: []web.AppReport{
+		{Application: discovery.Application{Path: "/var/www/a"}, TruncatedRuns: 3},
+		{Application: discovery.Application{Path: "/var/www/b"}, TruncatedRuns: 2},
+	}}
+	var found []Finding
+	for _, f := range Evaluate(nil, cur) {
+		if f.Fingerprint == "web:scan-cut" {
+			found = append(found, f)
+		}
+	}
+	if len(found) != 1 || found[0].Severity != "medium" || !strings.Contains(found[0].Detail, "/var/www/a (3 runs)") || strings.Contains(found[0].Detail, "/var/www/b") {
+		t.Errorf("findings = %+v", found)
+	}
+}

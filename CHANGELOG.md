@@ -19,6 +19,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   them changed again and reads them first, then the smallest, so decoys go last; one script cannot
   take more than 20 seconds of the run. A script left unread three runs in a row is named in the
   result, and the verifier raises a medium alert for it until it is read.
+- The web collector counts the runs in a row each application's scan was cut short by its time
+  limit, and the verifier raises one medium alert for the host when an application reaches three:
+  in a week of a fleet of a hundred applications, cuts came alone or in pairs but on two hosts.
 - The kernel's socket tables are read as streams: a table grown past 16 MB by anyone's
   listeners was dropped whole, root's listeners with it; now every row goes through the bound
   that keeps root's sockets and the listeners first, up to a million rows a table.
