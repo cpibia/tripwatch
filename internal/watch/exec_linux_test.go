@@ -224,3 +224,32 @@ func TestRecentExes(t *testing.T) {
 		t.Error("sudo, read at its start, taken for a backdoor")
 	}
 }
+
+// A job counts as cron's only when its parent, through shells, is a cron of root run from a
+// system directory: a process of a user named cron, a copy elsewhere or a deleted binary is not.
+func TestFromCronNeedsRootsCron(t *testing.T) {
+	proc := func(fsys fstest.MapFS, pid, ppid, uid int, exe string) {
+		dir := "proc/" + strconv.Itoa(pid) + "/"
+		fsys[dir+"status"] = &fstest.MapFile{Data: []byte("Name:\tx\nPPid:\t" + strconv.Itoa(ppid) + "\nUid:\t" + strconv.Itoa(uid) + "\t" + strconv.Itoa(uid) + "\t0\t0\n")}
+		fsys[dir+"exe"] = &fstest.MapFile{Data: []byte(exe), Mode: fs.ModeSymlink}
+	}
+	for _, c := range []struct {
+		name string
+		uid  int
+		exe  string
+		want bool
+	}{
+		{"root's cron", 0, "/usr/sbin/cron", true},
+		{"a user's process named cron", 1000, "/usr/sbin/cron", false},
+		{"a copy of cron elsewhere", 0, "/home/ubuntu/cron", false},
+		{"a deleted cron", 0, "/usr/sbin/cron (deleted)", false},
+	} {
+		fsys := fstest.MapFS{}
+		proc(fsys, 70, 1, c.uid, c.exe)
+		proc(fsys, 77, 70, 1000, "/usr/bin/dash")
+		x := &Execs{src: collector.Source{FS: fsys}}
+		if got := x.fromCron(system.Process{PID: 80, PPID: 77, UID: 1000}); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
