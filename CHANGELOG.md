@@ -44,6 +44,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   target followed by `?>`, `>` or a pseudo-attribute (`<?mso-application progid=`) counts named
   signatures alone. `<?>` opens nothing, and syntax PHP never compiles (`=> {`, `[^`) keeps the
   minified scripts a cache holds from being taken for code.
+- A volume of the local driver binding a host directory is checked against the container's mount
+  table like a bind, and its mount point on the host (the volume's `_data`) is the volume itself,
+  not a directory of the runtime's state.
 - A running container whose mount table lacks a host directory or file its configuration binds
   (the source swapped after the start, or the process chrooted away from it) has its mounts "not
   verified by the kernel", a power of its own.

@@ -169,7 +169,7 @@ func TestDockerVolumesLinksAndDeviceRules(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 	c := res.Containers[0]
-	want := []Mount{{Source: "/etc", Destination: "/a", RW: true, Volume: "h"}, {Source: "/tmp/l", Destination: "/e", Resolved: "/"}}
+	want := []Mount{{Source: "/etc", Destination: "/a", RW: true, Volume: "h", boundVolume: true}, {Source: "/tmp/l", Destination: "/e", Resolved: "/"}}
 	if !slices.Equal(c.Mounts, want) {
 		t.Errorf("mounts = %+v", c.Mounts)
 	}
@@ -234,6 +234,33 @@ func TestRunningContainerMountsFromTheKernel(t *testing.T) {
 		if got := ContainerPowers(run(tt.mountinfo, tt.mountPoints)); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: powers = %q, want %q", tt.name, got, tt.want)
 		}
+	}
+}
+
+// A volume of the local driver binding a host directory is checked against the kernel's table
+// like a bind: its device swapped around the start leaves it out, and the mounts unverified.
+func TestBoundVolumeMissingFromTheKernel(t *testing.T) {
+	const id = "c1b2c3d4e5f6a1b2c3d4e5f6"
+	fsys := fstest.MapFS{
+		"proc/1/mountinfo":                   text("22 1 8:1 / / rw shared:1 - ext4 /dev/vda1 rw\n"),
+		"proc/4242/mountinfo":                text("500 400 0:52 / / rw - overlay overlay rw\n503 500 8:1 /root /y rw - ext4 /dev/vda1 rw\n"),
+		"var/lib/docker/volumes/v/opts.json": text(`{"MountType":"none","MountOpts":"bind","MountDevice":"/srv/v"}`),
+		"srv/v/keep":                         {},
+		"var/lib/docker/containers/" + id + "/config.v2.json": text(`{"ID": "` + id + `", "Name": "/s", "State": {"Running": true, "Pid": 4242},
+			"MountPoints": {"/h": {"Type": "volume", "Name": "v", "Driver": "local", "Destination": "/h", "RW": true}}}`),
+	}
+	c := collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys}).Containers[0]
+	if !strings.Contains(c.KernelUnverified, "/srv/v") || !slices.Contains(ContainerPowers(c), "mounts not verified by the kernel") {
+		t.Errorf("unverified %q, powers %q", c.KernelUnverified, ContainerPowers(c))
+	}
+}
+
+// The _data of a volume bound to a host directory is a mount point of its own on the host, the
+// volume under its runtime name; a managed volume's _data is a plain directory of the runtime.
+func TestVolumeMountPoint(t *testing.T) {
+	h := &HostMounts{read: true, entries: []mountEntry{{dev: "8:1", root: "/", point: "/"}, {dev: "8:1", root: "/srv/data", point: "/var/lib/docker/volumes/bv/_data"}}}
+	if !h.volumeMountPoint("/var/lib/docker/volumes/bv/_data") || h.volumeMountPoint("/var/lib/docker/volumes/db/_data") || h.volumeMountPoint("/srv/data") {
+		t.Error("volume mount points misread")
 	}
 }
 

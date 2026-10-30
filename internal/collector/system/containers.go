@@ -30,6 +30,9 @@ type Mount struct {
 	// list: the runtime's own (the root filesystem, /etc/hosts), or one moved by a link in the
 	// image or a chroot.
 	Undeclared bool `json:"undeclared,omitempty"`
+	// boundVolume marks a volume of the local driver that binds a host directory: a bind under
+	// another name, which the sensor checks against the kernel's table like one.
+	boundVolume bool
 }
 
 // Container is a Docker container as its daemon keeps it on disk. Only what gives it power over
@@ -400,6 +403,7 @@ func readDockerContainer(fsys fs.FS, dir string, host *HostMounts, issues *colle
 				continue
 			}
 			mount.Source, mount.Volume = device, m.Name
+			mount.boundVolume = !strings.HasPrefix(device, "/dev/")
 		} else if m.Type != "" && m.Type != "bind" || m.Source == "" {
 			continue
 		}
@@ -1003,6 +1007,15 @@ func (h *HostMounts) hostPaths(dev, root string) []string {
 // part of them.
 const maxContainedMounts = 4 * maxContainerList
 
+// volumeMountPoint reports a host path where a runtime mounted a volume: a volume's _data that
+// is a mount point of its own, not a directory of the runtime's state.
+func (h *HostMounts) volumeMountPoint(p string) bool {
+	if path.Base(p) != "_data" || !under(p, []string{"/var/lib/docker/volumes", "/var/lib/containers/storage/volumes"}) {
+		return false
+	}
+	return slices.ContainsFunc(h.entries, func(e mountEntry) bool { return e.point == p })
+}
+
 // within returns the host's mounts of the filesystem dev whose root lies strictly below root:
 // parts of what a mount of root shows that the host also shows elsewhere.
 func (h *HostMounts) within(dev, root string) []mountEntry {
@@ -1068,6 +1081,11 @@ func kernelMounts(fsys fs.FS, pid int, host *HostMounts, declared []Mount, issue
 		root := strings.TrimSuffix(e.root, "//deleted")
 		for _, p := range host.hostPaths(e.dev, root) {
 			mounted[p] = true
+			// The runtime mounts a volume bound to a host directory at the volume's _data on the
+			// host: that path is the volume itself, the same directory under another name.
+			if host.volumeMountPoint(p) {
+				continue
+			}
 			m := Mount{Source: p, Destination: e.point, RW: e.rw, Undeclared: !points[e.point]}
 			if !slices.Contains(out, m) {
 				out = append(out, m)
@@ -1085,10 +1103,10 @@ func kernelMounts(fsys fs.FS, pid int, host *HostMounts, declared []Mount, issue
 	}
 	// Every host directory or file the configuration binds must be in the table: one that is
 	// not was swapped after the start, or the process chrooted away from it, and what it really
-	// leads to cannot be told. Volumes are left out: their sources are the daemon's, and those of
-	// a driver are not paths.
+	// leads to cannot be told. Volumes are left out, their sources being the daemon's or a
+	// device, except those of the local driver that bind a host directory.
 	for _, m := range declared {
-		if src := path.Clean("/" + cmp.Or(m.Resolved, m.Source)); m.Volume == "" && !mounted[src] {
+		if src := path.Clean("/" + cmp.Or(m.Resolved, m.Source)); (m.Volume == "" || m.boundVolume) && !mounted[src] {
 			return out, "the host's " + src + ", bound at " + path.Clean("/"+m.Destination) + ", is not in its mount table"
 		}
 	}
