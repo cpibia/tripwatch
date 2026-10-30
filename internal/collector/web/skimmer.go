@@ -2,16 +2,19 @@ package web
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -251,11 +254,13 @@ func svgSignals(content []byte) []string {
 // rebuilds bundles and replaces whole packages whose admin scripts hold payment field names
 // with exits and eval: generated bundles and packages with many changed files are left out
 // then, and the files changed elsewhere, a few at a time, are still read.
-func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) (unread []string) {
+func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) skimmerRun {
+	run := skimmerRun{read: map[string]bool{}, updating: map[string]bool{}}
 	files := k.others
 	if k.count <= maxSkimmerChanges {
 		files = append(files, k.generated...)
 	} else {
+		run.skipGenerated = true
 		if skipped := k.count - len(k.others) - k.dropped; skipped > 0 {
 			s.issues = append(s.issues, fmt.Sprintf("%s: %d scripts changed in generated bundles not read for skimmers: %d scripts and templates changed at once, a deploy",
 				s.report.Path, skipped, k.count))
@@ -267,35 +272,61 @@ func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) (u
 		for _, c := range k.others {
 			perPackage[packageOf(c.Path)]++
 		}
-		updating := func(pkg string) bool { return perPackage[pkg] > maxPackageChanges && k.versioned[pkg] }
-		var updated []string
-		files = slices.DeleteFunc(slices.Clone(files), func(c FileChange) bool { return updating(packageOf(c.Path)) })
-		for pkg := range perPackage {
-			if updating(pkg) {
-				updated = append(updated, pkg)
+		for pkg, n := range perPackage {
+			if n > maxPackageChanges && k.versioned[pkg] {
+				run.updating[pkg] = true
 			}
 		}
-		if len(updated) > 0 {
-			slices.Sort(updated)
+		files = slices.DeleteFunc(slices.Clone(files), func(c FileChange) bool { return run.updating[packageOf(c.Path)] })
+		if len(run.updating) > 0 {
+			updated := slices.Sorted(maps.Keys(run.updating))
 			s.issues = append(s.issues, fmt.Sprintf("%s: packages updated as a whole not read for skimmers: %s", s.report.Path, strings.Join(updated[:min(len(updated), 20)], ", ")))
 		}
 	}
-	if k.dropped > 0 {
-		s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers past the first %d", s.report.Path, k.dropped, maxSkimmerCandidates))
+	// The order is not the attacker's to choose: scripts left unread by earlier runs come first,
+	// then the smallest, so decoys written to fill the run's time or budget go last.
+	sizes := make(map[string]int64, len(files))
+	for _, c := range files {
+		if info, err := fs.Stat(s.src.FS, strings.TrimPrefix(c.Path, "/")); err == nil {
+			sizes[c.Path] = info.Size()
+		}
 	}
-	for i, c := range files {
+	slices.SortStableFunc(files, func(a, b FileChange) int {
+		return cmp.Or(cmp.Compare(b.pending, a.pending), cmp.Compare(sizes[a.Path], sizes[b.Path]))
+	})
+	left := 0
+	for _, c := range files {
 		if s.expired(ctx) {
-			s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers, read at the next run: %v", s.report.Path, len(files)-i, ctx.Err()))
-			for _, rest := range files[i:] {
-				unread = append(unread, rest.Path)
-			}
-			return unread
+			left++
+			continue
 		}
-		if !s.inspectChanged(ctx, c) {
-			unread = append(unread, c.Path)
+		if s.inspectChanged(ctx, c) {
+			run.read[c.Path] = true
+		} else {
+			left++
 		}
 	}
-	return unread
+	if left += k.dropped; left > 0 {
+		s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers in this run, kept pending for the next", s.report.Path, left))
+	}
+	return run
+}
+
+// skimmerRun is what a run did with the changed scripts: those it read, and what it left out by
+// design, the bundles a deploy generates and the packages being updated.
+type skimmerRun struct {
+	read          map[string]bool
+	skipGenerated bool
+	updating      map[string]bool
+}
+
+// pending reports whether a changed script was left unread by the run, not by design: it stays
+// to be read at a later run.
+func (r skimmerRun) pending(p string) bool {
+	if r.read[p] || r.updating[packageOf(p)] {
+		return false
+	}
+	return !r.skipGenerated || !slices.ContainsFunc(generatedBundles, func(d string) bool { return strings.Contains(p, d) })
 }
 
 // versionFile reports a file that changes when the package holding it is updated: the
@@ -348,6 +379,9 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 		return false
 	}
 	s.budget.dataLeft -= info.Size()
+	// One file cannot take the rest of the run: past its own time it is left, and stays pending.
+	fileCtx, cancel := context.WithTimeout(ctx, maxSkimmerFileTime)
+	defer cancel()
 	f, err := s.src.FS.Open(name)
 	if err != nil {
 		return true
@@ -365,7 +399,7 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 		if strings.EqualFold(path.Ext(name), ".svg") && svg == nil {
 			svg = svgSignals(piece)
 		}
-		if err != nil || s.expired(ctx) {
+		if err != nil || s.expired(ctx) || fileCtx.Err() != nil {
 			break
 		}
 		// The end of a piece is read again with the next, so a pattern cut in two is whole once.
@@ -375,8 +409,12 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 	if len(sigs) > 0 {
 		s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs)
 	}
-	return !s.expired(ctx)
+	return !s.expired(ctx) && fileCtx.Err() == nil
 }
+
+// maxSkimmerFileTime bounds the time one changed script takes to read for skimmers. A variable for
+// the tests, whose race detector makes reading ten times slower.
+var maxSkimmerFileTime = 20 * time.Second
 
 // Pieces in which a large script is read for skimmers.
 const (

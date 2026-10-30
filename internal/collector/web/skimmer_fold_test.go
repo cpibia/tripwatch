@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/cpibia/tripwatch/internal/collector"
 )
 
 // A hostile script cannot make the folding slow or deep: nested parentheses, endless chains,
@@ -34,7 +36,7 @@ func TestFoldingHostileScripts(t *testing.T) {
 
 // A run past its time stops reading changed scripts for skimmers and says how many were left.
 func TestSkimmerSearchStopsWithTheRun(t *testing.T) {
-	s := &scanner{budget: newHashBudget(), findings: map[string]int{}, report: AppReport{}}
+	s := &scanner{src: collector.NewSource(t.TempDir()), budget: newHashBudget(), findings: map[string]int{}, report: AppReport{}}
 	s.report.Path = "/var/www/shop"
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector"
 )
@@ -137,6 +138,10 @@ func TestSkimmerOnCleanCorpus(t *testing.T) {
 // not a skimmer in a file changed on its own; decoys of other kinds do not count; a skimmer
 // padded past the size read at once is still seen; an SVG script under any namespace prefix runs.
 func TestSkimmerEvasions(t *testing.T) {
+	// The padded script is read whole, however slow the race detector makes it.
+	saved := maxSkimmerFileTime
+	maxSkimmerFileTime = time.Hour
+	t.Cleanup(func() { maxSkimmerFileTime = saved })
 	tr := newTree(t)
 	tr.file("var/www/blog/wp-includes/version.php", "<?php $wp_version = '6.6';")
 	tr.file("var/www/blog/wp-content/themes/shop/checkout.js", "jQuery(function(){})")

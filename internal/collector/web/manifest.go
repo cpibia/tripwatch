@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -51,6 +52,8 @@ type FileChange struct {
 	Change string `json:"change"`
 	// SHA256 is the file's content now, absent for a removal or a file too large to hash.
 	SHA256 string `json:"sha256,omitempty"`
+	// pending counts the runs before this one that left the script unread for skimmers.
+	pending int
 }
 
 // manifestWriter writes the manifest of one application's run next to the one in use.
@@ -184,39 +187,110 @@ func (r *manifestReader) advance() {
 	r.path, r.sum = p, line[i+1:]
 }
 
-// dropFromManifest rewrites a manifest without the given files (paths as FileChange gives them),
-// through a temporary file renamed over it.
-func dropFromManifest(name string, paths []string) error {
-	drop := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		drop[strings.TrimPrefix(p, "/")] = true
+// pendingPrefix marks in a manifest a script a run left unread for skimmers, with the number of
+// runs in a row that did and the entry it had before: it never equals a content, so the next run
+// finds the script changed and reads it.
+const pendingPrefix = "pending:"
+
+// pendingRuns is the number of runs in a row that left an entry's script unread.
+func pendingRuns(sum string) int {
+	rest, ok := strings.CutPrefix(sum, pendingPrefix)
+	if !ok {
+		return 0
 	}
-	in, err := os.Open(name) //nolint:gosec // under the operator's state directory
+	n, _, _ := strings.Cut(rest, ":")
+	runs, _ := strconv.Atoi(n)
+	return runs
+}
+
+// changedSum reports whether two entries of a file in two manifests name different content, as
+// the comparison of manifests judges it.
+func changedSum(old, now string) bool {
+	// A file hashed in one run and only fingerprinted in the other (the hash budget ran out)
+	// cannot be compared; two fingerprints can, since a rewrite changes the change time or the
+	// inode. A link to a release's shared file is hashed with its content since that file is
+	// inspected: the first run that does is not a change.
+	firstContent := strings.HasPrefix(old, "link:") && strings.HasPrefix(now, old+":")
+	return old != now && !firstContent && strings.HasPrefix(old, "unhashed:") == strings.HasPrefix(now, "unhashed:")
+}
+
+// maxReportedUnread bounds the scripts named as left unread for runs in a row.
+const maxReportedUnread = 100
+
+// unreadRunsReported is from how many runs in a row a script left unread is named in the result.
+const unreadRunsReported = 3
+
+// keepPending rewrites the manifest a run hands on so that every changed script it left unread
+// for skimmers, not by design, keeps the entry of the manifest before it, marked pending: the next
+// run finds it changed again and reads it. It returns the scripts left unread for several runs in
+// a row. The two manifests are read as streams, in walk order.
+func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, error) {
+	pf, err := os.Open(prev) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() { _ = in.Close() }()
-	tmp := name + ".tmp"
+	defer func() { _ = pf.Close() }()
+	nf, err := os.Open(next) //nolint:gosec // under the operator's state directory
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = nf.Close() }()
+	tmp := next + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return err
+		return nil, err
 	}
 	w := bufio.NewWriterSize(out, 64<<10)
-	r := newManifestReader(in)
-	for ; !r.done; r.advance() {
-		if !drop[r.path] {
-			if _, err := fmt.Fprintf(w, "%s %s\n", strconv.Quote(r.path), r.sum); err != nil {
-				_ = out.Close()
-				return err
+	old, now := newManifestReader(pf), newManifestReader(nf)
+	var long []UnreadScript
+	for ; !now.done; now.advance() {
+		for !old.done && comparePaths(old.path, now.path) < 0 {
+			old.advance()
+		}
+		before := ""
+		if !old.done && old.path == now.path {
+			before = old.sum
+		}
+		entry := now.sum
+		p := "/" + now.path
+		if slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(p))) && (before == "" || changedSum(before, now.sum)) && run.pending(p) {
+			runs := pendingRuns(before) + 1
+			base := before
+			if runs > 1 {
+				_, _, base = cutPending(before)
+			}
+			entry = fmt.Sprintf("%s%d:%s", pendingPrefix, runs, cmp.Or(base, "new"))
+			if runs >= unreadRunsReported && len(long) < maxReportedUnread {
+				long = append(long, UnreadScript{Path: p, Runs: runs})
 			}
 		}
+		if _, err := fmt.Fprintf(w, "%s %s\n", strconv.Quote(now.path), entry); err != nil {
+			_ = out.Close()
+			return nil, err
+		}
 	}
-	err = errors.Join(r.err, w.Flush(), out.Sync(), out.Close())
-	if err != nil {
+	if err := errors.Join(old.err, now.err, w.Flush(), out.Sync(), out.Close()); err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return nil, err
 	}
-	return os.Rename(tmp, name)
+	return long, os.Rename(tmp, next)
+}
+
+// cutPending splits a pending entry into its runs and the entry it kept.
+func cutPending(sum string) (string, int, string) {
+	rest, ok := strings.CutPrefix(sum, pendingPrefix)
+	if !ok {
+		return sum, 0, sum
+	}
+	n, base, _ := strings.Cut(rest, ":")
+	runs, _ := strconv.Atoi(n)
+	return n, runs, base
+}
+
+// UnreadScript is a changed script that runs in a row left unread for skimmers.
+type UnreadScript struct {
+	Path string `json:"path"`
+	Runs int    `json:"runs"`
 }
 
 // skimmerCandidates are the scripts and templates added or changed, kept apart from the list of
@@ -290,14 +364,8 @@ func diffManifests(prev, cur string) ([]FileChange, int, skimmerCandidates, erro
 			emit(FileChange{Path: "/" + now.path, Change: ChangeAdded, SHA256: contentHash(now.sum)})
 			now.advance()
 		default:
-			// A file hashed in one run and only fingerprinted in the other (the hash budget ran
-			// out) cannot be compared; two fingerprints can, since a rewrite changes the change
-			// time or the inode.
-			// A link to a release's shared file is hashed with its content since that file is
-			// inspected: the first run that does is not a change.
-			firstContent := strings.HasPrefix(old.sum, "link:") && strings.HasPrefix(now.sum, old.sum+":")
-			if old.sum != now.sum && !firstContent && strings.HasPrefix(old.sum, "unhashed:") == strings.HasPrefix(now.sum, "unhashed:") {
-				emit(FileChange{Path: "/" + now.path, Change: ChangeModified, SHA256: contentHash(now.sum)})
+			if changedSum(old.sum, now.sum) {
+				emit(FileChange{Path: "/" + now.path, Change: ChangeModified, SHA256: contentHash(now.sum), pending: pendingRuns(old.sum)})
 			}
 			old.advance()
 			now.advance()
@@ -352,16 +420,18 @@ func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
 			s.report.Changes, s.report.ChangeCount = changes, count
-			// Scripts the run had no time or budget left to read for skimmers stay out of the
-			// manifest handed on, so that the next run finds them changed and reads them: taken
-			// in as seen, a skimmer among them would never be read again.
-			if unread := s.inspectCandidates(ctx, candidates); len(unread) > 0 {
-				if err := dropFromManifest(m.next, unread); err != nil {
-					s.issues = append(s.issues, fmt.Sprintf("%s: manifest not written, scripts left unread would pass for seen: %v", s.report.Path, err))
-					_ = os.Remove(m.next)
-					return ""
-				}
+			// Scripts the run had no time or budget left to read for skimmers, however many,
+			// keep their old entry in the manifest handed on, so that the next run finds them
+			// changed and reads them: taken in as seen, a skimmer among them would never be read
+			// again. Those left unread for runs in a row are named in the result.
+			run := s.inspectCandidates(ctx, candidates)
+			long, err := keepPending(prev, m.next, run)
+			if err != nil {
+				s.issues = append(s.issues, fmt.Sprintf("%s: manifest not written, scripts left unread would pass for seen: %v", s.report.Path, err))
+				_ = os.Remove(m.next)
+				return ""
 			}
+			s.report.UnreadScripts = long
 		}
 	}
 	return m.next

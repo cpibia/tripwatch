@@ -1418,6 +1418,15 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			state("web", "code-search-incomplete", "high", "Data files not searched for code", b.String())
 		}
+		// A changed script the sensor had no time or budget to read for skimmers several runs in
+		// a row: decoys written next to a skimmer to keep it from being read look like this. The
+		// alert stays as long as the script is left unread.
+		for _, app := range w.Apps {
+			for _, u := range app.UnreadScripts {
+				state("web", "skimmer-unread:"+u.Path, "medium", "Changed script not read for skimmers: "+u.Path,
+					fmt.Sprintf("%s changed and was left unread for skimmers by %d runs in a row, for lack of time or budget: other files changed with it took the run's share. Read it, and see what else changed in %s.", u.Path, u.Runs, app.Path))
+			}
+		}
 	}
 
 	if l := cur.Weblog; l != nil {

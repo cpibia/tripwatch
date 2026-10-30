@@ -14,9 +14,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A script in an upload path answered with a permanent redirect stays high unless the script is
   the path's last segment with nothing after it: `x.php/a.php`, `x.php/` and `x.php/y.php.jpg`
   run `x.php` through PATH_INFO, which chooses its own status.
-- Scripts the run had no time or budget left to read for skimmers stay out of the code manifest
-  it hands on: the next run finds them changed again and reads them, instead of taking them for
-  seen for good. The issue says they are read at the next run.
+- Changed scripts a run left unread for skimmers, for its time, its budget or past the 2,000 it
+  reads, keep their old entry in the code manifest it hands on, marked pending: the next run finds
+  them changed again and reads them first, then the smallest, so decoys go last; one script cannot
+  take more than 20 seconds of the run. A script left unread three runs in a row is named in the
+  result, and the verifier raises a medium alert for it until it is read.
 - The kernel's socket tables are read as streams: a table grown past 16 MB by anyone's
   listeners was dropped whole, root's listeners with it; now every row goes through the bound
   that keeps root's sockets and the listeners first, up to a million rows a table.

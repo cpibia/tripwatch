@@ -1081,3 +1081,14 @@ func TestDeployIsOneAlert(t *testing.T) {
 		t.Errorf("a few scripts changed: %d findings, want 3 scripts and 3 directories", len(got))
 	}
 }
+
+// A changed script left unread for skimmers several runs in a row is a medium alert of its own.
+func TestUnreadScriptAlert(t *testing.T) {
+	cur := baseState()
+	cur.Web = &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/var/www/shop"},
+		UnreadScripts: []web.UnreadScript{{Path: "/var/www/shop/pub/zzz/skim.js", Runs: 3}}}}}
+	got := fingerprints(Evaluate(nil, cur))
+	if !slices.Contains(got, "medium web:skimmer-unread:/var/www/shop/pub/zzz/skim.js") {
+		t.Errorf("findings = %v", got)
+	}
+}

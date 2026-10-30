@@ -229,8 +229,9 @@ func TestManifestFirstHashOfASharedLink(t *testing.T) {
 	}
 }
 
-// Scripts a run cut short has not read for skimmers stay out of the manifest it hands on: the
-// next run finds them changed again and reads them, instead of taking them for seen.
+// Scripts a run cut short has not read for skimmers keep their old entry in the manifest it hands
+// on, marked pending: the next run finds them changed again and reads them, instead of taking them
+// for seen. After three runs in a row they are named in the result.
 func TestUnreadScriptsStayPending(t *testing.T) {
 	state := t.TempDir()
 	prev := manifestPath(state, "/var/www/shop")
@@ -240,27 +241,37 @@ func TestUnreadScriptsStayPending(t *testing.T) {
 	if err := os.WriteFile(prev, []byte(`"var/www/shop/a.js" `+strings.Repeat("a", 64)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, err := newManifestWriter(state, "/var/www/shop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.add("var/www/shop/a.js", strings.Repeat("b", 64))
-	m.add("var/www/shop/b.js", strings.Repeat("c", 64))
-	s := &scanner{manifest: m, budget: newHashBudget(), findings: map[string]int{}, report: AppReport{Application: discovery.Application{Path: "/var/www/shop"}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	next := s.finishManifest(ctx, state)
-	if next == "" {
-		t.Fatalf("no manifest: %v", s.issues)
+	var s *scanner
+	for run := 1; run <= 3; run++ {
+		m, err := newManifestWriter(state, "/var/www/shop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.add("var/www/shop/a.js", strings.Repeat("b", 64))
+		m.add("var/www/shop/b.js", strings.Repeat("c", 64))
+		s = &scanner{src: collector.NewSource(t.TempDir()), manifest: m, budget: newHashBudget(), findings: map[string]int{}, report: AppReport{Application: discovery.Application{Path: "/var/www/shop"}}}
+		next := s.finishManifest(ctx, state)
+		if next == "" {
+			t.Fatalf("run %d: no manifest: %v", run, s.issues)
+		}
+		data, err := os.ReadFile(next) //nolint:gosec // the test's own state directory
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf(`"var/www/shop/a.js" pending:%d:`+strings.Repeat("a", 64), run)
+		if !strings.Contains(string(data), want) || !strings.Contains(string(data), fmt.Sprintf(`"var/www/shop/b.js" pending:%d:new`, run)) {
+			t.Fatalf("run %d: unread scripts handed on as seen:\n%s", run, data)
+		}
+		if err := os.Rename(next, prev); err != nil {
+			t.Fatal(err)
+		}
 	}
-	data, err := os.ReadFile(next) //nolint:gosec // the test's own state directory
-	if err != nil {
-		t.Fatal(err)
+	if !slices.Equal(s.report.UnreadScripts, []UnreadScript{{"/var/www/shop/a.js", 3}, {"/var/www/shop/b.js", 3}}) {
+		t.Errorf("unread scripts = %+v", s.report.UnreadScripts)
 	}
-	if strings.Contains(string(data), "a.js") || strings.Contains(string(data), "b.js") {
-		t.Errorf("unread scripts handed on as seen:\n%s", data)
-	}
-	if !slices.ContainsFunc(s.issues, func(i string) bool { return strings.Contains(i, "read at the next run") }) {
+	if !slices.ContainsFunc(s.issues, func(i string) bool { return strings.Contains(i, "kept pending for the next") }) {
 		t.Errorf("issues %q", s.issues)
 	}
 }
