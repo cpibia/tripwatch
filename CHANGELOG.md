@@ -6,6 +6,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.42] - 2026-10-30
+
 What changes for an operator, in short; the details follow by component.
 
 - **New alerts.** A payment skimmer is searched for in every changed script, across statements
@@ -1600,7 +1602,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.41...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.42...HEAD
+[0.1.42]: https://github.com/cpibia/tripwatch/compare/v0.1.41...v0.1.42
 [0.1.41]: https://github.com/cpibia/tripwatch/compare/v0.1.40...v0.1.41
 [0.1.40]: https://github.com/cpibia/tripwatch/compare/v0.1.39...v0.1.40
 [0.1.39]: https://github.com/cpibia/tripwatch/compare/v0.1.38...v0.1.39
