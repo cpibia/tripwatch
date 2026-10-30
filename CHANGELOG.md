@@ -146,6 +146,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   outside the scratch directories and for no other user's file, and a package manager lowers
   only root's files in the scratch directories: the web server's user, who can read when apt
   holds its lock, could drop, run and remove a program in `/dev/shm` named `.dpkg-new` unseen.
+- A package manager running no longer lowers another user's crontab, start-up file or service
+  unit, in a home or owned by that user: only root's.
 
 - A new cron line is critical, with the reason, when it never runs on schedule (the 31st of
   February, as CronRAT hides its code), downloads and runs what it fetched, decodes a base64

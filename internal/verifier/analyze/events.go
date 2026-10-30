@@ -36,8 +36,7 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 		// Only outside the scratch directories and for no other user's file: dpkg stages a file
 		// next to its destination, never in /tmp or /dev/shm, where the name would only hide a
 		// dropper. A removal carries no owner; outside the scratch directories only root writes.
-		if (packageManager || e.PackageManager) && lowered(e) && e.Class != watch.ClassScratch && !e.WebUser && e.Owner == "" &&
-			(e.UID == nil || *e.UID == 0) && packageTemp(e.Path) {
+		if (packageManager || e.PackageManager) && lowered(e) && e.Class != watch.ClassScratch && packageTemp(e.Path) {
 			continue
 		}
 		f, ok := judgeEvent(e, history)
@@ -67,23 +66,30 @@ func packageTemp(p string) bool {
 
 // rootOwned reports an event on a file root owns, which no other user can have made.
 func rootOwned(e watch.Event) bool {
-	return e.UID != nil && *e.UID == 0 && !e.WebUser && e.Owner == ""
+	return e.UID != nil && *e.UID == 0 && notAnotherUsers(e)
+}
+
+// notAnotherUsers reports an event on no other user's file: not in a user's home or crontab nor
+// owned by another user; a removal carries no owner, and outside those places only root writes.
+func notAnotherUsers(e watch.Event) bool {
+	return !e.WebUser && e.Owner == "" && (e.UID == nil || *e.UID == 0)
 }
 
 // lowered says whether a package manager running explains an event well enough to lower its
 // severity: packages install services, scheduled tasks and start-up scripts all the time, and
 // root's files in the scratch directories. Never who may become root, the accounts, SSH keys or
 // library preloading, which a package rarely touches and an intruder always does; nor process
-// starts or uploads, which no package explains; nor another user's files in the scratch
-// directories, which the web server's user can time to the package manager's lock.
+// starts or uploads, which no package explains; nor another user's files, a crontab or a start-up
+// file in a home or anything in the scratch directories, which the web server's user can time to
+// the package manager's lock, readable by anyone.
 func lowered(e watch.Event) bool {
 	switch e.Class {
 	case watch.ClassService, watch.ClassSchedule:
-		return true
+		return notAnotherUsers(e)
 	case watch.ClassScratch:
 		return rootOwned(e)
 	case watch.ClassHook:
-		return path.Base(e.Path) != "ld.so.preload"
+		return path.Base(e.Path) != "ld.so.preload" && notAnotherUsers(e)
 	}
 	return false
 }

@@ -203,6 +203,23 @@ func TestHookInstalledByAPackage(t *testing.T) {
 	}
 }
 
+// A package manager running does not lower another user's crontab or start-up file: the web
+// server's user can read when apt holds its lock.
+func TestPackageManagerLowersOnlyRootsFiles(t *testing.T) {
+	web := uint32(33)
+	at := time.Now()
+	for name, e := range map[string]watch.Event{
+		"crontab":   {At: at, Class: watch.ClassSchedule, Op: watch.OpWrite, Path: "/var/spool/cron/crontabs/www-data", SHA256: strings.Repeat("d", 64), UID: &web, Owner: "www-data"},
+		"bashrc":    {At: at, Class: watch.ClassHook, Op: watch.OpWrite, Path: "/var/www/.bashrc", SHA256: strings.Repeat("e", 64), UID: &web, Owner: "www-data"},
+		"user unit": {At: at, Class: watch.ClassService, Op: watch.OpCreate, Path: "/var/www/.config/systemd/user/x.service", SHA256: strings.Repeat("f", 64), UID: &web, Owner: "www-data"},
+	} {
+		with, without := EvaluateEvents([]watch.Event{e}, true, nil), EvaluateEvents([]watch.Event{e}, false, nil)
+		if len(with) != 1 || len(without) != 1 || with[0].Severity != without[0].Severity {
+			t.Errorf("%s: %+v with a package manager, %+v without", name, with, without)
+		}
+	}
+}
+
 // The staging names hide nothing in the scratch directories: there the web server's user, who can
 // read when apt holds its lock, would drop, run and remove a program under one. Root's own files
 // there are still lowered while a package manager runs.
