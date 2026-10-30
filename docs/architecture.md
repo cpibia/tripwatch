@@ -157,10 +157,14 @@ and powers, on root's channel, unless a container with the same name, image, ima
 was seen within the hour (4,096 remembered; a key is forgotten an hour after its last container
 is gone, so the same container started again later is reported again), and its removal is
 reported too. A start with the same name, tag and powers on another digest carries the digest it
-replaces. The verifier raises the start under the snapshot rule's fingerprint and detail (the
+replaces; the digest last seen for a key is kept as long as the sensor runs, however long the
+container was stopped. Docker and CRI-O report the digest; containerd and Podman bundles hold
+none, and the alert says another image under the same tag is not told apart. The verifier raises the start under the snapshot rule's fingerprint and detail (the
 medium "runs another image" for a replaced digest), so the next snapshot does not raise it again
-and an acceptance holds for both; the detail leaves out the container's ID and creation time,
-which go in the title, so an acceptance also holds for the same job container started every day.
+and an acceptance holds for both; the detail, which an acceptance is bound to, holds the image
+digest, so accepting a container never covers another image put under its tag, and leaves out
+the container's ID and creation time, which go in the title, so an acceptance holds for the same
+job container started every day.
 
 Events go through bounded channels to a batcher: root's system paths have a channel of their own,
 which the batcher reads first and no other account can fill (a loss there counts as root's), the

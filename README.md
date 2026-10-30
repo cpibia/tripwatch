@@ -379,7 +379,9 @@ what changes there within two seconds, in signed event envelopes of the same cha
   seen although no snapshot ever shows it. Containers there before the sensor started, those
   without such a power and redeploys of one seen within the hour (same name, image, digest and
   powers) are left to the snapshots; the same name, tag and powers on another image digest is
-  reported as a medium alert naming both digests.
+  reported as a medium alert naming both digests, and accepting a container's alert covers only
+  its digest. containerd and Podman leave no image digest in their bundles: for them another
+  image under the same tag is not told apart, and the alert says so.
 
 The verifier keeps the events for seven days, unless configured otherwise (at most 20,000 a server in 24 hours for uploads
 and process starts, as many for the homes and crontabs of accounts other than root, 2,000 of

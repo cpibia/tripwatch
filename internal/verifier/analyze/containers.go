@@ -49,14 +49,19 @@ func containerFindings(prev *State, cur State) []Finding {
 
 // containerFinding is the alert of a container with power over the host, from a snapshot or
 // from the event of its start. Both give it the same fingerprint and detail: what was accepted
-// from one is not raised again by the other. The detail leaves out what changes with every
-// start of the same container, its ID and creation time, which go in the title, so that an
-// acceptance holds for a job container started again every day.
+// from one is not raised again by the other. The detail, which an acceptance is bound to, holds
+// the image's digest, so that accepting a container never covers another image put under its
+// tag, and leaves out what changes with every start of the same container, its ID and creation
+// time, which go in the title, so that the acceptance holds for a job container started again.
 func containerFinding(c watch.ContainerInfo, title string) Finding {
+	digest := "digest " + c.ImageID
+	if c.ImageID == "" {
+		digest = "digest not reported by the runtime, so another image under the same tag is not told apart"
+	}
 	return Finding{Kind: "containers", Owner: "root", Severity: "high", Fingerprint: "containers:new-power:" + c.Key(),
 		Title: fmt.Sprintf("%s: %s (%s, created %s)", title, c.Name, c.ID, orUnknown(c.Created)),
-		Detail: fmt.Sprintf("Container %s, image %s, has %s. Each of these is root on the host: whoever controls the container controls the server. Check that it is a container you started.",
-			c.Name, orUnknown(c.Image), strings.Join(c.Powers, ", "))}
+		Detail: fmt.Sprintf("Container %s, image %s (%s), has %s. Each of these is root on the host: whoever controls the container controls the server. Check that it is a container you started.",
+			c.Name, orUnknown(c.Image), digest, strings.Join(c.Powers, ", "))}
 }
 
 // containerImageFinding is the alert of a container with power over the host that runs

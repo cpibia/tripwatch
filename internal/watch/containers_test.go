@@ -132,6 +132,19 @@ func TestContainersImageSwapAndKeyExpiry(t *testing.T) {
 	if len(got) != 1 || got[0].Op != OpCreate || got[0].Container.ID != "p4" || got[0].Container.Replaces != "" {
 		t.Fatalf("started again after its key expired: %+v", got)
 	}
+
+	// The image last seen for a key outlives the key: a swap after a long stop names it.
+	stop(fsys, "p4")
+	c.look()
+	drain(out)
+	now = now.Add(24 * time.Hour)
+	c.look()
+	start(fsys, "p5", "sha256:other")
+	c.look()
+	got = drain(out)
+	if len(got) != 1 || got[0].Container.Replaces != "sha256:backdoor" {
+		t.Fatalf("image swapped after a day stopped: %+v", got)
+	}
 }
 
 // A configuration never readable is given up after a few looks, and not read again.

@@ -628,6 +628,10 @@ func ociContainer(fsys fs.FS, runtime, name string, cfg ociConfig) Container {
 		Name:  cmp.Or(a["io.kubernetes.cri.container-name"], a["io.kubernetes.container.name"], a["io.container.name"], cfg.Hostname),
 		Image: cmp.Or(a["io.kubernetes.cri.image-name"], a["io.kubernetes.container.image"], a["org.opencontainers.image.ref.name"], a["io.podman.annotations.image"]),
 		User:  fmt.Sprint(cfg.Process.User.UID)}
+	// CRI-O names the image's ID; containerd and Podman leave no digest in the bundle.
+	if ref := a["io.kubernetes.cri-o.ImageRef"]; ref != "" {
+		c.ImageID = ref
+	}
 	if pod := cmp.Or(a["io.kubernetes.cri.sandbox-name"], a["io.kubernetes.pod.name"]); pod != "" {
 		c.Name = cmp.Or(a["io.kubernetes.cri.sandbox-namespace"], a["io.kubernetes.pod.namespace"]) + "/" + pod + "/" + c.Name
 	}

@@ -22,8 +22,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   architecture, reading the whole cache for it even past the bound on directories.
 - The container watcher keys a container also by its image digest and forgets a key an hour
   after its last container is gone: an image swapped under the same name, tag and powers is
-  reported with the digest it replaces, and the same container started again hours later is
-  reported again instead of never until the sensor restarts.
+  reported with the digest it replaces (the digest last seen for a key is kept as long as the
+  sensor runs), and the same container started again hours later is reported again instead of
+  never until the sensor restarts. CRI-O containers carry their image's ID.
 - Directories renamed in a loop by any user no longer put off the sensor's next plan of its
   watches: a watched root moved away and back is watched again within a couple of seconds, while
   the loop runs, instead of staying blind until it stops.
@@ -43,9 +44,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   unconfigured directories fold into one.
 - A container start seen in real time on another image than the one of the same name, tag and
   powers before it raises the snapshot rule's medium "runs another image". The alert of a
-  container with power over the host keeps its ID and creation time in the title, out of the
-  detail, so an acceptance holds for the same container started again; acceptances given before
-  are asked once more the next time that container starts.
+  container with power over the host names the image digest in its detail, so accepting it never
+  covers another image under the same tag, or says the runtime reports none, and keeps the ID and
+  creation time in the title, so an acceptance holds for the same container started again;
+  acceptances given before are asked once more the next time that container starts.
 
 ## [0.1.41] - 2026-10-29
 

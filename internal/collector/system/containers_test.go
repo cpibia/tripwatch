@@ -87,6 +87,18 @@ func TestOCIContainers(t *testing.T) {
 	}
 }
 
+// CRI-O names the image's ID in the bundle, which tells an image put under the same tag apart.
+func TestCRIOImageID(t *testing.T) {
+	var cfg ociConfig
+	if err := json.Unmarshal([]byte(`{"annotations": {"io.kubernetes.container.name": "agent", "io.kubernetes.container.image": "agent:1",
+		"io.kubernetes.cri-o.ImageRef": "3f2a9c1d"}}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if c := ociContainer(fstest.MapFS{}, "cri-o", "run/containers/storage/overlay-containers/abc/userdata/config.json", cfg); c.Image != "agent:1" || c.ImageID != "3f2a9c1d" {
+		t.Errorf("container = %+v", c)
+	}
+}
+
 // Every way of handing a container the host counts, under any name; what containers commonly
 // share without power over the host does not.
 func TestContainerPowers(t *testing.T) {

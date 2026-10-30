@@ -82,6 +82,15 @@ func TestContainerEventsImageSwapAndStableDetail(t *testing.T) {
 		t.Fatalf("event findings %+v, snapshot findings %+v", got, snap)
 	}
 
+	// Accepting a container never covers another image under its tag, whatever the window: the
+	// digest is in the detail an acceptance is bound to. A runtime that reports no digest says so.
+	good := containerFinding(watch.ContainerInfo{ID: "aaa", Name: "proxy", Image: "proxy:v2", ImageID: "sha256:good", Powers: []string{"privileged"}}, "Container with access to the host")
+	backdoor := containerFinding(watch.ContainerInfo{ID: "bbb", Name: "proxy", Image: "proxy:v2", ImageID: "sha256:backdoor", Powers: []string{"privileged"}}, "Container with access to the host")
+	unknown := containerFinding(watch.ContainerInfo{ID: "ccc", Name: "proxy", Image: "proxy:v2", Powers: []string{"privileged"}}, "Container with access to the host")
+	if good.Fingerprint != backdoor.Fingerprint || good.Detail == backdoor.Detail || !strings.Contains(unknown.Detail, "digest not reported by the runtime") {
+		t.Errorf("good %q, backdoor %q, without digest %q", good.Detail, backdoor.Detail, unknown.Detail)
+	}
+
 	first := containerFinding(watch.ContainerInfo{ID: "aaa", Name: "job", Image: "backup", Created: "2026-10-28T03:00:00Z", Powers: []string{"privileged"}}, "Container with access to the host started")
 	again := containerFinding(watch.ContainerInfo{ID: "ccc", Name: "job", Image: "backup", Created: "2026-10-29T03:00:00Z", Powers: []string{"privileged"}}, "Container with access to the host started")
 	if first.Fingerprint != again.Fingerprint || first.Detail != again.Detail || first.Title == again.Title || !strings.Contains(again.Title, "ccc") {

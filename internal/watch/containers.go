@@ -46,7 +46,9 @@ const (
 	maxContainerKeys = 4096
 	maxPowers        = 32
 	// containerKeyTTL is how long a container's key stays known after the last container with
-	// it is gone: a redeploy is not reported, the same container started again later is.
+	// it is gone: a redeploy is not reported, the same container started again later is. The
+	// image last seen for a key is kept as long as the sensor runs, so that an image swapped
+	// under it is told apart however long the container was stopped.
 	containerKeyTTL = time.Hour
 )
 
@@ -62,7 +64,7 @@ type Containers struct {
 	// keys holds when a container was last seen, by its key and image; images the image last
 	// seen for each key, to tell a swapped image from a redeploy.
 	keys   map[string]time.Time
-	images map[string]seenImage
+	images map[string]string
 	// looked is set after the first look, whose containers were there before the sensor and are
 	// left to the snapshots.
 	looked bool
@@ -71,11 +73,6 @@ type Containers struct {
 	rereadFrom int
 	// Dropped counts events lost because the consumer did not keep up.
 	Dropped atomic.Int64
-}
-
-type seenImage struct {
-	id string
-	at time.Time
 }
 
 type tracked struct {
@@ -88,7 +85,7 @@ type tracked struct {
 
 func NewContainers(src collector.Source, out chan<- Event) *Containers {
 	return &Containers{fsys: src.FS, out: out, now: time.Now, known: map[string]*tracked{}, tries: map[string]int{},
-		keys: map[string]time.Time{}, images: map[string]seenImage{}}
+		keys: map[string]time.Time{}, images: map[string]string{}}
 }
 
 // Run looks at the runtimes' state every ContainerPoll until ctx ends.
@@ -167,11 +164,6 @@ func (c *Containers) look() {
 			delete(c.keys, k)
 		}
 	}
-	for k, img := range c.images {
-		if now.Sub(img.at) > containerKeyTTL {
-			delete(c.images, k)
-		}
-	}
 	c.looked = true
 }
 
@@ -213,8 +205,8 @@ func (c *Containers) read(ref system.ContainerRef, t *tracked, host *system.Host
 	}
 	// The tag is a label whoever controls the daemon rewrites: the same name, tag and powers on
 	// another image is another program, reported with the image it took the place of.
-	if was, ok := c.images[info.Key()]; ok && was.id != "" && info.ImageID != "" && was.id != info.ImageID {
-		info.Replaces = was.id
+	if was := c.images[info.Key()]; was != "" && info.ImageID != "" && was != info.ImageID {
+		info.Replaces = was
 	}
 	c.remember(info, now)
 	if c.looked {
@@ -230,7 +222,7 @@ func (c *Containers) remember(info *ContainerInfo, now time.Time) {
 		c.keys[imageKey(info)] = now
 	}
 	if _, ok := c.images[info.Key()]; ok || len(c.images) < maxContainerKeys {
-		c.images[info.Key()] = seenImage{id: info.ImageID, at: now}
+		c.images[info.Key()] = info.ImageID
 	}
 }
 
