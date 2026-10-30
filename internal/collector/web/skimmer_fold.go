@@ -172,14 +172,16 @@ type folder struct {
 	steps     int
 }
 
-// foldedStrings returns every value of length 4 or more that an expression of the script's
-// string literals builds, each preceded by a space.
-func foldedStrings(content []byte) []byte {
-	return foldStrings(content, map[string]string{})
+// foldStrings returns every value of length 4 or more that an expression of the script's
+// string literals builds, each preceded by a space, with the constants of the pieces read
+// before, which it adds to.
+func foldStrings(content []byte, constants map[string]string) []byte {
+	out, _, _ := foldWork(content, constants)
+	return out
 }
 
-// foldStrings is foldedStrings with the constants of the pieces read before, which it adds to.
-func foldStrings(content []byte, constants map[string]string) []byte {
+// foldWork folds and says how much work it took: the tokens read and the terms evaluated.
+func foldWork(content []byte, constants map[string]string) ([]byte, int, int) {
 	f := folder{toks: jsTokens(content), constants: constants}
 	var out []byte
 	for i := 0; i < len(f.toks) && len(out) < maxNormalised && f.steps < maxFoldSteps; {
@@ -216,7 +218,7 @@ func foldStrings(content []byte, constants map[string]string) []byte {
 		}
 		i = max(next, i+1)
 	}
-	return out
+	return out, len(f.toks), f.steps
 }
 
 // set keeps a constant. Past the bound one already kept goes: a script cannot fill the table

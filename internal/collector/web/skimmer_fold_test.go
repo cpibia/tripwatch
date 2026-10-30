@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
 // A hostile script cannot make the folding slow or deep: nested parentheses, endless chains,
-// arrays never joined and unterminated literals are read in bounded time.
+// arrays never joined and unterminated literals cost a few terms a token, within the bound of a
+// piece. The work is counted rather than timed, so that a slow runner cannot fail the test.
 func TestFoldingHostileScripts(t *testing.T) {
 	for name, src := range map[string]string{
 		"nesting":    strings.Repeat("(", 200000) + `"a"` + strings.Repeat(")", 200000),
@@ -21,10 +21,9 @@ func TestFoldingHostileScripts(t *testing.T) {
 		"constant chains": "var a='" + strings.Repeat("a", 4000) + "';" +
 			strings.Repeat(strings.Repeat("(", 32)+strings.Repeat("a+", 2000)+"a;", 1<<20/(32+4002)),
 	} {
-		start := time.Now()
-		foldedStrings([]byte(src))
-		if d := time.Since(start); d > 5*time.Second {
-			t.Errorf("%s: %v", name, d)
+		_, tokens, steps := foldWork([]byte(src), map[string]string{})
+		if steps > 8*tokens || steps >= maxFoldSteps {
+			t.Errorf("%s: %d terms for %d tokens", name, steps, tokens)
 		}
 	}
 }
