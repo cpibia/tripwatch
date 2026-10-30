@@ -1392,8 +1392,8 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			if pa, ok := prevApps[app.Path]; ok {
 				scripts := scriptChanges(app)
-				// Past maxNamedScripts the scripts are one alert, a deploy most likely: the
-				// directories whose code changed are listed in it rather than raised one by one.
+				// Scripts changed together are one alert, a deploy most likely: the directories
+				// whose code changed are listed in it rather than raised one by one.
 				bulk := len(scripts) == 1 && strings.HasPrefix(scripts[0].Fingerprint, "scripts:")
 				var dirs []string
 				for dir, sum := range app.DirHashes {
@@ -1680,13 +1680,15 @@ func sameObject(before, cur objectT) bool {
 	return before.Target == cur.Target && before.Definer == cur.Definer
 }
 
-// maxNamedScripts is how many changed scripts of one application get an alert each; past it, a
-// deploy is the likely cause and one alert lists them.
+// maxNamedScripts is how many changed scripts of one application an alert names; past it the
+// rest are counted.
 const maxNamedScripts = 20
 
 // scriptChanges raises the scripts added or changed in an application since the previous
 // snapshot, by name: a new script in the web root or a changed core file is how a backdoor lands,
-// and the directory's hash alone does not say which file it is.
+// and the directory's hash alone does not say which file it is. One script is an alert of its
+// own; several changed together, as a deploy changes them, are one alert that names each with its
+// hash, as high as one alone: the count of alerts goes down, not what they say.
 func scriptChanges(app web.AppReport) []Finding {
 	var scripts []web.FileChange
 	for _, c := range app.Changes {
@@ -1697,15 +1699,40 @@ func scriptChanges(app web.AppReport) []Finding {
 	if len(scripts) == 0 {
 		return nil
 	}
-	if len(scripts) > maxNamedScripts {
+	if len(scripts) > 1 {
+		// Every script's content is in the fingerprint, so that the same files changed again
+		// are a new alert rather than one absorbed by an acknowledged one.
+		h := sha256.New()
 		var list []string
-		for _, c := range scripts[:maxNamedScripts] {
-			list = append(list, c.Change+" "+c.Path)
+		for i, c := range scripts {
+			fmt.Fprintf(h, "%s %s %s\n", c.Change, c.Path, c.SHA256)
+			if i < maxNamedScripts {
+				line := c.Change + " " + c.Path
+				if c.SHA256 != "" {
+					line += " (SHA-256 " + c.SHA256[:min(16, len(c.SHA256))] + ")"
+				}
+				list = append(list, line)
+			}
 		}
-		sum := sha256.Sum256([]byte(strings.Join(list, "\n")))
-		return []Finding{{Fingerprint: "scripts:" + app.Path + ":" + hex.EncodeToString(sum[:8]), Severity: "high",
-			Title:  fmt.Sprintf("%d scripts added or changed in %s", len(scripts), app.Path),
-			Detail: fmt.Sprintf("%d code files changed in all since the previous snapshot, a deploy if one was made. The first scripts:\n%s", app.ChangeCount, strings.Join(list, "\n"))}}
+		detail := fmt.Sprintf("%d code files changed in all since the previous snapshot, a deploy if one was made. Scripts:\n%s", app.ChangeCount, strings.Join(list, "\n"))
+		if more := len(scripts) - maxNamedScripts; more > 0 {
+			detail += fmt.Sprintf("\nand %d more", more)
+		}
+		var others []string
+		for _, c := range app.Changes {
+			if c.Change == web.ChangeRemoved || !web.IsScript(c.Path) {
+				if len(others) == maxNamedScripts {
+					others = append(others, "...")
+					break
+				}
+				others = append(others, c.Change+" "+c.Path)
+			}
+		}
+		if len(others) > 0 {
+			detail += "\nOther files changed:\n" + strings.Join(others, "\n")
+		}
+		return []Finding{{Fingerprint: "scripts:" + app.Path + ":" + hex.EncodeToString(h.Sum(nil)[:8]), Severity: "high",
+			Title: fmt.Sprintf("%d scripts added or changed in %s", len(scripts), app.Path), Detail: detail}}
 	}
 	out := make([]Finding, 0, len(scripts))
 	for _, c := range scripts {

@@ -137,6 +137,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
   issues in a panel, work left undone apart from the notes. The twenty issues kept of a collector are the most
   serious: the skimmer search left unfinished first, then other work left undone, notes last, so
   a flood of minor issues cannot push it out.
+- Scripts changed together in an application are one high alert naming each with its hash, the
+  other files changed and the directories whose code changed, instead of a high alert for each
+  script and a medium one for each directory: a deploy that rewrites four core files raised six
+  alerts, now one. A script changed alone is still an alert of its own, and the same scripts
+  changed again to other contents are a new alert.
 - The names dpkg, rpm and apk stage a file under are skipped while a package manager runs only
   outside the scratch directories and for no other user's file, and a package manager lowers
   only root's files in the scratch directories: the web server's user, who can read when apt

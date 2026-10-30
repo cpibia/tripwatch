@@ -493,9 +493,10 @@ For each application the `web` collector produces:
   SVG in an upload directory that runs script, under any namespace prefix, is reported as it lands;
 - **changed code files by name**: with a state directory the sensor keeps a manifest of each
   application's code files and reports the files added, changed or removed since the previous
-  delivered snapshot; each script added or changed is a high alert of its own (one alert for
-  more than 20, as a deploy makes, which also lists the directories whose code changed instead
-  of an alert for each), and the change of a directory's hash lists its files;
+  delivered snapshot; a script added or changed alone is a high alert of its own, and scripts
+  changed together, as a deploy changes them, are one high alert that names each with its hash
+  (the first 20, the rest counted), the other files changed and the directories whose code
+  changed, instead of an alert for each; the change of a directory's hash lists its files;
 - **hidden files** among scripts and in data directories, except the tool configurations and
   test fixtures that libraries ship on purpose and the `._` metadata files macOS puts in the zips
   it makes (signatures are still searched in those);

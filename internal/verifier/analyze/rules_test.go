@@ -707,17 +707,44 @@ func TestScriptChanges(t *testing.T) {
 	)}) {
 		got[f.Fingerprint] = f
 	}
-	if f := got["web-change:file:/var/www/shop/pub/sysapi.php:aa"]; f.Severity != "high" || f.Title != "Script added: /var/www/shop/pub/sysapi.php" {
+	// Scripts changed together are one high alert naming each with its hash, the other files
+	// and the directories.
+	if len(got) != 1 {
+		t.Errorf("findings: %v", got)
+	}
+	for _, f := range got {
+		for _, want := range []string{"2 scripts added or changed in /var/www/shop", "added /var/www/shop/pub/sysapi.php (SHA-256 aa)", "modified /var/www/shop/vendor/acme/App/View.php (SHA-256 bb)",
+			"modified /var/www/shop/vendor/acme/etc/di.xml", "removed /var/www/shop/vendor/acme/App/Old.php", "Directories whose code changed:\n/var/www/shop/vendor"} {
+			if f.Severity != "high" || !strings.Contains(f.Title+"\n"+f.Detail, want) {
+				t.Errorf("scripts changed together: %s lacks %q", f.Severity, want)
+			}
+		}
+	}
+	// One script alone is an alert of its own, and its directory one too.
+	got = map[string]Finding{}
+	for _, f := range Evaluate(prev, State{Web: app(
+		web.FileChange{Path: "/var/www/shop/vendor/acme/App/New.php", Change: web.ChangeAdded, SHA256: "aa"},
+		web.FileChange{Path: "/var/www/shop/vendor/acme/etc/di.xml", Change: web.ChangeModified},
+	)}) {
+		got[f.Fingerprint] = f
+	}
+	if f := got["web-change:file:/var/www/shop/vendor/acme/App/New.php:aa"]; f.Severity != "high" || f.Title != "Script added: /var/www/shop/vendor/acme/App/New.php" {
 		t.Errorf("new script: %+v", f)
 	}
-	if f := got["web-change:file:/var/www/shop/vendor/acme/App/View.php:bb"]; f.Severity != "high" {
-		t.Errorf("changed core file: %+v", f)
-	}
-	if f := got["web-change:code:/var/www/shop/vendor:b"]; !strings.Contains(f.Detail, "modified /var/www/shop/vendor/acme/etc/di.xml") || !strings.Contains(f.Detail, "removed /var/www/shop/vendor/acme/App/Old.php") {
+	if f := got["web-change:code:/var/www/shop/vendor:b"]; !strings.Contains(f.Detail, "modified /var/www/shop/vendor/acme/etc/di.xml") {
 		t.Errorf("directory change does not name its files: %q", f.Detail)
 	}
-	if len(got) != 3 {
-		t.Errorf("findings: %v", got)
+	// The same scripts changed again to other contents are a new alert.
+	again := Evaluate(prev, State{Web: app(
+		web.FileChange{Path: "/var/www/shop/pub/sysapi.php", Change: web.ChangeAdded, SHA256: "a2"},
+		web.FileChange{Path: "/var/www/shop/vendor/acme/App/View.php", Change: web.ChangeModified, SHA256: "bb"},
+	)})
+	first := Evaluate(prev, State{Web: app(
+		web.FileChange{Path: "/var/www/shop/pub/sysapi.php", Change: web.ChangeAdded, SHA256: "aa"},
+		web.FileChange{Path: "/var/www/shop/vendor/acme/App/View.php", Change: web.ChangeModified, SHA256: "bb"},
+	)})
+	if len(again) != 1 || len(first) != 1 || again[0].Fingerprint == first[0].Fingerprint {
+		t.Errorf("same scripts, other contents: %v, %v", again, first)
 	}
 
 	var deploy []web.FileChange
@@ -1077,8 +1104,8 @@ func TestDeployIsOneAlert(t *testing.T) {
 		t.Errorf("findings = %+v", got)
 	}
 	got = Evaluate(&State{Web: app(hashes("a"), nil)}, State{Web: app(hashes("b"), changes[:3])})
-	if len(got) != 6 {
-		t.Errorf("a few scripts changed: %d findings, want 3 scripts and 3 directories", len(got))
+	if len(got) != 1 || !strings.Contains(got[0].Title, "3 scripts added or changed") || !strings.Contains(got[0].Detail, "/var/www/site/wp-admin/f0.php") {
+		t.Errorf("a few scripts changed: %+v", got)
 	}
 }
 
