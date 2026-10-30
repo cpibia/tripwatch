@@ -66,18 +66,29 @@ BEGIN {
 {
   id = $1; cat = $2
   if (cat == "control") {
-    for (t = 1; t <= ntools; t++) { control[t] = $(3 + t); cost_s[t] = $(6 + 2 * t); cost_m[t] = $(7 + 2 * t) }
+    for (t = 1; t <= ntools; t++) { control[t] = $(3 + t); cost_s[t] = $(6 + 2 * t); cost_m[t] = $(7 + 2 * t); floor[t] = $(19 + t) + 0 }
     next
   }
-  # Routine changes are no attacks: they are counted apart, in the noise table.
-  if (cat == "noise") next
+  # Routine changes are no attacks: what each tool reported beyond the clean run is counted apart.
+  if (cat == "noise") {
+    nn++
+    noise[nn] = "| " $3 " |"
+    for (t = 1; t <= ntools; t++) {
+      v = ($(19 + t) == "" ? "-" : ($(19 + t) == "blocked" ? "blocked" : $(19 + t) - floor[t]))
+      if (v != "-" && v != "blocked" && v < 0) v = 0
+      noise[nn] = noise[nn] " " v " |"
+    }
+    next
+  }
+  if ($(16) != "") hasnamed = 1
   n++; catcount[cat]++
   row[n] = "| " $3 " |"
   rowcat[n] = cat
   for (t = 1; t <= ntools; t++) {
     v = $(3 + t)
-    row[n] = row[n] " " cell(v) " |"
+    row[n] = row[n] " " cell(v) (v == "yes" && $(15 + t) == "yes" ? " named" : "") " |"
     if (v == "yes") { total[t]++; bycat[cat, t]++ }
+    if ($(15 + t) == "yes") { named[t]++; namedcat[cat, t]++ }
   }
 }
 END {
@@ -102,6 +113,15 @@ END {
   print "need a kernel with the process connector: the run says which kernel it had."
   print "**Blocked** means the tool did not finish within 900 s."
   print ""
+  print "A tool **names** the attack when its output identifies the technique, beyond reporting the artifact added,"
+  print "changed or removed: for tripwatch an alert of high or critical severity that mentions the artifact, raised by"
+  print "the verifier on the snapshot compared with the baseline or by its real-time rules; for the others a new line"
+  print "about the artifact that carries a judgement of the tool on it, a warning of rkhunter. AIDE and debsums report"
+  print "changes only, so they never name. The same criterion applies to every tool."
+  print ""
+  print "**Noise** is measured on routine changes: for each tool, what it reports beyond the clean run (tripwatch: alerts;"
+  print "AIDE: added, removed and changed entries; rkhunter: warnings; debsums: failed files). Fewer is better."
+  print ""
   if (fp == "") print "The control scenario, with no attack, produces no differences for any tool."
   else print "Warning: the control scenario, with no attack, produces differences for:" fp "."
   print ""
@@ -115,6 +135,16 @@ END {
     print "| Scenario | tripwatch | AIDE | rkhunter | debsums |"
     print "|---|:-:|:-:|:-:|:-:|"
     for (i = 1; i <= n; i++) if (rowcat[i] == cat) print row[i]
+    print ""
+  }
+  if (nn > 0) {
+    print "## Noise from routine changes"
+    print ""
+    print "Reported beyond the clean run; fewer is better."
+    print ""
+    print "| Routine change | tripwatch | AIDE | rkhunter | debsums |"
+    print "|---|:-:|:-:|:-:|:-:|"
+    for (i = 1; i <= nn; i++) print noise[i]
     print ""
   }
   print "## Cost of a full check"
@@ -144,7 +174,22 @@ END {
   line = "| **Total** | **" n "** |"
   for (t = 1; t <= ntools; t++) line = line " **" (total[t] + 0) "** |"
   print line > summary
+  if (hasnamed) {
+    line = "| **Named** | |"
+    for (t = 1; t <= ntools; t++) line = line " " (named[t] + 0) " |"
+    print line > summary
+  }
   print "" > summary
+  if (hasnamed) print "Named means the output identifies the technique, not only the changed file; method in bench/RESULTS.md." > summary
+  if (nn > 0) {
+    print "" > summary
+    print "Noise on routine changes (a plugin update, a package with a hook, log rotation, a deploy), reported beyond the clean run:" > summary
+    print "" > summary
+    print "| Routine change | tripwatch | AIDE | rkhunter | debsums |" > summary
+    print "|---|:-:|:-:|:-:|:-:|" > summary
+    for (i = 1; i <= nn; i++) print noise[i] > summary
+    print "" > summary
+  }
   print "Detects means the data about the attack appears in the output of the tool; for tripwatch the" > summary
   print "judgement stays with the verifier: its real-time rules run on what the watchers of the sensor saw while the" > summary
   print "scenario ran. The scenarios in the \"Limits\" category (a dropper or an SSH key that appear and disappear" > summary

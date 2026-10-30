@@ -16,6 +16,15 @@ the scenario ran, the watchers being started after a first snapshot as in daemon
 need a kernel with the process connector: the run says which kernel it had.
 **Blocked** means the tool did not finish within 900 s.
 
+A tool **names** the attack when its output identifies the technique, beyond reporting the artifact added,
+changed or removed: for tripwatch an alert of high or critical severity that mentions the artifact, raised by
+the verifier on the snapshot compared with the baseline or by its real-time rules; for the others a new line
+about the artifact that carries a judgement of the tool on it, a warning of rkhunter. AIDE and debsums report
+changes only, so they never name. The same criterion applies to every tool.
+
+**Noise** is measured on routine changes: for each tool, what it reports beyond the clean run (tripwatch: alerts;
+AIDE: added, removed and changed entries; rkhunter: warnings; debsums: failed files). Fewer is better.
+
 The control scenario, with no attack, produces no differences for any tool.
 
 ## Results per scenario
