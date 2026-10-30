@@ -153,10 +153,14 @@ filesystem. They only add powers to those of the configuration; an entry at a po
 configuration does not list counts only as a whole tree or a socket, since the runtime's own
 mounts (layers, hosts file) lie deep in its state; a table that cannot be read, or is empty as
 after a chroot outside the mounts, is `kernel_unverified`, a power of its own) is reported as a `container` event with its name, image, runtime
-and powers, on root's channel, unless a container with the same name, image and powers was seen
-before (4,096 remembered), and its removal is reported too. The verifier raises the start under
-the snapshot rule's fingerprint and detail, so the next snapshot does not raise it again and an
-acceptance holds for both.
+and powers, on root's channel, unless a container with the same name, image, image digest and powers
+was seen within the hour (4,096 remembered; a key is forgotten an hour after its last container
+is gone, so the same container started again later is reported again), and its removal is
+reported too. A start with the same name, tag and powers on another digest carries the digest it
+replaces. The verifier raises the start under the snapshot rule's fingerprint and detail (the
+medium "runs another image" for a replaced digest), so the next snapshot does not raise it again
+and an acceptance holds for both; the detail leaves out the container's ID and creation time,
+which go in the title, so an acceptance also holds for the same job container started every day.
 
 Events go through bounded channels to a batcher: root's system paths have a channel of their own,
 which the batcher reads first and no other account can fill (a loss there counts as root's), the

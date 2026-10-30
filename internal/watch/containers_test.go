@@ -81,6 +81,59 @@ func TestContainersReportPowerOverTheHost(t *testing.T) {
 	}
 }
 
+// The same name, tag and powers on another image is reported with the image it replaces, even
+// while the key is known; the same container started again is reported once its key has been
+// gone for an hour, not when it is redeployed within it.
+func TestContainersImageSwapAndKeyExpiry(t *testing.T) {
+	sock := func(id, image string) []byte {
+		return []byte(`{"ID": "` + id + `", "Name": "/proxy", "Image": "` + image + `", "Config": {"Image": "proxy:v2"},
+			"MountPoints": {"/var/run/docker.sock": {"Source": "/var/run/docker.sock", "Destination": "/var/run/docker.sock", "Type": "bind"}}}`)
+	}
+	start := func(fsys fstest.MapFS, id, image string) {
+		dockerContainer(fsys, id, "proxy", `{}`)
+		fsys["var/lib/docker/containers/"+id+"/config.v2.json"].Data = sock(id, image)
+	}
+	stop := func(fsys fstest.MapFS, id string) {
+		delete(fsys, "var/lib/docker/containers/"+id+"/config.v2.json")
+		delete(fsys, "var/lib/docker/containers/"+id+"/hostconfig.json")
+	}
+	now := time.Unix(1_000_000, 0)
+	fsys := fstest.MapFS{}
+	start(fsys, "p1", "sha256:good")
+	out := make(chan Event, 8)
+	c := NewContainers(collector.Source{FS: fsys}, out)
+	c.now = func() time.Time { return now }
+	c.look()
+
+	stop(fsys, "p1")
+	start(fsys, "p2", "sha256:good")
+	c.look()
+	if got := drain(out); len(got) != 0 {
+		t.Fatalf("redeploy of the same image: %+v", got)
+	}
+
+	stop(fsys, "p2")
+	start(fsys, "p3", "sha256:backdoor")
+	now = now.Add(time.Minute)
+	c.look()
+	got := drain(out)
+	if len(got) != 1 || got[0].Op != OpCreate || got[0].Container.ImageID != "sha256:backdoor" || got[0].Container.Replaces != "sha256:good" {
+		t.Fatalf("image swapped under the same tag: %+v", got)
+	}
+
+	stop(fsys, "p3")
+	c.look()
+	drain(out)
+	now = now.Add(containerKeyTTL + time.Minute)
+	c.look()
+	start(fsys, "p4", "sha256:backdoor")
+	c.look()
+	got = drain(out)
+	if len(got) != 1 || got[0].Op != OpCreate || got[0].Container.ID != "p4" || got[0].Container.Replaces != "" {
+		t.Fatalf("started again after its key expired: %+v", got)
+	}
+}
+
 // A configuration never readable is given up after a few looks, and not read again.
 func TestContainersGiveUpOnUnreadable(t *testing.T) {
 	fsys := fstest.MapFS{"var/lib/docker/containers/bad1/config.v2.json": &fstest.MapFile{Data: []byte(`{`)}}

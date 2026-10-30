@@ -334,7 +334,10 @@ func judgeContainer(e watch.Event) (Finding, bool) {
 	if e.Op != watch.OpCreate || c == nil || len(c.Powers) == 0 {
 		return Finding{}, false
 	}
-	return containerFinding(*c, "Container with access to the host started: "+c.Name), true
+	if c.Replaces != "" && c.ImageID != "" {
+		return containerImageFinding(*c), true
+	}
+	return containerFinding(*c, "Container with access to the host started"), true
 }
 
 // processKey identifies a process by what its alert says of it, the PID aside: executable,

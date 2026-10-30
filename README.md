@@ -377,8 +377,9 @@ what changes there within two seconds, in signed event envelopes of the same cha
   mounted, a raw disk) is
   reported at once, and so is its removal, so one started to escape and removed seconds later is
   seen although no snapshot ever shows it. Containers there before the sensor started, those
-  without such a power and redeploys of one already known (same name, image and powers) are
-  left to the snapshots.
+  without such a power and redeploys of one seen within the hour (same name, image, digest and
+  powers) are left to the snapshots; the same name, tag and powers on another image digest is
+  reported as a medium alert naming both digests.
 
 The verifier keeps the events for seven days, unless configured otherwise (at most 20,000 a server in 24 hours for uploads
 and process starts, as many for the homes and crontabs of accounts other than root, 2,000 of

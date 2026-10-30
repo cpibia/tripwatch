@@ -13,12 +13,16 @@ import (
 
 // ContainerInfo describes, in an event, a container with power over the host.
 type ContainerInfo struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Image   string   `json:"image,omitempty"`
-	Runtime string   `json:"runtime"`
-	Created string   `json:"created,omitempty"`
-	Powers  []string `json:"powers"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Image   string `json:"image,omitempty"`
+	ImageID string `json:"image_id,omitempty"`
+	// Replaces is the image a container of the same name, tag and powers ran within the hour
+	// before, when it was another one.
+	Replaces string   `json:"replaces,omitempty"`
+	Runtime  string   `json:"runtime"`
+	Created  string   `json:"created,omitempty"`
+	Powers   []string `json:"powers"`
 }
 
 // Key identifies a container the way the snapshot rules do: by name, image and powers, so a
@@ -41,6 +45,9 @@ const (
 	// not remembered, and each of its redeploys is reported.
 	maxContainerKeys = 4096
 	maxPowers        = 32
+	// containerKeyTTL is how long a container's key stays known after the last container with
+	// it is gone: a redeploy is not reported, the same container started again later is.
+	containerKeyTTL = time.Hour
 )
 
 // Containers reports, as they appear, the containers with power over the host, and their
@@ -52,7 +59,10 @@ type Containers struct {
 	now   func() time.Time
 	known map[string]*tracked
 	tries map[string]int
-	keys  map[string]bool
+	// keys holds when a container was last seen, by its key and image; images the image last
+	// seen for each key, to tell a swapped image from a redeploy.
+	keys   map[string]time.Time
+	images map[string]seenImage
 	// looked is set after the first look, whose containers were there before the sensor and are
 	// left to the snapshots.
 	looked bool
@@ -61,6 +71,11 @@ type Containers struct {
 	rereadFrom int
 	// Dropped counts events lost because the consumer did not keep up.
 	Dropped atomic.Int64
+}
+
+type seenImage struct {
+	id string
+	at time.Time
 }
 
 type tracked struct {
@@ -72,7 +87,8 @@ type tracked struct {
 }
 
 func NewContainers(src collector.Source, out chan<- Event) *Containers {
-	return &Containers{fsys: src.FS, out: out, now: time.Now, known: map[string]*tracked{}, tries: map[string]int{}, keys: map[string]bool{}}
+	return &Containers{fsys: src.FS, out: out, now: time.Now, known: map[string]*tracked{}, tries: map[string]int{},
+		keys: map[string]time.Time{}, images: map[string]seenImage{}}
 }
 
 // Run looks at the runtimes' state every ContainerPoll until ctx ends.
@@ -140,6 +156,22 @@ func (c *Containers) look() {
 			delete(c.tries, p)
 		}
 	}
+	now := c.now()
+	for _, t := range c.known {
+		if t.info != nil {
+			c.remember(t.info, now)
+		}
+	}
+	for k, at := range c.keys {
+		if now.Sub(at) > containerKeyTTL {
+			delete(c.keys, k)
+		}
+	}
+	for k, img := range c.images {
+		if now.Sub(img.at) > containerKeyTTL {
+			delete(c.images, k)
+		}
+	}
 	c.looked = true
 }
 
@@ -168,23 +200,43 @@ func (c *Containers) read(ref system.ContainerRef, t *tracked, host *system.Host
 	if len(powers) == 0 {
 		return
 	}
-	info := &ContainerInfo{ID: clipText(ct.ID), Name: clipText(ct.Name), Image: clipText(ct.Image), Runtime: ref.Runtime,
-		Created: clipText(ct.Created), Powers: powers[:min(len(powers), maxPowers)]}
-	key := info.Key()
-	if t.info != nil && t.info.Key() == key {
+	info := &ContainerInfo{ID: clipText(ct.ID), Name: clipText(ct.Name), Image: clipText(ct.Image), ImageID: clipText(ct.ImageID),
+		Runtime: ref.Runtime, Created: clipText(ct.Created), Powers: powers[:min(len(powers), maxPowers)]}
+	if t.info != nil && imageKey(t.info) == imageKey(info) {
 		return
 	}
 	t.info = info
-	if c.keys[key] {
+	now := c.now()
+	if _, known := c.keys[imageKey(info)]; known {
+		c.remember(info, now)
 		return
 	}
-	if len(c.keys) < maxContainerKeys {
-		c.keys[key] = true
+	// The tag is a label whoever controls the daemon rewrites: the same name, tag and powers on
+	// another image is another program, reported with the image it took the place of.
+	if was, ok := c.images[info.Key()]; ok && was.id != "" && info.ImageID != "" && was.id != info.ImageID {
+		info.Replaces = was.id
 	}
+	c.remember(info, now)
 	if c.looked {
 		t.reported = true
 		c.send(Event{At: c.now(), Class: ClassContainer, Op: OpCreate, Path: "/" + ref.Path, Container: t.info})
 	}
+}
+
+// remember records a container's key and image as seen at now. When the bound is reached a new
+// key is not remembered, and each redeploy of its container is reported.
+func (c *Containers) remember(info *ContainerInfo, now time.Time) {
+	if _, ok := c.keys[imageKey(info)]; ok || len(c.keys) < maxContainerKeys {
+		c.keys[imageKey(info)] = now
+	}
+	if _, ok := c.images[info.Key()]; ok || len(c.images) < maxContainerKeys {
+		c.images[info.Key()] = seenImage{id: info.ImageID, at: now}
+	}
+}
+
+// imageKey is a container's key with its image's digest.
+func imageKey(info *ContainerInfo) string {
+	return info.Key() + "|" + info.ImageID
 }
 
 func (c *Containers) send(e Event) {

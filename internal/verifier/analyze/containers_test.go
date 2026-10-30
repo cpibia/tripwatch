@@ -65,6 +65,30 @@ func TestContainerEvents(t *testing.T) {
 	}
 }
 
+// A start seen in real time on another image than the one of the same name, tag and powers
+// before is the snapshot rule's medium, with its fingerprint and detail. The detail of a start
+// does not change with the container's ID and creation time, so an acceptance holds for the
+// same container started again.
+func TestContainerEventsImageSwapAndStableDetail(t *testing.T) {
+	proxy := system.Container{ID: "aaa", Name: "proxy", Image: "proxy:v2", ImageID: "sha256:1111", Mounts: []system.Mount{{Source: "/var/run/docker.sock", Destination: "/var/run/docker.sock"}}}
+	swapped := proxy
+	swapped.ID, swapped.ImageID = "bbb", "sha256:2222"
+	snap := containerFindings(&State{Containers: &system.ContainersResult{Containers: []system.Container{proxy}}},
+		State{Containers: &system.ContainersResult{Containers: []system.Container{swapped}}})
+	info := &watch.ContainerInfo{ID: swapped.ID, Name: swapped.Name, Image: swapped.Image, ImageID: swapped.ImageID, Replaces: proxy.ImageID,
+		Runtime: "docker", Powers: system.ContainerPowers(swapped)}
+	got := EvaluateEvents([]watch.Event{{At: time.Now(), Class: watch.ClassContainer, Op: watch.OpCreate, Path: "/var/lib/docker/containers/bbb", Container: info}}, true, nil)
+	if len(got) != 1 || len(snap) != 1 || got[0].Fingerprint != snap[0].Fingerprint || got[0].Detail != snap[0].Detail || got[0].Severity != "medium" {
+		t.Fatalf("event findings %+v, snapshot findings %+v", got, snap)
+	}
+
+	first := containerFinding(watch.ContainerInfo{ID: "aaa", Name: "job", Image: "backup", Created: "2026-10-28T03:00:00Z", Powers: []string{"privileged"}}, "Container with access to the host started")
+	again := containerFinding(watch.ContainerInfo{ID: "ccc", Name: "job", Image: "backup", Created: "2026-10-29T03:00:00Z", Powers: []string{"privileged"}}, "Container with access to the host started")
+	if first.Fingerprint != again.Fingerprint || first.Detail != again.Detail || first.Title == again.Title || !strings.Contains(again.Title, "ccc") {
+		t.Errorf("first %+v, again %+v", first, again)
+	}
+}
+
 // A container list cut at its bound is an alert: what was left out is not checked.
 func TestTruncatedContainersRaiseAnAlert(t *testing.T) {
 	cur := State{Containers: &system.ContainersResult{Truncated: true}}

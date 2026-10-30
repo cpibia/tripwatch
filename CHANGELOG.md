@@ -14,6 +14,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A script in an upload path answered with a permanent redirect stays high unless the script is
   the path's last segment with nothing after it: `x.php/a.php`, `x.php/` and `x.php/y.php.jpg`
   run `x.php` through PATH_INFO, which chooses its own status.
+- The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
+  architecture, reading the whole cache for it even past the bound on directories.
+- The container watcher keys a container also by its image digest and forgets a key an hour
+  after its last container is gone: an image swapped under the same name, tag and powers is
+  reported with the digest it replaces, and the same container started again hours later is
+  reported again instead of never until the sensor restarts.
 - Directories renamed in a loop by any user no longer put off the sensor's next plan of its
   watches: a watched root moved away and back is watched again within a couple of seconds, while
   the loop runs, instead of staying blind until it stops.
@@ -26,6 +32,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A deploy is one alert: when more than 20 scripts changed, the directories whose code changed
   are listed in the "scripts added or changed" alert instead of raising a "Code changed in"
   alert each (one WordPress update raised thirteen on each server).
+- The system's own library directories are `/lib`, `/usr/lib` and the one holding each
+  architecture's libc (with its `/usr` twin), no longer any directory of that shape: `ldconfig
+  /usr/lib64` on a multiarch system, or a made-up `/usr/lib/<triplet>`, is a high alert. A
+  loader cache or configuration past the bounds read is a high alert of its own, and more than 16
+  unconfigured directories fold into one.
+- A container start seen in real time on another image than the one of the same name, tag and
+  powers before it raises the snapshot rule's medium "runs another image". The alert of a
+  container with power over the host keeps its ID and creation time in the title, out of the
+  detail, so an acceptance holds for the same container started again; acceptances given before
+  are asked once more the next time that container starts.
 
 ## [0.1.41] - 2026-10-29
 
