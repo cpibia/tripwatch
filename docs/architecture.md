@@ -65,7 +65,14 @@ the signing key does not change.
   recovers; if none of the previous 50 snapshots has its result, a high alert says the comparison
   was not possible. Rules produce conditions (a state that is dangerous in itself, closed when it
   disappears, except critical and high ones) and changes. Every minute a check raises the alert
-  for silent hosts and for those that send heartbeats but no more snapshots.
+  for silent hosts and for those that send heartbeats but no more snapshots. What each collector
+  reports it could not do (its `issues`) is kept, the twenty most serious per collector first
+  (the skimmer search left unfinished, then other work left undone, notes last); work left undone
+  raises one low "Analysis incomplete" state per host and collector, while notes, matched by the
+  exact end the sensor writes so that a path an attacker names cannot imitate one, stay on the
+  host page with the rest. The web collector's findings are bounded by the alert they raise: the
+  sensor keeps 200 that raise none apart, and past 1,000 a more severe finding takes the place of
+  a less severe one, a skimmer left out keeping its script pending.
 - **Alerts**: one fingerprint per condition and host; the same condition updates the existing
   alert instead of creating a new one, and reopens it if it was resolved, unless it was accepted.
   An acceptance (`accepted` table) binds a host and fingerprint to a hash of the alert's detail,
@@ -177,7 +184,11 @@ rest share one. The batcher sends at most every two seconds, in batches
 under 176 KB (base64 in the envelope, under the verifier's 256 KB for an event), with the counts of what was lost (kernel queue overflow, full channel, full queue,
 and among them the events on root's system paths) and whether a package manager was running, which is
 known from a lock of dpkg, rpm or apk held by a process of root in `/proc/locks`, never from a
-process name. If the transport cannot seal a batch because an earlier envelope is still pending,
+process name. It is read when each event is queued, not when its batch leaves, and lowers only
+root's files: services, scheduled tasks and start-up files of another user, or in a home, and the
+web server's files in the scratch directories keep their severity, since anyone can read when
+the lock is held. The names a package manager stages a file under (`.dpkg-new`, `.rpmnew`...)
+are passed over only outside the scratch directories, where dpkg never writes them. If the transport cannot seal a batch because an earlier envelope is still pending,
 the batcher keeps it in a queue of 4,096 events and retries with a backoff up to a minute. A
 batch the verifier refuses for its size, which the transport drops from the chain, is not taken
 for delivered: its events go again in batches half the size of the refused one, root's first,
@@ -330,7 +341,14 @@ substitutions are literals, and the names a `var`, `let`, `const` or assignment 
 earlier in the file, kept from one piece to the next and, past the bound, only for a name the
 piece uses again, in place of one it does not; regular expression literals are skipped whole,
 told from a division by the token before, a keyword after a dot being a property's name, and
-after a ")" or a "}", where only a parser could tell, read both ways, the strings of both kept; a script using more than 2,048
+after a ")" or a "}" by a stack of what each open bracket started (a condition, an expression, a
+block, an object, a function or class declared or used as a value), kept from one piece to the
+next with any template, string or comment left open there; a template's substitutions are read
+as code and its text, at most 4 KB, passed over. The stack decides only in a closed list of cases
+a tokenizer is sure of: after an arrow function's body, a conditional's or a label's "{", a
+line break after `return`, `of`, `await` or `yield`, or any start it does not know, the "/" is
+read both ways, the whole piece and each statement again from its ";", the strings of every
+reading kept; a script using more than 2,048
 constants or nesting brackets past 64 levels is named in the issues); names built at run time (from the page, through
 functions, loops, spread or aliases of functions), object properties (`o.a`), a pattern's
 `.source`, `String.raw`, and a constant used more than a piece after thousands of decoys set

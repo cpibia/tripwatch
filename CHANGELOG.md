@@ -6,6 +6,26 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+What changes for an operator, in short; the details follow by component.
+
+- **New alerts.** A payment skimmer is searched for in every changed script, across statements
+  and pieces of a file that try to hide the strings it builds; scripts left unread run after run
+  raise a medium alert each, and an application behind on its skimmer search a high one. What a
+  collector could not check raises one low "Analysis incomplete" alert per collector. A
+  container whose bind mounts its kernel does not show, a cron line that never runs on
+  schedule or fetches and runs code, and the loader's cache naming a library directory the
+  system does not own raise alerts of their own.
+- **Host page.** A "What the sensor could not check" panel lists each collector's issues, work
+  left undone apart from notes such as a network filesystem skipped by design.
+- **Less noise.** Scripts changed together, as a deploy changes them, are one alert instead of
+  one per script and directory; a package manager lowers only root's files and never hides a
+  file under a staging name in `/tmp` or `/dev/shm`; issues that are notes raise nothing. On the
+  fleet today no host gets the new "Analysis incomplete" alert.
+- **Declared limits.** Until the sensors are updated, their search for hidden processes stops at
+  the same PID every run and shows only on the host page. A "/" after the body of an arrow
+  function, or after a bracket opened before the piece read, is still read both ways.
+- **Upgrade.** Update the verifier, then the sensors: the new alerts need both.
+
 ### Sensor
 
 - A start-up hook that is a symlink takes the later of its own change time and its target's,
@@ -157,13 +177,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   holds its lock, could drop, run and remove a program in `/dev/shm` named `.dpkg-new` unseen.
 - A package manager running no longer lowers another user's crontab, start-up file or service
   unit, in a home or owned by that user: only root's.
-
 - A new cron line is critical, with the reason, when it never runs on schedule (the 31st of
   February, as CronRAT hides its code), downloads and runs what it fetched, decodes a base64
   payload or starts a process under another name; other new lines stay high.
-- A deploy is one alert: when more than 20 scripts changed, the directories whose code changed
-  are listed in the "scripts added or changed" alert instead of raising a "Code changed in"
-  alert each (one WordPress update raised thirteen on each server).
 - The system's own library directories are `/lib`, `/usr/lib` and the one holding each
   architecture's libc (with its `/usr` twin), no longer any directory of that shape: `ldconfig
   /usr/lib64` on a multiarch system, or a made-up `/usr/lib/<triplet>`, is a high alert. A
