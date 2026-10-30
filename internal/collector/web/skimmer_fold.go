@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/base64"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -186,19 +187,31 @@ func jsTokens(content []byte, regexAfterClose, module bool, from *brackets, carr
 				out = append(out, jsToken{kind: 'p', text: string(c)})
 			}
 			i = max(i+1, next)
-		case identByte(c) || c == '$':
+		case identByte(c) || c == '$' || c == '\\' && i+1 < len(content) && content[i+1] == 'u':
+			// A name's \u escapes are its letters: Imag\u0065 is Image.
+			var name []byte
 			j := i
-			for j < len(content) && (identByte(content[j]) || content[j] == '$') {
-				j++
+			for j < len(content) {
+				if identByte(content[j]) || content[j] == '$' {
+					name = append(name, content[j])
+					j++
+					continue
+				}
+				if content[j] != '\\' || j+1 >= len(content) || content[j+1] != 'u' {
+					break
+				}
+				r, n := jsEscape(content[j+1:])
+				name = append(name, r...)
+				j += 1 + n
 			}
 			kind := byte('n')
 			if c >= '0' && c <= '9' {
 				kind = '0'
 			}
-			if w := string(content[i:j]); kind == 'n' && (w == "function" || w == "class") && !afterDot(out) {
+			if w := string(name); kind == 'n' && (w == "function" || w == "class") && !afterDot(out) {
 				b.declare(b.statementStart(out, w == "class"))
 			}
-			out = append(out, jsToken{kind: kind, text: string(content[i:j])})
+			out = append(out, jsToken{kind: kind, text: string(name)})
 			i = j
 		default:
 			// Brackets nested past 64 levels are past what the folding follows, and said so.
@@ -741,6 +754,9 @@ type foldConstants struct {
 	deep bool
 	// brackets are those open where the next piece starts.
 	brackets *brackets
+	// code and bare are the last piece as the tokenizer read it, with and without the text of
+	// its strings.
+	code, bare []byte
 	// full counts the puts left to refuse after a look found no name to give up: one look,
 	// not one per name, when every name kept is used further on.
 	full int
@@ -789,10 +805,10 @@ func (c *foldConstants) put(name, v string, usedLater func(string) bool) {
 
 // foldStrings returns every value of length 4 or more that an expression of the script's
 // string literals builds, each preceded by a space, with the constants of the pieces read
-// before, which it adds to.
-func foldStrings(content []byte, constants *foldConstants) []byte {
-	out, _, _ := foldWork(content, constants)
-	return out
+// before, which it adds to; and the script as the tokenizer read it, rendered (see render).
+func foldStrings(content []byte, constants *foldConstants) (folded []byte, code, bare []byte) {
+	folded, _, _ = foldWork(content, constants)
+	return folded, constants.code, constants.bare
 }
 
 // foldWork folds and says how much work it took: the tokens read and the terms evaluated.
@@ -806,38 +822,21 @@ func foldStrings(content []byte, constants *foldConstants) []byte {
 func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 	// The next piece starts skimmerOverlap bytes before this one ends, with the brackets open
 	// there.
-	carryAt := len(content) - skimmerOverlap
-	if carryAt <= 0 {
-		carryAt = len(content)
-	}
+	carryAt := pieceCut(content)
 	content, carryAt = jsNormalize(content, carryAt)
 	from := constants.brackets
 	pattern, scanned, deep, ambiguous, carry := jsTokens(content, true, false, from, carryAt)
 	constants.brackets = carry
+	constants.code, constants.bare = render(pattern)
 	lastName := map[string]int{}
 	readings := []tokenReading{{toks: pattern, scanned: scanned, deep: deep}}
+	readings = append(readings, otherReadings(content, false, ambiguous, from)...)
 	// Whether the file is a script or a module is not in its text: where it decides what
-	// "<!--" and "-->" are, the piece is read as a module too.
+	// "<!--" and "-->" are, the piece is read as a module too, every way a script is.
 	if bytes.Contains(content, []byte("<!--")) || bytes.Contains(content, []byte("-->")) {
-		toks, scanned, deep, _, _ := jsTokens(content, true, true, from, len(content))
+		toks, scanned, deep, ambiguous, _ := jsTokens(content, true, true, from, len(content))
 		readings = append(readings, tokenReading{toks: toks, scanned: scanned, deep: deep})
-	}
-	if ambiguous {
-		division, scanned, deep, _, _ := jsTokens(content, false, false, from, len(content))
-		readings = append(readings, tokenReading{toks: division, scanned: scanned, deep: deep})
-		for start := 0; start < len(content); {
-			end := bytes.IndexByte(content[start:], ';')
-			if end < 0 {
-				end = len(content)
-			} else {
-				end += start
-			}
-			for _, regexAfterClose := range []bool{true, false} {
-				toks, scanned, deep, _, _ := jsTokens(content[start:end], regexAfterClose, false, &brackets{}, end-start)
-				readings = append(readings, tokenReading{toks: toks, scanned: scanned, deep: deep, base: start})
-			}
-			start = end + 1
-		}
+		readings = append(readings, otherReadings(content, true, ambiguous, from)...)
 	}
 	for _, rd := range readings {
 		for _, t := range rd.toks {
@@ -858,6 +857,77 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 		tokens, steps = tokens+len(rd.toks), steps+n
 	}
 	return out, tokens, steps
+}
+
+// render writes tokens back as text in one form, whatever the spacing, comments and escapes of
+// the source: names apart by one space, punctuation glued, strings decoded between double
+// quotes, literals joined by "+" as one string (fetch("https://"+"x.example/p") names its host),
+// patterns as "/r/". The signal searches run on it, so that "new/**/Image(", a
+// no-break space or "navigator. sendBeacon(" read as their plain forms. bare is the same without
+// the text of the strings, for the searches that a word inside a string must not satisfy.
+func render(toks []jsToken) (code, bare []byte) {
+	for k, t := range toks {
+		if k > 0 && (t.kind == 'n' || t.kind == '0') && (toks[k-1].kind == 'n' || toks[k-1].kind == '0') {
+			code, bare = append(code, ' '), append(bare, ' ')
+		}
+		switch {
+		case t.kind == 'p' && t.text == "+" && k > 0 && k+1 < len(toks) && toks[k-1].kind == 's' && toks[k+1].kind == 's':
+			// Joined below.
+		case t.kind == 's' && k >= 2 && toks[k-1].text == "+" && toks[k-2].kind == 's':
+			code = append(append(code[:len(code)-1], t.text...), '"')
+		case t.kind == 's':
+			code = append(append(append(code, '"'), t.text...), '"')
+			bare = append(bare, `""`...)
+		case t.kind == 'r':
+			code, bare = append(code, "/r/"...), append(bare, "/r/"...)
+		default:
+			code, bare = append(code, t.text...), append(bare, t.text...)
+		}
+	}
+	// A member named by a string is the member: navigator["sendBeacon"] is navigator.sendBeacon.
+	code = memberString.ReplaceAll(code, []byte(".$1"))
+	return code, bare
+}
+
+// memberString is a member read through a string that is a plain name.
+var memberString = regexp.MustCompile(`\["([A-Za-z_$][A-Za-z0-9_$]*)"\]`)
+
+// pieceCut is where the next piece of a script starts: skimmerOverlap bytes before this one ends,
+// moved back to the start of a UTF-8 character, so that no character is split between two pieces.
+func pieceCut(piece []byte) int {
+	p := len(piece) - skimmerOverlap
+	if p <= 0 {
+		return len(piece)
+	}
+	for k := 0; k < utf8.UTFMax && p > 0 && !utf8.RuneStart(piece[p]); k++ {
+		p--
+	}
+	return p
+}
+
+// otherReadings are the readings of a piece besides its whole one with a pattern after an
+// uncertain bracket: when that one met such a "/", the whole piece with a division there, and
+// each statement again both ways from its ";".
+func otherReadings(content []byte, module, ambiguous bool, from *brackets) []tokenReading {
+	if !ambiguous {
+		return nil
+	}
+	division, scanned, deep, _, _ := jsTokens(content, false, module, from, len(content))
+	readings := []tokenReading{{toks: division, scanned: scanned, deep: deep}}
+	for start := 0; start < len(content); {
+		end := bytes.IndexByte(content[start:], ';')
+		if end < 0 {
+			end = len(content)
+		} else {
+			end += start
+		}
+		for _, regexAfterClose := range []bool{true, false} {
+			toks, scanned, deep, _, _ := jsTokens(content[start:end], regexAfterClose, module, &brackets{}, end-start)
+			readings = append(readings, tokenReading{toks: toks, scanned: scanned, deep: deep, base: start})
+		}
+		start = end + 1
+	}
+	return readings
 }
 
 // tokenReading is one reading of a piece, or of one of its statements starting at base.

