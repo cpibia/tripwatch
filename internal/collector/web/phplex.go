@@ -745,8 +745,10 @@ func (c *codeSearch) match() {
 }
 
 // variableCall is a call that hides the name of what it calls: through a variable ("$f(",
-// "$a[0](", "${'f'}("), through an expression or a string ("(...)(", "'putenv'("), or handing a
-// callback to a function that calls it (array_map, call_user_func...).
+// "$a[0](", "${'f'}("), through an expression or a string ("(...)(", "'putenv'("), handing a
+// callback to a function that calls it (array_map, call_user_func...), or through a method that
+// calls what it was given (ReflectionFunction's invoke, a closure's __invoke).
 var variableCall = regexp.MustCompile(`\$[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]* ?(?:\[[^\]]*\] ?)*\(|\$\{[^}]*\} ?\(|\) ?\(|['"] ?\(|` +
 	`(?i)\b(?:array_map|array_filter|array_walk(?:_recursive)?|array_reduce|call_user_func(?:_array)?|forward_static_call(?:_array)?|usort|uasort|uksort|` +
-	`register_shutdown_function|register_tick_function|iterator_apply|ob_start|set_error_handler|set_exception_handler|spl_autoload_register|preg_replace_callback(?:_array)?) ?\(`)
+	`register_shutdown_function|register_tick_function|iterator_apply|ob_start|set_error_handler|set_exception_handler|spl_autoload_register|preg_replace_callback(?:_array)?) ?\(|` +
+	`(?i)\bReflection(?:Function|Method)\b|-> ?(?:invoke(?:Args)?|__invoke|call|bindTo) ?\(|:: ?fromCallable ?\(`)

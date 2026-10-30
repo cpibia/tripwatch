@@ -34,7 +34,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - In a block opened by `<?` and a blank, as dumps and logs quote it, a backtick around a bare
   word counts when the block also calls something it does not name: through a variable
   (`$f("PATH=...")`, `$a[0](`, `${"f"}(`), an expression or a string (`("put"."env")(`,
-  `"putenv"(`), or a callback (`array_map`, `call_user_func`...), any of which can be putenv, so
+  `"putenv"(`), a callback (`array_map`, `call_user_func`...) or a method that calls what it is given
+  (`ReflectionFunction::invoke`, `Closure::fromCallable(...)->__invoke`), any of which can be putenv, so
   that the word runs from the attacker's directory.
 - `<?echo`, `<?print`, `<?const` and constants followed by an operator (`<?PHP_EOL>1;`) open
   code, not a processing instruction: only a lower-case target, an undefined constant on which
