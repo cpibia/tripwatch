@@ -1705,7 +1705,7 @@ func scriptChanges(app web.AppReport) []Finding {
 		h := sha256.New()
 		var list []string
 		for i, c := range scripts {
-			fmt.Fprintf(h, "%s %s %s\n", c.Change, c.Path, c.SHA256)
+			_, _ = fmt.Fprintf(h, "%s %s %s\n", c.Change, c.Path, c.SHA256)
 			if i < maxNamedScripts {
 				line := c.Change + " " + c.Path
 				if c.SHA256 != "" {
