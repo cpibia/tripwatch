@@ -237,8 +237,10 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		if path.Dir(e.Path) == "/etc/ld.so.conf.d" {
 			return Finding{}, false
 		}
+		// As the snapshot rule judges it: a snapshot finding this event already reported is
+		// dropped, so a lower severity here would lower root's start-up files.
 		severity := "high"
-		if !strings.HasPrefix(e.Path, "/etc/") {
+		if homeOwner(e.Path) != "root" {
 			severity = "medium"
 		}
 		return systemChange(e, "hook", severity, "Start-up script changed",

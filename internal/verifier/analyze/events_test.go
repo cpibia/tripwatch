@@ -203,6 +203,22 @@ func TestHookInstalledByAPackage(t *testing.T) {
 	}
 }
 
+// Root's start-up files in its home are as high in real time as in a snapshot, which drops its
+// own finding once an event reported the content; another user's stay medium.
+func TestRootHomeHookIsHigh(t *testing.T) {
+	root, web := uint32(0), uint32(33)
+	for p, want := range map[string]string{"/root/.bashrc": "high", "/etc/profile.d/x.sh": "high", "/var/www/.bashrc": "medium"} {
+		uid := &root
+		if want == "medium" {
+			uid = &web
+		}
+		got := EvaluateEvents([]watch.Event{{At: time.Now(), Class: watch.ClassHook, Op: watch.OpWrite, Path: p, SHA256: strings.Repeat("a", 64), UID: uid}}, false, nil)
+		if len(got) != 1 || got[0].Severity != want {
+			t.Errorf("%s: %+v, want %s", p, got, want)
+		}
+	}
+}
+
 // A package manager running does not lower another user's crontab or start-up file: the web
 // server's user can read when apt holds its lock.
 func TestPackageManagerLowersOnlyRootsFiles(t *testing.T) {

@@ -181,6 +181,9 @@ What changes for an operator, in short; the details follow by component.
   holds its lock, could drop, run and remove a program in `/dev/shm` named `.dpkg-new` unseen.
 - A package manager running no longer lowers another user's crontab, start-up file or service
   unit, in a home or owned by that user: only root's.
+- A change to root's start-up files in its home (`/root/.bashrc` and the like) is high in real
+  time as in a snapshot: the snapshot's own finding is dropped once an event reported the
+  content, so the event's medium was the only alert left.
 - A new cron line is critical, with the reason, when it never runs on schedule (the 31st of
   February, as CronRAT hides its code), downloads and runs what it fetched, decodes a base64
   payload or starts a process under another name; other new lines stay high.
