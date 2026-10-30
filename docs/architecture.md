@@ -329,8 +329,8 @@ comments skipped, parentheses, `+`, `.concat()`, `[..].join()`, `.split("").reve
 substitutions are literals, and the names a `var`, `let`, `const` or assignment gave such a value
 earlier in the file, kept from one piece to the next and, past the bound, only for a name the
 piece uses again, in place of one it does not; regular expression literals are skipped whole,
-told from a division by the token before, the bracket of an if, while or for and the brace of an
-object included, a keyword after a dot being a property's name; a script using more than 2,048
+told from a division by the token before, a keyword after a dot being a property's name, and
+after a ")" or a "}", where only a parser could tell, read both ways, the strings of both kept; a script using more than 2,048
 constants or nesting brackets past 64 levels is named in the issues); names built at run time (from the page, through
 functions, loops, spread or aliases of functions), object properties (`o.a`), a pattern's
 `.source`, `String.raw`, and a constant used more than a piece after thousands of decoys set

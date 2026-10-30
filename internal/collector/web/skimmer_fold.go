@@ -30,11 +30,13 @@ type jsToken struct {
 // jsTokens splits content into tokens, comments and blanks left out. A template literal with
 // substitutions of string literals only (`${”}`) is one string; one with any other
 // substitution is punctuation, so that nothing is folded across it.
-func jsTokens(content []byte) ([]jsToken, int, bool) {
+// A "/" after ")" or "}" divides or starts a pattern depending on what the bracket closed, which
+// a tokenizer that does not parse cannot always tell: regexAfterClose picks one reading, and the
+// folding reads the script both ways.
+func jsTokens(content []byte, regexAfterClose bool) ([]jsToken, int, bool) {
 	var out []jsToken
 	scanned := 0
-	var parens, braces []bool
-	lastControl, lastObject, deep := false, false, false
+	depth, deep := 0, false
 	for i := 0; i < len(content) && len(out) < maxFoldTokens; {
 		c := content[i]
 		switch {
@@ -53,7 +55,7 @@ func jsTokens(content []byte) ([]jsToken, int, bool) {
 				i = len(content)
 			}
 		// "*/" ends a comment whose start lay in an earlier piece, never starts a pattern.
-		case c == '/' && (i == 0 || content[i-1] != '*') && regexAllowed(out, len(out) > 0 && out[len(out)-1].text == ")" && lastControl, lastObject):
+		case c == '/' && (i == 0 || content[i-1] != '*') && regexAllowed(out, regexAfterClose):
 			end, closed := regexEnd(content, i)
 			scanned += max(end-i, 1)
 			switch {
@@ -88,34 +90,14 @@ func jsTokens(content []byte) ([]jsToken, int, bool) {
 			out = append(out, jsToken{kind, string(content[i:j])})
 			i = j
 		default:
-			// Brackets are matched to know whether a ")" closes the condition of an if, a
-			// while or a for, and whether a "}" closes an object or a block: after those a "/"
-			// starts a pattern, after an object it divides. Past 64 levels the matching gives
-			// up, and says so.
+			// Brackets nested past 64 levels are past what the folding follows, and said so.
 			switch c {
-			case '(':
-				control := len(out) > 0 && out[len(out)-1].kind == 'n' && slices.Contains([]string{"if", "while", "for", "with"}, out[len(out)-1].text)
-				if len(parens) < maxBracketDepth {
-					parens = append(parens, control)
-				} else {
+			case '(', '{', '[':
+				if depth++; depth > maxBracketDepth {
 					deep = true
 				}
-			case ')':
-				lastControl = len(parens) > 0 && parens[len(parens)-1]
-				if len(parens) > 0 {
-					parens = parens[:len(parens)-1]
-				}
-			case '{':
-				if len(braces) < maxBracketDepth {
-					braces = append(braces, objectStart(out))
-				} else {
-					deep = true
-				}
-			case '}':
-				lastObject = len(braces) > 0 && braces[len(braces)-1]
-				if len(braces) > 0 {
-					braces = braces[:len(braces)-1]
-				}
+			case ')', '}', ']':
+				depth = max(depth-1, 0)
 			}
 			out = append(out, jsToken{'p', string(c)})
 			i++
@@ -127,7 +109,7 @@ func jsTokens(content []byte) ([]jsToken, int, bool) {
 // regexAllowed reports whether a "/" after these tokens starts a regular expression rather than
 // a division: after punctuation other than a closing bracket or "++"/"--", after the ")" of an
 // if, while or for, after a block's "}", or after a keyword that takes an expression.
-func regexAllowed(toks []jsToken, controlParen, objectBrace bool) bool {
+func regexAllowed(toks []jsToken, regexAfterClose bool) bool {
 	if len(toks) == 0 {
 		return true
 	}
@@ -138,10 +120,8 @@ func regexAllowed(toks []jsToken, controlParen, objectBrace bool) bool {
 			return false
 		}
 		switch t.text {
-		case ")":
-			return controlParen
-		case "}":
-			return !objectBrace
+		case ")", "}":
+			return regexAfterClose
 		}
 		return t.text != "]"
 	case 'n':
@@ -159,22 +139,6 @@ func regexAllowed(toks []jsToken, controlParen, objectBrace bool) bool {
 
 // maxBracketDepth bounds the brackets matched in a piece.
 const maxBracketDepth = 64
-
-// objectStart reports whether a "{" after these tokens opens an object rather than a block: where
-// an expression goes, after an operator, an opening bracket, a comma, a colon or return.
-func objectStart(toks []jsToken) bool {
-	if len(toks) == 0 {
-		return false
-	}
-	t := toks[len(toks)-1]
-	switch t.kind {
-	case 'p':
-		return strings.ContainsAny(t.text, "=(,:[!&|?+-*%<>~^")
-	case 'n':
-		return t.text == "return" || t.text == "case" || t.text == "yield"
-	}
-	return false
-}
 
 // regexEnd returns where the regular expression literal starting at i ends, with its flags, and
 // true; or false with i when the line ends first, or the end of the window read when the window
@@ -316,7 +280,16 @@ func foldStrings(content []byte, constants *foldConstants) []byte {
 
 // foldWork folds and says how much work it took: the tokens read and the terms evaluated.
 func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
-	toks, scanned, deep := jsTokens(content)
+	// Both readings of an ambiguous "/" are folded, one after the other, and their strings
+	// joined: whichever is right, the names built in it are found.
+	out, tokens, steps := foldReading(content, constants, true)
+	more, tokens2, steps2 := foldReading(content, constants, false)
+	return append(out, more...), tokens + tokens2, steps + steps2
+}
+
+// foldReading folds the script read with one reading of an ambiguous "/".
+func foldReading(content []byte, constants *foldConstants, regexAfterClose bool) ([]byte, int, int) {
+	toks, scanned, deep := jsTokens(content, regexAfterClose)
 	constants.deep = constants.deep || deep
 	f := folder{toks: toks, constants: constants, lastName: map[string]int{}, steps: scanned / 16}
 	for k, t := range f.toks {

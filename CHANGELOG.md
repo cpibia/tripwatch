@@ -81,8 +81,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   escapes, comments between the pieces, parentheses, `+`, `.concat()`, `[..].join()`, `atob()`,
   template literals with literal substitutions, and constants assigned earlier in the file. It also
   folds `.slice()` and `.replace()` with literal arguments, starts at brackets before a literal,
-  skips regular expression literals (after the bracket of an if, while or for and after a block
-  too, never after `++`/`--`, an object's `}` or a keyword used as a property's name), keeps constants from one piece of a large script to the next and,
+  skips regular expression literals (never after `++`/`--` or a keyword used as a property's name;
+  after a `)` or a `}`, which a tokenizer cannot tell a division from, the script is folded both
+  ways and the strings of both kept), keeps constants from one piece of a large script to the next and,
   past its bound, keeps a name the piece uses again over decoys it never uses. A script that uses
   more than 2,048 string constants, or nests brackets past 64 levels, is named in the issues. The folding stops concatenating at its bound, starts only where a string can, reads at most a few
   million terms a piece, and the skimmer search stops with the run's time, naming what it left. A literal left open passes over its
