@@ -14,6 +14,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A script in an upload path answered with a permanent redirect stays high unless the script is
   the path's last segment with nothing after it: `x.php/a.php`, `x.php/` and `x.php/y.php.jpg`
   run `x.php` through PATH_INFO, which chooses its own status.
+- A batch of real-time events stays under the verifier's limit once in its envelope (it could
+  pass it by a few bytes when full, as the web user can make it with long names in the uploads),
+  and a batch refused for its size is no longer taken for delivered: its events go again in
+  smaller batches, root's first, and the counts of lost events it carried are kept.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
 - The container watcher keys a container also by its image digest and forgets a key an hour

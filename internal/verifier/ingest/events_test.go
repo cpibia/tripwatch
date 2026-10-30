@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -112,5 +113,38 @@ func TestEventBatchesRaiseAlerts(t *testing.T) {
 	}
 	if len(evs) != 4 || evs[0].Path != shell || evs[0].Op != watch.OpDelete || !strings.Contains(string(evs[3].Data), `"sha256":"ab12"`) {
 		t.Fatalf("stored %+v", evs)
+	}
+}
+
+// A batch filled to the batcher's bound, sealed in an envelope, stays within what the ingest
+// accepts for an event: the payload is base64 there, a third larger.
+func TestFullBatchFitsTheEventEnvelope(t *testing.T) {
+	in := make(chan watch.Event, 2000)
+	for i := range cap(in) {
+		in <- watch.Event{Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/var/www/site/wp-content/uploads/" + strconv.Itoa(i) + strings.Repeat("é", 100) + ".php"}
+	}
+	var payloads [][]byte
+	b := &watch.Batcher{In: in, Send: func(_ context.Context, p []byte) error {
+		payloads = append(payloads, p)
+		return nil
+	}, Lost: func() (int64, int64) { return 1 << 40, 1 << 40 }, LostSystem: func() int64 { return 1 << 40 }, LostBudget: func() int64 { return 1 << 40 }}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b.Run(ctx)
+	_, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer := protocol.NewSealer(strings.Repeat("h", 64), key, protocol.ChainState{})
+	largest := 0
+	for _, p := range payloads {
+		body, err := json.Marshal(sealer.Seal(protocol.KindEvent, p, time.Now()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		largest = max(largest, len(body))
+	}
+	if len(payloads) == 0 || largest > MaxSmallSize || largest < MaxSmallSize/2 {
+		t.Fatalf("%d batches, largest envelope %d bytes, ingest accepts %d", len(payloads), largest, MaxSmallSize)
 	}
 }

@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -42,10 +43,15 @@ type Batch struct {
 	PackageManager bool `json:"package_manager,omitempty"`
 }
 
-// Bounds of the batcher. A batch stays well below what the verifier accepts for an event
-// envelope (256 KB), and what waits while the verifier is unreachable is capped.
+// ErrTooLarge is returned by Send when the verifier refused the envelope for its size and the
+// payload was dropped: the batcher sends its events again in smaller batches.
+var ErrTooLarge = errors.New("watch: batch too large for the verifier")
+
+// Bounds of the batcher. A batch stays below what the verifier accepts for an event envelope
+// (256 KB) once in the envelope, where the payload is base64, a third larger, and what waits
+// while the verifier is unreachable is capped.
 const (
-	MaxBatchBytes = 192 << 10
+	MaxBatchBytes = 176 << 10
 	MaxQueued     = 4096
 	Window        = 2 * time.Second
 	maxBackoff    = time.Minute
@@ -64,7 +70,7 @@ type Batcher struct {
 	// can make fills In, never this, and Run reads it first.
 	Urgent <-chan Event
 	// Send seals and delivers a payload. It returns an error only when the payload was not
-	// sealed, so it has to be sent again.
+	// sealed, so it has to be sent again, or was refused for its size (ErrTooLarge).
 	Send func(ctx context.Context, payload []byte) error
 	// Lost returns how many events and process inspections the sources have lost so far, in all.
 	Lost func() (dropped, skipped int64)
@@ -93,9 +99,13 @@ type Batcher struct {
 	seenBudget       int64
 	failures         int
 	retryAt          time.Time
-	homes            atomic.Pointer[map[string]string]
-	perOwner         map[string]int
-	spoolUIDs        map[string]uint32
+	// limit is the bound on the next batch's events, below MaxBatchBytes after the verifier
+	// refused one for its size; taken holds the ranks of the batch being sent.
+	limit     int
+	taken     []int
+	homes     atomic.Pointer[map[string]string]
+	perOwner  map[string]int
+	spoolUIDs map[string]uint32
 }
 
 // queued is an event waiting to be sent, with its rank and when it came.
@@ -434,13 +444,19 @@ func (b *Batcher) Flush(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		if err := b.Send(ctx, payload); err != nil {
+		err = b.Send(ctx, payload)
+		if errors.Is(err, ErrTooLarge) {
+			b.tooLarge(len(batch.Events), len(payload))
+			return
+		}
+		if err != nil {
 			b.failures++
 			wait := min(Window<<min(b.failures, 6), maxBackoff)
 			b.retryAt = now.Add(wait)
 			return
 		}
 		b.failures, b.retryAt = 0, time.Time{}
+		b.limit = min(2*b.batchLimit(), MaxBatchBytes)
 		b.reset(b.pending)
 		clear(b.perOwner)
 		for _, q := range b.queue {
@@ -455,6 +471,37 @@ func (b *Batcher) Flush(ctx context.Context) {
 	}
 }
 
+// tooLarge handles a batch of n events in size bytes the verifier refused for its size. Its
+// events stay queued and go again in batches half as large, down to one event, which, refused
+// alone, is lost and counted. The counts of lost events were not delivered either, so they are
+// kept.
+func (b *Batcher) tooLarge(n, size int) {
+	if n > 1 {
+		b.limit = max(size/2, 1)
+		return
+	}
+	if n == 1 {
+		b.dropped++
+		if b.taken[0] == rankRoot {
+			b.droppedSystem++
+		}
+		b.reset(b.pending)
+		clear(b.perOwner)
+		for _, q := range b.queue {
+			if q.rank == rankUser {
+				b.perOwner[q.owner]++
+			}
+		}
+	}
+}
+
+func (b *Batcher) batchLimit() int {
+	if b.limit == 0 {
+		return MaxBatchBytes
+	}
+	return b.limit
+}
+
 // next builds the next batch, the system events first; pending holds the queue without them
 // until the batch is sent.
 func (b *Batcher) next() Batch {
@@ -463,7 +510,8 @@ func (b *Batcher) next() Batch {
 	// Root's system events first, then whatever has waited MaxWait, then each rank in turn, each
 	// in the order it came: a change to root's keys must not wait behind a flood in the uploads
 	// or in a user's home, and a webshell must not wait behind a flood forever.
-	size, n := 0, 0
+	size, n, limit := 0, 0, b.batchLimit()
+	b.taken = b.taken[:0]
 	taken := make([]bool, len(b.queue))
 	stale := b.now().Add(-MaxWait)
 	for pass := -1; pass < ranks; pass++ {
@@ -473,12 +521,13 @@ func (b *Batcher) next() Batch {
 			if q.rank < 0 || taken[i] || (pass == -1 && !first) || (pass == rankRoot && !aged) || (pass > rankRoot && q.rank != pass) {
 				continue
 			}
-			if n > 0 && size+len(q.raw) > MaxBatchBytes {
+			if n > 0 && size+len(q.raw) > limit {
 				break
 			}
 			size += len(q.raw) + 1
 			n++
 			taken[i] = true
+			b.taken = append(b.taken, q.rank)
 			batch.Events = append(batch.Events, q.raw)
 		}
 	}

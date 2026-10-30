@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -89,12 +90,17 @@ func (r *realtime) drained() {
 }
 
 // sendEvents delivers a batch as an event envelope. A batch sealed but not delivered goes out
-// before the next envelope, so only one never sealed is handed back.
+// before the next envelope, so only one never sealed is handed back, and one the verifier
+// refused for its size, which the transport dropped, for the batcher to split.
 func sendEvents(log *slog.Logger, client *transport.Client) func(context.Context, []byte) error {
 	return func(ctx context.Context, payload []byte) error {
 		err := client.Send(ctx, protocol.KindEvent, payload, time.Now())
 		if errors.Is(err, transport.ErrNotSealed) {
 			return err
+		}
+		if errors.Is(err, transport.ErrTooLarge) {
+			log.Warn("events refused for their size, sent again in smaller batches", "bytes", len(payload))
+			return fmt.Errorf("%w: %w", watch.ErrTooLarge, err)
 		}
 		if err != nil && ctx.Err() == nil {
 			log.Warn("events not delivered yet, they go out before the next envelope", "err", err)

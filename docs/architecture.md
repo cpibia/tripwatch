@@ -165,11 +165,15 @@ which go in the title, so an acceptance also holds for the same job container st
 Events go through bounded channels to a batcher: root's system paths have a channel of their own,
 which the batcher reads first and no other account can fill (a loss there counts as root's), the
 rest share one. The batcher sends at most every two seconds, in batches
-under 192 KB, with the counts of what was lost (kernel queue overflow, full channel, full queue,
+under 176 KB (base64 in the envelope, under the verifier's 256 KB for an event), with the counts of what was lost (kernel queue overflow, full channel, full queue,
 and among them the events on root's system paths) and whether a package manager was running, which is
 known from a lock of dpkg, rpm or apk held by a process of root in `/proc/locks`, never from a
 process name. If the transport cannot seal a batch because an earlier envelope is still pending,
-the batcher keeps it in a queue of 4,096 events and retries with a backoff up to a minute. The
+the batcher keeps it in a queue of 4,096 events and retries with a backoff up to a minute. A
+batch the verifier refuses for its size, which the transport drops from the chain, is not taken
+for delivered: its events go again in batches half the size of the refused one, root's first,
+down to a single event, which refused alone is counted as lost; the counts of lost events it
+carried are kept for the next batch, and the bound doubles back with each batch that goes through. The
 queue ranks events: root's system paths first; then the start-up files, `.ssh` and SSH keys in
 the home of each account other than root, and the files in the cron and at spools owned by such
 an account (by the file's UID, never its name: `crontab` writes temporary files with random

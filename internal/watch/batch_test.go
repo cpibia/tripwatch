@@ -111,6 +111,45 @@ func TestBatcherBoundsBatchesAndQueue(t *testing.T) {
 	}
 }
 
+// A batch the verifier refuses for its size is sent again in smaller ones, root's events first,
+// with the counts of lost events it carried; an event refused alone is lost and counted, as
+// root's when it is. The bound doubles back with each batch that goes through.
+func TestBatcherSplitsWhatTheVerifierRefuses(t *testing.T) {
+	var sent []Batch
+	refuse := func(p []byte) bool { return len(p) > 16<<10 || strings.Contains(string(p), "huge") }
+	b := &Batcher{Send: func(_ context.Context, p []byte) error {
+		if refuse(p) {
+			return ErrTooLarge
+		}
+		sent = append(sent, decodeBatch(t, p))
+		return nil
+	}, Lost: func() (int64, int64) { return 7, 0 }}
+	b.Now = time.Now
+	for range 300 {
+		b.add(Event{Class: ClassUpload, Op: OpCreate, Path: "/var/www/site/uploads/" + strings.Repeat("x", 200) + ".php"})
+	}
+	b.add(Event{Class: ClassSSH, Op: OpCreate, Path: "/root/.ssh/authorized_keys"})
+	b.add(Event{Class: ClassHook, Op: OpCreate, Path: "/etc/profile.d/huge.sh"})
+	for range 200 {
+		b.Flush(context.Background())
+	}
+	if len(sent) == 0 || len(sent[0].Events) == 0 || !strings.Contains(string(sent[0].Events[0]), "authorized_keys") || sent[0].Dropped != 7 {
+		t.Fatalf("first batch delivered: %+v", sent)
+	}
+	total, dropped, system := 0, int64(0), int64(0)
+	for _, s := range sent {
+		total += len(s.Events)
+		dropped += s.Dropped
+		system += s.DroppedSystem
+	}
+	if total != 301 || dropped != 8 || system != 1 || b.live != 0 {
+		t.Fatalf("%d events delivered, %d dropped (%d of root's), %d left", total, dropped, system, b.live)
+	}
+	if b.batchLimit() < 16<<10 {
+		t.Errorf("bound after the flood: %d", b.batchLimit())
+	}
+}
+
 // A package manager counts only when a process of root holds its lock: a process merely named
 // dpkg does not.
 func TestPackageManagerRunning(t *testing.T) {
