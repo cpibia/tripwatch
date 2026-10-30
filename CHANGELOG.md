@@ -112,9 +112,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
   the skimmer search now knows it as JavaScript tokenizers do, from a stack of what each open
   bracket started: the condition of an `if` or a loop, an expression, a block, an object, a
   declared function or class, a function or class expression. Scripts that asked for one reading
-  in one place and the other elsewhere no longer hide the strings they build. Only a "/" after an
-  arrow function's body, or after a bracket opened before the piece read, is still read both
-  ways, the whole script and each statement again. The clean corpus reads faster (70 s, was 83).
+  in one place and the other elsewhere no longer hide the strings they build. The stack decides
+  only where a tokenizer is sure: after a conditional's or a label's "{", a line break after
+  `return`, or any start it does not know, the "/" is still read both ways, the whole script and
+  each statement again. The stack goes on from one 1 MB piece to the next. A template literal
+  with a real substitution is read as JavaScript reads it, its text passed over and each
+  substitution read as code: its closing backtick no longer opens a template that hid the next
+  4 KB. The clean corpus reads faster (71 s, was 83).
 - An application's findings are bounded by the alert they raise: those that raise none (a link
   out of the application, an `.htaccess` with no handler, an encoded blob) have a bound of 200
   of their own, and past the bound of 1,000 a finding takes the place of a less severe one. A
