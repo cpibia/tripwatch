@@ -107,40 +107,6 @@ const (
 	maxConcatParts = 64
 )
 
-// literals returns the script's string literals as the browser builds them: escapes decoded,
-// template literals without substitutions taken as strings, literals joined with "+" joined.
-// A field's name written 'payment[cc'+'_num'+'ber]' or 'p\x61yment' is whole again. Comments
-// and regular expressions are not told apart: a quote in one shifts what follows, which costs a
-// missed name, never a false one, since only the decoded text is searched for names.
-func literals(content []byte) []byte {
-	var out []byte
-	i := 0
-	for i < len(content) && len(out) < maxNormalised {
-		lit, next, ok := jsLiteral(content, i)
-		if !ok {
-			i++
-			continue
-		}
-		joined := lit
-		for parts := 1; parts < maxConcatParts; parts++ {
-			j := skipBlanks(content, next)
-			if j >= len(content) || content[j] != '+' {
-				break
-			}
-			more, after, ok := jsLiteral(content, skipBlanks(content, j+1))
-			if !ok {
-				break
-			}
-			joined, next = append(joined, more...), after
-		}
-		if len(joined) >= 4 {
-			out = append(append(out, ' '), joined...)
-		}
-		i = next
-	}
-	return out
-}
-
 func skipBlanks(b []byte, i int) int {
 	for i < len(b) && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r') {
 		i++
@@ -199,6 +165,11 @@ func jsEscape(b []byte) ([]byte, int) {
 		if v, ok := hex(b[1:5]); ok {
 			return []byte(string(v)), 5
 		}
+	case b[0] == '\r' && len(b) >= 2 && b[1] == '\n':
+		// A backslash at the end of a line continues the literal on the next.
+		return nil, 2
+	case b[0] == '\n' || b[0] == '\r':
+		return nil, 1
 	case b[0] >= '0' && b[0] <= '7':
 		n := 1
 		for n < 3 && n < len(b) && b[n] >= '0' && b[n] <= '7' {
@@ -216,7 +187,7 @@ type skimmerFamilies struct{ fields, harvest, exits, sends, hidden, key bool }
 
 func (f *skimmerFamilies) scan(content []byte) {
 	text := content
-	if extra := append(decoded(content), literals(content)...); len(extra) > 0 {
+	if extra := append(decoded(content), foldedStrings(content)...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)
 	}
 	f.fields = f.fields || paymentFields.Match(text)

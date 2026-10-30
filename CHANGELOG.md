@@ -54,9 +54,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   version file changed in the same run (`style.css`, `readme.txt`, the main plugin file,
   `composer.json`, `package.json`, `etc/module.xml`, `.info.yml`): decoys written next to a
   skimmer in a theme no longer hide it. Payment field names split across `atob` literals,
-  reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded, and string
-  literals are read as the browser builds them: escapes decoded, template literals, literals
-  joined with `+` (`'payment[cc'+'_num'+'ber]'`, `'p\x61yment'`).
+  reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded, and the
+  expressions a script builds from string literals only are folded by a bounded tokenizer:
+  escapes, comments between the pieces, parentheses, `+`, `.concat()`, `[..].join()`, `atob()`,
+  template literals with literal substitutions, and constants assigned earlier in the file.
 - The `hooks` collector reads dpkg's file lists as streams and names the hooks a package owns.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.

@@ -322,10 +322,13 @@ that changed files of other kinds cannot push them out, and read for a card skim
 (`payment_skimmer`, critical): payment fields together with an exit to another host or with
 obfuscation, or a live secret payment key. Field names hidden in `atob` literals (adjacent ones joined
 with `+` decoded together), strings turned around with `split("").reverse().join("")`,
-`String.fromCharCode` lists and runs of `\x`/`\u00` escapes are decoded first, and every string
-literal is read as the browser builds it (escapes decoded, template literals without
-substitutions, literals joined with `+`); names built through variables, aliases, arrays or
-spread are past what a search without running the script can follow, a limit of the rule, and a file is read in 1 MB pieces with the families
+`String.fromCharCode` lists and runs of `\x`/`\u00` escapes are decoded first, and the script's
+expressions built of string literals only are folded by a bounded tokenizer (escapes decoded,
+comments skipped, parentheses, `+`, `.concat()`, `[..].join()`, `.split("").reverse().join("")`,
+`atob()`, template literals whose substitutions are literals, and the names a `var`, `let`,
+`const` or assignment gave such a value earlier in the file); names built at run time (from the
+page, through functions, loops, spread or aliases of functions) are past what a search without
+running the script can follow, a limit of the rule, and a file is read in 1 MB pieces with the families
 gathered across them, so padding cannot separate the fields from the exit. When more than 50
 scripts and templates changed at once, generated bundles (`pub/static`, `var/view_preprocessed`,
 `wp-content/cache`) and packages with more than 10 changed scripts whose version file changed too (`style.css`,
