@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -49,6 +50,9 @@ type codeSearch struct {
 	loose bool
 	// ran says a block PHP runs was opened earlier in the file: it may have defined any constant.
 	ran bool
+	// bareTick says a loose block holds a backtick, varCall that the block calls through a
+	// variable.
+	bareTick, varCall bool
 	// named says the block was opened by "<?" glued to code rather than by a real open tag: as
 	// the minified scripts a cache holds quote "<?(" in a regular expression, and run on through
 	// their template literals, a backtick there counts only when it interpolates a variable.
@@ -304,6 +308,9 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		// after putenv() has pointed PATH at the attacker's directory.
 		if b == '`' && !c.loose && !c.named {
 			c.backtick = true
+		}
+		if b == '`' && c.loose {
+			c.bareTick = true
 		}
 	case '/':
 		if !more(2) {
@@ -690,7 +697,10 @@ func (c *codeSearch) endBlock() {
 	if c.mode != lexText && (!c.broken || !c.shortTags) {
 		c.match()
 		if !c.exhausted && !c.broken && !c.glued {
-			if c.backtick {
+			// In a block a dump or a log opens, a backtick around a bare word is a quoted name;
+			// one next to a call through a variable, which can be putenv() under a built name,
+			// runs a command found on a PATH the attacker set.
+			if c.backtick || c.loose && c.bareTick && c.varCall {
 				c.add("backtick_exec")
 			}
 			if c.call && len(c.sigs) == 0 {
@@ -699,6 +709,7 @@ func (c *codeSearch) endBlock() {
 		}
 	}
 	c.mode, c.code, c.backtick, c.heredoc, c.call, c.broken, c.glued, c.loose, c.named = lexText, c.code[:0], false, nil, false, false, false, false, false
+	c.bareTick, c.varCall = false, false
 	c.nested, c.nowdoc, c.blockLen = c.nested[:0], false, 0
 }
 
@@ -724,4 +735,10 @@ func (c *codeSearch) match() {
 	if dangerousCall.Match(c.code) {
 		c.call = true
 	}
+	if variableCall.Match(c.code) {
+		c.varCall = true
+	}
 }
+
+// variableCall is a call through a variable ("$f(..."), which hides the name of what it calls.
+var variableCall = regexp.MustCompile(`\$[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]* ?\(`)

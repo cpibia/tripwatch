@@ -28,6 +28,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A heredoc label longer than 128 bytes, or after more than 16 blanks, is a signature in a data
   file (`long_heredoc_label`): with a body of `/*` or `?>` it hid the payload after it, with a
   full `<?php` tag and the default configuration.
+- In a block opened by `<?` and a blank, as dumps and logs quote it, a backtick around a bare
+  word counts when the block also calls through a variable: `$f="put"."env";$f("PATH=...")`
+  hides putenv and the word runs from the attacker's directory.
 - `<?echo`, `<?print`, `<?const` and constants followed by an operator (`<?PHP_EOL>1;`) open
   code, not a processing instruction: only a lower-case target, an undefined constant on which
   PHP 8 stops, is left to the named signatures, and only until a block PHP runs appears in the
