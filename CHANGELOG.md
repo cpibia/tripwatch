@@ -149,6 +149,13 @@ What changes for an operator, in short; the details follow by component.
   terminator to one, U+2028 and U+2029 staying text inside a string, where a backslash before
   them continues the line. Whether a piece starts a line goes on from the piece before. The
   clean corpus reads faster (74 s, was 83).
+- The skimmer families are also searched on the script as the tokenizer read it: comments
+  dropped, white space and escapes in names undone (`new/**/Image(`, `Imag\u0065`,
+  `navigator. sendBeacon(`), literals joined by `+` read as one string, so a host split across
+  them is named, and a member named by a string read as the member (`navigator["sendBeacon"]`).
+  A constructor matches through brackets and a global object (`new(Image)()`), a file is cut in
+  pieces on character starts, and a script that may be a module is read every way as one too.
+  The search costs about twice as much (1.1 s per MB of changed script).
 - An application's findings are bounded by the alert they raise: those that raise none (a link
   out of the application, an `.htaccess` with no handler, an encoded blob) have a bound of 200
   of their own, and past the bound of 1,000 a finding takes the place of a less severe one. A
