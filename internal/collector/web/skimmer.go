@@ -118,7 +118,8 @@ func skipBlanks(b []byte, i int) int {
 	return i
 }
 
-// jsLiteral decodes the string literal starting at i, if one does, and returns where it ends.
+// jsLiteral decodes the string literal starting at i, if one does, and returns where it ends;
+// for one not closed within the window, where reading may go on.
 func jsLiteral(b []byte, i int) ([]byte, int, bool) {
 	if i >= len(b) || b[i] != '\'' && b[i] != '"' && b[i] != '`' {
 		return nil, i, false
@@ -142,7 +143,9 @@ func jsLiteral(b []byte, i int) ([]byte, int, bool) {
 			out = append(out, c)
 		}
 	}
-	return nil, i, false
+	// Not closed within the window: the next quote inside it would be read the same way, so
+	// the whole window is passed over.
+	return nil, min(i+maxLiteral, len(b)), false
 }
 
 // jsEscape decodes the escape after a backslash and returns its bytes and length.

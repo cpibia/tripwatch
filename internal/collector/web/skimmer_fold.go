@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"slices"
 	"strconv"
@@ -65,7 +66,7 @@ func jsTokens(content []byte) []jsToken {
 				i = next
 			} else {
 				out = append(out, jsToken{'p', string(c)})
-				i++
+				i = max(i+1, next)
 			}
 		case identByte(c) || c == '$':
 			j := i
@@ -183,7 +184,7 @@ func jsFoldLiteral(b []byte, i int) ([]byte, int, bool) {
 			out = append(out, c)
 		}
 	}
-	return nil, i, false
+	return nil, min(i+maxLiteral, len(b)), false
 }
 
 // folder evaluates the expressions of a script that are built of string literals only:
@@ -219,17 +220,22 @@ func (c *foldConstants) put(name, v string, usedLater func(string) bool) {
 		if !usedLater(name) {
 			return
 		}
-		victim, at := "", int64(-1)
-		for k, t := range c.set {
-			if !usedLater(k) && t > at {
-				victim, at = k, t
+		// Half the table goes at once, the names the piece does not use again, the newest
+		// first: one pass for many names to come, not one per name.
+		var unused []string
+		for k := range c.set {
+			if !usedLater(k) {
+				unused = append(unused, k)
 			}
 		}
-		if victim == "" {
+		if len(unused) == 0 {
 			return
 		}
-		delete(c.values, victim)
-		delete(c.set, victim)
+		slices.SortFunc(unused, func(a, b string) int { return cmp.Compare(c.set[b], c.set[a]) })
+		for _, k := range unused[:min(len(unused), maxFoldConstants/2)] {
+			delete(c.values, k)
+			delete(c.set, k)
+		}
 	}
 	c.clock++
 	c.values[name], c.set[name] = v, c.clock
@@ -252,7 +258,8 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 		}
 	}
 	var out []byte
-	for i := 0; i < len(f.toks) && len(out) < maxNormalised && f.steps < maxFoldSteps; {
+	// What is folded never outgrows the piece more than four times over.
+	for i := 0; i < len(f.toks) && len(out) < min(maxNormalised, 4*len(content)) && f.steps < maxFoldSteps; {
 		// var x = ..., x = ...: the value is kept for the uses of x after it.
 		name := -1
 		switch {
