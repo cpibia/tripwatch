@@ -46,7 +46,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   version file changed in the same run (`style.css`, `readme.txt`, the main plugin file,
   `composer.json`, `package.json`, `etc/module.xml`, `.info.yml`): decoys written next to a
   skimmer in a theme no longer hide it. Payment field names split across `atob` literals,
-  reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded.
+  reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded, and string
+  literals are read as the browser builds them: escapes decoded, template literals, literals
+  joined with `+` (`'payment[cc'+'_num'+'ber]'`, `'p\x61yment'`).
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
   It also reports the flags of its own architecture's libc, and a cache too large to read,

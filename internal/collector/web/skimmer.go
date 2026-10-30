@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // KindSkimmer is a script or a template, changed since the previous run, that reads payment
@@ -39,7 +40,7 @@ var (
 	// The browser runs an SVG script element whatever namespace prefix names it.
 	activeSVG = regexp.MustCompile(`(?i)<(?:[a-z0-9_.-]+:)?script\b|\bon[a-z]{3,20}\s*=|javascript:`)
 
-	atobLiteral = regexp.MustCompile(`\batob\s*\(\s*['"]([A-Za-z0-9+/=]{4,1000})['"]\s*\)`)
+	atobLiteral = regexp.MustCompile("\\batob\\s*\\(\\s*['\"`]([A-Za-z0-9+/=]{4,1000})['\"`]\\s*\\)")
 	// reversedLiteral is a string written backwards and turned around at run time.
 	reversedLiteral = regexp.MustCompile(`['"]([^'"\\]{4,200})['"]\s*\.\s*split\s*\(\s*['"]{2}\s*\)\s*\.\s*reverse\s*\(\s*\)\s*\.\s*join\s*\(`)
 	reversed        = regexp.MustCompile(`\.split\s*\(\s*['"]{2}\s*\)\s*\.\s*reverse\s*\(\s*\)\s*\.\s*join\s*\(`)
@@ -99,12 +100,123 @@ func decoded(content []byte) []byte {
 	return out
 }
 
+// Bounds of the string literals normalised in a piece.
+const (
+	maxLiteral     = 4 << 10
+	maxNormalised  = 1 << 20
+	maxConcatParts = 64
+)
+
+// literals returns the script's string literals as the browser builds them: escapes decoded,
+// template literals without substitutions taken as strings, literals joined with "+" joined.
+// A field's name written 'payment[cc'+'_num'+'ber]' or 'p\x61yment' is whole again. Comments
+// and regular expressions are not told apart: a quote in one shifts what follows, which costs a
+// missed name, never a false one, since only the decoded text is searched for names.
+func literals(content []byte) []byte {
+	var out []byte
+	i := 0
+	for i < len(content) && len(out) < maxNormalised {
+		lit, next, ok := jsLiteral(content, i)
+		if !ok {
+			i++
+			continue
+		}
+		joined := lit
+		for parts := 1; parts < maxConcatParts; parts++ {
+			j := skipBlanks(content, next)
+			if j >= len(content) || content[j] != '+' {
+				break
+			}
+			more, after, ok := jsLiteral(content, skipBlanks(content, j+1))
+			if !ok {
+				break
+			}
+			joined, next = append(joined, more...), after
+		}
+		if len(joined) >= 4 {
+			out = append(append(out, ' '), joined...)
+		}
+		i = next
+	}
+	return out
+}
+
+func skipBlanks(b []byte, i int) int {
+	for i < len(b) && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+// jsLiteral decodes the string literal starting at i, if one does, and returns where it ends.
+func jsLiteral(b []byte, i int) ([]byte, int, bool) {
+	if i >= len(b) || b[i] != '\'' && b[i] != '"' && b[i] != '`' {
+		return nil, i, false
+	}
+	quote := b[i]
+	var out []byte
+	for j := i + 1; j < len(b) && j-i < maxLiteral; j++ {
+		c := b[j]
+		switch {
+		case c == quote:
+			return out, j + 1, true
+		case c == '\n' && quote != '`':
+			return nil, i, false
+		case c == '$' && quote == '`' && j+1 < len(b) && b[j+1] == '{':
+			return nil, i, false
+		case c == '\\' && j+1 < len(b):
+			r, n := jsEscape(b[j+1:])
+			out = append(out, r...)
+			j += n
+		default:
+			out = append(out, c)
+		}
+	}
+	return nil, i, false
+}
+
+// jsEscape decodes the escape after a backslash and returns its bytes and length.
+func jsEscape(b []byte) ([]byte, int) {
+	hex := func(s []byte) (rune, bool) {
+		v, err := strconv.ParseUint(string(s), 16, 32)
+		if err != nil || v > unicode.MaxRune {
+			return 0, false
+		}
+		return rune(v), true
+	}
+	switch {
+	case b[0] == 'x' && len(b) >= 3:
+		if v, ok := hex(b[1:3]); ok {
+			return []byte(string(v)), 3
+		}
+	case b[0] == 'u' && len(b) >= 3 && b[1] == '{':
+		if end := bytes.IndexByte(b[:min(len(b), 10)], '}'); end > 2 {
+			if v, ok := hex(b[2:end]); ok {
+				return []byte(string(v)), end + 1
+			}
+		}
+	case b[0] == 'u' && len(b) >= 5:
+		if v, ok := hex(b[1:5]); ok {
+			return []byte(string(v)), 5
+		}
+	case b[0] >= '0' && b[0] <= '7':
+		n := 1
+		for n < 3 && n < len(b) && b[n] >= '0' && b[n] <= '7' {
+			n++
+		}
+		if v, err := strconv.ParseUint(string(b[:n]), 8, 8); err == nil {
+			return []byte{byte(v)}, n
+		}
+	}
+	return b[:1], 1
+}
+
 // skimmerFamilies are the families of a skimmer seen in a file, gathered across its pieces.
 type skimmerFamilies struct{ fields, harvest, exits, sends, hidden, key bool }
 
 func (f *skimmerFamilies) scan(content []byte) {
 	text := content
-	if extra := decoded(content); len(extra) > 0 {
+	if extra := append(decoded(content), literals(content)...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)
 	}
 	f.fields = f.fields || paymentFields.Match(text)
