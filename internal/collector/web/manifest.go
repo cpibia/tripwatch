@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"cmp"
+	"container/heap"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -224,28 +225,33 @@ const unreadRunsReported = 3
 // for skimmers, not by design, keeps the entry of the manifest before it, marked pending: the next
 // run finds it changed again and reads it. It returns the scripts left unread for several runs in
 // a row. The two manifests are read as streams, in walk order.
-func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, int, error) {
+func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, int, bool, error) {
 	pf, err := os.Open(prev) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	defer func() { _ = pf.Close() }()
 	nf, err := os.Open(next) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	defer func() { _ = nf.Close() }()
 	tmp := next + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // under the operator's state directory
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	w := bufio.NewWriterSize(out, 64<<10)
 	old, now := newManifestReader(pf), newManifestReader(nf)
 	var long []UnreadScript
-	longCount := 0
+	longCount, vanished := 0, false
 	for ; !now.done; now.advance() {
 		for !old.done && comparePaths(old.path, now.path) < 0 {
+			// A pending script gone from the tree: the application's count of runs behind does
+			// not start over for it, so taking a skimmer away for one run gains nothing.
+			if pendingRuns(old.sum) > 0 {
+				vanished = true
+			}
 			old.advance()
 		}
 		before := ""
@@ -270,14 +276,19 @@ func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, int, error)
 		}
 		if _, err := fmt.Fprintf(w, "%s %s\n", strconv.Quote(now.path), entry); err != nil {
 			_ = out.Close()
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 	}
 	if err := errors.Join(old.err, now.err, w.Flush(), out.Sync(), out.Close()); err != nil {
 		_ = os.Remove(tmp)
-		return nil, 0, err
+		return nil, 0, false, err
 	}
-	return long, longCount - len(long), os.Rename(tmp, next)
+	for ; !old.done; old.advance() {
+		if pendingRuns(old.sum) > 0 {
+			vanished = true
+		}
+	}
+	return long, longCount - len(long), vanished, os.Rename(tmp, next)
 }
 
 // keepLongest adds u to the scripts left unread longest, at most maxReportedUnread of them:
@@ -319,6 +330,21 @@ type skimmerCandidates struct {
 	// versioned are the packages whose version file changed in the same run: those being
 	// updated, whose scripts may change by the hundred.
 	versioned map[string]bool
+	heaped    bool
+}
+
+// byPending orders candidates as a min-heap of their runs pending.
+type byPending []FileChange
+
+func (h byPending) Len() int           { return len(h) }
+func (h byPending) Less(i, j int) bool { return h[i].pending < h[j].pending }
+func (h byPending) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *byPending) Push(x any)        { *h = append(*h, x.(FileChange)) }
+func (h *byPending) Pop() any {
+	old := *h
+	x := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return x
 }
 
 // generatedBundles are where frameworks write the scripts a deploy builds, merged with every
@@ -344,12 +370,16 @@ func (k *skimmerCandidates) add(c FileChange) {
 	case len(k.others) < maxSkimmerCandidates:
 		k.others = append(k.others, c)
 	default:
-		// Past the bound a script left unread before takes the place of a new one, which stays
-		// pending in turn: the order of the walk cannot keep the old ones out for good.
-		if c.pending > 0 {
-			if i := slices.IndexFunc(k.others, func(o FileChange) bool { return o.pending == 0 }); i >= 0 {
-				k.others[i] = c
-			}
+		// Past the bound the candidates are kept by how long they have been pending, in a heap:
+		// a script pending longer takes the place of the one pending least, whatever the order
+		// of the walk.
+		if !k.heaped {
+			heap.Init((*byPending)(&k.others))
+			k.heaped = true
+		}
+		if c.pending > k.others[0].pending {
+			k.others[0] = c
+			heap.Fix((*byPending)(&k.others), 0)
 		}
 		k.dropped++
 	}
@@ -449,13 +479,18 @@ func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 			// changed and reads them: taken in as seen, a skimmer among them would never be read
 			// again. Those left unread for runs in a row are named in the result.
 			run := s.inspectCandidates(ctx, candidates)
-			long, more, err := keepPending(prev, m.next, run)
+			long, more, vanished, err := keepPending(prev, m.next, run)
 			if err != nil {
 				s.issues = append(s.issues, fmt.Sprintf("%s: manifest not written, scripts left unread would pass for seen: %v", s.report.Path, err))
 				_ = os.Remove(m.next)
 				return ""
 			}
 			s.report.UnreadScripts, s.report.UnreadScriptsMore = long, more
+			s.behind = run.left > 0 || vanished
+			// The search cut by the run's time leaves the application unread as a cut walk does.
+			if s.stopped {
+				s.report.Truncated = true
+			}
 		}
 	}
 	return m.next

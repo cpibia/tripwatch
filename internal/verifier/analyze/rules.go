@@ -1435,6 +1435,19 @@ func Evaluate(prev *State, cur State) []Finding {
 			state("web", "scan-cut", "medium", "Web applications not scanned whole for runs in a row",
 				"The sensor's scan of these applications was cut short by its time limit run after run, so part of their code and data is not read: "+strings.Join(cut, ", ")+". Many files written in them can cause it; see what grew there.")
 		}
+		// An application whose changed scripts were not all read for skimmers three runs in a
+		// row: whatever keeps them unread (decoys, a cut scan, files that come and go), the
+		// application is behind. High, so that only a person closes it.
+		for _, app := range w.Apps {
+			if app.BehindRuns >= truncatedRunsAlert {
+				var oldest []string
+				for _, u := range app.UnreadScripts[:min(len(app.UnreadScripts), 10)] {
+					oldest = append(oldest, fmt.Sprintf("%s (%d runs)", u.Path, u.Runs))
+				}
+				state("web", "skimmer-behind:"+app.Path, "high", "Changed scripts not read for skimmers in "+app.Path,
+					fmt.Sprintf("%d runs in a row left changed scripts of %s unread for skimmers, for lack of time or budget, past the bound on scripts read, or because the scan was cut: a skimmer among them goes unseen. Unread longest: %s.", app.BehindRuns, app.Path, cmp.Or(strings.Join(oldest, ", "), "none named yet")))
+			}
+		}
 		// A changed script the sensor had no time or budget to read for skimmers several runs in
 		// a row: decoys written next to a skimmer to keep it from being read look like this. It is
 		// raised as a change, which a sensor that stops naming the script cannot close: a person

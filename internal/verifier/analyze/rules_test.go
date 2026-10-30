@@ -1119,3 +1119,20 @@ func TestScansCutRunAfterRun(t *testing.T) {
 		t.Errorf("findings = %+v", found)
 	}
 }
+
+// An application whose changed scripts were not all read three runs in a row is a high alert
+// naming the scripts unread longest.
+func TestApplicationBehindOnSkimmers(t *testing.T) {
+	cur := baseState()
+	cur.Web = &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/var/www/shop"}, BehindRuns: 3,
+		UnreadScripts: []web.UnreadScript{{Path: "/var/www/shop/skim.js", Runs: 3}}}, {Application: discovery.Application{Path: "/var/www/blog"}, BehindRuns: 2}}}
+	var got []Finding
+	for _, f := range Evaluate(nil, cur) {
+		if strings.HasPrefix(f.Fingerprint, "web:skimmer-behind:") {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 1 || got[0].Severity != "high" || !strings.Contains(got[0].Detail, "/var/www/shop/skim.js (3 runs)") {
+		t.Errorf("findings = %+v", got)
+	}
+}

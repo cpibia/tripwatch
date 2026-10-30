@@ -290,17 +290,52 @@ func TestTruncatedRunsCounted(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, a := range out.(Result).Apps {
-			return a.TruncatedRuns
+		apps := out.(Result).Apps
+		if len(apps) == 0 {
+			t.Fatal("no application")
 		}
-		t.Fatal("no application")
-		return 0
+		if apps[0].BehindRuns != apps[0].TruncatedRuns {
+			t.Errorf("runs behind %d, cut %d", apps[0].BehindRuns, apps[0].TruncatedRuns)
+		}
+		return apps[0].TruncatedRuns
 	}
 	if r1, r2 := runs(cut), runs(cut); r1 != 1 || r2 != 2 {
 		t.Errorf("runs cut: %d then %d", r1, r2)
 	}
 	if r := runs(context.Background()); r != 0 {
 		t.Errorf("after a whole run: %d", r)
+	}
+	if n := c.behindRuns["/var/www/shop"]; n != 0 {
+		t.Errorf("runs behind after a whole run: %d", n)
+	}
+}
+
+// Past the bound candidates are kept by how long they have been pending; a pending script gone
+// from the tree is reported, so the application's runs behind do not start over for it.
+func TestCandidatesByPendingAndVanished(t *testing.T) {
+	var k skimmerCandidates
+	for i := range maxSkimmerCandidates {
+		k.add(FileChange{Path: fmt.Sprintf("/var/www/shop/d%05d.js", i), Change: ChangeModified, pending: 1})
+	}
+	k.add(FileChange{Path: "/var/www/shop/new.js", Change: ChangeAdded})
+	k.add(FileChange{Path: "/var/www/shop/old.js", Change: ChangeModified, pending: 5})
+	has := func(p string) bool {
+		return slices.ContainsFunc(k.others, func(c FileChange) bool { return c.Path == p })
+	}
+	if !has("/var/www/shop/old.js") || has("/var/www/shop/new.js") || len(k.others) != maxSkimmerCandidates {
+		t.Errorf("old kept %v, new kept %v, %d candidates", has("/var/www/shop/old.js"), has("/var/www/shop/new.js"), len(k.others))
+	}
+
+	dir := t.TempDir()
+	prev, next := filepath.Join(dir, "prev"), filepath.Join(dir, "next")
+	if err := os.WriteFile(prev, []byte(`"var/www/shop/a.js" pending:2:`+strings.Repeat("a", 64)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(next, []byte(`"var/www/shop/b.php" `+strings.Repeat("b", 64)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, vanished, err := keepPending(prev, next, skimmerRun{read: map[string]bool{}, updating: map[string]bool{}}); err != nil || !vanished {
+		t.Errorf("vanished %v, %v", vanished, err)
 	}
 }
 
@@ -333,7 +368,7 @@ func TestPendingScriptsCannotBePushedOut(t *testing.T) {
 	if err := os.WriteFile(next, []byte(`"var/www/shop/a.js" unhashed:size:9:ctime:1:id:1`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := keepPending(prev, next, skimmerRun{read: map[string]bool{}, updating: map[string]bool{}}); err != nil {
+	if _, _, _, err := keepPending(prev, next, skimmerRun{read: map[string]bool{}, updating: map[string]bool{}}); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(next); !strings.Contains(string(data), "pending:3:"+strings.Repeat("a", 64)) { //nolint:gosec // the test's own directory

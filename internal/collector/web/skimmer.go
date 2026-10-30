@@ -311,6 +311,7 @@ func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) sk
 			left++
 		}
 	}
+	run.left = left + k.dropped
 	if left += k.dropped; left > 0 {
 		s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers in this run, kept pending for the next", s.report.Path, left))
 	}
@@ -320,7 +321,9 @@ func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) sk
 // skimmerRun is what a run did with the changed scripts: those it read, and what it left out by
 // design, the bundles a deploy generates and the packages being updated.
 type skimmerRun struct {
-	read          map[string]bool
+	read map[string]bool
+	// left counts the changed scripts left unread, past the bound included.
+	left          int
 	skipGenerated bool
 	updating      map[string]bool
 }

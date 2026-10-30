@@ -21,7 +21,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
   one, and a run whose hash budget ran out does not clear it. A script left unread three runs in a
   row is named in the result (the hundred unread longest, the rest counted), and the verifier
   raises a medium alert for it that the sensor cannot close by no longer naming it. Applications
-  whose scan was cut short go first at the next run.
+  whose scan was cut short go first at the next run. Per application the collector counts the runs in a
+  row that left changed scripts unread for any reason (a search cut by the run's time counts as a
+  cut scan), not starting over while a pending script disappears; from the third, the verifier
+  raises a high alert naming the application and the scripts unread longest. Past the 2,000,
+  candidates are kept by how long they have been pending.
 - The web collector counts the runs in a row each application's scan was cut short by its time
   limit, and the verifier raises one medium alert for the host when an application reaches three:
   in a week of a fleet of a hundred applications, cuts came alone or in pairs but on two hosts.

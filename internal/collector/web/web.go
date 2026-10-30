@@ -146,6 +146,10 @@ type AppReport struct {
 	// TruncatedRuns counts the runs in a row, this one included, whose scan of the application
 	// was cut short, since the sensor started.
 	TruncatedRuns int `json:"truncated_runs,omitempty"`
+	// BehindRuns counts the runs in a row, this one included, that left changed scripts of the
+	// application unread for skimmers, for any reason: it starts over only when a run reads
+	// every change.
+	BehindRuns int `json:"behind_runs,omitempty"`
 }
 
 // maxUploadDirs bounds the upload directories listed for one application.
@@ -190,8 +194,10 @@ type Collector struct {
 	StateDir string
 	pending  pendingManifests
 	searched searchedFiles
-	// truncatedRuns counts, per application, the runs in a row its scan was cut short.
+	// truncatedRuns counts, per application, the runs in a row its scan was cut short;
+	// behindRuns those that left changed scripts unread for skimmers.
 	truncatedRuns map[string]int
+	behindRuns    map[string]int
 }
 
 // maxTruncatedApps bounds the applications whose cut scans are counted.
@@ -264,6 +270,20 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 		} else if _, ok := c.truncatedRuns[s.report.Path]; ok || len(c.truncatedRuns) < maxTruncatedApps {
 			c.truncatedRuns[s.report.Path]++
 			s.report.TruncatedRuns = c.truncatedRuns[s.report.Path]
+		}
+		// Runs that left a changed script unread, for any reason, add up until one reads every
+		// change: per application, so that no shuffling of files between runs starts it over.
+		if c.behindRuns == nil {
+			c.behindRuns = map[string]int{}
+		}
+		switch {
+		case s.behind || s.report.Truncated:
+			if _, ok := c.behindRuns[s.report.Path]; ok || len(c.behindRuns) < maxTruncatedApps {
+				c.behindRuns[s.report.Path]++
+				s.report.BehindRuns = c.behindRuns[s.report.Path]
+			}
+		default:
+			delete(c.behindRuns, s.report.Path)
 		}
 		res.Apps = append(res.Apps, s.report)
 		res.Issues = append(res.Issues, s.issues...)
@@ -345,6 +365,8 @@ func (b *hashBudget) take(n int64) bool {
 }
 
 type scanner struct {
+	// behind says the run left changed scripts of the application unread for skimmers.
+	behind  bool
 	src     collector.Source
 	root    string
 	profile *discovery.Profile
