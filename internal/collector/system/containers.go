@@ -445,7 +445,7 @@ func finishContainer(c *Container) {
 	})
 	c.Mounts = clipNamed(c, "mounts", c.Mounts)
 	slices.SortFunc(c.KernelMounts, func(a, b Mount) int {
-		return cmp.Or(rank(kernelMountPower(b) != "")-rank(kernelMountPower(a) != ""), strings.Compare(a.Destination, b.Destination),
+		return cmp.Or(rank(kernelMountPower(*c, b) != "")-rank(kernelMountPower(*c, a) != ""), strings.Compare(a.Destination, b.Destination),
 			strings.Compare(a.Source, b.Source))
 	})
 	c.KernelMounts = clipNamed(c, "kernel_mounts", c.KernelMounts)
@@ -758,7 +758,7 @@ func ContainerPowers(c Container) []string {
 		}
 	}
 	for _, m := range c.KernelMounts {
-		if p := kernelMountPower(m); p != "" && !slices.Contains(out, p) {
+		if p := kernelMountPower(c, m); p != "" && !slices.Contains(out, p) {
 			out = append(out, p)
 		}
 	}
@@ -821,16 +821,42 @@ func mountPower(m Mount) string {
 	return ""
 }
 
-// kernelMountPower is the power of a mount read from the kernel. One the configuration does not
-// list counts only when it is a whole tree of the host or a socket: the runtime's own mounts
-// (the root filesystem's layers, the container's hosts file) lie deep in its state directory.
-func kernelMountPower(m Mount) string {
-	p := mountPower(m)
+// kernelMountPower is the power of a mount read from the kernel, judged as a declared one is
+// wherever it is mounted: a link in the image or a swapped source moves a mount to a point the
+// configuration does not list. Only the runtime's own files are left out by where they are on
+// the host: the image layers it mounts as the root filesystem, its volumes, and the container's
+// own state directory, which holds its hosts, hostname and resolv.conf.
+func kernelMountPower(c Container, m Mount) string {
 	src := path.Clean("/" + m.Source)
-	if m.Undeclared && src != "/" && !slices.Contains(hostTrees, src) && !strings.HasPrefix(p, "the runtime socket") {
+	if m.Undeclared && (under(src, layerStores) || ownState(c, src)) {
 		return ""
 	}
-	return p
+	return mountPower(m)
+}
+
+// layerStores are where runtimes keep the image layers and snapshots they mount as containers'
+// root filesystems, shared by every container, and the data of the volumes they manage, which
+// the configuration leaves out of a container's mounts.
+var layerStores = []string{"/var/lib/docker/volumes", "/var/lib/containers/storage/volumes", "/var/lib/docker/overlay2", "/var/lib/docker/fuse-overlayfs", "/var/lib/docker/vfs", "/var/lib/docker/btrfs",
+	"/var/lib/docker/zfs", "/var/lib/docker/rootfs", "/var/lib/containers/storage/overlay", "/var/lib/containers/storage/vfs",
+	"/var/lib/containers/storage/btrfs", "/var/lib/containers/storage/zfs"}
+
+// ownState reports whether p is in the state directory of container c itself, by its ID: Docker's
+// containers/<id>, Podman's overlay-containers/<id>, containerd's snapshots of its snapshotter.
+// Another container's state is not the runtime's business in this one.
+func ownState(c Container, p string) bool {
+	if strings.HasPrefix(p, "/var/lib/containerd/io.containerd.snapshotter.v1.") {
+		return true
+	}
+	if len(c.ID) < 12 {
+		return false
+	}
+	for _, store := range []string{"/var/lib/docker/containers/", "/var/lib/containers/storage/overlay-containers/"} {
+		if rest, ok := strings.CutPrefix(p, store); ok && strings.HasPrefix(rest, c.ID) && strings.Contains(rest, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 // podRuntimeDirs hold one directory per pod or sandbox whose files the runtime mounts into it:
@@ -995,15 +1021,29 @@ func kernelMounts(fsys fs.FS, pid int, host *HostMounts, declared []Mount, issue
 		points[path.Clean("/"+m.Destination)] = true
 	}
 	var out []Mount
+	mounted := map[string]bool{}
 	for _, e := range entries {
 		if slices.Contains(pseudoFilesystems, e.fstype) && !points[e.point] {
 			continue
 		}
-		for _, p := range host.hostPaths(e.dev, e.root) {
+		// A file replaced since it was mounted, as editors and resolvers replace theirs, stays
+		// mounted under its old name with this mark.
+		root := strings.TrimSuffix(e.root, "//deleted")
+		for _, p := range host.hostPaths(e.dev, root) {
+			mounted[p] = true
 			m := Mount{Source: p, Destination: e.point, RW: e.rw, Undeclared: !points[e.point]}
 			if !slices.Contains(out, m) {
 				out = append(out, m)
 			}
+		}
+	}
+	// Every host directory or file the configuration binds must be in the table: one that is
+	// not was swapped after the start, or the process chrooted away from it, and what it really
+	// leads to cannot be told. Volumes are left out: their sources are the daemon's, and those of
+	// a driver are not paths.
+	for _, m := range declared {
+		if src := path.Clean("/" + cmp.Or(m.Resolved, m.Source)); m.Volume == "" && !mounted[src] {
+			return out, "the host's " + src + ", bound at " + path.Clean("/"+m.Destination) + ", is not in its mount table"
 		}
 	}
 	return out, ""

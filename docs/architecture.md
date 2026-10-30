@@ -150,9 +150,11 @@ source leads through links, the host path behind a Docker volume from its `opts.
 a running container `kernel_mounts`: every entry of `/proc/<pid>/mountinfo`, its device and
 root matched against the host's own table to every host path that shows that part of the
 filesystem. They only add powers to those of the configuration; an entry at a point the
-configuration does not list counts only as a whole tree or a socket, since the runtime's own
-mounts (layers, hosts file) lie deep in its state; a table that cannot be read, or is empty as
-after a chroot outside the mounts, is `kernel_unverified`, a power of its own) is reported as a `container` event with its name, image, runtime
+configuration does not list is judged as a declared one, except the runtime's own files (image
+layers and snapshots, the volumes it manages, the container's own state directory with its hosts
+file); a table that cannot be read, is empty, or lacks the host path of a directory or file the
+configuration binds (swapped after the start, or the process chrooted away from it; a file
+replaced since its mount still counts) is `kernel_unverified`, a power of its own) is reported as a `container` event with its name, image, runtime
 and powers, on root's channel, unless a container with the same name, image, image digest and powers
 was seen within the hour (4,096 remembered; a key is forgotten an hour after its last container
 is gone, so the same container started again later is reported again), and its removal is

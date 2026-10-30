@@ -24,6 +24,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   target followed by `?>`, `>` or a pseudo-attribute (`<?mso-application progid=`) counts named
   signatures alone. `<?>` opens nothing, and syntax PHP never compiles (`=> {`, `[^`) keeps the
   minified scripts a cache holds from being taken for code.
+- A running container whose mount table lacks a host directory or file its configuration binds
+  (the source swapped after the start, or the process chrooted away from it) has its mounts "not
+  verified by the kernel", a power of its own.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
 - The container watcher keys a container also by its image digest and forgets a key an hour
@@ -48,6 +51,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
   /usr/lib64` on a multiarch system, or a made-up `/usr/lib/<triplet>`, is a high alert. A
   loader cache or configuration past the bounds read is a high alert of its own, and more than 16
   unconfigured directories fold into one.
+- A mount in a container's table at a point its configuration does not list is judged as a
+  declared one: a link in the image moving a bind of `/root` or `/etc/cron.d` elsewhere is a
+  power. Only the runtime's own image layers, volumes and the container's own state directory
+  are left out.
 - A container start seen in real time on another image than the one of the same name, tag and
   powers before it raises the snapshot rule's medium "runs another image". The alert of a
   container with power over the host names the image digest in its detail, so accepting it never

@@ -189,7 +189,7 @@ func TestRunningContainerMountsFromTheKernel(t *testing.T) {
 		"26 22 8:1 /srv/x /mnt/x rw shared:1 - ext4 /dev/vda1 rw\n"
 	const rootfs = "500 400 0:52 / / rw - overlay overlay rw\n" +
 		"501 500 0:60 / /proc rw - proc proc rw\n" +
-		"502 500 8:16 /docker/containers/0123/hosts /etc/hosts rw - ext4 /dev/vdb1 rw\n"
+		"502 500 8:16 /docker/containers/a1b2c3d4e5f6a1b2c3d4e5f6/hosts /etc/hosts rw - ext4 /dev/vdb1 rw\n"
 	run := func(mountinfo, mountPoints string) Container {
 		t.Helper()
 		const id = "a1b2c3d4e5f6a1b2c3d4e5f6"
@@ -201,6 +201,7 @@ func TestRunningContainerMountsFromTheKernel(t *testing.T) {
 		}
 		return collect[ContainersResult](t, Containers{}, collector.Source{FS: fsys}).Containers[0]
 	}
+	const unverified = "mounts not verified by the kernel"
 	bind := func(src, dst string) string {
 		return `"` + dst + `": {"Source": "` + src + `", "Destination": "` + dst + `", "RW": true, "Type": "bind"}`
 	}
@@ -208,16 +209,23 @@ func TestRunningContainerMountsFromTheKernel(t *testing.T) {
 		name, mountinfo, mountPoints string
 		want                         []string
 	}{
-		{"link swapped back", rootfs + "503 500 8:1 / /h rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable"}},
-		{"link in the image", rootfs + "503 500 8:1 / /x rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable"}},
-		{"chrooted into the mount", "503 500 8:1 / / rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable"}},
+		{"link swapped back", rootfs + "503 500 8:1 / /h rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable", unverified}},
+		{"link in the image", rootfs + "503 500 8:1 / /x rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable", unverified}},
+		{"chrooted into the mount", "503 500 8:1 / / rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"), []string{"the host's /, writable", unverified}},
+		{"link in the image to a system directory", rootfs + "503 500 8:1 /etc/cron.d /x rw - ext4 /dev/vda1 rw\n", bind("/tmp/x", "/h"),
+			[]string{"the host's /etc/cron.d, writable", unverified}},
+		{"another container's state", rootfs + "503 500 8:16 /docker/containers/ffff00001111/config.v2.json /c rw - ext4 /dev/vdb1 rw\n", "",
+			[]string{"the host's /var/lib/docker/containers/ffff00001111/config.v2.json, writable"}},
+		{"chrooted into a tmpfs", "503 500 0:70 / / rw - tmpfs tmpfs rw\n", bind("/", "/h"), []string{"the host's /, writable", unverified}},
+		{"file replaced since its mount", rootfs + "503 500 8:1 /etc/localtime//deleted /etc/localtime ro - ext4 /dev/vda1 rw\n", bind("/etc/localtime", "/etc/localtime"), nil},
 		{"chrooted elsewhere", "", bind("/tmp/x", "/h"), []string{"mounts not verified by the kernel"}},
 		{"data root behind a shorter alias", rootfs + "503 500 8:16 /docker /x rw - ext4 /dev/vdb1 rw\n", bind("/var/lib/docker", "/x"),
 			[]string{"the host's /var/lib/docker, writable"}},
 		{"system tree as the kernel sees it", rootfs + "503 500 8:1 /etc/cron.d /c rw - ext4 /dev/vda1 rw\n", bind("/srv/c", "/c"),
-			[]string{"the host's /etc/cron.d, writable"}},
+			[]string{"the host's /etc/cron.d, writable", unverified}},
 		{"plain container", rootfs + "503 500 8:1 /srv/data /data rw - ext4 /dev/vda1 rw\n", bind("/srv/data", "/data"), nil},
-		{"pod volume", rootfs, bind("/var/lib/kubelet/pods/7f3a/volumes/kubernetes.io~configmap/cfg", "/cfg"), nil},
+		{"pod volume", rootfs + "503 500 8:1 /var/lib/kubelet/pods/7f3a/volumes/kubernetes.io~configmap/cfg /cfg ro - ext4 /dev/vda1 rw\n",
+			bind("/var/lib/kubelet/pods/7f3a/volumes/kubernetes.io~configmap/cfg", "/cfg"), nil},
 	} {
 		if got := ContainerPowers(run(tt.mountinfo, tt.mountPoints)); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: powers = %q, want %q", tt.name, got, tt.want)
