@@ -312,13 +312,16 @@ that is gone, a `.next` of a run that never finished) are removed. The scripts,
 templates and SVG images among the changes are kept apart from the other changes in the diff, so
 that changed files of other kinds cannot push them out, and read for a card skimmer
 (`payment_skimmer`, critical): payment fields together with an exit to another host or with
-obfuscation, or a live secret payment key. Field names hidden in `atob` literals and runs of
-`\x`/`\u00` escapes are decoded first, and a file is read in 1 MB pieces with the families
+obfuscation, or a live secret payment key. Field names hidden in `atob` literals (adjacent ones joined
+with `+` decoded together), strings turned around with `split("").reverse().join("")`,
+`String.fromCharCode` lists and runs of `\x`/`\u00` escapes are decoded first, and a file is read in 1 MB pieces with the families
 gathered across them, so padding cannot separate the fields from the exit. When more than 50
 scripts and templates changed at once, generated bundles (`pub/static`, `var/view_preprocessed`,
-`wp-content/cache`) and packages with more than 10 changed scripts (`plugins/<name>`,
-`vendor/<a>/<b>`, `app/code/<a>/<b>`...) are a deploy or an update and are left out, named in the
-issues; files changed elsewhere are still read. A harvest of every form field is reported with
+`wp-content/cache`) and packages with more than 10 changed scripts whose version file changed too (`style.css`,
+`readme.txt`, the main plugin file, `composer.json`, `package.json`, `etc/module.xml`, `.info.yml`;
+`plugins/<name>`, `vendor/<a>/<b>`, `app/code/<a>/<b>`...) are a deploy or an update and are
+left out, named in the issues; a package whose scripts change by the dozen at the same version,
+as decoys written next to a skimmer, is read; files changed elsewhere are still read. A harvest of every form field is reported with
 them but is not enough alone: editor and file manager bundles hold it with exits and `eval`, and
 on a corpus of WordPress, WooCommerce, its payment gateways, Elementor and Contact Form 7 that
 combination matches dozens of admin bundles. The same corpus shows 31 Elementor admin bundles

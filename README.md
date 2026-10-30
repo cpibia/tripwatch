@@ -483,11 +483,12 @@ For each application the `web` collector produces:
   checked on a corpus of clean applications; very long encoded blobs are reported separately as
   a weak indicator;
 - **payment skimmers**: scripts, templates and SVG images among the files changed since the
-  previous snapshot are read for payment fields (also when hidden in `atob` literals or escapes)
+  previous snapshot are read for payment fields (also when hidden in `atob` literals, split across them, reversed, in `fromCharCode` lists or
+  escapes)
   with an exit to another host (`new Image`, `sendBeacon`, `WebSocket`, a request to an absolute
   URL) or with obfuscation (`atob`, `fromCharCode`, `new Function`, `eval`), and for live secret
   payment keys, large files in pieces; in a change of more than 50 scripts, generated bundles and
-  packages updated as a whole are left out and named, files changed elsewhere are still read; an
+  packages updated as a whole (their version file changed with them) are left out and named, files changed elsewhere are still read; an
   SVG in an upload directory that runs script, under any namespace prefix, is reported as it lands;
 - **changed code files by name**: with a state directory the sensor keeps a manifest of each
   application's code files and reports the files added, changed or removed since the previous

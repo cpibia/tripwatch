@@ -27,6 +27,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A running container whose mount table lacks a host directory or file its configuration binds
   (the source swapped after the start, or the process chrooted away from it) has its mounts "not
   verified by the kernel", a power of its own.
+- A package whose scripts change by the dozen is left out of the skimmer search only when its
+  version file changed in the same run (`style.css`, `readme.txt`, the main plugin file,
+  `composer.json`, `package.json`, `etc/module.xml`, `.info.yml`): decoys written next to a
+  skimmer in a theme no longer hide it. Payment field names split across `atob` literals,
+  reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
 - The container watcher keys a container also by its image digest and forgets a key an hour

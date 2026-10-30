@@ -39,8 +39,12 @@ var (
 	// The browser runs an SVG script element whatever namespace prefix names it.
 	activeSVG = regexp.MustCompile(`(?i)<(?:[a-z0-9_.-]+:)?script\b|\bon[a-z]{3,20}\s*=|javascript:`)
 
-	atobLiteral = regexp.MustCompile(`\batob\s*\(\s*['"]([A-Za-z0-9+/=]{4,1000})['"]`)
-	escapeRun   = regexp.MustCompile(`(?i)(?:\\x[0-9a-f]{2}|\\u00[0-9a-f]{2}){4,}`)
+	atobLiteral = regexp.MustCompile(`\batob\s*\(\s*['"]([A-Za-z0-9+/=]{4,1000})['"]\s*\)`)
+	// reversedLiteral is a string written backwards and turned around at run time.
+	reversedLiteral = regexp.MustCompile(`['"]([^'"\\]{4,200})['"]\s*\.\s*split\s*\(\s*['"]{2}\s*\)\s*\.\s*reverse\s*\(\s*\)\s*\.\s*join\s*\(`)
+	reversed        = regexp.MustCompile(`\.split\s*\(\s*['"]{2}\s*\)\s*\.\s*reverse\s*\(\s*\)\s*\.\s*join\s*\(`)
+	charCodes       = regexp.MustCompile(`(?i)String\.fromCharCode\s*\(\s*((?:0x[0-9a-f]{1,2}|\d{1,3})(?:\s*,\s*(?:0x[0-9a-f]{1,2}|\d{1,3})){2,200})\s*\)`)
+	escapeRun       = regexp.MustCompile(`(?i)(?:\\x[0-9a-f]{2}|\\u00[0-9a-f]{2}){4,}`)
 )
 
 // maxDecoded bounds the literals decoded from one file.
@@ -50,9 +54,33 @@ const maxDecoded = 256
 // skimmers keep the names of the payment fields there, out of sight of a plain search.
 func decoded(content []byte) []byte {
 	var out []byte
-	for _, m := range atobLiteral.FindAllSubmatch(content, maxDecoded) {
-		if b, err := base64.StdEncoding.DecodeString(string(m[1])); err == nil {
-			out = append(append(out, ' '), b...)
+	// Literals joined with "+" are decoded joined: a field's name split across two of them is
+	// whole again.
+	last := -1
+	for _, m := range atobLiteral.FindAllSubmatchIndex(content, maxDecoded) {
+		b, err := base64.StdEncoding.DecodeString(string(content[m[2]:m[3]]))
+		if err != nil {
+			last = -1
+			continue
+		}
+		if last < 0 || len(bytes.Trim(content[last:m[0]], " \t\r\n+")) > 0 {
+			out = append(out, ' ')
+		}
+		out = append(out, b...)
+		last = m[1]
+	}
+	for _, m := range reversedLiteral.FindAllSubmatch(content, maxDecoded) {
+		out = append(out, ' ')
+		for i := len(m[1]) - 1; i >= 0; i-- {
+			out = append(out, m[1][i])
+		}
+	}
+	for _, m := range charCodes.FindAllSubmatch(content, maxDecoded) {
+		out = append(out, ' ')
+		for _, code := range strings.Split(string(m[1]), ",") {
+			if v, err := strconv.ParseUint(strings.TrimSpace(code), 0, 8); err == nil {
+				out = append(out, byte(v))
+			}
 		}
 	}
 	for _, run := range escapeRun.FindAll(content, maxDecoded) {
@@ -83,7 +111,7 @@ func (f *skimmerFamilies) scan(content []byte) {
 	f.harvest = f.harvest || formHarvest.Match(text)
 	f.exits = f.exits || exfiltration.Match(text)
 	f.sends = f.sends || sends.Match(text)
-	f.hidden = f.hidden || obfuscation.Match(content)
+	f.hidden = f.hidden || obfuscation.Match(content) || reversed.Match(content)
 	f.key = f.key || secretKey.Match(text)
 }
 
@@ -141,14 +169,18 @@ func (s *scanner) inspectCandidates(k skimmerCandidates) {
 			s.issues = append(s.issues, fmt.Sprintf("%s: %d scripts changed in generated bundles not read for skimmers: %d scripts and templates changed at once, a deploy",
 				s.report.Path, skipped, k.count))
 		}
+		// A package is being updated when its version file changed with its scripts: one whose
+		// scripts change by the dozen at the same version is read, as decoys put next to a
+		// skimmer by whoever can write there make it.
 		perPackage := map[string]int{}
 		for _, c := range k.others {
 			perPackage[packageOf(c.Path)]++
 		}
+		updating := func(pkg string) bool { return perPackage[pkg] > maxPackageChanges && k.versioned[pkg] }
 		var updated []string
-		files = slices.DeleteFunc(slices.Clone(files), func(c FileChange) bool { return perPackage[packageOf(c.Path)] > maxPackageChanges })
-		for pkg, n := range perPackage {
-			if n > maxPackageChanges {
+		files = slices.DeleteFunc(slices.Clone(files), func(c FileChange) bool { return updating(packageOf(c.Path)) })
+		for pkg := range perPackage {
+			if updating(pkg) {
 				updated = append(updated, pkg)
 			}
 		}
@@ -163,6 +195,22 @@ func (s *scanner) inspectCandidates(k skimmerCandidates) {
 	for _, c := range files {
 		s.inspectChanged(c)
 	}
+}
+
+// versionFile reports a file that changes when the package holding it is updated: the
+// manifest of its package manager, WordPress' style.css, readme.txt or main plugin file named
+// after the package, Magento's etc/module.xml, Drupal's .info.yml.
+func versionFile(p string) bool {
+	pkg := packageOf(p)
+	dir, base := path.Dir(p), strings.ToLower(path.Base(p))
+	switch {
+	case dir == pkg+"/etc":
+		return base == "module.xml"
+	case dir != pkg:
+		return false
+	}
+	return slices.Contains([]string{"composer.json", "package.json", "style.css", "readme.txt", "readme.md", "changelog.txt", "changelog.md"}, base) ||
+		base == strings.ToLower(path.Base(pkg))+".php" || strings.HasSuffix(base, ".info.yml")
 }
 
 // maxPackageChanges is how many scripts of one package may change at once, in a change too large

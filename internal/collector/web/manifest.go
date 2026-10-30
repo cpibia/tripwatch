@@ -189,6 +189,9 @@ func (r *manifestReader) advance() {
 type skimmerCandidates struct {
 	generated, others []FileChange
 	count, dropped    int
+	// versioned are the packages whose version file changed in the same run: those being
+	// updated, whose scripts may change by the hundred.
+	versioned map[string]bool
 }
 
 // generatedBundles are where frameworks write the scripts a deploy builds, merged with every
@@ -196,6 +199,12 @@ type skimmerCandidates struct {
 var generatedBundles = []string{"/pub/static/", "/var/view_preprocessed/", "/wp-content/cache/"}
 
 func (k *skimmerCandidates) add(c FileChange) {
+	if c.Change != ChangeRemoved && versionFile(c.Path) && len(k.versioned) < maxSkimmerCandidates {
+		if k.versioned == nil {
+			k.versioned = map[string]bool{}
+		}
+		k.versioned[packageOf(c.Path)] = true
+	}
 	if c.Change == ChangeRemoved || !slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(c.Path))) {
 		return
 	}
