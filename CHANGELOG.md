@@ -113,12 +113,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   bracket started: the condition of an `if` or a loop, an expression, a block, an object, a
   declared function or class, a function or class expression. Scripts that asked for one reading
   in one place and the other elsewhere no longer hide the strings they build. The stack decides
-  only where a tokenizer is sure: after a conditional's or a label's "{", a line break after
-  `return`, or any start it does not know, the "/" is still read both ways, the whole script and
-  each statement again. The stack goes on from one 1 MB piece to the next. A template literal
-  with a real substitution is read as JavaScript reads it, its text passed over and each
-  substitution read as code: its closing backtick no longer opens a template that hid the next
-  4 KB. The clean corpus reads faster (71 s, was 83).
+  only in a closed list of cases a tokenizer is sure of: anywhere else (a conditional's or a
+  label's "{", a line break after `return`, `of`, `await` or `yield`, which can be names) the
+  "/" is still read both ways, the whole script and each statement again. A function
+  expression's body holds statements, so a label inside one is a label. The stack goes on from
+  one 1 MB piece to the next, with the template, string or comment left open where the next
+  piece starts. A template literal with a real substitution is read as JavaScript reads it, its
+  text passed over (at most 4 KB) and each substitution read as code: its closing backtick no
+  longer opens a template that hid the next 4 KB. The clean corpus reads faster (71 s, was 83).
 - An application's findings are bounded by the alert they raise: those that raise none (a link
   out of the application, an `.htaccess` with no handler, an encoded blob) have a bound of 200
   of their own, and past the bound of 1,000 a finding takes the place of a less severe one. A

