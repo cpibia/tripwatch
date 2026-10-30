@@ -421,6 +421,87 @@ used, as the `mysql` client does. Values taken with `getenv()` are resolved from
 the PHP processes and their ancestors. Queries go through an interface (`querier`), so tests do
 not need a database.
 
+## Design: content references (not implemented)
+
+This section is a design for the next large change; nothing in it exists in the code yet.
+
+**Goal.** Today a changed script of a public component (an application's core, a plugin, a
+theme) is either an alert or, when it changes with its package's version file in a change too
+large to read, left out of the skimmer search as an update. Neither tells an update from a
+tampered file. The published releases of these components are public: if the verifier knows the
+hash of every file of a release, a changed file that matches the release it claims is an update,
+and one that does not is tampering, whatever the size of the change.
+
+**Sources.** Fetched by the verifier only: the sensor stays offline, and the verifier already
+runs on a separate machine. One fixed list of hosts per ecosystem, HTTPS with the system roots,
+no redirect outside the list:
+
+- WordPress core: the release archive of `wordpress.org` for the version and locale, hashed by
+  the verifier. The checksums API (`api.wordpress.org/core/checksums`) gives only MD5: kept as a
+  cross-check, never as the only reference.
+- WordPress plugins: `downloads.wordpress.org/plugin-checksums/<slug>/<version>.json` (SHA-256
+  per file), and the release archive when the list is missing.
+- WordPress themes: the release archive (`downloads.wordpress.org/theme/<slug>.<version>.zip`),
+  hashed by the verifier; there is no checksum list.
+- Drupal core and contributed projects: the release archive named by
+  `updates.drupal.org/release-history`, whose hash the history publishes.
+- Magento and Composer packages: the archives need credentials (`repo.magento.com`) or point at
+  arbitrary hosts (`dist.url` in `composer.lock`): out of scope for a first version, as are
+  private plugins and themes, which have no public release.
+
+The verifier always hashes files itself with SHA-256 from an archive, or takes SHA-256 from a
+published list; it never compares MD5 alone.
+
+**Binding to version and path.** A reference is keyed by ecosystem, slug, version and, for
+WordPress core, locale, and maps a path relative to the package's root to a hash. The sensor
+already reports the application's version (`AppReport.Version`) and, in the code manifest diff,
+each changed file's path and SHA-256. It would add, per package whose files changed, the
+package's root, slug and version, read from the files `versionFile` already recognises (the
+plugin header, `style.css`, `.info.yml`, `version.php`), clipped like every field. The verifier
+then judges each changed file under that root:
+
+- equal to the reference: an update, no "Script changed" alert, and the file is not counted as
+  a reason to leave the package out of the skimmer search;
+- different from it, or absent from it: a high alert naming the release it should match,
+  "differs from <slug> <version> as published", and the file read for skimmers whatever the size
+  of the change;
+- a version lower than the previous snapshot's: a medium alert, since a downgrade to a
+  vulnerable release passes every file check.
+
+**Effect on the skimmer search.** The rule that leaves out a package changed as a whole (SEC-171,
+decoys by the dozen at the same version) becomes: files that match their release are not read,
+the others always are. Decoys written next to a skimmer cannot match a published release, so
+they no longer protect it, and an update of sixty files costs sixty lookups instead of a
+judgement on its size.
+
+**Cache and limits.** References are immutable: one fetch per ecosystem, slug, version and
+locale for the whole fleet, kept in the verifier's database (a table of path and hash per
+release), with a cap on the total (for instance 2 GB) and the least recently used releases
+dropped first. A failed fetch is remembered for a day, so a host naming a release that does not
+exist cannot make the verifier ask again at every snapshot. Per fetch: a timeout, at most 64 MB
+downloaded and 256 MB and 50,000 entries uncompressed, read as a stream; an archive past a bound
+gives no reference. Per host: a budget of new releases fetched per day, so a compromised host
+naming thousands of slugs cannot turn the verifier into a crawler.
+
+**Without network.** No reference means today's behaviour, stated in the alert ("not checked
+against a published release") and on the host page; nothing is lowered without a reference. A
+verifier that may not reach the internet turns the feature off with one setting.
+
+**Risks.**
+
+- *A compromised source.* A release poisoned upstream matches its own reference. A reference
+  only lowers a "changed" alert to an update: signatures, webshell and skimmer findings still run
+  on the files of an update in the run it lands, so a malicious release is still read, once.
+- *SSRF.* The verifier builds every URL from a fixed host and a slug and version that must match
+  strict patterns (lowercase letters, digits and hyphens for a slug, a dotted version of bounded
+  length), percent-encoded; the sensor never supplies a URL or a host.
+- *Size and cost.* The bounds above, the per-host budget, and the cache shared by the fleet keep
+  the work proportional to the releases in use, not to what a host claims.
+- *Disclosure.* The verifier tells the upstream hosts which releases the fleet runs, once per
+  release; operators who do not want that keep the feature off.
+- *Version lies.* A host can claim any version: the files must then match that release byte for
+  byte, which an attacker's file cannot; a claimed downgrade is an alert of its own.
+
 ## Package layout
 
 | Package | Role |
