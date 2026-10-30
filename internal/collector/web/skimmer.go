@@ -251,7 +251,7 @@ func svgSignals(content []byte) []string {
 // rebuilds bundles and replaces whole packages whose admin scripts hold payment field names
 // with exits and eval: generated bundles and packages with many changed files are left out
 // then, and the files changed elsewhere, a few at a time, are still read.
-func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) {
+func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) (unread []string) {
 	files := k.others
 	if k.count <= maxSkimmerChanges {
 		files = append(files, k.generated...)
@@ -285,11 +285,17 @@ func (s *scanner) inspectCandidates(ctx context.Context, k skimmerCandidates) {
 	}
 	for i, c := range files {
 		if s.expired(ctx) {
-			s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers: %v", s.report.Path, len(files)-i, ctx.Err()))
-			return
+			s.issues = append(s.issues, fmt.Sprintf("%s: %d changed scripts not read for skimmers, read at the next run: %v", s.report.Path, len(files)-i, ctx.Err()))
+			for _, rest := range files[i:] {
+				unread = append(unread, rest.Path)
+			}
+			return unread
 		}
-		s.inspectChanged(ctx, c)
+		if !s.inspectChanged(ctx, c) {
+			unread = append(unread, c.Path)
+		}
 	}
+	return unread
 }
 
 // versionFile reports a file that changes when the package holding it is updated: the
@@ -329,20 +335,22 @@ func packageOf(p string) string {
 
 // inspectChanged reads one changed script or template for a skimmer, piece after piece when it
 // is large, gathering the families across the pieces: padding cannot push them apart.
-func (s *scanner) inspectChanged(ctx context.Context, c FileChange) {
+// It reports whether the file was read, or is gone: one left unread for the run's budget or time
+// stays to be read at the next run.
+func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 	name := strings.TrimPrefix(c.Path, "/")
 	info, err := fs.Stat(s.src.FS, name)
 	if err != nil || !info.Mode().IsRegular() {
-		return
+		return true
 	}
 	if s.budget.dataLeft < info.Size() {
-		s.issues = append(s.issues, fmt.Sprintf("%s: not read for skimmers, budget of %d bytes a run spent", c.Path, MaxDataScanBytesPerRun))
-		return
+		s.issues = append(s.issues, fmt.Sprintf("%s: not read for skimmers, budget of %d bytes a run spent; read at the next run", c.Path, MaxDataScanBytesPerRun))
+		return false
 	}
 	s.budget.dataLeft -= info.Size()
 	f, err := s.src.FS.Open(name)
 	if err != nil {
-		return
+		return true
 	}
 	defer func() { _ = f.Close() }()
 	var fam skimmerFamilies
@@ -367,6 +375,7 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) {
 	if len(sigs) > 0 {
 		s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs)
 	}
+	return !s.expired(ctx)
 }
 
 // Pieces in which a large script is read for skimmers.

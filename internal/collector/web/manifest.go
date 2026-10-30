@@ -184,6 +184,41 @@ func (r *manifestReader) advance() {
 	r.path, r.sum = p, line[i+1:]
 }
 
+// dropFromManifest rewrites a manifest without the given files (paths as FileChange gives them),
+// through a temporary file renamed over it.
+func dropFromManifest(name string, paths []string) error {
+	drop := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		drop[strings.TrimPrefix(p, "/")] = true
+	}
+	in, err := os.Open(name) //nolint:gosec // under the operator's state directory
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	tmp := name + ".tmp"
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // under the operator's state directory
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriterSize(out, 64<<10)
+	r := newManifestReader(in)
+	for ; !r.done; r.advance() {
+		if !drop[r.path] {
+			if _, err := fmt.Fprintf(w, "%s %s\n", strconv.Quote(r.path), r.sum); err != nil {
+				_ = out.Close()
+				return err
+			}
+		}
+	}
+	err = errors.Join(r.err, w.Flush(), out.Sync(), out.Close())
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, name)
+}
+
 // skimmerCandidates are the scripts and templates added or changed, kept apart from the list of
 // changes so that changes of other files cannot push them out: those in bundles a deploy
 // generates, and the others.
@@ -317,7 +352,16 @@ func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
 			s.report.Changes, s.report.ChangeCount = changes, count
-			s.inspectCandidates(ctx, candidates)
+			// Scripts the run had no time or budget left to read for skimmers stay out of the
+			// manifest handed on, so that the next run finds them changed and reads them: taken
+			// in as seen, a skimmer among them would never be read again.
+			if unread := s.inspectCandidates(ctx, candidates); len(unread) > 0 {
+				if err := dropFromManifest(m.next, unread); err != nil {
+					s.issues = append(s.issues, fmt.Sprintf("%s: manifest not written, scripts left unread would pass for seen: %v", s.report.Path, err))
+					_ = os.Remove(m.next)
+					return ""
+				}
+			}
 		}
 	}
 	return m.next

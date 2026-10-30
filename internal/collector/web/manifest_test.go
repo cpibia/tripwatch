@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -225,5 +226,41 @@ func TestManifestFirstHashOfASharedLink(t *testing.T) {
 	}
 	if _, n, _, err := diffManifests(first, changed); err != nil || n != 1 {
 		t.Errorf("changed content: %d changes, %v", n, err)
+	}
+}
+
+// Scripts a run cut short has not read for skimmers stay out of the manifest it hands on: the
+// next run finds them changed again and reads them, instead of taking them for seen.
+func TestUnreadScriptsStayPending(t *testing.T) {
+	state := t.TempDir()
+	prev := manifestPath(state, "/var/www/shop")
+	if err := os.MkdirAll(filepath.Dir(prev), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(prev, []byte(`"var/www/shop/a.js" `+strings.Repeat("a", 64)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := newManifestWriter(state, "/var/www/shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.add("var/www/shop/a.js", strings.Repeat("b", 64))
+	m.add("var/www/shop/b.js", strings.Repeat("c", 64))
+	s := &scanner{manifest: m, budget: newHashBudget(), findings: map[string]int{}, report: AppReport{Application: discovery.Application{Path: "/var/www/shop"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	next := s.finishManifest(ctx, state)
+	if next == "" {
+		t.Fatalf("no manifest: %v", s.issues)
+	}
+	data, err := os.ReadFile(next) //nolint:gosec // the test's own state directory
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "a.js") || strings.Contains(string(data), "b.js") {
+		t.Errorf("unread scripts handed on as seen:\n%s", data)
+	}
+	if !slices.ContainsFunc(s.issues, func(i string) bool { return strings.Contains(i, "read at the next run") }) {
+		t.Errorf("issues %q", s.issues)
 	}
 }
