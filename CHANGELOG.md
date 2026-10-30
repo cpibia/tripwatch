@@ -82,8 +82,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A mount in a container's table at a point its configuration does not list is judged as a
   declared one: a link in the image moving a bind of `/root` or `/etc/cron.d` elsewhere is a
   power. Only the runtime's own image layers, volumes and the container's own state directory
-  are left out, and not when the entry is a directory the configuration binds: another
-  container's layer bound through an alias of the data root counts under every path it shows.
+  are left out, and not when the entry is a directory the configuration binds (a volume of the
+  local driver bound to a path included): another container's layer bound through an alias of
+  the data root counts under every path it shows.
+- A container's mount that shows, on the host, a sensitive tree mounted elsewhere is a power:
+  `-v /data:/h` where the host binds `/data/docker` at `/var/lib/docker` gives the runtime's
+  state, and is judged as such.
 - A container start seen in real time on another image than the one of the same name, tag and
   powers before it raises the snapshot rule's medium "runs another image". The alert of a
   container with power over the host names the image digest in its detail, so accepting it never

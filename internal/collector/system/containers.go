@@ -843,8 +843,10 @@ func boundAt(c Container, point string) bool {
 		if k.Destination != point {
 			continue
 		}
+		// Volumes the daemon manages are never in the configuration's mounts; a volume there is
+		// one of the local driver bound to a host path, a bind under another name.
 		for _, d := range c.Mounts {
-			if d.Volume == "" && path.Clean("/"+cmp.Or(d.Resolved, d.Source)) == path.Clean("/"+k.Source) {
+			if path.Clean("/"+cmp.Or(d.Resolved, d.Source)) == path.Clean("/"+k.Source) {
 				return true
 			}
 		}
@@ -997,6 +999,23 @@ func (h *HostMounts) hostPaths(dev, root string) []string {
 	return out
 }
 
+// maxContainedMounts bounds the mounts a container's entries add through host paths that show
+// part of them.
+const maxContainedMounts = 4 * maxContainerList
+
+// within returns the host's mounts of the filesystem dev whose root lies strictly below root:
+// parts of what a mount of root shows that the host also shows elsewhere.
+func (h *HostMounts) within(dev, root string) []mountEntry {
+	var out []mountEntry
+	base := strings.TrimSuffix(root, "/")
+	for _, e := range h.entries {
+		if e.dev == dev && e.root != root && strings.HasPrefix(e.root, base+"/") {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // pseudoFilesystems are the kernel's own; a container gets an instance of its own, or the
 // host's read-only (sysfs with the host's network), at points the runtime chooses.
 var pseudoFilesystems = []string{"proc", "sysfs", "cgroup", "cgroup2", "mqueue", "devpts"}
@@ -1051,6 +1070,15 @@ func kernelMounts(fsys fs.FS, pid int, host *HostMounts, declared []Mount, issue
 			mounted[p] = true
 			m := Mount{Source: p, Destination: e.point, RW: e.rw, Undeclared: !points[e.point]}
 			if !slices.Contains(out, m) {
+				out = append(out, m)
+			}
+		}
+		// The host may show part of what the container sees at another path: a data disk
+		// mounted at /data whose docker directory is bound at /var/lib/docker gives a
+		// container of /data the runtime's state. Each such host path is judged too.
+		for _, h := range host.within(e.dev, root) {
+			m := Mount{Source: h.point, Destination: path.Join(e.point, strings.TrimPrefix(h.root, strings.TrimSuffix(root, "/"))), RW: e.rw, Undeclared: true}
+			if len(out) < maxContainedMounts && !slices.Contains(out, m) {
 				out = append(out, m)
 			}
 		}

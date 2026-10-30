@@ -218,6 +218,8 @@ func TestRunningContainerMountsFromTheKernel(t *testing.T) {
 			[]string{"the host's /var/lib/docker/containers/ffff00001111/config.v2.json, writable"}},
 		{"another container's layer through an alias, moved by a link in the image", rootfs + "503 500 8:16 /docker/overlay2/ffff/diff /y rw - ext4 /dev/vdb1 rw\n",
 			bind("/data/docker/overlay2/ffff/diff", "/h"), []string{"the host's /var/lib/docker/overlay2/ffff/diff, writable"}},
+		{"the data disk holding the runtime's state", rootfs + "503 500 8:16 / /h rw - ext4 /dev/vdb1 rw\n", bind("/data", "/h"),
+			[]string{"the host's /var/lib/docker, writable"}},
 		{"chrooted into a tmpfs", "503 500 0:70 / / rw - tmpfs tmpfs rw\n", bind("/", "/h"), []string{"the host's /, writable", unverified}},
 		{"file replaced since its mount", rootfs + "503 500 8:1 /etc/localtime//deleted /etc/localtime ro - ext4 /dev/vda1 rw\n", bind("/etc/localtime", "/etc/localtime"), nil},
 		{"chrooted elsewhere", "", bind("/tmp/x", "/h"), []string{"mounts not verified by the kernel"}},
@@ -232,6 +234,18 @@ func TestRunningContainerMountsFromTheKernel(t *testing.T) {
 		if got := ContainerPowers(run(tt.mountinfo, tt.mountPoints)); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: powers = %q, want %q", tt.name, got, tt.want)
 		}
+	}
+}
+
+// A volume of the local driver bound to another container's layer through an alias of the data
+// root, moved by a link in the image, is judged as the bind it is.
+func TestLocalBindVolumeMovedByALink(t *testing.T) {
+	c := Container{ID: "a1b2c3d4e5f6", Running: true,
+		Mounts: []Mount{{Source: "/data/docker/overlay2/ffff/diff", Destination: "/h", RW: true, Volume: "v"}},
+		KernelMounts: []Mount{{Source: "/data/docker/overlay2/ffff/diff", Destination: "/y", RW: true, Undeclared: true},
+			{Source: "/var/lib/docker/overlay2/ffff/diff", Destination: "/y", RW: true, Undeclared: true}}}
+	if got := ContainerPowers(c); !slices.Equal(got, []string{"the host's /var/lib/docker/overlay2/ffff/diff, writable"}) {
+		t.Errorf("powers = %q", got)
 	}
 }
 
