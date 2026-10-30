@@ -47,6 +47,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   reversed with `split("").reverse()` or built with `String.fromCharCode` are decoded.
 - The `hooks` collector reports where the loader's cache puts `libc.so.6`, with each entry's
   architecture, reading the whole cache for it even past the bound on directories.
+  It also reports the flags of its own architecture's libc, and a cache too large to read,
+  which the loader still uses, as truncated instead of leaving it out.
 - The powers in a container's real-time event are clipped like its other fields: binds of long
   paths can no longer make the event too large for the verifier and lose it.
 - The container watcher keys a container also by its image digest and forgets a key an hour
@@ -70,7 +72,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   architecture's libc (with its `/usr` twin), no longer any directory of that shape: `ldconfig
   /usr/lib64` on a multiarch system, or a made-up `/usr/lib/<triplet>`, is a high alert. A
   loader cache or configuration past the bounds read is a high alert of its own, and more than 16
-  unconfigured directories fold into one.
+  unconfigured directories fold into one. A libc of another architecture than the sensor's makes no
+  directory the system's, and the legacy hwcaps subdirectories (`tls`, `haswell`...) count as
+  directories of their own: glibc no longer searches them by itself.
 - A mount in a container's table at a point its configuration does not list is judged as a
   declared one: a link in the image moving a bind of `/root` or `/etc/cron.d` elsewhere is a
   power. Only the runtime's own image layers, volumes and the container's own state directory

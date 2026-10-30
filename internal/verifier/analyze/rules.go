@@ -738,7 +738,9 @@ func loaderDefaults(l *system.LoaderPaths) func(string) bool {
 	byArch := map[uint32]map[string]bool{}
 	for _, c := range l.Libc {
 		d := strings.TrimPrefix(path.Clean(c.Dir), "/usr")
-		if !systemLibDir.MatchString(d) {
+		// Only the sensor's own architecture counts when it says which it is: a 32-bit libc
+		// alone in a directory would otherwise make that directory the system's.
+		if !systemLibDir.MatchString(d) || l.Native != 0 && c.Flags != l.Native {
 			continue
 		}
 		if byArch[c.Flags] == nil {
@@ -760,9 +762,6 @@ func loaderDefaults(l *system.LoaderPaths) func(string) bool {
 // maxLoaderAlerts is how many directories of the loader's cache get an alert each.
 const maxLoaderAlerts = 16
 
-// legacyHwcaps are the subdirectories older glibc versions searched for optimised builds.
-var legacyHwcaps = []string{"tls", "haswell", "avx512_1", "x86_64", "i686", "i586", "sse2", "v2", "v3", "v4"}
-
 // unconfiguredLoaderDirs lists the directories of the loader's cache that neither its
 // configuration nor its defaults name, the glibc-hwcaps subdirectories of a named one counting
 // as that one.
@@ -775,9 +774,9 @@ func unconfiguredLoaderDirs(l *system.LoaderPaths) []string {
 		if i := strings.Index(d, "/glibc-hwcaps/"); i > 0 {
 			d = d[:i]
 		}
-		for slices.Contains(legacyHwcaps, path.Base(d)) && !named.has(d) && !trusted(d) {
-			d = path.Dir(d)
-		}
+		// The legacy hwcaps subdirectories (tls, haswell, x86_64...) are not searched by
+		// glibc 2.37 and later on its own, nor put in the cache by ldconfig on the systems
+		// seen: one in the cache was named by someone, and counts as a directory of its own.
 		if !named.has(d) && !trusted(d) {
 			out = append(out, dir)
 		}

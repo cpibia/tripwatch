@@ -24,6 +24,10 @@ type LoaderPaths struct {
 	// directory created for the occasion can match. Never nil, so that an empty list is told
 	// apart from a sensor that did not report it.
 	Libc []LibcCopy `json:"libc"`
+	// Native is the flags of a libc6 entry for the architecture the sensor runs on: a libc of
+	// another one, a 32-bit copy put in a directory of its own, tells nothing of where the
+	// system's libraries are.
+	Native uint32 `json:"native,omitempty"`
 	// Truncated says the cache or the configuration held more than the bounds read;
 	// ConfigTruncated that the configuration did, so that what it names is incomplete.
 	Truncated       bool `json:"truncated,omitempty"`
@@ -65,11 +69,21 @@ const (
 // (musl, or a system without ldconfig).
 func readLoaderPaths(fsys fs.FS, issues *collector.Issues) *LoaderPaths {
 	data, err := fs.ReadFile(fsys, "etc/ld.so.cache")
+	if errors.Is(err, collector.ErrTooLarge) {
+		// The loader still uses a cache past what is read: that it is too large is reported,
+		// with the configuration, instead of nothing.
+		issues.Add(err)
+		lp := &LoaderPaths{Libc: []LibcCopy{}, Native: nativeLibcFlags, Truncated: true}
+		files := 0
+		lp.ConfigTruncated = loaderConfig(fsys, "etc/ld.so.conf", 0, &files, map[string]bool{}, &lp.ConfigDirs)
+		slices.Sort(lp.ConfigDirs)
+		return lp
+	}
 	if err != nil {
 		issues.Add(err)
 		return nil
 	}
-	lp := &LoaderPaths{}
+	lp := &LoaderPaths{Native: nativeLibcFlags}
 	lp.CacheDirs, lp.Libc, lp.Truncated, err = cacheDirs(data)
 	if err != nil {
 		issues.Add(err)

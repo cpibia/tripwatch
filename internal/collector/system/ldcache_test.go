@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -40,6 +41,31 @@ func TestLoaderPaths(t *testing.T) {
 	want := []string{"/lib/aarch64-linux-gnu", "/opt/vendor/lib", "/usr/lib/aarch64-linux-gnu", "/usr/local/lib", "/usr/local/lib/aarch64-linux-gnu"}
 	if !slices.Equal(lp.ConfigDirs, want) {
 		t.Errorf("config dirs %v, want %v", lp.ConfigDirs, want)
+	}
+}
+
+// A cache too large to read at once, which the loader still uses, is reported as truncated
+// with the configuration, not left out.
+func TestLoaderCacheTooLarge(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/ld.so.conf"), []byte("/usr/local/lib\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(root, "etc/ld.so.cache")) //nolint:gosec // a file of the test's own temporary directory
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(collector.MaxReadSize + 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	var issues collector.Issues
+	lp := readLoaderPaths(collector.NewSource(root).FS, &issues)
+	if lp == nil || !lp.Truncated || lp.Libc == nil || lp.Native != nativeLibcFlags || !slices.Equal(lp.ConfigDirs, []string{"/usr/local/lib"}) || len(issues) != 1 {
+		t.Errorf("loader paths %+v, issues %q", lp, issues)
 	}
 }
 

@@ -939,7 +939,8 @@ func TestLoaderCacheDirs(t *testing.T) {
 		ConfigDirs: []string{"/usr/local/lib", "/opt/vendor/lib"},
 	}}
 	got := slices.DeleteFunc(fingerprints(Evaluate(nil, cur)), func(f string) bool { return !strings.Contains(f, "loader-cache") })
-	want := []string{"high persistence:loader-cache:/opt/x", "high persistence:loader-cache:/usr/lib/x86_64-linux-gnu/evil"}
+	want := []string{"high persistence:loader-cache:/lib/tls", "high persistence:loader-cache:/opt/vendor/lib/haswell", "high persistence:loader-cache:/opt/x",
+		"high persistence:loader-cache:/usr/lib/x86_64-linux-gnu/evil"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -967,7 +968,14 @@ func TestLoaderCacheDirsFromLibc(t *testing.T) {
 		{"debian", system.LoaderPaths{Libc: debian,
 			CacheDirs:  []string{"/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3", "/usr/lib", "/lib/tls", "/lib32", "/usr/local/lib", "/usr/lib64", "/usr/lib/x-linux-y", "/opt/x"},
 			ConfigDirs: []string{"/usr/local/lib"}},
-			[]string{"high persistence:loader-cache:/opt/x", "high persistence:loader-cache:/usr/lib/x-linux-y", "high persistence:loader-cache:/usr/lib64"}},
+			[]string{"high persistence:loader-cache:/lib/tls", "high persistence:loader-cache:/opt/x", "high persistence:loader-cache:/usr/lib/x-linux-y",
+				"high persistence:loader-cache:/usr/lib64"}},
+		{"libc of another architecture", system.LoaderPaths{Native: 0x0303,
+			Libc:      []system.LibcCopy{{Dir: "/lib/x86_64-linux-gnu", Flags: 0x0303}, {Dir: "/usr/lib/evil-linux-x", Flags: 0x0003}},
+			CacheDirs: []string{"/lib/x86_64-linux-gnu", "/usr/lib/evil-linux-x"}},
+			[]string{"high persistence:loader-cache:/usr/lib/evil-linux-x"}},
+		{"cache too large to read", system.LoaderPaths{Native: 0x0303, Libc: []system.LibcCopy{}, Truncated: true},
+			[]string{"high persistence:loader-cache-unread"}},
 		{"rhel", system.LoaderPaths{Libc: []system.LibcCopy{{Dir: "/lib64", Flags: 0x0303}, {Dir: "/usr/lib", Flags: 0x0003}},
 			CacheDirs: []string{"/lib64", "/usr/lib64", "/usr/lib", "/usr/lib64/glibc-hwcaps/x86-64-v2"}},
 			nil},
