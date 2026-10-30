@@ -482,23 +482,31 @@ func (s sensor) sendSnapshot(ctx context.Context, client *transport.Client) erro
 	if err := zw.Close(); err != nil {
 		return err
 	}
+	payload := buf.Bytes()
+	if err := retryUnsealed(ctx, snapshotRetry, snapshotRetries, func() error {
+		return client.Send(ctx, protocol.KindSnapshot, payload, time.Now())
+	}); err != nil {
+		return err
+	}
+	return s.commit()
+}
+
+// retryUnsealed sends, and sends again every interval up to tries times while the payload could
+// not be sealed: the pending envelope, an event batch the verifier asked to send later, goes
+// first, and waiting the next snapshot would leave an hour without one. Any other error, or a
+// refusal, ends it.
+func retryUnsealed(ctx context.Context, every time.Duration, tries int, send func() error) error {
 	for try := 0; ; try++ {
-		err := client.Send(ctx, protocol.KindSnapshot, buf.Bytes(), time.Now())
-		if err == nil {
-			break
-		}
-		// Not sealed: the pending envelope, an event batch the verifier asked to send later,
-		// goes first. Waiting the next interval would leave an hour without a snapshot.
-		if !errors.Is(err, transport.ErrNotSealed) || errors.Is(err, transport.ErrRejected) || try == snapshotRetries {
+		err := send()
+		if err == nil || !errors.Is(err, transport.ErrNotSealed) || errors.Is(err, transport.ErrRejected) || try == tries {
 			return err
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(snapshotRetry):
+		case <-time.After(every):
 		}
 	}
-	return s.commit()
 }
 
 func (s sensor) commit() error { return errors.Join(s.weblog.Commit(), s.web.Commit()) }
