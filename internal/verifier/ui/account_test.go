@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha1" //nolint:gosec // RFC 6238 TOTP, as the verifier computes it
+	"crypto/sha256"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -80,5 +82,33 @@ func TestSecondFactorSignIn(t *testing.T) {
 	}
 	if on, _ := h.store.TOTPEnabled(context.Background(), email); !on {
 		t.Fatal("second factor off")
+	}
+}
+
+// Ending sessions that do not exist leaves no trace in the audit log: a user signed in cannot
+// push an administrator's entries out with made-up IDs. Ending a real one is recorded.
+func TestEndSessionAuditsOnlyRealSessions(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	ctx := context.Background()
+	before, err := h.store.AuditLog(ctx, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 50 {
+		h.post("/account/end-session", url.Values{"csrf": {csrf}, "id": {"00"}})
+	}
+	after, _ := h.store.AuditLog(ctx, 10000)
+	if len(after) != len(before) {
+		t.Fatalf("%d audit entries from sessions that do not exist", len(after)-len(before))
+	}
+	token, err := h.store.Login(ctx, email, password, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(token))
+	h.post("/account/end-session", url.Values{"csrf": {csrf}, "id": {hex.EncodeToString(sum[:])}})
+	if after, _ := h.store.AuditLog(ctx, 10000); len(after) != len(before)+1 {
+		t.Errorf("ending a real session: %d entries, want %d", len(after), len(before)+1)
 	}
 }

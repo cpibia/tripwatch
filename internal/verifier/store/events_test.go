@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,5 +99,47 @@ func TestEventsOwnersPerBatch(t *testing.T) {
 	}
 	if k, _ := s.AddEvents(ctx, events[:1], t0.Add(time.Minute)); stored(k) != 1 {
 		t.Fatal("an account seen earlier in the day is refused")
+	}
+}
+
+// A search through events whose text a monitored host chose, made to cost as much as the text is
+// long (long runs of one character and a pattern that almost matches them), stops at its time
+// limit, and a write of the ingest made meanwhile does not wait for it.
+func TestHostileSearchIsBoundedInTime(t *testing.T) {
+	if testing.Short() {
+		t.Skip("fills the database with sixty thousand events")
+	}
+	s := open(t)
+	ctx := context.Background()
+	path := "/srv/u/" + strings.Repeat("a", 400)
+	data := []byte(`{"name":"` + strings.Repeat("a", 1000) + `"}`)
+	for h := range 3 {
+		batch := make([]Event, MaxEventsPerDay)
+		for i := range batch {
+			batch[i] = Event{HostID: fmt.Sprintf("web-%02d", h), Seq: 1, At: t0, Class: "upload", Op: "create", Path: path, Data: data}
+		}
+		if _, err := s.AddEvents(ctx, batch, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := strings.Repeat("a", 199) + "b"
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.SearchEvents(ctx, query, 50)
+		done <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+	write := time.Now()
+	root := []Event{{HostID: "web-00", Seq: 2, At: t0, Class: "ssh", Op: "create", Path: "/root/.ssh/authorized_keys", Data: []byte(`{}`)}}
+	if _, err := s.AddEvents(ctx, root, t0); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(write); d > 2*time.Second {
+		t.Errorf("a write waited %v behind the search", d)
+	}
+	<-done
+	if d := time.Since(start); d > searchTimeout+2*time.Second {
+		t.Errorf("the search took %v, past its limit of %v", d, searchTimeout)
 	}
 }
