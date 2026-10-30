@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -154,5 +155,23 @@ func TestSnapshotBound(t *testing.T) {
 	s.Bound(500)
 	if _, ok := s.Results["processes"]; ok || len(s.Results) != 2 || !strings.Contains(s.Errors["processes"], "900 bytes") {
 		t.Errorf("results %v, errors %v", len(s.Results), s.Errors)
+	}
+}
+
+// EachLine reads a stream: long lines are cut and their rest skipped, carriage returns dropped,
+// and the bound on lines says when lines were left unread.
+func TestEachLine(t *testing.T) {
+	fsys := fstest.MapFS{"t": {Data: []byte("a\r\n" + strings.Repeat("x", 100<<10) + "\nb\nc")}}
+	var got []string
+	cut, err := EachLine(fsys, "t", 8, 10, func(l string) { got = append(got, l) })
+	if err != nil || cut || !slices.Equal(got, []string{"a", "xxxxxxxx", "b", "c"}) {
+		t.Errorf("lines %q, cut %v, err %v", got, cut, err)
+	}
+	got = nil
+	if cut, _ := EachLine(fsys, "t", 8, 2, func(l string) { got = append(got, l) }); !cut || len(got) != 2 {
+		t.Errorf("bound of 2: %q, cut %v", got, cut)
+	}
+	if cut, err := EachLine(fsys, "missing", 8, 2, func(string) {}); cut || err != nil {
+		t.Errorf("missing file: %v %v", cut, err)
 	}
 }

@@ -14,6 +14,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A script in an upload path answered with a permanent redirect stays high unless the script is
   the path's last segment with nothing after it: `x.php/a.php`, `x.php/` and `x.php/y.php.jpg`
   run `x.php` through PATH_INFO, which chooses its own status.
+- The kernel's socket tables are read as streams: a table grown past 16 MB by anyone's
+  listeners was dropped whole, root's listeners with it; now every row goes through the bound
+  that keeps root's sockets and the listeners first, up to a million rows a table.
 - A path with `..` read inside the observed root no longer fails while renames happen elsewhere
   on the system: the kernel refuses it then with EAGAIN, which any user could keep causing with a
   rename loop to stop the sensor following an application's shared upload link. It is tried

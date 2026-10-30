@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bufio"
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
@@ -174,6 +175,44 @@ func hashFile(fsys fs.FS, name string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// EachLine calls fn with each line of name, read as a stream: for the kernel's tables, which an
+// unprivileged user can grow past any size read at once, so that the lines that matter are not
+// lost with the rest. Lines are cut at maxLine bytes, and at most maxLines are read; it reports
+// whether that bound left lines unread. A missing file yields no lines and no error.
+func EachLine(fsys fs.FS, name string, maxLine, maxLines int, fn func(string)) (bool, error) {
+	f, err := fsys.Open(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	r := bufio.NewReaderSize(f, 64<<10)
+	for n := 0; ; n++ {
+		if n == maxLines {
+			_, err := r.Peek(1)
+			return err == nil, nil
+		}
+		slice, err := r.ReadSlice('\n')
+		// The slice is the reader's buffer: it is copied before more is read.
+		line := string(slice[:min(len(slice), maxLine)])
+		for errors.Is(err, bufio.ErrBufferFull) {
+			// A line longer than the buffer: what follows its first part is skipped.
+			_, err = r.ReadSlice('\n')
+		}
+		if len(line) > 0 {
+			fn(strings.TrimRight(line, "\r\n"))
+		}
+		if errors.Is(err, io.EOF) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
 }
 
 // ReadLines returns the content of name split into lines. A missing file yields no lines

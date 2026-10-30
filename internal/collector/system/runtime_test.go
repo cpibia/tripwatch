@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -210,6 +212,32 @@ func TestSocketsBoundKeepsWhatRulesRead(t *testing.T) {
 	want := fmt.Sprintf("5003 sockets left out over the limit of %d: 5003 of UID 65534", MaxSockets)
 	if !slices.Equal(res.Issues, collector.Issues{want}) {
 		t.Errorf("issues = %q, want %q", res.Issues, want)
+	}
+}
+
+// A table grown past what is read at once by anyone's listeners is read as a stream: root's
+// listener written after them is kept, the flood is cut to the bound and its owner named.
+func TestSocketsTableLargerThanAReadKeepsRoot(t *testing.T) {
+	var tcp strings.Builder
+	tcp.WriteString(tcpHeader + "\n")
+	for i := 0; tcp.Len() <= collector.MaxReadSize; i++ {
+		fmt.Fprintf(&tcp, "%d: %08X:%04X 00000000:0000 0A 00000000:00000000 00:00000000 00000000 65534 0 %d 1 0\n", i, 0x0100007F+i>>16, i%65536, 40000+i)
+	}
+	tcp.WriteString("9999999: 00000000:7A69 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 7 1 0\n")
+	// The observed root's view enforces the bound on what is read at once, which a map does not.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "proc/net"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc/net/tcp"), []byte(tcp.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res := collect[SocketsResult](t, Sockets{}, collector.NewSource(root))
+	if !slices.ContainsFunc(res.Sockets, func(s Socket) bool { return s.Local == "0.0.0.0:31337" && s.UID == 0 }) {
+		t.Errorf("root's listener left out of a table of %d bytes; issues %q", tcp.Len(), res.Issues)
+	}
+	if len(res.Sockets) != MaxSockets || len(res.Issues) != 1 || !strings.Contains(res.Issues[0], "of UID 65534") {
+		t.Errorf("%d sockets, issues %q", len(res.Sockets), res.Issues)
 	}
 }
 

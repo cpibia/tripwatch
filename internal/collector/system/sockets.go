@@ -12,6 +12,13 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector"
 )
 
+// Bounds on reading the kernel's socket tables: a row is about 150 bytes, and a million rows,
+// past what one account's descriptors reach by default, take a few seconds to parse.
+const (
+	maxSocketLine  = 512
+	maxSocketLines = 1 << 20
+)
+
 // TCP states from include/net/tcp_states.h that matter for detection: listeners, open
 // connections, and outbound attempts that never completed (SYN_SENT is what a blocked
 // egress looks like).
@@ -180,13 +187,13 @@ func (Sockets) Collect(ctx context.Context, src collector.Source) (any, error) {
 		if !ok {
 			continue
 		}
+		// Read as streams: anyone can open sockets until a table outgrows what is read at
+		// once, and the bound keeps root's and the listeners first.
 		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6", "raw", "raw6"} {
-			lines, err := collector.ReadLines(src.FS, dir+proto)
-			res.Issues.Add(err)
-			for _, line := range lines {
+			cut, err := collector.EachLine(src.FS, dir+proto, maxSocketLine, maxSocketLines, func(line string) {
 				s, inode, ok := parseSocketLine(proto, line)
 				if !ok {
-					continue
+					return
 				}
 				s.NetNS = ns
 				if pid, found := owners[inode]; found {
@@ -196,20 +203,26 @@ func (Sockets) Collect(ctx context.Context, src collector.Source) (any, error) {
 					}
 				}
 				bound.add(s)
+			})
+			res.Issues.Add(err)
+			if cut {
+				res.Issues.Add(fmt.Errorf("%s%s: more than %d lines, the rest not read", dir, proto, maxSocketLines))
 			}
 		}
-		lines, err := collector.ReadLines(src.FS, dir+"packet")
-		res.Issues.Add(err)
-		for _, line := range lines {
+		cut, err := collector.EachLine(src.FS, dir+"packet", maxSocketLine, maxSocketLines, func(line string) {
 			s, inode, ok := parsePacketLine(line)
 			if !ok {
-				continue
+				return
 			}
 			s.NetNS = ns
 			if pid, found := owners[inode]; found {
 				s.PID, s.Process, s.Exe = pid, comms[pid], exeOf(src.FS, pid)
 			}
 			bound.add(s)
+		})
+		res.Issues.Add(err)
+		if cut {
+			res.Issues.Add(fmt.Errorf("%spacket: more than %d lines, the rest not read", dir, maxSocketLines))
 		}
 	}
 	bound.result(&res)
