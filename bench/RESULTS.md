@@ -1,6 +1,6 @@
 # Detection benchmark
 
-Commit `6aafbed`, 2026-10-28, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+Commit `9f49cfa`, 2026-10-30, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
 with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
 ## Method
@@ -34,6 +34,9 @@ The control scenario, with no attack, produces no differences for any tool.
 | Library injected through /etc/ld.so.preload | ✅ | ✅ | ✅ | ❌ |
 | Login script in /etc/profile.d | ✅ | ✅ | ❌ | ❌ |
 | Line added to root's .bashrc | ✅ | ✅ | ❌ | ❌ |
+| Command planted in the SSH login script sshrc | ✅ | ✅ | ❌ | ❌ |
+| Root hook run when a network interface comes up | ✅ | ✅ | ❌ | ❌ |
+| Backdoor sourced from a bash completion fragment | ✅ | ✅ | ❌ | ❌ |
 
 ### Privileges
 
@@ -77,6 +80,9 @@ The control scenario, with no attack, produces no differences for any tool.
 | Card skimmer added to the site's JavaScript | ✅ | ✅ | ❌ | ❌ |
 | Backdoor in the web root with its function name split and escaped | ✅ | ✅ | ❌ | ❌ |
 | Core file changed to include remote code when a cookie is set | ✅ | ✅ | ❌ | ❌ |
+| Web shell opened by a bare short tag in a data file the application includes | ✅ | ✅ | ❌ | ❌ |
+| Code in a data file hidden behind a heredoc whose label is longer than usual | ✅ | ✅ | ❌ | ❌ |
+| Card skimmer in a theme with the field's name split into pieces | ✅ | ✅ | ❌ | ❌ |
 
 ### Limits: attacks between two checks, and traps
 
@@ -85,6 +91,7 @@ The control scenario, with no attack, produces no differences for any tool.
 | Dropper run and deleted between two checks | ✅ | ❌ | ❌ | ❌ |
 | SSH key added, used and removed between two checks | ✅ | ❌ | ❌ | ❌ |
 | FIFO in place of the web user's authorized_keys | ✅ | ✅ | ❌ | ❌ |
+| Loader search path poisoned via ld.so.conf.d, then the config removed | ✅ | ❌ | ❌ | ❌ |
 
 ## Cost of a full check
 
@@ -92,7 +99,7 @@ Measured on the control scenario, in the same container.
 
 | Tool | Time | Peak memory |
 |---|--:|--:|
-| tripwatch | 1.3 s | 28 MB |
-| AIDE | 49.5 s | 39 MB |
-| rkhunter | 151.1 s | 11 MB |
+| tripwatch | 1.5 s | 27 MB |
+| AIDE | 49.5 s | 40 MB |
+| rkhunter | 147.5 s | 11 MB |
 | debsums | 1.1 s | 13 MB |
