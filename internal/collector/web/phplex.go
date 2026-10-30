@@ -530,6 +530,10 @@ func openTagLen(t []byte, short bool) (int, int) {
 		return 0, tagName
 	case exact && k == j && k < len(t):
 		return 0, tagExact
+	case exact && !bytes.HasPrefix(bytes.ToLower(t[k:]), []byte("version")):
+		// Only a real XML prolog is never code; "xml" or "php" then a blank and anything else is,
+		// once a block that ran could have defined the name.
+		return 0, tagExact
 	case exact:
 		return 0, tagNone
 	case goesOn:

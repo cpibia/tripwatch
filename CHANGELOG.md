@@ -35,7 +35,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   code, not a processing instruction: only a lower-case target, an undefined constant on which
   PHP 8 stops, is left to the named signatures, and only until a block PHP runs appears in the
   file, since that block can define the name (`<?php define("foo",1);?>` then `<?foo>1;`, also
-  with `xml` and `php`).
+  with `xml` and `php`, followed by a blank or not; only a real `<?xml version=` prolog stays
+  text). A definition in another file the same request includes is past what a search of one
+  file can see.
 - With short open tags, `<?` glued to code other than an XML processing instruction opens a
   block searched with the weak signals: `<?$c=$_GET["c"];system($c);`, `<?@`, `<?(function`,
   `<?/**/`, `<?echo"`, `<?PHP_EOL.$c=` and `<?E_ALL|` in a data file are now found. Only a
