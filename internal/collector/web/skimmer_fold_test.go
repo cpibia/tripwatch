@@ -8,9 +8,10 @@ import (
 )
 
 // A hostile script cannot make the folding slow or deep: nested parentheses, endless chains,
-// arrays never joined and unterminated literals cost a few terms a token, within the bound of a
-// piece. The work is counted rather than timed, so that a slow runner cannot fail the test.
+// arrays never joined, unterminated literals and replacements that would make megabytes cost a
+// few terms a token, the bytes they produce counted, within the bound of a piece. The work is counted rather than timed, so that a slow runner cannot fail the test.
 func TestFoldingHostileScripts(t *testing.T) {
+	x4 := "var c='" + strings.Repeat("x", 4000) + "';"
 	for name, src := range map[string]string{
 		"nesting":    strings.Repeat("(", 200000) + `"a"` + strings.Repeat(")", 200000),
 		"chain":      strings.Repeat(`"ab"+`, 100000) + `"c"`,
@@ -20,6 +21,9 @@ func TestFoldingHostileScripts(t *testing.T) {
 		"assignment": strings.Repeat(`var a=a+a;`, 50000) + `var a="xy";`,
 		"constant chains": "var a='" + strings.Repeat("a", 4000) + "';" +
 			strings.Repeat(strings.Repeat("(", 32)+strings.Repeat("a+", 2000)+"a;", 1<<20/(32+4002)),
+		"replace all":       x4 + strings.Repeat("c.replaceAll('x',c);", 1<<20/20),
+		"replace all empty": x4 + strings.Repeat("c.replaceAll('',c);", 1<<20/19),
+		"replace chain":     x4 + "c" + strings.Repeat(".replaceAll('',c)", 1<<20/17),
 	} {
 		_, tokens, steps := foldWork([]byte(src), map[string]string{})
 		if steps > 8*tokens || steps >= maxFoldSteps {

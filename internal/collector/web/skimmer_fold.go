@@ -244,12 +244,26 @@ func (f *folder) expr(i, depth int) (string, int, bool) {
 		if !ok {
 			break
 		}
-		if len(v) < maxFoldValue {
-			v = clipFold(v + w)
-		}
+		v = f.join(v, w)
 		i = next
 	}
 	return v, i, true
+}
+
+// charge takes the cost of an operation that produces n bytes from the piece's budget, before
+// the operation runs, and says whether it may.
+func (f *folder) charge(n int) bool {
+	f.steps += 1 + n/16
+	return f.steps <= maxFoldSteps
+}
+
+// join appends w to v up to the value's bound, the bytes charged first.
+func (f *folder) join(v, w string) string {
+	n := min(len(w), maxFoldValue-len(v))
+	if n <= 0 || !f.charge(len(v)+n) {
+		return v
+	}
+	return v + w[:n]
 }
 
 // term folds a literal, a parenthesised expression, a known name or an array joined, followed
@@ -267,6 +281,9 @@ func (f *folder) term(i, depth int) (string, int, bool) {
 	case t.kind == 'n' && t.text == "atob" && i+1 < len(f.toks) && f.toks[i+1].text == "(":
 		w, next, ok := f.expr(i+2, depth+1)
 		if !ok || next >= len(f.toks) || f.toks[next].text != ")" {
+			return "", i, false
+		}
+		if !f.charge(len(w)) {
 			return "", i, false
 		}
 		b, err := base64.StdEncoding.DecodeString(w)
@@ -291,7 +308,14 @@ func (f *folder) term(i, depth int) (string, int, bool) {
 		if next+4 < len(f.toks) && f.toks[next].text == "." && f.toks[next+1].text == "join" && f.toks[next+2].text == "(" {
 			sep, after, ok := f.expr(next+3, depth+1)
 			if ok && after < len(f.toks) && f.toks[after].text == ")" {
-				return f.calls(clipFold(strings.Join(parts, sep)), after+1, depth)
+				joined := ""
+				for k, p := range parts {
+					if k > 0 {
+						joined = f.join(joined, sep)
+					}
+					joined = f.join(joined, p)
+				}
+				return f.calls(joined, after+1, depth)
 			}
 		}
 		return "", i, false
@@ -311,14 +335,17 @@ func (f *folder) calls(v string, i, depth int) (string, int, bool) {
 			if !ok {
 				return v, i, true
 			}
-			if len(v) < maxFoldValue {
-				v = clipFold(v + strings.Join(parts, ""))
+			for _, p := range parts {
+				v = f.join(v, p)
 			}
 			i = next
 		case "slice", "substring", "substr":
 			// .slice(a) and .slice(a, b) with literal numbers.
 			a, b, next, ok := f.numbers(i + 3)
 			if !ok {
+				return v, i, true
+			}
+			if !f.charge(len(v)) {
 				return v, i, true
 			}
 			r := []rune(v)
@@ -339,18 +366,26 @@ func (f *folder) calls(v string, i, depth int) (string, int, bool) {
 			if !ok || len(parts) != 2 {
 				return v, i, true
 			}
+			// The result's size is known before it is built: past the bound the call is not
+			// folded, so an empty pattern on a long value cannot make megabytes.
+			count := strings.Count(v, parts[0])
 			if f.toks[i+1].text == "replace" {
-				v = strings.Replace(v, parts[0], parts[1], 1)
-			} else {
-				v = strings.ReplaceAll(v, parts[0], parts[1])
+				count = min(count, 1)
 			}
-			v, i = clipFold(v), next
+			size := len(v) + count*(len(parts[1])-len(parts[0]))
+			if size > maxFoldValue || !f.charge(len(v)+size) {
+				return v, i, true
+			}
+			v, i = strings.Replace(v, parts[0], parts[1], count), next
 		case "split":
 			// split("").reverse().join("")
 			if i+12 < len(f.toks) && f.toks[i+3].kind == 's' && f.toks[i+3].text == "" && f.toks[i+4].text == ")" &&
 				f.toks[i+5].text == "." && f.toks[i+6].text == "reverse" && f.toks[i+7].text == "(" && f.toks[i+8].text == ")" &&
 				f.toks[i+9].text == "." && f.toks[i+10].text == "join" && f.toks[i+11].text == "(" && f.toks[i+12].kind == 's' &&
 				i+13 < len(f.toks) && f.toks[i+13].text == ")" {
+				if !f.charge(len(v)) {
+					return v, i, true
+				}
 				r := []rune(v)
 				for a, b := 0, len(r)-1; a < b; a, b = a+1, b-1 {
 					r[a], r[b] = r[b], r[a]
