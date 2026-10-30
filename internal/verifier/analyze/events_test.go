@@ -186,3 +186,19 @@ func TestScratchGroupsByOwner(t *testing.T) {
 		t.Errorf("groups: user %q, root %q", u, r)
 	}
 }
+
+// A hook installed while a package manager of root held its lock, the event saying so even when
+// the batch left after it, is lowered; its staging names raise nothing then, and the same names
+// without a package manager do.
+func TestHookInstalledByAPackage(t *testing.T) {
+	ev := func(p string, pm bool) watch.Event {
+		return watch.Event{At: time.Now(), Class: watch.ClassHook, Op: watch.OpCreate, Path: p, SHA256: strings.Repeat("a", 64), PackageManager: pm}
+	}
+	got := EvaluateEvents([]watch.Event{ev("/etc/profile.d/x.sh.dpkg-new", true), ev("/etc/profile.d/x.sh", true)}, false, nil)
+	if len(got) != 1 || got[0].Severity != "medium" || !strings.Contains(got[0].Fingerprint, "/etc/profile.d/x.sh ") {
+		t.Errorf("with a package manager: %+v", got)
+	}
+	if got := EvaluateEvents([]watch.Event{ev("/etc/profile.d/x.sh.dpkg-new", false)}, false, nil); len(got) != 1 || got[0].Severity != "high" {
+		t.Errorf("without one: %+v", got)
+	}
+}

@@ -106,6 +106,8 @@ type Batcher struct {
 	homes     atomic.Pointer[map[string]string]
 	perOwner  map[string]int
 	spoolUIDs map[string]uint32
+	pm        bool
+	pmAt      time.Time
 }
 
 // queued is an event waiting to be sent, with its rank and when it came.
@@ -208,6 +210,7 @@ const maxFinalBatches = 40
 
 func (b *Batcher) add(e Event) {
 	e.Owner = b.owner(e)
+	e.PackageManager = b.packageManagerNow()
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return
@@ -250,6 +253,18 @@ func (b *Batcher) add(e Event) {
 	b.order[q.rank] = append(b.order[q.rank], len(b.queue))
 	b.queue = append(b.queue, q)
 	b.live++
+}
+
+// packageManagerNow says whether a package manager runs, read at most once a second: under a
+// flood of events the lock table is not read for each.
+func (b *Batcher) packageManagerNow() bool {
+	if b.PackageManager == nil {
+		return false
+	}
+	if now := b.now(); now.Sub(b.pmAt) >= time.Second {
+		b.pm, b.pmAt = b.PackageManager(), now
+	}
+	return b.pm
 }
 
 // reset makes q, which holds no holes, the queue.

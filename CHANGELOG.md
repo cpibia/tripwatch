@@ -132,6 +132,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A request that posted to a script missing at collection time is no longer dropped as a probe:
   a web shell sent its command in the body and deleted before the run raises its alert. Failed
   reads of a missing script stay probes; in a week of the fleet's logs every one was a GET.
+- Each real-time event carries whether a package manager of root held its lock when it was
+  queued, read at most once a second: an installation is over before its batch leaves, so a hook
+  it wrote was judged as if no package manager ran. The names dpkg, rpm and apk stage files under
+  (`.dpkg-new`, `.rpmnew`...) raise nothing while one runs. In the benchmark, installing a package
+  with a login hook went from three high alerts to one medium.
 - A package update no longer lowers every new start-up script to low: where dpkg's file lists
   were read, only a new hook a package owns is; one no package names stays high or medium. A
   hook there before keeps being lowered, as maintainer scripts regenerate some. rpm and apk keep

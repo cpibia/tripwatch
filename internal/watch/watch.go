@@ -59,13 +59,17 @@ const (
 // hash, owner and mode are read after the change, through the same confined view of the
 // filesystem the collectors use, and only for regular files within the hashing limit.
 type Event struct {
-	At     time.Time `json:"at"`
-	Class  string    `json:"class"`
-	Op     string    `json:"op"`
-	Path   string    `json:"path"`
-	Dir    bool      `json:"dir,omitempty"`
-	Size   int64     `json:"size,omitempty"`
-	SHA256 string    `json:"sha256,omitempty"`
+	At time.Time `json:"at"`
+	// PackageManager says a package manager of root held its lock when the event was queued:
+	// what an installation writes and renames (a hook, its .dpkg-new) is over before the batch
+	// leaves.
+	PackageManager bool   `json:"package_manager,omitempty"`
+	Class          string `json:"class"`
+	Op             string `json:"op"`
+	Path           string `json:"path"`
+	Dir            bool   `json:"dir,omitempty"`
+	Size           int64  `json:"size,omitempty"`
+	SHA256         string `json:"sha256,omitempty"`
 	// PrevSHA256 is the content the sensor last knew the file to have, for system paths: a key
 	// added and then removed by rewriting a file that existed long before shows as a return to it.
 	PrevSHA256 string `json:"prev_sha256,omitempty"`

@@ -407,3 +407,21 @@ func TestRootEventIsNotNoise(t *testing.T) {
 		t.Error("a directory created in the uploads is not low priority")
 	}
 }
+
+// An event takes the package manager's state when it is queued: an installation is over before
+// its batch leaves, and the batch's own flag then says nothing.
+func TestEventsCarryThePackageManager(t *testing.T) {
+	running := true
+	var sent [][]byte
+	b := &Batcher{Send: func(_ context.Context, p []byte) error { sent = append(sent, p); return nil },
+		PackageManager: func() bool { return running }, Now: time.Now}
+	b.add(Event{Class: ClassHook, Op: OpCreate, Path: "/etc/profile.d/x.sh"})
+	running = false
+	b.pmAt = time.Time{}
+	b.Flush(context.Background())
+	got := decodeBatch(t, sent[0])
+	var e Event
+	if err := json.Unmarshal(got.Events[0], &e); err != nil || !e.PackageManager || got.PackageManager {
+		t.Errorf("event %+v, batch flag %v, %v", e, got.PackageManager, err)
+	}
+}

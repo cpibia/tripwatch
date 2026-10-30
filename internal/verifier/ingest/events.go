@@ -47,7 +47,7 @@ func (s *Server) watched(ctx context.Context, host string, e protocol.Envelope, 
 			subject = ev.Exe
 		}
 		events = append(events, ev)
-		rows = append(rows, store.Event{HostID: host, Seq: e.Sequence, At: ev.At, Class: ev.Class, Op: ev.Op, Path: subject, PackageManager: b.PackageManager, Owner: ev.Owner, Data: raw})
+		rows = append(rows, store.Event{HostID: host, Seq: e.Sequence, At: ev.At, Class: ev.Class, Op: ev.Op, Path: subject, PackageManager: b.PackageManager || ev.PackageManager, Owner: ev.Owner, Data: raw})
 	}
 	kept, err := s.Store.AddEvents(ctx, rows, now)
 	if err != nil {

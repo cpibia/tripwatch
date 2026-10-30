@@ -31,6 +31,11 @@ type History func(path string, since time.Time) []watch.Event
 func EvaluateEvents(events []watch.Event, packageManager bool, history History) []Finding {
 	var out []Finding
 	for _, e := range events {
+		// The names package managers stage a file under while they install it come and go
+		// with every installation: while one runs, the file under its own name is what counts.
+		if (packageManager || e.PackageManager) && lowered(e) && packageTemp(e.Path) {
+			continue
+		}
 		f, ok := judgeEvent(e, history)
 		if !ok {
 			continue
@@ -40,7 +45,7 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 		if e.SHA256 != "" && !strings.Contains(f.Fingerprint, "-transient:") {
 			f.Fingerprint += " sha256:" + e.SHA256[:min(16, len(e.SHA256))]
 		}
-		if packageManager && lowered(e) {
+		if (packageManager || e.PackageManager) && lowered(e) {
 			f.Severity = lower(f.Severity)
 			f.Detail += " A package manager was running at the time: an installation or an upgrade may have made this change."
 		}
@@ -53,6 +58,13 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 // severity: packages install services, scheduled tasks and start-up scripts all the time. Never
 // who may become root, the accounts, SSH keys or library preloading, which a package rarely
 // touches and an intruder always does; nor process starts or uploads, which no package explains.
+// packageTemp reports the names under which dpkg, rpm and apk stage a file they install or keep
+// the one they replace.
+func packageTemp(p string) bool {
+	return slices.ContainsFunc([]string{".dpkg-new", ".dpkg-tmp", ".dpkg-old", ".dpkg-dist", ".rpmnew", ".rpmsave", ".rpmorig", ".apk-new"},
+		func(suffix string) bool { return strings.HasSuffix(p, suffix) })
+}
+
 func lowered(e watch.Event) bool {
 	switch e.Class {
 	case watch.ClassService, watch.ClassSchedule, watch.ClassScratch:
