@@ -82,6 +82,7 @@ const (
 	documentBlockCode = 64 << 10
 	blockOverlap      = 4 << 10
 	maxHeredocIDSize  = 128
+	maxHeredocBlanks  = 16
 	// maxNested bounds interpolations inside interpolations; deeper nesting has no use in a
 	// data file and is reported rather than followed.
 	maxNested = 64
@@ -312,7 +313,7 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 			return 1
 		}
 	case '<':
-		if !more(3 + maxHeredocIDSize + 4) {
+		if !more(3 + maxHeredocBlanks + 1 + maxHeredocIDSize + 4) {
 			return 0
 		}
 		if id, n, ok := heredocStart(d[i:]); ok {
@@ -320,6 +321,12 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 			c.mode, c.heredoc, c.atLine = lexHeredoc, id, true
 			c.nowdoc = bytes.Contains(d[i:i+n], []byte("'"))
 			return n
+		}
+		// PHP takes a label of any length, and a body the lexer cannot follow as a string can
+		// open a comment or close the block in front of the code after it. No data file needs
+		// a label this long: it is named.
+		if longHeredocLabel(d[i:]) {
+			c.add("long_heredoc_label")
 		}
 	case '_':
 		// PHP compiles nothing after __halt_compiler: what follows cannot break the block.
@@ -503,11 +510,33 @@ func openTagLen(t []byte, short bool) (int, int) {
 	case goesOn:
 		return 0, tagName
 	}
-	if processingInstruction(t) {
+	if processingInstruction(t) && !runsFirst(t) {
 		return 0, tagGlued
 	}
 	return 0, tagName
 }
+
+// runsFirst reports a name glued to "<?" that PHP evaluates without failing: a keyword ("<?echo",
+// "<?const X=1;"), true, false or null, or a name of the shape of the constants PHP and its
+// extensions define (upper case or an underscore: "<?PHP_EOL>1;", "<?E_ALL"). Since PHP 8 any
+// other name is an undefined constant, an Error at the block's first statement before anything
+// after it runs, as the lower-case targets of processing instructions are.
+func runsFirst(t []byte) bool {
+	j := 0
+	for j < len(t) && j < openTagLook && identByte(t[j]) {
+		j++
+	}
+	name := string(t[:j])
+	return slices.Contains(phpKeywords, strings.ToLower(name)) || strings.ContainsAny(name, "ABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+}
+
+// phpKeywords are the words that start a statement or an expression without naming a constant.
+var phpKeywords = []string{"abstract", "and", "array", "as", "break", "callable", "case", "catch", "class", "clone", "const", "continue",
+	"declare", "default", "die", "do", "echo", "else", "elseif", "empty", "enum", "eval", "exit", "extends", "false", "final", "finally",
+	"fn", "for", "foreach", "function", "global", "goto", "if", "implements", "include", "include_once", "instanceof", "insteadof",
+	"interface", "isset", "list", "match", "namespace", "new", "null", "or", "parent", "print", "private", "protected", "public",
+	"readonly", "require", "require_once", "return", "self", "static", "switch", "throw", "trait", "true", "try", "unset", "use",
+	"var", "while", "xor", "yield"}
 
 // processingInstruction reports whether what follows "<?" is shaped as an XML processing
 // instruction: a target, a name starting with a letter, then "?>", ">" or a blank and a
@@ -558,7 +587,7 @@ func heredocStart(d []byte) (id []byte, n int, ok bool) {
 		return nil, 0, false
 	}
 	j := 3
-	for j < len(d) && (d[j] == ' ' || d[j] == '\t') {
+	for j < len(d) && j-3 < maxHeredocBlanks && (d[j] == ' ' || d[j] == '\t') {
 		j++
 	}
 	var quote byte
@@ -590,6 +619,29 @@ func heredocStart(d []byte) (id []byte, n int, ok bool) {
 		return nil, 0, false
 	}
 	return append([]byte(nil), id...), j, true
+}
+
+// longHeredocLabel reports "<<<" followed by a label longer than the lexer follows, or by more
+// blanks before it than it looks ahead for.
+func longHeredocLabel(d []byte) bool {
+	if !bytes.HasPrefix(d, []byte("<<<")) {
+		return false
+	}
+	j := 3
+	for j < len(d) && (d[j] == ' ' || d[j] == '\t') {
+		j++
+	}
+	if j-3 > maxHeredocBlanks {
+		return true
+	}
+	if j < len(d) && (d[j] == '"' || d[j] == '\'') {
+		j++
+	}
+	start := j
+	for j < len(d) && j-start <= maxHeredocIDSize && identByte(d[j]) && (j > start || identStart(d[j])) {
+		j++
+	}
+	return j-start > maxHeredocIDSize
 }
 
 func identByte(c byte) bool { return isWordByte(c) || c >= 0x80 }

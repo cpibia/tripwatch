@@ -18,6 +18,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   pass it by a few bytes when full, as the web user can make it with long names in the uploads),
   and a batch refused for its size is no longer taken for delivered: its events go again in
   smaller batches, root's first, and the counts of lost events it carried are kept.
+- A heredoc label longer than 128 bytes, or after more than 16 blanks, is a signature in a data
+  file (`long_heredoc_label`): with a body of `/*` or `?>` it hid the payload after it, with a
+  full `<?php` tag and the default configuration.
+- `<?echo`, `<?print`, `<?const` and constants followed by an operator (`<?PHP_EOL>1;`) open
+  code, not a processing instruction: only a lower-case target, an undefined constant on which
+  PHP 8 stops, is left to the named signatures.
 - With short open tags, `<?` glued to code other than an XML processing instruction opens a
   block searched with the weak signals: `<?$c=$_GET["c"];system($c);`, `<?@`, `<?(function`,
   `<?/**/`, `<?echo"`, `<?PHP_EOL.$c=` and `<?E_ALL|` in a data file are now found. Only a

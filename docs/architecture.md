@@ -269,16 +269,21 @@ with runs of blanks folded, block after block without overlap, so the cost stays
 files (a PDF, an archive) hold an open tag every few megabytes by chance, and the random "code"
 after it soon holds a backtick or a word like `exec(`: a block whose code holds, outside its
 strings and comments, a control byte PHP 8 refuses to compile loses those two weak signals,
-while the named signatures still count. `__halt_compiler` ends the block, since PHP compiles
-nothing after it: binary data appended to a payload cannot hide it. Code interpolated in a
+while the named signatures still count. A heredoc whose label is longer than the 128 bytes the lexer follows, or comes
+after more than 16 blanks, is a signature of its own (`long_heredoc_label`): its body could
+otherwise open a comment or close the block in front of the code after it. `__halt_compiler`
+ends the block, since PHP compiles nothing after it: binary data appended to a payload cannot hide it. Code interpolated in a
 string, a command or a heredoc (`{$...}`, `${...}`) is followed as code up to its matching
 brace, with its own strings, so a quote or a `?>` inside it closes nothing (64 levels deep at
 most; deeper is itself a finding, `nested_interpolation`). Whether short open tags are on is
 php.ini's choice, so the content is lexed twice: once with the tags above, once with `<?`
 opening a block whatever follows (but `xml`, and `php` glued to more text, which stops on the
 undefined constant `php`, and a character no statement starts with, as in `<?>`). There a block
-opened by a processing instruction (a target such as `mso-application` followed by `?>`, `>` or
-a pseudo-attribute) counts only the named signatures; one opened by `<?` glued to anything else
+opened by a processing instruction (a lower-case target such as `mso-application` followed by
+`?>`, `>` or a pseudo-attribute, which PHP 8 stops on as an undefined constant before anything
+after it runs) counts only the named signatures; a keyword, `true`, `false`, `null` or a name
+with upper case or an underscore, the shape of the constants PHP defines (`<?echo`, `<?const`,
+`<?PHP_EOL>1;`), is code; one opened by `<?` glued to anything else
 (`<?$c=`, `<?@`, `<?(`, `<?PHP_EOL.`) is code, with the weak signals, a backtick counting only
 when it interpolates a variable, and "=> {" or "[^", which PHP never compiles and the scripts a
 cache holds are full of, make it uncompilable. In that second pass a block PHP 8 cannot compile makes the whole file
