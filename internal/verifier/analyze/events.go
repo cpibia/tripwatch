@@ -33,7 +33,11 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 	for _, e := range events {
 		// The names package managers stage a file under while they install it come and go
 		// with every installation: while one runs, the file under its own name is what counts.
-		if (packageManager || e.PackageManager) && lowered(e) && packageTemp(e.Path) {
+		// Only outside the scratch directories and for no other user's file: dpkg stages a file
+		// next to its destination, never in /tmp or /dev/shm, where the name would only hide a
+		// dropper. A removal carries no owner; outside the scratch directories only root writes.
+		if (packageManager || e.PackageManager) && lowered(e) && e.Class != watch.ClassScratch && !e.WebUser && e.Owner == "" &&
+			(e.UID == nil || *e.UID == 0) && packageTemp(e.Path) {
 			continue
 		}
 		f, ok := judgeEvent(e, history)
@@ -54,10 +58,6 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 	return out
 }
 
-// lowered says whether a package manager running explains an event well enough to lower its
-// severity: packages install services, scheduled tasks and start-up scripts all the time. Never
-// who may become root, the accounts, SSH keys or library preloading, which a package rarely
-// touches and an intruder always does; nor process starts or uploads, which no package explains.
 // packageTemp reports the names under which dpkg, rpm and apk stage a file they install or keep
 // the one they replace.
 func packageTemp(p string) bool {
@@ -65,10 +65,23 @@ func packageTemp(p string) bool {
 		func(suffix string) bool { return strings.HasSuffix(p, suffix) })
 }
 
+// rootOwned reports an event on a file root owns, which no other user can have made.
+func rootOwned(e watch.Event) bool {
+	return e.UID != nil && *e.UID == 0 && !e.WebUser && e.Owner == ""
+}
+
+// lowered says whether a package manager running explains an event well enough to lower its
+// severity: packages install services, scheduled tasks and start-up scripts all the time, and
+// root's files in the scratch directories. Never who may become root, the accounts, SSH keys or
+// library preloading, which a package rarely touches and an intruder always does; nor process
+// starts or uploads, which no package explains; nor another user's files in the scratch
+// directories, which the web server's user can time to the package manager's lock.
 func lowered(e watch.Event) bool {
 	switch e.Class {
-	case watch.ClassService, watch.ClassSchedule, watch.ClassScratch:
+	case watch.ClassService, watch.ClassSchedule:
 		return true
+	case watch.ClassScratch:
+		return rootOwned(e)
 	case watch.ClassHook:
 		return path.Base(e.Path) != "ld.so.preload"
 	}

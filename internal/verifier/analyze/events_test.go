@@ -202,3 +202,30 @@ func TestHookInstalledByAPackage(t *testing.T) {
 		t.Errorf("without one: %+v", got)
 	}
 }
+
+// The staging names hide nothing in the scratch directories: there the web server's user, who can
+// read when apt holds its lock, would drop, run and remove a program under one. Root's own files
+// there are still lowered while a package manager runs.
+func TestStagingNamesNotInScratch(t *testing.T) {
+	web, root := uint32(33), uint32(0)
+	at := time.Now()
+	drop := []watch.Event{
+		{At: at, Class: watch.ClassScratch, Op: watch.OpCreate, Path: "/dev/shm/.x.dpkg-new", SHA256: strings.Repeat("b", 64), Mode: "-rwxr-xr-x", UID: &web, WebUser: true, PackageManager: true},
+		{At: at.Add(time.Second), Class: watch.ClassScratch, Op: watch.OpDelete, Path: "/dev/shm/.x.dpkg-new", PackageManager: true},
+	}
+	history := func(string, time.Time) []watch.Event { return drop[:1] }
+	got := EvaluateEvents(drop, true, history)
+	if len(got) == 0 || got[0].Severity == "low" {
+		t.Errorf("the web user's drop under a staging name: %+v", got)
+	}
+	mine := watch.Event{At: at, Class: watch.ClassScratch, Op: watch.OpCreate, Path: "/tmp/apt.conf.x", SHA256: strings.Repeat("c", 64), Mode: "-rwxr-xr-x", UID: &root, PackageManager: true}
+	theirs := mine
+	theirs.UID, theirs.WebUser = &web, true
+	a, b := EvaluateEvents([]watch.Event{mine}, true, nil), EvaluateEvents([]watch.Event{theirs}, true, nil)
+	lowered := func(f []Finding) bool {
+		return len(f) == 1 && strings.Contains(f[0].Detail, "A package manager was running")
+	}
+	if !lowered(a) || lowered(b) {
+		t.Errorf("root's file lowered %v, the web user's %v", lowered(a), lowered(b))
+	}
+}
