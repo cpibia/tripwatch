@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"strings"
 	"sync/atomic"
@@ -64,7 +65,7 @@ type Containers struct {
 	// keys holds when a container was last seen, by its key and image; images the image last
 	// seen for each key, to tell a swapped image from a redeploy.
 	keys   map[string]time.Time
-	images map[string]string
+	images map[string]seenImage
 	// looked is set after the first look, whose containers were there before the sensor and are
 	// left to the snapshots.
 	looked bool
@@ -73,6 +74,14 @@ type Containers struct {
 	rereadFrom int
 	// Dropped counts events lost because the consumer did not keep up.
 	Dropped atomic.Int64
+	// Forgotten counts the images forgotten past maxContainerKeys, the one seen longest ago
+	// first: a swap under its key is then reported as a start, without the image it replaces.
+	Forgotten atomic.Int64
+}
+
+type seenImage struct {
+	id string
+	at time.Time
 }
 
 type tracked struct {
@@ -85,7 +94,7 @@ type tracked struct {
 
 func NewContainers(src collector.Source, out chan<- Event) *Containers {
 	return &Containers{fsys: src.FS, out: out, now: time.Now, known: map[string]*tracked{}, tries: map[string]int{},
-		keys: map[string]time.Time{}, images: map[string]string{}}
+		keys: map[string]time.Time{}, images: map[string]seenImage{}}
 }
 
 // Run looks at the runtimes' state every ContainerPoll until ctx ends.
@@ -205,7 +214,7 @@ func (c *Containers) read(ref system.ContainerRef, t *tracked, host *system.Host
 	}
 	// The tag is a label whoever controls the daemon rewrites: the same name, tag and powers on
 	// another image is another program, reported with the image it took the place of.
-	if was := c.images[info.Key()]; was != "" && info.ImageID != "" && was != info.ImageID {
+	if was := c.images[info.Key()].id; was != "" && info.ImageID != "" && was != info.ImageID {
 		info.Replaces = was
 	}
 	c.remember(info, now)
@@ -221,9 +230,25 @@ func (c *Containers) remember(info *ContainerInfo, now time.Time) {
 	if _, ok := c.keys[imageKey(info)]; ok || len(c.keys) < maxContainerKeys {
 		c.keys[imageKey(info)] = now
 	}
-	if _, ok := c.images[info.Key()]; ok || len(c.images) < maxContainerKeys {
-		c.images[info.Key()] = info.ImageID
+	if _, ok := c.images[info.Key()]; !ok && len(c.images) >= maxContainerKeys {
+		oldest := ""
+		for k, img := range c.images {
+			if oldest == "" || img.at.Before(c.images[oldest].at) {
+				oldest = k
+			}
+		}
+		delete(c.images, oldest)
+		c.Forgotten.Add(1)
 	}
+	c.images[info.Key()] = seenImage{id: info.ImageID, at: now}
+}
+
+// Issues describes what the watcher could not keep track of.
+func (c *Containers) Issues() []string {
+	if n := c.Forgotten.Load(); n > 0 {
+		return []string{fmt.Sprintf("containers: %d images of containers with power over the host forgotten past %d remembered, the one seen longest ago first; an image swapped under a forgotten name and tag is reported as a start, without the image it replaces", n, maxContainerKeys)}
+	}
+	return nil
 }
 
 // imageKey is a container's key with its image's digest.

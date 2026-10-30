@@ -147,6 +147,30 @@ func TestContainersImageSwapAndKeyExpiry(t *testing.T) {
 	}
 }
 
+// The images remembered by name, tag and powers are bounded: past the bound the one seen
+// longest ago is forgotten and counted, and a container still running keeps its own.
+func TestContainersImagesBounded(t *testing.T) {
+	fsys := fstest.MapFS{}
+	dockerContainer(fsys, "keep", "proxy", `{"Privileged": true}`)
+	c := NewContainers(collector.Source{FS: fsys}, make(chan Event, maxContainerKeys+64))
+	now := time.Unix(1_000_000, 0)
+	c.now = func() time.Time { return now }
+	c.look()
+	for i := range maxContainerKeys + 10 {
+		now = now.Add(time.Second)
+		id := fmt.Sprintf("ci%05d", i)
+		dockerContainer(fsys, id, "job-"+id, `{"Privileged": true}`)
+		c.look()
+		delete(fsys, "var/lib/docker/containers/"+id+"/config.v2.json")
+		delete(fsys, "var/lib/docker/containers/"+id+"/hostconfig.json")
+	}
+	c.look()
+	proxy := ContainerInfo{Name: "proxy", Image: "alpine:3.20", Powers: []string{"privileged"}}
+	if len(c.images) != maxContainerKeys || c.Forgotten.Load() != 11 || c.images[proxy.Key()].at.IsZero() || len(c.Issues()) != 1 {
+		t.Fatalf("%d images, %d forgotten, proxy kept %v, issues %v", len(c.images), c.Forgotten.Load(), !c.images[proxy.Key()].at.IsZero(), c.Issues())
+	}
+}
+
 // A configuration never readable is given up after a few looks, and not read again.
 func TestContainersGiveUpOnUnreadable(t *testing.T) {
 	fsys := fstest.MapFS{"var/lib/docker/containers/bad1/config.v2.json": &fstest.MapFile{Data: []byte(`{`)}}

@@ -220,5 +220,8 @@ func (r *realtime) status() *watch.Status {
 		st.Unwatched = r.files.Unwatched()
 		st.Issues = append(st.Issues, r.files.Issues()...)
 	}
+	if r.containers != nil {
+		st.Issues = append(st.Issues, r.containers.Issues()...)
+	}
 	return st
 }
