@@ -8,6 +8,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- Decoy files: the paths listed in `/etc/tripwatch/decoys` (`-decoys-file`), one absolute path
+  a line, the file owned by the sensor's user and readable by it only, since the command line is
+  readable by every local user. The `decoys` collector reports their metadata, hard links
+  included, and the other paths found leading to one, and is reported with an empty list when
+  there are none, or when the file is refused, with the reason in its errors. No collector or
+  watcher opens a decoy, by its path or a link, attributes included. Files the sensor reads are
+  opened with `O_NOATIME` where the kernel allows it.
 - The web collector names the release of each drupal.org project in a Drupal site's
   modules/contrib, themes/contrib or profiles/contrib, from the project and version drupal.org's
   packaging writes into its .info.yml. Releases are named for every package installed, changed or
@@ -74,6 +81,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- Decoys: high alerts for a decoy removed, replaced or rewritten, one listed and missing (also in
+  the first snapshot), one with another hard link, a path leading to one, and each decoy of a
+  sensor that stops listing it or stops reporting decoys at all. A decoy missing and then put in
+  place raises nothing.
 - A directory whose code changed is named in the alert of one of its files when that alert is
   high or critical, with the other files changed there, instead of a medium alert of its own: a
   backdoor in one plugin file raised three alerts, now one.

@@ -265,9 +265,9 @@ func openIn(dir, name string) (*os.File, os.FileInfo, error) {
 	// Checked on the O_PATH descriptor, which opens nothing a watcher of opens sees: a link to a
 	// decoy leads here too.
 	if isDecoy(info) {
-		return nil, info, ErrDecoy
+		return nil, info, refuseDecoy(name)
 	}
-	fd, err := syscall.Open("/proc/self/fd/"+strconv.Itoa(int(pf.Fd())), readFlags, 0)
+	fd, err := openNoAtime("/proc/self/fd/"+strconv.Itoa(int(pf.Fd())), readFlags)
 	if err != nil {
 		return nil, nil, &os.PathError{Op: "reopen", Path: pf.Name(), Err: err}
 	}
@@ -333,6 +333,18 @@ func releaseRoot(dir string) {
 	}
 }
 
+// openNoAtime opens path without updating its access time, which a file's owner or root may ask:
+// the sensor's reads would otherwise show on every file it reads, decoys' neighbours included, and
+// tell an intruder who looks at access times what the sensor reads and when. A file the sensor
+// may not open so is opened without the flag.
+func openNoAtime(path string, flags int) (int, error) {
+	fd, err := syscall.Open(path, flags|syscall.O_NOATIME, 0)
+	if errors.Is(err, syscall.EPERM) {
+		fd, err = syscall.Open(path, flags, 0)
+	}
+	return fd, err
+}
+
 func openFlags(full string, flags int) (*os.File, error) {
 	fd, err := syscall.Open(full, flags, 0)
 	if err != nil {
@@ -357,6 +369,9 @@ func attrsIn(dir, name string) (Attrs, error) {
 	}
 	if m := st.Mode & syscall.S_IFMT; m != syscall.S_IFREG && m != syscall.S_IFDIR {
 		return Attrs{}, nil
+	}
+	if isDecoyID(fileID{dev: uint64(st.Dev), ino: st.Ino}) { //nolint:unconvert,gosec // Dev's type differs between platforms
+		return Attrs{}, refuseDecoy(name)
 	}
 	return ReadAttrs("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
 }

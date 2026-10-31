@@ -31,7 +31,7 @@ func openIn(dir, name string) (*os.File, os.FileInfo, error) {
 		return nil, info, ErrNotRegular
 	}
 	if isDecoy(info) {
-		return nil, info, ErrDecoy
+		return nil, info, refuseDecoy(name)
 	}
 	fd, err := syscall.Open(full, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC|syscall.O_NOCTTY, 0)
 	if err != nil {
@@ -54,5 +54,9 @@ func readlinkIn(dir, name string) (string, error) {
 }
 
 func attrsIn(dir, name string) (Attrs, error) {
-	return ReadAttrs(filepath.Join(dir, filepath.FromSlash(name)))
+	full := filepath.Join(dir, filepath.FromSlash(name))
+	if info, err := os.Stat(full); err == nil && isDecoy(info) {
+		return Attrs{}, refuseDecoy(name)
+	}
+	return ReadAttrs(full)
 }

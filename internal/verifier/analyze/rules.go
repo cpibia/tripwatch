@@ -881,7 +881,11 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	for _, f := range decoyChanges(prev, cur) {
-		change("decoy", f.Fingerprint, f.Severity, f.Title, f.Detail)
+		if f.State {
+			state("decoy", f.Fingerprint, f.Severity, f.Title, f.Detail)
+		} else {
+			change("decoy", f.Fingerprint, f.Severity, f.Title, f.Detail)
+		}
 	}
 
 	for name, msg := range cur.Errors {
@@ -1837,36 +1841,67 @@ func releaseKind(ecosystem string) string {
 	return "Plugin"
 }
 
-// decoyChanges raises the decoys gone, replaced or rewritten since the previous snapshot: an
+// decoyChanges raises the decoys gone, replaced or rewritten since the previous snapshot (an
 // intruder who finds one and removes it, or the operator's list changed, which the sensor's
-// configuration says.
+// configuration says), and as conditions the decoys missing where none was before, a decoy with
+// another hard link and the other paths leading to one. A sensor that stops reporting its decoys
+// altogether loses each of them as if it were taken off the list.
 func decoyChanges(prev *State, cur State) []Finding {
-	if prev == nil || prev.Decoys == nil || cur.Decoys == nil {
-		return nil
-	}
-	now := map[string]system.DecoyState{}
-	for _, d := range cur.Decoys.Decoys {
-		now[d.Path] = d
+	var before map[string]system.DecoyState
+	if prev != nil && prev.Decoys != nil {
+		before = map[string]system.DecoyState{}
+		for _, d := range prev.Decoys.Decoys {
+			before[d.Path] = d
+		}
 	}
 	var out []Finding
-	for _, old := range prev.Decoys.Decoys {
-		if old.Missing {
-			continue
+	if cur.Decoys == nil {
+		for _, old := range listed(prev) {
+			if !old.Missing {
+				out = append(out, Finding{Fingerprint: "gone:" + old.Path, Severity: "high", Title: "Decoy no longer watched: " + old.Path,
+					Detail: old.Path + " was a decoy in the previous snapshot and the sensor no longer reports its decoys: its configuration or the sensor changed, which only root can do."})
+			}
 		}
-		d, listed := now[old.Path]
+		return out
+	}
+	now := map[string]bool{}
+	for _, d := range cur.Decoys.Decoys {
+		now[d.Path] = true
+		old, known := before[d.Path]
 		switch {
-		case !listed:
-			out = append(out, Finding{Fingerprint: "gone:" + old.Path, Severity: "high", Title: "Decoy no longer watched: " + old.Path,
-				Detail: old.Path + " was a decoy in the previous snapshot and the sensor no longer lists it: its configuration changed, which only root can do."})
+		case d.Missing && known && !old.Missing:
+			out = append(out, Finding{Fingerprint: "removed:" + d.Path, Severity: "high", Title: "Decoy removed: " + d.Path,
+				Detail: d.Path + " was there in the previous snapshot and is gone: whoever found it may know it was a decoy."})
 		case d.Missing:
-			out = append(out, Finding{Fingerprint: "removed:" + old.Path, Severity: "high", Title: "Decoy removed: " + old.Path,
-				Detail: old.Path + " was there in the previous snapshot and is gone: whoever found it may know it was a decoy."})
-		case d.Inode != old.Inode || d.Size != old.Size || !d.ModTime.Equal(old.ModTime) || d.ChangeTime != old.ChangeTime:
-			out = append(out, Finding{Fingerprint: fmt.Sprintf("changed:%s:%d:%d", old.Path, d.Inode, d.ChangeTime), Severity: "high", Title: "Decoy changed: " + old.Path,
-				Detail: fmt.Sprintf("%s was replaced or rewritten since the previous snapshot (inode %d to %d, %d to %d bytes): nothing legitimate touches a decoy.", old.Path, old.Inode, d.Inode, old.Size, d.Size)})
+			out = append(out, Finding{Fingerprint: "missing:" + d.Path, Severity: "high", Title: "Decoy missing: " + d.Path, State: true,
+				Detail: d.Path + " is listed as a decoy and is not there: a decoy is put in place before it is listed, so one never seen may have been found and removed."})
+		case known && !old.Missing && (d.Inode != old.Inode || d.Size != old.Size || !d.ModTime.Equal(old.ModTime) || d.ChangeTime != old.ChangeTime):
+			out = append(out, Finding{Fingerprint: fmt.Sprintf("changed:%s:%d:%d", d.Path, d.Inode, d.ChangeTime), Severity: "high", Title: "Decoy changed: " + d.Path,
+				Detail: fmt.Sprintf("%s was replaced or rewritten since the previous snapshot (inode %d to %d, %d to %d bytes): nothing legitimate touches a decoy.", d.Path, old.Inode, d.Inode, old.Size, d.Size)})
+		}
+		if d.Links > 1 {
+			out = append(out, Finding{Fingerprint: fmt.Sprintf("links:%s:%d", d.Path, d.Inode), Severity: "high", Title: "Decoy with another hard link: " + d.Path, State: true,
+				Detail: fmt.Sprintf("%s has %d hard links: another path leads to the decoy, and the sensor reads none of them, so whatever is written there is never read.", d.Path, d.Links)})
+		}
+	}
+	for _, a := range cur.Decoys.Aliases {
+		out = append(out, Finding{Fingerprint: "alias:" + a, Severity: "high", Title: "Path leading to a decoy: " + a, State: true,
+			Detail: a + " is the same file as a decoy, a hard link to it, so the sensor never reads it: a file hidden behind a decoy."})
+	}
+	for _, old := range listed(prev) {
+		if path := old.Path; !now[path] && !old.Missing {
+			out = append(out, Finding{Fingerprint: "gone:" + path, Severity: "high", Title: "Decoy no longer watched: " + path,
+				Detail: path + " was a decoy in the previous snapshot and the sensor no longer lists it: its configuration changed, which only root can do."})
 		}
 	}
 	return out
+}
+
+func listed(st *State) []system.DecoyState {
+	if st == nil || st.Decoys == nil {
+		return nil
+	}
+	return st.Decoys.Decoys
 }
 
 // fileAlertIn returns the alert, high or critical, of a file under dir among those raised for

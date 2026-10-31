@@ -1192,3 +1192,30 @@ func TestDecoyChanges(t *testing.T) {
 		t.Errorf("an unchanged decoy raised: %v", got)
 	}
 }
+
+// A decoy missing from the first snapshot, a second hard link and a path found leading to a decoy
+// are conditions; a sensor that stops reporting decoys loses them all; a decoy missing and then
+// put in place is no alert.
+func TestDecoyConditions(t *testing.T) {
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	cur := baseState()
+	cur.Decoys = &system.DecoysResult{
+		Decoys:  []system.DecoyState{{Path: "/a", Missing: true}, {Path: "/b", Inode: 2, Size: 1, ModTime: at, Links: 2}},
+		Aliases: []string{"/var/www/x.php"},
+	}
+	got := fingerprints(Evaluate(nil, cur))
+	for _, want := range []string{"high decoy:missing:/a", "high decoy:links:/b:2", "high decoy:alias:/var/www/x.php"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("first snapshot: missing %q in %v", want, got)
+		}
+	}
+	prev := cur
+	cur = baseState()
+	if got := fingerprints(Evaluate(&prev, cur)); !slices.Contains(got, "high decoy:gone:/b") || slices.Contains(got, "high decoy:gone:/a") {
+		t.Errorf("decoys no longer reported: %v", got)
+	}
+	cur.Decoys = &system.DecoysResult{Decoys: []system.DecoyState{{Path: "/a", Inode: 9, Size: 1, ModTime: at}, {Path: "/b", Inode: 2, Size: 1, ModTime: at, Links: 1}}}
+	if got := fingerprints(Evaluate(&prev, cur)); slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "decoy:") }) {
+		t.Errorf("a decoy put in place raised: %v", got)
+	}
+}

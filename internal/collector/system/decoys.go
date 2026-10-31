@@ -2,7 +2,11 @@ package system
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"io/fs"
+	"os"
 	"path"
 	"strings"
 	"syscall"
@@ -17,6 +21,9 @@ import (
 // changes what this reports.
 type Decoys struct {
 	Paths []string
+	// Err is why the decoys' configuration could not be read: reported with an empty list, so the
+	// verifier sees the decoys it knew go.
+	Err error
 }
 
 // DecoyState is one decoy as a snapshot finds it.
@@ -28,11 +35,16 @@ type DecoyState struct {
 	ModTime    time.Time `json:"mtime,omitzero"`
 	ChangeTime int64     `json:"ctime,omitempty"`
 	Inode      uint64    `json:"inode,omitempty"`
+	// Links counts the file's hard links: a second one is another path to the decoy, which the
+	// sensor never reads either.
+	Links uint64 `json:"links,omitempty"`
 }
 
 // DecoysResult is the decoys' state.
 type DecoysResult struct {
 	Decoys []DecoyState `json:"decoys"`
+	// Aliases are the other paths a collector or watcher found leading to a decoy, and left unread.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 // maxDecoys bounds the decoys watched.
@@ -75,9 +87,62 @@ func (d Decoys) Collect(_ context.Context, src collector.Source) (any, error) {
 		st.Size, st.Mode, st.ModTime = info.Size(), info.Mode().String(), info.ModTime().UTC()
 		st.ChangeTime, _ = collector.ChangeTime(info)
 		if sys, ok := info.Sys().(*syscall.Stat_t); ok {
-			st.Inode = sys.Ino
+			st.Inode, st.Links = sys.Ino, uint64(sys.Nlink) //nolint:unconvert // Nlink's type differs between platforms
 		}
 		res.Decoys = append(res.Decoys, st)
 	}
-	return res, nil
+	res.Aliases = collector.DecoyAliases()
+	return res, d.Err
+}
+
+// maxDecoysFile bounds the decoys' configuration file.
+const maxDecoysFile = 64 << 10
+
+// LoadDecoys reads the decoys' configuration: one absolute path a line, blank lines and lines
+// starting with # ignored. The file must belong to the user the sensor runs as (root) and be
+// unreadable by others: the list is what an intruder looks for, and the command line any local
+// user can read is no place for it. A missing file is no decoys.
+func LoadDecoys(name string) ([]string, error) {
+	f, err := os.Open(name) //nolint:gosec // the operator's configuration
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	switch {
+	case !info.Mode().IsRegular():
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	case !ok || int(st.Uid) != os.Geteuid():
+		return nil, fmt.Errorf("%s must belong to the user the sensor runs as", name)
+	case info.Mode().Perm()&0o077 != 0:
+		return nil, fmt.Errorf("%s must be readable by its owner only (mode 0600)", name)
+	case info.Size() > maxDecoysFile:
+		return nil, fmt.Errorf("%s is larger than %d bytes", name, maxDecoysFile)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxDecoysFile))
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for line := range strings.Lines(string(data)) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !path.IsAbs(line) {
+			return nil, fmt.Errorf("%s: %q is not an absolute path", name, line)
+		}
+		if len(paths) == maxDecoys {
+			return paths, fmt.Errorf("%s: more than %d decoys, the rest ignored", name, maxDecoys)
+		}
+		paths = append(paths, line)
+	}
+	return paths, nil
 }

@@ -31,7 +31,7 @@ func ReadAttrs(path string) (Attrs, error) {
 
 	// O_NONBLOCK keeps a FIFO or device from blocking the open; O_NOCTTY keeps a terminal from
 	// becoming the sensor's controlling terminal, whose owner could then signal it to death.
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC|syscall.O_NOCTTY, 0)
+	fd, err := openNoAtime(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC|syscall.O_NOCTTY)
 	if err != nil {
 		return attrs, err
 	}
