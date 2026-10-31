@@ -423,9 +423,18 @@ used, as the `mysql` client does. Values taken with `getenv()` are resolved from
 the PHP processes and their ancestors. Queries go through an interface (`querier`), so tests do
 not need a database.
 
-## Design: content references (not implemented)
+## Content references
 
-This section is a design for the next large change; nothing in it exists in the code yet.
+Implemented for WordPress plugins (`internal/verifier/refs`, `store/contentrefs.go`, the sensor's
+`releases.go`, `releaseChanges` in the rules), opt-in with `TRIPWATCH_CONTENT_REFERENCES=on`: the
+sensor names the release of each plugin with changed files from its header, the verifier
+fetches WordPress's `plugin-checksums` list for it within the bounds below, and a changed file
+whose SHA-256 the release lists at its path raises nothing, while one the release lacks or has
+with other content is high. WordPress's list carries no sizes, so the SHA-256 alone decides.
+Not yet done: WordPress core and themes (from release archives), Drupal, and leaving files
+that match their release out of the sensor's skimmer search, which needs the verifier to tell
+the sensor; until then every changed file is still read. The rest of this section is the design
+those follow.
 
 **Goal.** Today a changed script of a public component (an application's core, a plugin, a
 theme) is either an alert or, when it changes with its package's version file in a change too

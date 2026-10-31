@@ -38,6 +38,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/verifier/ingest"
 	"github.com/cpibia/tripwatch/internal/verifier/notify"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
+	"github.com/cpibia/tripwatch/internal/verifier/refs"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 	"github.com/cpibia/tripwatch/internal/verifier/ui"
 )
@@ -204,6 +205,11 @@ func serve(log *slog.Logger) error {
 	}
 
 	analyzer := &analyze.Analyzer{Store: st, Now: now, Log: log}
+	// Content references tell their source which releases the servers run: off unless asked for.
+	references := os.Getenv("TRIPWATCH_CONTENT_REFERENCES") == "on"
+	if references {
+		analyzer.Refs = &refs.Resolver{Store: st, Fetcher: &refs.Fetcher{}, Enabled: true, PerRound: 5, PerHostDay: 50, Now: now}
+	}
 	wake := make(chan struct{}, 1)
 	in := &ingest.Server{Store: st, CA: ca, Now: now, Log: log, Wake: wake, Started: now()}
 	go analyzer.Worker(ctx, wake)
@@ -286,7 +292,7 @@ func serve(log *slog.Logger) error {
 	errs := make(chan error, 2)
 	go func() { errs <- ingestSrv.ListenAndServeTLS("", "") }()
 	go func() { errs <- uiSrv.ListenAndServe() }()
-	log.Info("tripwatch verifier started", "version", buildinfo.Version, "ingest", ingestSrv.Addr, "ui", uiSrv.Addr, "email", mailer.Enabled())
+	log.Info("tripwatch verifier started", "version", buildinfo.Version, "ingest", ingestSrv.Addr, "ui", uiSrv.Addr, "email", mailer.Enabled(), "content_references", references)
 
 	select {
 	case <-ctx.Done():

@@ -798,6 +798,17 @@ console states it where it matters: `TRIPWATCH_KEEP_SNAPSHOTS_DAYS` (30, at leas
 alerts (90) and `TRIPWATCH_KEEP_RESOLVED_MINOR_DAYS` for resolved medium and low ones (7, no
 more than the others). Snapshots that are evidence of an open alert stay past their retention.
 
+Content references are off by default. With `TRIPWATCH_CONTENT_REFERENCES=on` the verifier
+compares the changed files of each WordPress plugin with the plugin's release as published: a
+file with the SHA-256 the release lists at its path is the update's own and raises nothing, one
+the release does not have, or has with other content, raises a high alert naming the release,
+and a plugin whose version went down raises a medium one. The checksums come from
+`downloads.wordpress.org` only, once per release for all the servers, kept in the database
+(2 GB at most, the least used dropped first), at most five fetches per analysis round and fifty
+per server a day; a release the source lacks is asked again after a day. Turning it on tells
+WordPress.org which plugins and versions the servers run. Webshell signatures and the skimmer
+search still read every changed file.
+
 More users are invited from the console (Settings, Users). A new password, or a first
 administrator, from the command line:
 

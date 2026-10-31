@@ -1391,13 +1391,13 @@ func Evaluate(prev *State, cur State) []Finding {
 				state("web", f.Kind+":"+f.Path, sev, title, detail)
 			}
 			if pa, ok := prevApps[app.Path]; ok {
-				scripts := scriptChanges(app)
+				scripts := scriptChanges(app, cur.Published)
 				// Scripts changed together are one alert, a deploy most likely: the directories
 				// whose code changed are listed in it rather than raised one by one.
 				bulk := len(scripts) == 1 && strings.HasPrefix(scripts[0].Fingerprint, "scripts:")
 				var dirs []string
 				for dir, sum := range app.DirHashes {
-					if old, ok := pa.DirHashes[dir]; ok && old != sum && !onlyDataChanged(app, dir) {
+					if old, ok := pa.DirHashes[dir]; ok && old != sum && !onlyDataChanged(app, dir) && !releasedIn(app, dir, cur.Published) {
 						if bulk {
 							dirs = append(dirs, dir)
 							continue
@@ -1419,6 +1419,9 @@ func Evaluate(prev *State, cur State) []Finding {
 					scripts[0].Detail += "\nDirectories whose code changed:\n" + strings.Join(dirs, "\n") + more
 				}
 				for _, f := range scripts {
+					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
+				}
+				for _, f := range releaseChanges(app, pa, cur.Published) {
 					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
 			}
@@ -1689,9 +1692,13 @@ const maxNamedScripts = 20
 // and the directory's hash alone does not say which file it is. One script is an alert of its
 // own; several changed together, as a deploy changes them, are one alert that names each with its
 // hash, as high as one alone: the count of alerts goes down, not what they say.
-func scriptChanges(app web.AppReport) []Finding {
+func scriptChanges(app web.AppReport, published map[string]Published) []Finding {
 	var scripts []web.FileChange
 	for _, c := range app.Changes {
+		// A file of a package whose release is known is judged against it (releaseChanges).
+		if _, judged := published[c.Path]; judged {
+			continue
+		}
 		if c.Change != web.ChangeRemoved && web.IsScript(c.Path) {
 			scripts = append(scripts, c)
 		}
@@ -1748,6 +1755,79 @@ func scriptChanges(app web.AppReport) []Finding {
 	}
 	return out
 }
+
+// releaseChanges raises the changed files of a package that differ from its public release: a
+// file the release does not have, or has with other content, was not put there by the release,
+// and a file that matches it byte for byte is the release's own and raises nothing. A package
+// whose release went down since the previous snapshot is raised too: a downgrade to a release
+// with a known hole passes every file comparison.
+func releaseChanges(app, prev web.AppReport, published map[string]Published) []Finding {
+	var out []Finding
+	for _, c := range app.Changes {
+		p, ok := published[c.Path]
+		if !ok || p.Matches {
+			continue
+		}
+		why := "the release has no file at this path"
+		if p.Listed {
+			why = "the release has this file with other content"
+		}
+		out = append(out, Finding{Fingerprint: "release-differs:" + c.Path + ":" + c.SHA256, Severity: "high",
+			Title: "Script differs from its published release: " + c.Path,
+			Detail: fmt.Sprintf("%s was %s in %s, and is not as %s publishes it: %s.\nSHA-256 %s",
+				c.Path, c.Change, app.Path, p.Release, why, orNone(c.SHA256))})
+	}
+	before := map[string]string{}
+	for _, r := range prev.Releases {
+		before[r.Root] = r.Version
+	}
+	for _, r := range app.Releases {
+		if old, ok := before[r.Root]; ok && lowerVersion(r.Version, old) {
+			out = append(out, Finding{Fingerprint: "release-downgrade:" + r.Root + ":" + r.Version, Severity: "medium",
+				Title: "Plugin downgraded: " + r.Slug,
+				Detail: fmt.Sprintf("%s went from %s to %s since the previous snapshot. A release older than the one in place may have a hole the newer one closed; its files match it as published, so nothing else is raised.",
+					r.Root, old, r.Version)})
+		}
+	}
+	return out
+}
+
+// releasedIn reports a directory whose every change is a file matching its public release, all of
+// them named: the change of its hash is the release's, not an alert of its own.
+func releasedIn(app web.AppReport, dir string, published map[string]Published) bool {
+	if len(published) == 0 || app.ChangeCount > len(app.Changes) {
+		return false
+	}
+	found := false
+	for _, c := range app.Changes {
+		if strings.HasPrefix(c.Path, dir+"/") {
+			if !published[c.Path].Matches {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
+}
+
+// lowerVersion reports whether version a is lower than b, compared number by number ("1.10" is
+// higher than "1.9"); a part that is not a number is compared as text.
+func lowerVersion(a, b string) bool {
+	pa, pb := strings.FieldsFunc(a, versionSep), strings.FieldsFunc(b, versionSep)
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		na, ea := strconv.Atoi(pa[i])
+		nb, eb := strconv.Atoi(pb[i])
+		switch {
+		case ea == nil && eb == nil && na != nb:
+			return na < nb
+		case (ea != nil || eb != nil) && pa[i] != pb[i]:
+			return pa[i] < pb[i]
+		}
+	}
+	return len(pa) < len(pb)
+}
+
+func versionSep(r rune) bool { return r == '.' || r == '-' || r == '+' }
 
 // changedIn lists the changes under a directory, at most maxNamedScripts of them.
 // codeExtensions are the files a change of the code tree is about: what the server or the
