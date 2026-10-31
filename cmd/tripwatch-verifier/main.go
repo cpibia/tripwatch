@@ -208,7 +208,8 @@ func serve(log *slog.Logger) error {
 	// Content references tell their source which releases the servers run: off unless asked for.
 	references := os.Getenv("TRIPWATCH_CONTENT_REFERENCES") == "on"
 	if references {
-		analyzer.Refs = &refs.Resolver{Store: st, Fetcher: &refs.Fetcher{}, Enabled: true, PerRound: 5, PerHostDay: 50, Now: now}
+		analyzer.Refs = &refs.Resolver{Store: st, Fetcher: &refs.Fetcher{}, Enabled: true, PerRound: 5, PerHostDay: 50, Now: now, Background: true}
+		go analyzer.Refs.Run(ctx)
 	}
 	wake := make(chan struct{}, 1)
 	in := &ingest.Server{Store: st, CA: ca, Now: now, Log: log, Wake: wake, Started: now()}

@@ -158,8 +158,8 @@ func (f *Fetcher) client(host string) *http.Client {
 		c = *f.Client
 	}
 	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if req.URL.Host != host || len(via) > 3 {
-			return fmt.Errorf("refs: redirect to %s refused", req.URL.Host)
+		if req.URL.Host != host || req.URL.Scheme != via[0].URL.Scheme || len(via) > 3 {
+			return fmt.Errorf("refs: redirect to %s://%s refused", req.URL.Scheme, req.URL.Host)
 		}
 		return nil
 	}
@@ -207,19 +207,28 @@ type Resolver struct {
 	Fetcher *Fetcher
 	// Enabled turns references on; off, Lookup always answers none.
 	Enabled bool
-	// PerRound bounds the fetches of one analysis round, PerHostDay those a host's snapshots
-	// start in a day.
+	// PerRound bounds the fetches of one pass of the analysis queue, PerHostDay those a host's
+	// snapshots start in a day.
 	PerRound, PerHostDay int
 	Now                  func() time.Time
+	// Background hands fetches to Run instead of making them in Lookup, so that a slow source
+	// never holds up the analysis: a release is then judged from the next snapshot on.
+	Background bool
 
 	mu      sync.Mutex
 	round   int
 	day     string
 	perHost map[string]int
+	queue   chan Key
+	queued  map[Key]bool
 }
 
-// missingFor is how long a release the source does not have is remembered before it is asked
-// for again.
+// maxQueued bounds the releases waiting to be fetched in the background.
+const maxQueued = 64
+
+// missingFor is how long a release the source does not have, or could not give (a timeout, an
+// error, a list too large or malformed), is remembered before it is asked for again: a host
+// naming one cannot make the verifier try at every snapshot.
 const missingFor = 24 * time.Hour
 
 // NewRound starts an analysis round, whose fetches PerRound bounds.
@@ -243,14 +252,59 @@ func (r *Resolver) Lookup(ctx context.Context, host string, k Key) (store.Conten
 	if !r.take(host, now) {
 		return store.ContentRef{}, false
 	}
-	ref, err = r.Fetcher.Fetch(ctx, k)
-	if err != nil {
+	if r.Background {
+		r.enqueue(k)
 		return store.ContentRef{}, false
 	}
-	if err := r.Store.PutContentRef(ctx, ref, now); err != nil {
-		return store.ContentRef{}, false
-	}
+	ref = r.fetch(ctx, k, now)
 	return ref, !ref.Missing
+}
+
+// fetch fetches and keeps a release's reference; a failure is kept as missing, for missingFor.
+func (r *Resolver) fetch(ctx context.Context, k Key, now time.Time) store.ContentRef {
+	ref, err := r.Fetcher.Fetch(ctx, k)
+	if err != nil {
+		ref = store.ContentRef{Ecosystem: k.Ecosystem, Slug: k.Slug, Version: k.Version, Missing: true}
+	}
+	_ = r.Store.PutContentRef(ctx, ref, now)
+	return ref
+}
+
+func (r *Resolver) enqueue(k Key) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.queue == nil {
+		r.queue, r.queued = make(chan Key, maxQueued), map[Key]bool{}
+	}
+	if r.queued[k] {
+		return
+	}
+	select {
+	case r.queue <- k:
+		r.queued[k] = true
+	default:
+	}
+}
+
+// Run makes the fetches Lookup handed over, one at a time, until ctx ends.
+func (r *Resolver) Run(ctx context.Context) {
+	r.mu.Lock()
+	if r.queue == nil {
+		r.queue, r.queued = make(chan Key, maxQueued), map[Key]bool{}
+	}
+	queue := r.queue
+	r.mu.Unlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case k := <-queue:
+			r.fetch(ctx, k, r.now())
+			r.mu.Lock()
+			delete(r.queued, k)
+			r.mu.Unlock()
+		}
+	}
 }
 
 // take spends one fetch of the round and of the host's day, or reports none is left.

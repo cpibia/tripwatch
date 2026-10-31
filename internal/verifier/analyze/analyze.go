@@ -238,6 +238,10 @@ func (a *Analyzer) Worker(ctx context.Context, wake <-chan struct{}) {
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {
+		// One pass of the queue is one round of the references' fetches.
+		if a.Refs != nil {
+			a.Refs.NewRound()
+		}
 		ids, err := a.Store.PendingSnapshots(ctx, 100)
 		if err != nil && ctx.Err() == nil {
 			a.Log.Error("load pending snapshots", "err", err)
@@ -549,7 +553,6 @@ func (a *Analyzer) published(ctx context.Context, host string, st State) map[str
 	if a.Refs == nil || st.Web == nil {
 		return nil
 	}
-	a.Refs.NewRound()
 	var out map[string]Published
 	for _, app := range st.Web.Apps {
 		for _, rel := range app.Releases {

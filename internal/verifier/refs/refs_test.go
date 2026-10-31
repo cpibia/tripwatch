@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -169,5 +170,70 @@ func TestContentRefsBound(t *testing.T) {
 	}
 	if kept["b"] || !kept["c"] {
 		t.Errorf("kept %v", kept)
+	}
+}
+
+// Every failure is remembered for a day, not a missing release alone: a source that errs or
+// gives a list too large or malformed is not asked again at every snapshot.
+func TestFailuresRemembered(t *testing.T) {
+	var asked atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		switch r.URL.Path {
+		case "/plugin-checksums/broken/1.0.json":
+			http.Error(w, "busy", http.StatusInternalServerError)
+		case "/plugin-checksums/garbled/1.0.json":
+			_, _ = w.Write([]byte("{not json"))
+		default:
+			_, _ = w.Write([]byte(`{"files":{"a":{"sha256":"` + strings.Repeat("a", maxReferenceBytes) + `"}}}`))
+		}
+	}))
+	defer srv.Close()
+	r := resolver(t, srv.URL)
+	for _, slug := range []string{"broken", "garbled", "huge"} {
+		for range 3 {
+			r.NewRound()
+			if _, ok := r.Lookup(context.Background(), "web-01", Key{WordPressPlugin, slug, "1.0"}); ok {
+				t.Errorf("%s gave a reference", slug)
+			}
+		}
+	}
+	if asked.Load() != 3 {
+		t.Errorf("asked %d times for three failing releases", asked.Load())
+	}
+}
+
+// In the background a lookup never waits for the source: the release is fetched apart and found
+// by a later lookup.
+func TestBackgroundFetch(t *testing.T) {
+	srv, _ := source(t)
+	r := resolver(t, srv.URL)
+	r.Background = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	k := Key{WordPressPlugin, "shop", "1.2.3"}
+	if _, ok := r.Lookup(ctx, "web-01", k); ok {
+		t.Fatal("a lookup waited for the source")
+	}
+	go r.Run(ctx)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ref, ok := r.Lookup(ctx, "web-01", k); ok && len(ref.Files) == 2 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Error("the background fetch never kept the reference")
+}
+
+// A redirect may not change the scheme, as it may not change the host.
+func TestRedirectKeepsScheme(t *testing.T) {
+	c := (&Fetcher{}).client("downloads.example")
+	via := []*http.Request{{URL: &url.URL{Scheme: "https", Host: "downloads.example"}}}
+	if err := c.CheckRedirect(&http.Request{URL: &url.URL{Scheme: "http", Host: "downloads.example"}}, via); err == nil {
+		t.Error("a redirect to http was followed")
+	}
+	if err := c.CheckRedirect(&http.Request{URL: &url.URL{Scheme: "https", Host: "downloads.example"}}, via); err != nil {
+		t.Errorf("a redirect on the same host and scheme was refused: %v", err)
 	}
 }

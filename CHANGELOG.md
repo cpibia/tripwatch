@@ -48,8 +48,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
   directory; a file the release lacks or has with other content is a high alert naming the
   release; a plugin whose version went down is a medium one. Checksums are fetched from one
   fixed host, slugs and versions checked against strict shapes, at most five fetches an analysis
-  round and fifty a server a day, kept in the database up to 2 GB, a release the source lacks
-  remembered for a day. Signatures and the skimmer search still read every changed file.
+  round and fifty a server a day, kept in the database up to 2 GB. A release the source lacks or
+  could not give (an error, a timeout, a list too large or malformed) is remembered for a day,
+  fetches run apart from the analysis, which never waits for them, so a release is judged from
+  the snapshot after it is fetched, and a redirect may change neither host nor scheme. Signatures
+  and the skimmer search still read every changed file.
 
 ## [0.1.42] - 2026-10-30
 
