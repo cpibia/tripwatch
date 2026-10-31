@@ -46,7 +46,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
   `cvv`), and a name's start, middle and end given by selectors on one element
   (`[name^=card][name$=number]`) put together, also when they leave out up to half of a known
   field name between them. A payment field's name inside base64 data, the payload of a data URI
-  or a whole quoted literal that decodes into data that is not text, is chance and not counted;
+  that a string holds (a quote, `data:`, a media type and `;base64,` before it) or a whole quoted literal that decodes into data that is not text, is chance and not counted;
   a run of code or of joined strings in the same letters (`(0+0+...+cardnumber.value)`) is
   never taken for it. The clean corpus flags the same files.
 - The families search, around each fixed word, the whole statement or line it is in (at most
