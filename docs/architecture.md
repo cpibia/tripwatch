@@ -433,10 +433,13 @@ sensor names the release of each plugin with changed files from its header, the 
 fetches WordPress's `plugin-checksums` list for it within the bounds below, and a changed file
 whose SHA-256 the release lists at its path raises nothing, while one the release lacks or has
 with other content is high. WordPress's list carries no sizes, so the SHA-256 alone decides.
-Not yet done: Drupal, and leaving files
-that match their release out of the sensor's skimmer search, which needs the verifier to tell
-the sensor; until then every changed file is still read. The rest of this section is the design
-those follow.
+Not yet done: Drupal. The rest of this section is the design it follows.
+
+**No channel to the sensor, by choice.** Files that match their release are still read by the
+sensor's skimmer search: telling the sensor which files to skip would need a channel from the
+verifier to a process that runs as root on every server, and a compromised verifier could then
+steer the sensors. The sensor stays an observer that only sends; the search costs little enough
+that the time it would save is not worth that surface.
 
 **Goal.** Today a changed script of a public component (an application's core, a plugin, a
 theme) is either an alert or, when it changes with its package's version file in a change too
