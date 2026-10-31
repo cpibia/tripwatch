@@ -55,7 +55,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   `placeholder`, `aria-label`, `autocomplete` (`cc-number`, `cc-csc`, `cc-exp`) and `data-*`
   attributes; parts that cover at least half of a known field name count, one side alone too
   unless it is only a generic part such as `number`. A payment field's name inside base64 data, the payload of a data URI
-  that a string holds (a quote, `data:`, a media type and `;base64,` before it) or a whole quoted literal that decodes into data that is not text, is chance and not counted;
+  that a string holds whole (a quote, `data:`, a media type and `;base64,` before it, the
+  same quote right after the base64) or a whole quoted literal that decodes into data that is not text, is chance and not counted;
   a run of code or of joined strings in the same letters (`(0+0+...+cardnumber.value)`) is
   never taken for it. The clean corpus flags the same files.
 - A changed script that reads a payment field and names another host, without a way out the

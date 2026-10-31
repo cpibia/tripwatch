@@ -265,15 +265,18 @@ func inBase64(original []byte, offsets []int32, text []byte, valuesFrom, valuesT
 	if end-start < minRun || start == 0 {
 		return false
 	}
-	if text[start-1] == ',' && bytes.HasSuffix(text[:start-1], []byte(";base64")) {
-		return dataURIStart(text[:start-1], start >= valuesFrom && start < valuesTo)
-	}
 	pad := end
 	for pad < len(text) && pad-end < 2 && text[pad] == '=' {
 		pad++
 	}
+	// quotedData reports whether text[start:pad] is the whole base64 payload of a string: the
+	// string closes right after it, so nothing of it can be code a browser runs.
 	quotedData := func(start, pad int) bool {
+		uri := text[start-1] == ',' && bytes.HasSuffix(text[:start-1], []byte(";base64"))
 		quote := text[start-1]
+		if uri {
+			quote = dataURIQuote(text[:start-1])
+		}
 		if quote != '\'' && quote != '"' && quote != '`' || pad >= len(text) || text[pad] != quote {
 			return false
 		}
@@ -283,6 +286,9 @@ func inBase64(original []byte, offsets []int32, text []byte, valuesFrom, valuesT
 		data, err := base64.StdEncoding.DecodeString(string(original[start:pad]))
 		if err != nil || len(data) == 0 {
 			return false
+		}
+		if uri {
+			return true
 		}
 		binary := 0
 		for _, c := range data {
@@ -310,29 +316,26 @@ func inBase64(original []byte, offsets []int32, text []byte, valuesFrom, valuesT
 	return false
 }
 
-// dataURIStart reports whether the ";base64" that text ends with closes the head of a data URI
-// that a string holds: "data:" and a media type, opened by a quote, or among the unquoted string
-// values. Code that only writes ";base64," before a run of the same letters is not one.
-func dataURIStart(text []byte, value bool) bool {
+// dataURIQuote returns the quote that opens the data URI whose head text ends with (";base64"):
+// "data:" and a media type right after a quote. 0 when there is none, as for code that only
+// writes ";base64," before a run of the same letters.
+func dataURIQuote(text []byte) byte {
 	const maxHead = 256
 	for i := len(text) - len(";base64"); i >= 0 && len(text)-i <= maxHead; i-- {
 		c := text[i]
 		switch {
 		case bytes.HasPrefix(text[i:], []byte("data:")):
 			if i == 0 {
-				return value
+				return 0
 			}
-			q := text[i-1]
-			return q == '\'' || q == '"' || q == '`' || value && !isWord(q)
+			return text[i-1]
 		case 'a' <= c && c <= 'z', '0' <= c && c <= '9', strings.IndexByte("/+.-_=;:", c) >= 0:
 		default:
-			return false
+			return 0
 		}
 	}
-	return false
+	return 0
 }
-
-func isWord(c byte) bool { return 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_' || c == '$' }
 
 // lowerFold returns b in lower case as the patterns of the families read it: ASCII letters
 // lowered, and the runes that fold to one of them made that letter, as Go's (?i) matched them.
