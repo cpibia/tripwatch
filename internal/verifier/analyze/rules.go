@@ -1393,14 +1393,25 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			if pa, ok := prevApps[app.Path]; ok {
 				scripts := scriptChanges(app, cur.Published)
+				released := releaseChanges(app, cur.KnownReleases, cur.Published)
 				// Scripts changed together are one alert, a deploy most likely: the directories
 				// whose code changed are listed in it rather than raised one by one.
 				bulk := len(scripts) == 1 && strings.HasPrefix(scripts[0].Fingerprint, "scripts:")
 				var dirs []string
-				for dir, sum := range app.DirHashes {
+				for _, dir := range slices.Sorted(maps.Keys(app.DirHashes)) {
+					sum := app.DirHashes[dir]
 					if old, ok := pa.DirHashes[dir]; ok && old != sum && !onlyDataChanged(app, dir) && !releasedIn(app, dir, cur.Published) {
 						if bulk {
 							dirs = append(dirs, dir)
+							continue
+						}
+						// A file of the directory with an alert of its own, more severe, says it
+						// already: the directory is named in that alert, not raised apart.
+						if f := fileAlertIn(dir, scripts, released); f != nil {
+							f.Detail += "\nIts directory's code changed: " + dir
+							if files := changedIn(app.Changes, dir); files != "" {
+								f.Detail += "\nChanged files there:\n" + files
+							}
 							continue
 						}
 						detail := "Without a deploy, someone changed the code of the application " + app.Path + "."
@@ -1422,7 +1433,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				for _, f := range scripts {
 					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
-				for _, f := range releaseChanges(app, cur.KnownReleases, cur.Published) {
+				for _, f := range released {
 					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
 			}
@@ -1752,7 +1763,7 @@ func scriptChanges(app web.AppReport, published map[string]Published) []Finding 
 		if c.SHA256 != "" {
 			detail += "\nSHA-256 " + c.SHA256
 		}
-		out = append(out, Finding{Fingerprint: "file:" + c.Path + ":" + c.SHA256, Severity: "high", Title: title, Detail: detail})
+		out = append(out, Finding{Fingerprint: "file:" + c.Path + ":" + c.SHA256, Severity: "high", Title: title, Detail: detail, Path: c.Path})
 	}
 	return out
 }
@@ -1775,7 +1786,7 @@ func releaseChanges(app web.AppReport, known map[string]store.HostRelease, publi
 		if p.Listed {
 			why = "the release has this file with other content"
 		}
-		out = append(out, Finding{Fingerprint: "release-differs:" + c.Path + ":" + c.SHA256, Severity: "high",
+		out = append(out, Finding{Fingerprint: "release-differs:" + c.Path + ":" + c.SHA256, Severity: "high", Path: c.Path,
 			Title: "Script differs from its published release: " + c.Path,
 			Detail: fmt.Sprintf("%s was %s in %s, and is not as %s publishes it: %s.\nSHA-256 %s",
 				c.Path, c.Change, app.Path, p.Release, why, orNone(c.SHA256))})
@@ -1820,6 +1831,20 @@ func releaseKind(ecosystem string) string {
 		return "Drupal project"
 	}
 	return "Plugin"
+}
+
+// fileAlertIn returns the alert, high or critical, of a file under dir among those raised for
+// single files, or nil.
+func fileAlertIn(dir string, lists ...[]Finding) *Finding {
+	for _, list := range lists {
+		for i := range list {
+			f := &list[i]
+			if f.Path != "" && strings.HasPrefix(f.Path, dir+"/") && (f.Severity == "high" || f.Severity == "critical") {
+				return f
+			}
+		}
+	}
+	return nil
 }
 
 // releasedIn reports a directory whose every change is a file matching its public release, all of

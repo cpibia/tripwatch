@@ -66,6 +66,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- A directory whose code changed is named in the alert of one of its files when that alert is
+  high or critical, with the other files changed there, instead of a medium alert of its own: a
+  backdoor in one plugin file raised three alerts, now one.
 - Content references, off by default (`TRIPWATCH_CONTENT_REFERENCES=on`): the changed files of a
   WordPress plugin or theme, and those of WordPress itself outside wp-content, are compared with
   the release as published on WordPress.org, by SHA-256 at the same path. A theme's release is

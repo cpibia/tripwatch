@@ -101,8 +101,9 @@ func TestReleaseRules(t *testing.T) {
 	if f := got["web-change:release-differs:"+root+"/assets/skim.js:dddd"]; f.Severity != "high" || !strings.Contains(f.Detail, "no file at this path") {
 		t.Errorf("added file: %+v", f)
 	}
-	if _, ok := got["web-change:code:"+root+":new"]; !ok {
-		t.Errorf("the directory with a file off its release is not raised: %v", got)
+	// The directory's change is named in the more severe alert of one of its files.
+	if _, ok := got["web-change:code:"+root+":new"]; ok || len(got) != 2 || !strings.Contains(got["web-change:release-differs:"+root+"/shop.php:aaaa"].Detail, "Its directory's code changed: "+root) {
+		t.Errorf("the directory with a file off its release is not folded: %v", got)
 	}
 	// The verifier remembers the last version of each package whatever snapshot named it: a
 	// downgrade is raised even when the snapshot before named the package with no change.

@@ -731,8 +731,13 @@ func TestScriptChanges(t *testing.T) {
 	if f := got["web-change:file:/var/www/shop/vendor/acme/App/New.php:aa"]; f.Severity != "high" || f.Title != "Script added: /var/www/shop/vendor/acme/App/New.php" {
 		t.Errorf("new script: %+v", f)
 	}
-	if f := got["web-change:code:/var/www/shop/vendor:b"]; !strings.Contains(f.Detail, "modified /var/www/shop/vendor/acme/etc/di.xml") {
-		t.Errorf("directory change does not name its files: %q", f.Detail)
+	// Its directory's change is named in it, with the other files changed there, not raised apart.
+	if f := got["web-change:file:/var/www/shop/vendor/acme/App/New.php:aa"]; !strings.Contains(f.Detail, "Its directory's code changed: /var/www/shop/vendor") ||
+		!strings.Contains(f.Detail, "modified /var/www/shop/vendor/acme/etc/di.xml") {
+		t.Errorf("the directory is not folded into the script's alert: %q", f.Detail)
+	}
+	if _, ok := got["web-change:code:/var/www/shop/vendor:b"]; ok {
+		t.Error("the directory is raised apart from the script's alert")
 	}
 	// The same scripts changed again to other contents are a new alert.
 	again := Evaluate(prev, State{Web: app(
@@ -898,7 +903,9 @@ func TestCodeChangeOfDataFilesOnly(t *testing.T) {
 		"a script":        {app(script, 2), true},
 		"incomplete list": {app(data, 5), true},
 	} {
-		got := slices.ContainsFunc(Evaluate(&prev, tc.cur), func(f Finding) bool { return strings.HasPrefix(f.Fingerprint, "web-change:code:/srv/site/captcha") })
+		got := slices.ContainsFunc(Evaluate(&prev, tc.cur), func(f Finding) bool {
+			return strings.HasPrefix(f.Fingerprint, "web-change:code:/srv/site/captcha") || strings.Contains(f.Detail, "Its directory's code changed: /srv/site/captcha")
+		})
 		if got != tc.want {
 			t.Errorf("%s: alert %v, want %v", name, got, tc.want)
 		}
