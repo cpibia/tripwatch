@@ -13,6 +13,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
   each ASCII character of its start. The file's size, already counted in the run's budget, bounds
   the work. One without a mark whose start is mostly outside ASCII, which only a charset the
   server or the page declares makes UTF-16, is read as it is: a limit of the rule.
+- The skimmer search costs a fifth of what it did in 0.1.42: about 0.1 s per MB of changed
+  script on generated input and 0.25 on real bundles, against 1.1. Go's case-insensitive
+  patterns folded every character and tried their alternatives at every byte: the text is now put
+  in lower case once, and each family runs only around the fixed words its matches hold (`cc`,
+  `card`, `fetch`, `sendBeacon`, `atob`...), with the same answers, which a test checks against
+  the full patterns on generated text. The clean corpus reads in 18 s, was 100.
 
 ## [0.1.42] - 2026-10-30
 

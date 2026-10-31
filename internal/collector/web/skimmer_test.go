@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -322,6 +323,41 @@ func TestSkimmerSignalsOnTokens(t *testing.T) {
 	} {
 		if skimmerSignals([]byte(src)) == nil {
 			t.Errorf("%s: not found", name)
+		}
+	}
+}
+
+// The searches near their anchors and the scan for long base64 literals give the answers of the
+// patterns they stand for, on text without runs of blanks longer than a window.
+func TestAnchoredSearchesMatchThePatterns(t *testing.T) {
+	parts := []string{"cc", "_", "number", "card", "holder", "cvv", "2", "cvc", "security", "-code", "expir", "ation", "_month",
+		"payment[", "x", " ", ".", "new", "(", ")", "Image", "window", "WebSocket", "sendBeacon", "fetch", "'", `"`, "https:", "//",
+		"a.example", "POST", ",", "url", ":", "$.", "ajax", ".open", "no-cors", "querySelectorAll", "input", "elements", "FormData",
+		"XMLHttpRequest", "atob", "String.fromCharCode", "Function", "eval", "unescape", `\x41`, "=", "QUJD", "+", "/"}
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // a seeded generator, so a failure repeats
+	for range 20000 {
+		var b strings.Builder
+		for range 1 + rng.IntN(24) {
+			b.WriteString(parts[rng.IntN(len(parts))])
+		}
+		text := []byte(b.String())
+		lower := lowerASCII(text)
+		for name, c := range map[string][2]bool{
+			"fields":  {matchNear(paymentFieldsLower, lower, paymentAnchors), paymentFields.Match(text)},
+			"harvest": {matchNear(formHarvestLower, lower, harvestAnchors), formHarvest.Match(text)},
+			"exits":   {matchNear(exfiltrationLower, lower, exitAnchors), exfiltration.Match(text)},
+			"sends":   {matchNear(sendsLower, lower, sendAnchors), sends.Match(text)},
+			"hidden":  {hidden(text), obfuscation.Match(text) || reversed.Match(text)},
+		} {
+			if c[0] != c[1] {
+				t.Fatalf("%s on %q: %v, the pattern says %v", name, text, c[0], c[1])
+			}
+		}
+	}
+	long := "'" + strings.Repeat("QUJD", 100) + "=='"
+	for _, s := range []string{long, long[:len(long)-4] + "'", "'" + strings.Repeat("QUJD", 99) + "'", `x"` + strings.Repeat("a/+9", 101) + `"y`} {
+		if got, want := longBase64([]byte(s)), obfuscation.MatchString(s); got != want {
+			t.Errorf("longBase64 on a %d-byte literal: %v, the pattern says %v", len(s), got, want)
 		}
 	}
 }

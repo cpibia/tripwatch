@@ -44,6 +44,16 @@ var (
 	// The browser runs an SVG script element whatever namespace prefix names it.
 	activeSVG = regexp.MustCompile(`(?i)<(?:[a-z0-9_.-]+:)?script\b|\bon[a-z]{3,20}\s*=|javascript:`)
 
+	// The families as they run, on text in lower case.
+	paymentFieldsLower = folded(paymentFields.String())
+	formHarvestLower   = folded(formHarvest.String())
+	exfiltrationLower  = folded(exfiltration.String())
+	sendsLower         = folded(sends.String())
+	charCodesLower     = folded(charCodes.String())
+	escapeRunLower     = folded(escapeRun.String())
+	// obfuscationLower is obfuscation but its long base64 literal, which longBase64 finds.
+	obfuscationLower = folded(strings.Replace(obfuscation.String(), `|['"][A-Za-z0-9+/]{400,}={0,2}['"]`, "", 1))
+
 	atobLiteral = regexp.MustCompile("\\batob\\s*\\(\\s*['\"`]([A-Za-z0-9+/=]{4,1000})['\"`]\\s*\\)")
 	// reversedLiteral is a string written backwards and turned around at run time.
 	reversedLiteral = regexp.MustCompile(`['"]([^'"\\]{4,200})['"]\s*\.\s*split\s*\(\s*['"]{2}\s*\)\s*\.\s*reverse\s*\(\s*\)\s*\.\s*join\s*\(`)
@@ -58,6 +68,123 @@ func newCall(name string) string {
 	return `\bnew\s*\(*\s*(?:(?:window|self|globalThis)\s*\.\s*)?` + name + `\s*\)*\s*\(`
 }
 
+// never matches nothing; when returns re, or never when the literal part re needs is absent.
+var never = regexp.MustCompile(`[^\x00-\x{10FFFF}]`)
+
+func when(present bool, re *regexp.Regexp) *regexp.Regexp {
+	if present {
+		return re
+	}
+	return never
+}
+
+// paymentAnchors and harvestAnchors are the fixed parts, one in every match of their pattern.
+var (
+	paymentAnchors = []string{"cc", "card", "cvv", "cvc", "security", "expir"}
+	harvestAnchors = []string{"queryselectorall", "elements", "formdata"}
+	exitAnchors    = []string{"new", "sendbeacon", "no-cors", "fetch", ".open", "$.", "url"}
+	sendAnchors    = []string{"new", "sendbeacon", "fetch"}
+	hiddenAnchors  = []string{"atob", "fromcharcode", "new", "eval", "unescape", `\x`}
+)
+
+// hidden reports obfuscation in b: a decoder, a constructed function, eval, a run of escapes, a
+// long base64 literal, or a string turned around at run time.
+func hidden(b []byte) bool {
+	return matchNear(obfuscationLower, lowerASCII(b), hiddenAnchors) || longBase64(b) || reversed.Match(b)
+}
+
+// longBase64 reports a quoted literal of 400 or more base64 characters, as obfuscation's pattern
+// does, in one pass.
+func longBase64(b []byte) bool {
+	run := -1
+	for i, c := range b {
+		switch {
+		case c == '\'' || c == '"':
+			if run >= 400 {
+				return true
+			}
+			run = 0
+		case run >= 0 && ('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '+' || c == '/'):
+			run++
+		case run >= 400 && c == '=':
+			// Padding before the closing quote.
+			for j := i; j < len(b) && j < i+3; j++ {
+				if b[j] == '\'' || b[j] == '"' {
+					return true
+				}
+				if b[j] != '=' {
+					break
+				}
+			}
+			run = -1
+		default:
+			run = -1
+		}
+	}
+	return false
+}
+
+// matchNear runs re only around each place an anchor occurs, in a window wider than any match of
+// re (at most 24 bytes before its anchor and 64 after; spacing longer than that in the source is
+// gone from the tokenizer's rendering, searched with it): the same answer as running it on the whole text, without
+// trying an alternation without a literal prefix at every byte.
+func matchNear(re *regexp.Regexp, text []byte, anchors []string) bool {
+	const before, after = 24, 64
+	for _, a := range anchors {
+		for off := 0; ; {
+			i := bytes.Index(text[off:], []byte(a))
+			if i < 0 {
+				break
+			}
+			i += off
+			// Only a match over the anchor counts: a "\b" at the window's edge is no edge of
+			// the text.
+			start := max(0, i-before)
+			for _, m := range re.FindAllIndex(text[start:min(len(text), i+len(a)+after)], -1) {
+				if start+m[0] <= i && i < start+m[1] {
+					return true
+				}
+			}
+			off = i + 1
+		}
+	}
+	return false
+}
+
+// lowerASCII returns b with its ASCII letters in lower case.
+func lowerASCII(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		out[i] = c
+	}
+	return out
+}
+
+// folded compiles a case-insensitive pattern as a case-sensitive one to run on text in lower case
+// (lowerASCII): the same matches on ASCII, several times faster than Go's (?i), which folds every
+// character it compares.
+func folded(pattern string) *regexp.Regexp {
+	pattern = strings.TrimPrefix(pattern, "(?i)")
+	var b strings.Builder
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		if c == '\\' && i+1 < len(pattern) {
+			b.WriteByte(c)
+			i++
+			b.WriteByte(pattern[i])
+			continue
+		}
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b.WriteByte(c)
+	}
+	return regexp.MustCompile(b.String())
+}
+
 // maxDecoded bounds the literals decoded from one file.
 const maxDecoded = 256
 
@@ -68,7 +195,12 @@ func decoded(content []byte) []byte {
 	// Literals joined with "+" are decoded joined: a field's name split across two of them is
 	// whole again.
 	last := -1
-	for _, m := range atobLiteral.FindAllSubmatchIndex(content, maxDecoded) {
+	// Each search runs only on a file that holds its literal part: most hold none, and the
+	// patterns cost far more than the look.
+	has := func(lit string) bool { return bytes.Contains(content, []byte(lit)) }
+	lower := lowerASCII(content)
+	hasFold := func(lit string) bool { return bytes.Contains(lower, []byte(lit)) }
+	for _, m := range when(has("atob"), atobLiteral).FindAllSubmatchIndex(content, maxDecoded) {
 		b, err := base64.StdEncoding.DecodeString(string(content[m[2]:m[3]]))
 		if err != nil {
 			last = -1
@@ -80,13 +212,13 @@ func decoded(content []byte) []byte {
 		out = append(out, b...)
 		last = m[1]
 	}
-	for _, m := range reversedLiteral.FindAllSubmatch(content, maxDecoded) {
+	for _, m := range when(has("reverse"), reversedLiteral).FindAllSubmatch(content, maxDecoded) {
 		out = append(out, ' ')
 		for i := len(m[1]) - 1; i >= 0; i-- {
 			out = append(out, m[1][i])
 		}
 	}
-	for _, m := range charCodes.FindAllSubmatch(content, maxDecoded) {
+	for _, m := range when(hasFold("fromcharcode"), charCodesLower).FindAllSubmatch(lower, maxDecoded) {
 		out = append(out, ' ')
 		for _, code := range strings.Split(string(m[1]), ",") {
 			if v, err := strconv.ParseUint(strings.TrimSpace(code), 0, 8); err == nil {
@@ -94,7 +226,7 @@ func decoded(content []byte) []byte {
 			}
 		}
 	}
-	for _, run := range escapeRun.FindAll(content, maxDecoded) {
+	for _, run := range when(has(`\x`) || hasFold(`\u00`), escapeRunLower).FindAll(lower, maxDecoded) {
 		out = append(out, ' ')
 		for i := 0; i+3 < len(run); {
 			n := 4
@@ -215,12 +347,13 @@ func (f *skimmerFamilies) scan(content []byte) {
 	if extra := append(append(decoded(content), folded...), code...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)
 	}
-	f.fields = f.fields || paymentFields.Match(text)
-	f.harvest = f.harvest || formHarvest.Match(text)
-	f.exits = f.exits || exfiltration.Match(text)
-	f.sends = f.sends || sends.Match(text)
-	f.hidden = f.hidden || obfuscation.Match(content) || reversed.Match(content) || obfuscation.Match(bare) || reversed.Match(bare)
-	f.key = f.key || secretKey.Match(text)
+	lower := lowerASCII(text)
+	f.fields = f.fields || matchNear(paymentFieldsLower, lower, paymentAnchors)
+	f.harvest = f.harvest || matchNear(formHarvestLower, lower, harvestAnchors)
+	f.exits = f.exits || matchNear(exfiltrationLower, lower, exitAnchors)
+	f.sends = f.sends || matchNear(sendsLower, lower, sendAnchors)
+	f.hidden = f.hidden || hidden(content) || hidden(bare)
+	f.key = f.key || bytes.Contains(text, []byte("sk_live_")) && secretKey.Match(text)
 }
 
 // verdict names the families of a skimmer: payment fields with an exit to another host or with
