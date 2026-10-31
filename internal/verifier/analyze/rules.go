@@ -1402,6 +1402,12 @@ func Evaluate(prev *State, cur State) []Finding {
 				if f.Reachable {
 					detail += "\nReachable from the web according to the configuration."
 				}
+				// The sensor reports it only in the run that saw the script change: a change, which
+				// only a person closes, and not a condition the next snapshot would resolve.
+				if f.Kind == web.KindPaymentWithHost {
+					change("web-change", f.Kind+":"+f.Path, sev, title, detail)
+					continue
+				}
 				state("web", f.Kind+":"+f.Path, sev, title, detail)
 			}
 			if pa, ok := prevApps[app.Path]; ok {

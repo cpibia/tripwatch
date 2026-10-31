@@ -61,7 +61,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
   never taken for it. The clean corpus flags the same files.
 - A changed script that reads a payment field and names another host, without a way out the
   strict search knows (jQuery markup, `srcset`, CSS `url()`, `srcdoc`, a fragment parsed from
-  markup...), is reported as `payment_field_with_host`, a medium alert. On a corpus of 2,776
+  markup...), is reported as `payment_field_with_host`, a medium alert that only a person closes. On a corpus of 2,776
   clean scripts (WordPress, WooCommerce, three payment gateways, Elementor, Contact Form 7) it
   marks 11, all in payment gateways
   (Stripe, WooPayments, PayPal); with content references on, a gateway's file that matches its
