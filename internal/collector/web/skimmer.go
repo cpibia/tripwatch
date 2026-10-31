@@ -36,12 +36,12 @@ var skimmerExtensions = []string{".js", ".mjs", ".html", ".htm", ".phtml", ".svg
 // to a host of its own, or hides the code that does.
 var (
 	paymentFields = regexp.MustCompile(`(?i)cc[_-]?(?:number|num|cid|exp|owner)|card[_-]?(?:number|holder|cvc|cvv|expir)|cardnumber|\bcvv2?\b|\bcvc\b|security[_-]?code|payment\[cc_|expir(?:y|ation)[_-]?(?:month|year|date)`)
-	exfiltration  = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|['"]no-cors['"]|(?:fetch|\.open|\$\.(?:ajax|post|get)|url\s*:)\s*\(?\s*(?:['"]POST['"]\s*,\s*)?['"](?:https?:)?//[a-z0-9-]+\.[a-z0-9.-]+`)
+	exfiltration  = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|` + newCall("EventSource") + `|['"]no-cors['"]|` + urlSink + `[\s(]*(?:[0-9a-z_$]+\s*,[\s(]*)?(?:['"]POST['"]\s*,\s*)?` + urlLiteral)
 	obfuscation   = regexp.MustCompile(`(?i)\batob\s*\(|String\.fromCharCode|` + newCall("Function") + `|\beval\s*\(|\bunescape\s*\(|(?:\\x[0-9a-f]{2}){8}|['"][A-Za-z0-9+/]{400,}={0,2}['"]`)
 	formHarvest   = regexp.MustCompile(`(?i)querySelectorAll\s*\(\s*['"](?:input|form|select)|\.elements\b|` + newCall("FormData"))
 	secretKey     = regexp.MustCompile(`\bsk_live_[0-9A-Za-z]{16,}`)
 	// sends is any way out, to a host named in the code or one put together at run time.
-	sends = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|\bfetch\s*\(|\bnew\s*\(*\s*XMLHttpRequest\b`)
+	sends = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|` + newCall("EventSource") + `|\bfetch\s*\)?\s*\(|\bnew\s*\(*\s*XMLHttpRequest\b|\bwindow\s*\.\s*open\s*\(`)
 	// The browser runs an SVG script element whatever namespace prefix names it.
 	activeSVG = regexp.MustCompile(`(?i)<(?:[a-z0-9_.-]+:)?script\b|\bon[a-z]{3,20}\s*=|javascript:`)
 
@@ -63,6 +63,16 @@ var (
 	escapeRun       = regexp.MustCompile(`(?i)(?:\\x[0-9a-f]{2}|\\u00[0-9a-f]{2}){4,}`)
 )
 
+// urlLiteral is a string naming another host, as the tokenizer's rendering writes a URL: a name
+// with or without dots, an IPv4 address, or an IPv6 one in brackets.
+const urlLiteral = `['"](?:https?:|wss?:)?//(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])`
+
+// urlSink is what takes the URL a skimmer sends to: a call (also through .call, .apply, a
+// Request, an EventSource, the base of a URL, a sequence expression), an option, or a property a
+// browser loads from (an image's or a script's src, a link's or the location's href, a form's
+// action).
+const urlSink = `(?:fetch\s*\)?|\.open|\$\.(?:ajax|post|get)|url\s*:|\bfetch\s*\.\s*(?:call|apply)\s*\(\s*[a-z0-9_$]*\s*,|reflect\.apply\s*\(\s*fetch\s*,\s*[a-z0-9_$]*\s*,\s*\[|new\s+(?:request|eventsource)|new\s+url\s*\([^()]{0,512},|\.(?:src|href|action)\s*=|\blocation\s*=|\blocation\s*\.\s*(?:assign|replace)|\bwindow\s*\.\s*open)`
+
 // newCall matches a constructor called with new, also through parentheses or a global object
 // (new(Image)(), new window.Image()).
 func newCall(name string) string {
@@ -83,15 +93,15 @@ func when(present bool, re *regexp.Regexp) *regexp.Regexp {
 var (
 	paymentAnchors = []string{"cc", "card", "cvv", "cvc", "security", "expir"}
 	harvestAnchors = []string{"queryselectorall", "elements", "formdata"}
-	exitAnchors    = []string{"new", "sendbeacon", "no-cors", "fetch", ".open", "$.", "url"}
-	sendAnchors    = []string{"new", "sendbeacon", "fetch"}
+	exitAnchors    = []string{"new", "sendbeacon", "no-cors", "fetch", ".open", "$.", "url", "src", "href", "action", "location", "call", "apply"}
+	sendAnchors    = []string{"new", "sendbeacon", "fetch", "open"}
 	hiddenAnchors  = []string{"atob", "fromcharcode", "new", "eval", "unescape", `\x`}
 )
 
 // hidden reports obfuscation in b: a decoder, a constructed function, eval, a run of escapes, a
 // long base64 literal, or a string turned around at run time.
 func hidden(b []byte) bool {
-	return matchNear(obfuscationLower, lowerFold(b), hiddenAnchors) || longBase64(b) || reversed.Match(b)
+	return matchNear(obfuscationLower, lowerFold(b), hiddenAnchors, nil) || longBase64(b) || reversed.Match(b)
 }
 
 // longBase64 reports a quoted literal of 400 or more base64 characters, as obfuscation's pattern
@@ -136,7 +146,7 @@ const maxStatementReach = 4 << 10
 // anchor counts: a "\b" at a region's edge where no statement ends is no edge of the text. The
 // same answer as running re on the whole text, without trying an alternation with no literal
 // prefix at every byte.
-func matchNear(re *regexp.Regexp, text []byte, anchors []string) bool {
+func matchNear(re *regexp.Regexp, text []byte, anchors []string, skip func(text []byte, m []int) bool) bool {
 	// anchorEnd[i] is one past the longest anchor starting at i, 0 when none does.
 	anchorEnd := make([]int32, len(text))
 	found := false
@@ -159,6 +169,9 @@ func matchNear(re *regexp.Regexp, text []byte, anchors []string) bool {
 	regionStart, regionEnd := -1, -1
 	search := func() bool {
 		for _, m := range re.FindAllIndex(text[regionStart:regionEnd], -1) {
+			if skip != nil && skip(text, []int{regionStart + m[0], regionStart + m[1]}) {
+				continue
+			}
 			for j := regionStart + m[0]; j < regionStart+m[1]; j++ {
 				if anchorEnd[j] != 0 {
 					return true
@@ -206,6 +219,29 @@ var foldsToASCII = func() map[rune]byte {
 	}
 	return m
 }()
+
+// inBase64 reports a match inside a run of base64 longer than any field name, such as an image
+// in a data URI, where "cvv" between a "+" and a "/" is chance, not a field: names hidden in base64
+// are decoded on their own (decoded).
+func inBase64(text []byte, m []int) bool {
+	const run = 48
+	b64 := func(c byte) bool {
+		return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '+' || c == '/'
+	}
+	start, end := m[0], m[1]
+	for start > 0 && b64(text[start-1]) && m[0]-start < run {
+		start--
+	}
+	for end < len(text) && b64(text[end]) && end-m[1] < run {
+		end++
+	}
+	for i := m[0]; i < m[1]; i++ {
+		if !b64(text[i]) {
+			return false
+		}
+	}
+	return end-start >= run
+}
 
 // lowerFold returns b in lower case as the patterns of the families read it: ASCII letters
 // lowered, and the runes that fold to one of them made that letter, as Go's (?i) matched them.
@@ -422,10 +458,10 @@ func (f *skimmerFamilies) scan(content []byte) {
 		text = append(slices.Clip(content), extra...)
 	}
 	lower := lowerFold(text)
-	f.fields = f.fields || matchNear(paymentFieldsLower, lower, paymentAnchors)
-	f.harvest = f.harvest || matchNear(formHarvestLower, lower, harvestAnchors)
-	f.exits = f.exits || matchNear(exfiltrationLower, lower, exitAnchors)
-	f.sends = f.sends || matchNear(sendsLower, lower, sendAnchors)
+	f.fields = f.fields || matchNear(paymentFieldsLower, lower, paymentAnchors, inBase64)
+	f.harvest = f.harvest || matchNear(formHarvestLower, lower, harvestAnchors, nil)
+	f.exits = f.exits || matchNear(exfiltrationLower, lower, exitAnchors, nil)
+	f.sends = f.sends || matchNear(sendsLower, lower, sendAnchors, nil)
 	f.hidden = f.hidden || hidden(content) || hidden(bare)
 	f.key = f.key || bytes.Contains(text, []byte("sk_live_")) && secretKey.Match(text)
 }
