@@ -359,7 +359,11 @@ reading kept; a script using more than 2,048
 constants or nesting brackets past 64 levels is named in the issues); names built at run time (from the page, through
 functions, loops, spread or aliases of functions), object properties (`o.a`), a pattern's
 `.source`, `String.raw`, and a constant used more than a piece after thousands of decoys set
-around it are past what a search without running the script can follow, a limit of the rule, and a file is read in 1 MB pieces with the families
+around it are past what a search without running the script can follow, a limit of the rule;
+so are a host that no literal of the script names (read from a `meta` tag or an attribute the
+template writes), for which not even the medium signal fires, and a skimmer split in two scripts
+changed together, one reading the field into `localStorage` and the other sending it, since the
+families are gathered per file: both leave only the alert on the changed code; and a file is read in 1 MB pieces with the families
 gathered across them (decoded from UTF-16 first when its byte order mark, or the zero byte beside
 each ASCII character of its start, says it is; a charset declared only by the server or the page
 is not seen), so padding cannot separate the fields from the exit. When more than 50

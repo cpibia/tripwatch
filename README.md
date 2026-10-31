@@ -490,7 +490,10 @@ For each application the `web` collector produces:
   with an exit to another host (`new Image`, `sendBeacon`, `WebSocket`, a request to an absolute
   URL) or with obfuscation (`atob`, `fromCharCode`, `new Function`, `eval`), and for live secret
   payment keys, large files in pieces; a payment field read in a script that names another host,
-  with none of those exits, is a medium alert, silent when the file matches its published release; in a change of more than 50 scripts, generated bundles and
+  with none of those exits, is a medium alert, silent when the file matches its published release
+  (a host no literal of the script names, and a skimmer split in two scripts changed together, one
+  storing the field and the other sending it, leave only the alert on the changed code: the search
+  is per file); in a change of more than 50 scripts, generated bundles and
   packages updated as a whole (their version file changed with them) are left out and named, files changed elsewhere are still read; an
   SVG in an upload directory that runs script, under any namespace prefix, is reported as it lands;
 - **changed code files by name**: with a state directory the sensor keeps a manifest of each
