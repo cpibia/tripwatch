@@ -353,7 +353,9 @@ constants or nesting brackets past 64 levels is named in the issues); names buil
 functions, loops, spread or aliases of functions), object properties (`o.a`), a pattern's
 `.source`, `String.raw`, and a constant used more than a piece after thousands of decoys set
 around it are past what a search without running the script can follow, a limit of the rule, and a file is read in 1 MB pieces with the families
-gathered across them, so padding cannot separate the fields from the exit. When more than 50
+gathered across them (decoded from UTF-16 first when its byte order mark, or the zero byte beside
+each ASCII character of its start, says it is; a charset declared only by the server or the page
+is not seen), so padding cannot separate the fields from the exit. When more than 50
 scripts and templates changed at once, generated bundles (`pub/static`, `var/view_preprocessed`,
 `wp-content/cache`) and packages with more than 10 changed scripts whose version file changed too (`style.css`,
 `readme.txt`, the main plugin file, `composer.json`, `package.json`, `etc/module.xml`, `.info.yml`;

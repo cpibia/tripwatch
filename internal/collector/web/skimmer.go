@@ -406,7 +406,7 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 	defer func() { _ = f.Close() }()
 	var fam skimmerFamilies
 	var svg []string
-	r := io.LimitReader(f, info.Size())
+	r := textReader(io.LimitReader(f, info.Size()))
 	buf := make([]byte, skimmerChunk+skimmerOverlap)
 	kept := 0
 	for {

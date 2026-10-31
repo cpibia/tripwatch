@@ -6,6 +6,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A script saved in UTF-16 is decoded to UTF-8 before the skimmer search, as a browser decodes
+  it: told by its byte order mark, little or big endian, or without one by the zero byte beside
+  each ASCII character of its start. The file's size, already counted in the run's budget, bounds
+  the work. One without a mark whose start is mostly outside ASCII, which only a charset the
+  server or the page declares makes UTF-16, is read as it is: a limit of the rule.
+
 ## [0.1.42] - 2026-10-30
 
 What changes for an operator, in short; the details follow by component.
