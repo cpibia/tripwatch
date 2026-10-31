@@ -236,6 +236,10 @@ func readlinkFD(fd int) (string, error) {
 	return string(buf[:n]), nil
 }
 
+// OpenPath returns an O_PATH descriptor for name in the observed root, resolved as every reader
+// resolves it, which opens nothing: for a watcher to mark a file it must never read.
+func OpenPath(src Source, name string) (*os.File, error) { return openPath(src.Root, name) }
+
 // statIn describes name, following symlinks inside dir, without opening the file itself.
 func statIn(dir, name string) (os.FileInfo, error) {
 	f, err := openPath(dir, name)

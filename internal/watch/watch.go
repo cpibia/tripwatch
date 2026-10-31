@@ -30,7 +30,13 @@ const (
 	ClassScratch = "scratch"
 	// ClassContainer is containers with power over the host, started or removed.
 	ClassContainer = "container"
+	// ClassDecoy is a decoy file read by a process: Reason is ReasonSweep when the process was
+	// reading many files of the decoy's directory at the time.
+	ClassDecoy = "decoy"
 )
+
+// ReasonSweep marks a decoy read among many files of its directory read by the same process.
+const ReasonSweep = "sweep"
 
 // Reasons a process start is reported. Only these are: a busy server starts thousands of
 // processes an hour, and the verifier needs the few that mean something.
