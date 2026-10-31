@@ -1170,3 +1170,25 @@ func TestApplicationBehindOnSkimmers(t *testing.T) {
 		t.Errorf("findings = %+v", got)
 	}
 }
+
+// A decoy removed, replaced, rewritten or taken off the sensor's list since the previous snapshot
+// is raised; one unchanged is not.
+func TestDecoyChanges(t *testing.T) {
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	d := func(path string, inode uint64, size int64) system.DecoyState {
+		return system.DecoyState{Path: path, Inode: inode, Size: size, ModTime: at, ChangeTime: 1}
+	}
+	prev := baseState()
+	prev.Decoys = &system.DecoysResult{Decoys: []system.DecoyState{d("/a", 1, 10), d("/b", 2, 10), d("/c", 3, 10), d("/d", 4, 10), d("/e", 5, 10)}}
+	cur := baseState()
+	cur.Decoys = &system.DecoysResult{Decoys: []system.DecoyState{d("/a", 1, 10), {Path: "/b", Missing: true}, d("/c", 9, 10), d("/d", 4, 11)}}
+	got := fingerprints(Evaluate(&prev, cur))
+	for _, want := range []string{"high decoy:removed:/b", "high decoy:changed:/c:9:1", "high decoy:changed:/d:4:1", "high decoy:gone:/e"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+	if slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, ":/a") }) {
+		t.Errorf("an unchanged decoy raised: %v", got)
+	}
+}

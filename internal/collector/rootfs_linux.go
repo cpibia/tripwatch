@@ -262,6 +262,11 @@ func openIn(dir, name string) (*os.File, os.FileInfo, error) {
 	if !info.Mode().IsRegular() && !info.IsDir() {
 		return nil, info, ErrNotRegular
 	}
+	// Checked on the O_PATH descriptor, which opens nothing a watcher of opens sees: a link to a
+	// decoy leads here too.
+	if isDecoy(info) {
+		return nil, info, ErrDecoy
+	}
 	fd, err := syscall.Open("/proc/self/fd/"+strconv.Itoa(int(pf.Fd())), readFlags, 0)
 	if err != nil {
 		return nil, nil, &os.PathError{Op: "reopen", Path: pf.Name(), Err: err}

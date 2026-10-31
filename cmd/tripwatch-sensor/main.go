@@ -53,7 +53,9 @@ type report struct {
 }
 
 type sensor struct {
-	root       string
+	root string
+	// decoys are the absolute paths of the decoy files.
+	decoys     []string
 	collectors []collector.Collector
 	weblog     *logs.Collector
 	web        *web.Collector
@@ -79,6 +81,7 @@ func main() {
 	heartbeat := flag.Duration("heartbeat", time.Minute, "time between heartbeats in daemon mode")
 	uninstallFlag := flag.Bool("apply-uninstall", false, "remove the sensor and its data on the order of the verifier that revoked this host, as the sensor starts it outside its service (needs -bundle)")
 	applyUpdate := flag.Bool("apply-update", false, "install the update the verifier ordered, as the sensor starts it on its own outside its service (needs -bundle)")
+	decoyList := flag.String("decoys", "", "comma-separated absolute paths of decoy files nothing legitimate reads, such as a fake backup of a configuration: a read is an alert in real time, and the sensor never opens them")
 	watchOnly := flag.Bool("watch-only", false, "print the real-time event batches as JSON lines until interrupted, without a verifier, to see what the watchers report")
 	flag.Parse()
 
@@ -112,7 +115,13 @@ func main() {
 	defer stop()
 
 	s := sensor{root: *rootDir, weblog: &logs.Collector{StateDir: *stateDir}, web: &web.Collector{StateDir: *stateDir}}
+	s.decoys = splitList(*decoyList)
 	s.collectors = append(system.All(), s.web, s.weblog)
+	if len(s.decoys) > 0 {
+		decoys := system.Decoys{Paths: s.decoys}
+		decoys.Refresh(collector.NewSource(*rootDir))
+		s.collectors = append(s.collectors, decoys)
+	}
 	if *appDB {
 		s.collectors = append(s.collectors, apps.Collector{AllowedHosts: splitList(*appDBHosts)})
 	}

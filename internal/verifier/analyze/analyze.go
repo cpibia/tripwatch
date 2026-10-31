@@ -93,6 +93,7 @@ type State struct {
 	Apps        *apps.Result
 	Kernel      *system.KernelResult
 	Containers  *system.ContainersResult
+	Decoys      *system.DecoysResult
 	// Realtime is nil for sensors that predate the real-time watchers.
 	Realtime *watch.Status
 	// Issues are what each collector said it could not do, by collector, at most
@@ -143,7 +144,7 @@ func Decode(payload []byte) (State, error) {
 	targets := map[string]any{
 		"accounts": &st.Accounts, "ssh": &st.SSH, "sudoers": &st.Sudoers, "scheduled": &st.Scheduled,
 		"services": &st.Services, "hooks": &st.Hooks, "processes": &st.Processes, "sockets": &st.Sockets,
-		"packages": &st.Packages, "privileged": &st.Privileged, "web": &st.Web, "weblog": &st.Weblog, "apps": &st.Apps, "kernel": &st.Kernel,
+		"packages": &st.Packages, "privileged": &st.Privileged, "web": &st.Web, "weblog": &st.Weblog, "apps": &st.Apps, "kernel": &st.Kernel, "decoys": &st.Decoys,
 		"containers": &st.Containers,
 	}
 	fail := func(name, msg string) {

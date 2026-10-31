@@ -30,6 +30,9 @@ func openIn(dir, name string) (*os.File, os.FileInfo, error) {
 	if !info.Mode().IsRegular() && !info.IsDir() {
 		return nil, info, ErrNotRegular
 	}
+	if isDecoy(info) {
+		return nil, info, ErrDecoy
+	}
 	fd, err := syscall.Open(full, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return nil, nil, &os.PathError{Op: "open", Path: full, Err: err}

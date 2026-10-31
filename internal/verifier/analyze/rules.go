@@ -880,6 +880,10 @@ func Evaluate(prev *State, cur State) []Finding {
 		state("collector-issues", name, "low", "Analysis incomplete: "+name, detail)
 	}
 
+	for _, f := range decoyChanges(prev, cur) {
+		change("decoy", f.Fingerprint, f.Severity, f.Title, f.Detail)
+	}
+
 	for name, msg := range cur.Errors {
 		if stoppedMidway(msg) {
 			continue
@@ -1831,6 +1835,38 @@ func releaseKind(ecosystem string) string {
 		return "Drupal project"
 	}
 	return "Plugin"
+}
+
+// decoyChanges raises the decoys gone, replaced or rewritten since the previous snapshot: an
+// intruder who finds one and removes it, or the operator's list changed, which the sensor's
+// configuration says.
+func decoyChanges(prev *State, cur State) []Finding {
+	if prev == nil || prev.Decoys == nil || cur.Decoys == nil {
+		return nil
+	}
+	now := map[string]system.DecoyState{}
+	for _, d := range cur.Decoys.Decoys {
+		now[d.Path] = d
+	}
+	var out []Finding
+	for _, old := range prev.Decoys.Decoys {
+		if old.Missing {
+			continue
+		}
+		d, listed := now[old.Path]
+		switch {
+		case !listed:
+			out = append(out, Finding{Fingerprint: "gone:" + old.Path, Severity: "high", Title: "Decoy no longer watched: " + old.Path,
+				Detail: old.Path + " was a decoy in the previous snapshot and the sensor no longer lists it: its configuration changed, which only root can do."})
+		case d.Missing:
+			out = append(out, Finding{Fingerprint: "removed:" + old.Path, Severity: "high", Title: "Decoy removed: " + old.Path,
+				Detail: old.Path + " was there in the previous snapshot and is gone: whoever found it may know it was a decoy."})
+		case d.Inode != old.Inode || d.Size != old.Size || !d.ModTime.Equal(old.ModTime) || d.ChangeTime != old.ChangeTime:
+			out = append(out, Finding{Fingerprint: fmt.Sprintf("changed:%s:%d:%d", old.Path, d.Inode, d.ChangeTime), Severity: "high", Title: "Decoy changed: " + old.Path,
+				Detail: fmt.Sprintf("%s was replaced or rewritten since the previous snapshot (inode %d to %d, %d to %d bytes): nothing legitimate touches a decoy.", old.Path, old.Inode, d.Inode, old.Size, d.Size)})
+		}
+	}
+	return out
 }
 
 // fileAlertIn returns the alert, high or critical, of a file under dir among those raised for
