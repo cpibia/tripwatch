@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // Bounds of the folding of a script's string expressions.
@@ -909,19 +911,27 @@ func foldWork(content []byte, constants *foldConstants) ([]byte, int, int) {
 // no-break space or "navigator. sendBeacon(" read as their plain forms. bare is the same without
 // the text of the strings, for the searches that a word inside a string must not satisfy.
 func render(toks []jsToken) (code, bare []byte) {
-	for k, t := range toks {
+	toks = ungroup(toks)
+	for k := 0; k < len(toks); k++ {
+		t := toks[k]
 		if k > 0 && (t.kind == 'n' || t.kind == '0') && (toks[k-1].kind == 'n' || toks[k-1].kind == '0') {
 			code, bare = append(code, ' '), append(bare, ' ')
 		}
-		switch {
-		case t.kind == 'p' && t.text == "+" && k > 0 && k+1 < len(toks) && toks[k-1].kind == 's' && toks[k+1].kind == 's':
-			// Joined below.
-		case t.kind == 's' && k >= 2 && toks[k-1].text == "+" && toks[k-2].kind == 's':
-			code = append(append(code[:len(code)-1], t.text...), '"')
-		case t.kind == 's':
-			code = append(append(append(code, '"'), t.text...), '"')
+		switch t.kind {
+		case 's':
+			// Literals joined by "+" are one string, written as a browser's URL parser reads it
+			// when it is one.
+			v := t.text
+			for k+2 < len(toks) && toks[k+1].text == "+" && toks[k+2].kind == 's' {
+				v += toks[k+2].text
+				k += 2
+			}
+			if u, ok := whatwgURL(v); ok {
+				v = u
+			}
+			code = append(append(append(code, '"'), v...), '"')
 			bare = append(bare, `""`...)
-		case t.kind == 'r':
+		case 'r':
 			code, bare = append(code, "/r/"...), append(bare, "/r/"...)
 		default:
 			code, bare = append(code, t.text...), append(bare, t.text...)
@@ -930,6 +940,92 @@ func render(toks []jsToken) (code, bare []byte) {
 	// A member named by a string is the member: navigator["sendBeacon"] is navigator.sendBeacon.
 	code = memberString.ReplaceAll(code, []byte(".$1"))
 	return code, bare
+}
+
+// ungroup drops the brackets that only group a name or a member path: new((((Image))))() is
+// new Image(), as JavaScript reads it, so that no pattern must reach across thousands of brackets.
+// A bracket after the end of an expression is a call and stays. One pass, a stack of the open
+// brackets each knowing whether it holds names alone.
+func ungroup(toks []jsToken) []jsToken {
+	type open struct {
+		at                 int
+		grouping, onlyName bool
+	}
+	out := make([]jsToken, 0, len(toks))
+	dropped := make([]bool, 0, len(toks))
+	var stack []open
+	last := -1 // the last token kept
+	for _, t := range toks {
+		switch {
+		case t.kind == 'p' && t.text == "(":
+			grouping := last < 0 || !expressionEnd(out[last])
+			stack = append(stack, open{at: len(out), grouping: grouping, onlyName: true})
+		case t.kind == 'p' && t.text == ")" && len(stack) > 0:
+			o := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if o.grouping && o.onlyName && last > o.at {
+				dropped[o.at] = true
+				continue
+			}
+			if len(stack) > 0 {
+				stack[len(stack)-1].onlyName = false
+			}
+		default:
+			if len(stack) > 0 && t.kind != 'n' && t.text != "." {
+				stack[len(stack)-1].onlyName = false
+			}
+		}
+		out = append(out, t)
+		dropped = append(dropped, false)
+		last = len(out) - 1
+	}
+	kept := out[:0]
+	for i, t := range out {
+		if !dropped[i] {
+			kept = append(kept, t)
+		}
+	}
+	return kept
+}
+
+// specialSchemes are the schemes whose URLs a browser reads with "\\" as "/" and any number of
+// slashes after the colon.
+var specialSchemes = map[string]bool{"http": true, "https": true, "ws": true, "wss": true, "ftp": true}
+
+// hostMapping maps a host as a browser's URL parser does (UTS 46: full-width letters and the
+// ideographic full stop are ASCII), lenient on what it cannot map.
+var hostMapping = idna.New(idna.MapForLookup(), idna.BidiRule(), idna.StrictDomainName(false), idna.ValidateLabels(false))
+
+// whatwgURL returns s as the URL a browser's parser makes of it, and true, when s is an absolute
+// or scheme-relative URL of a special scheme: C0 controls and spaces trimmed from its ends, tabs
+// and line breaks taken out, "\\" read as "/", the slashes after the scheme made two, and the
+// host mapped. " https:\\evil\u3002example" is then https://evil.example.
+func whatwgURL(s string) (string, bool) {
+	s = strings.TrimFunc(s, func(r rune) bool { return r <= ' ' })
+	s = strings.NewReplacer("\t", "", "\n", "", "\r", "").Replace(s)
+	prefix, rest := "", ""
+	if i := strings.IndexByte(s, ':'); i > 0 && specialSchemes[strings.ToLower(s[:i])] {
+		prefix, rest = strings.ToLower(s[:i])+"://", s[i+1:]
+	} else if len(s) > 1 && (s[0] == '/' || s[0] == '\\') && (s[1] == '/' || s[1] == '\\') {
+		prefix, rest = "//", s
+	} else {
+		return "", false
+	}
+	rest = strings.TrimLeft(strings.ReplaceAll(rest, "\\", "/"), "/")
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	host := rest[:end]
+	if at := strings.LastIndexByte(host, '@'); at >= 0 {
+		host = host[at+1:]
+	}
+	if mapped, err := hostMapping.ToASCII(host); err == nil && mapped != "" {
+		host = mapped
+	} else {
+		host = strings.ToLower(host)
+	}
+	return prefix + host + rest[end:], true
 }
 
 // memberString is a member read through a string that is a plain name.

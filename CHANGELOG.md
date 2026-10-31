@@ -17,6 +17,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   each ASCII character of its start. The file's size, already counted in the run's budget, bounds
   the work. One without a mark whose start is mostly outside ASCII, which only a charset the
   server or the page declares makes UTF-16, is read as it is: a limit of the rule.
+- Strings that a browser reads as a URL are read so before the search for a way out: C0 controls
+  and spaces at their ends and tabs and line breaks inside dropped, a backslash taken as a slash
+  and the slashes after `https:` made two, as the URL parser of browsers does, and the host
+  mapped as UTS 46 maps it (`golang.org/x/net/idna`, now a dependency of the sensor: full-width
+  letters and the ideographic full stop are ASCII). `fetch(' https:\\evil\u3002example')` names
+  its host. Brackets that only group a name are dropped from the source as the tokenizer renders
+  it, so `new` and two thousand brackets around `Image` is `new Image`, and the escapes `\t`,
+  `\n`, `\r`, `\b`, `\f`, `\v` and `\0` in strings are decoded.
 - The families search, around each fixed word, the whole statement or line it is in (at most
   4 KB each way), regions that touch merged into one: a call through seventy brackets or a host
   with a 63-character label is no longer longer than the window, and a file made only of those

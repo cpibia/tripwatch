@@ -381,6 +381,10 @@ func jsEscape(b []byte) ([]byte, int) {
 		if v, ok := hex(b[1:5]); ok {
 			return []byte(string(v)), 5
 		}
+	case strings.IndexByte("tnrbfv", b[0]) >= 0:
+		return []byte{"\t\n\r\b\f\v"[strings.IndexByte("tnrbfv", b[0])]}, 1
+	case b[0] == '0' && (len(b) == 1 || b[1] < '0' || b[1] > '9'):
+		return []byte{0}, 1
 	case b[0] == '\r' && len(b) >= 2 && b[1] == '\n':
 		// A backslash at the end of a line continues the literal on the next.
 		return nil, 2
