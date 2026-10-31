@@ -493,7 +493,7 @@ func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
 			s.report.Changes, s.report.ChangeCount = changes, count
-			s.report.Releases = s.pluginReleases(changes)
+			s.report.Releases = s.packageReleases(changes)
 			if core, ok := s.coreRelease(changes); ok {
 				s.report.Releases = append([]PackageRelease{core}, s.report.Releases...)
 			}

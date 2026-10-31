@@ -81,6 +81,27 @@ func (f *Fetcher) fetchCore(ctx context.Context, k Key, base *url.URL, api strin
 	return ref, nil
 }
 
+// fetchTheme makes the reference of a theme's release from its archive in WordPress's directory,
+// hashing every file itself. WordPress publishes no checksum list for themes, so there is no
+// second source to check the archive against: the reference is as good as that one host.
+func (f *Fetcher) fetchTheme(ctx context.Context, k Key, base *url.URL) (store.ContentRef, error) {
+	ref := store.ContentRef{Ecosystem: k.Ecosystem, Slug: k.Slug, Version: k.Version}
+	zipped, found, err := f.get(ctx, base.JoinPath("theme", k.Slug+"."+k.Version+".zip"), maxArchiveBytes)
+	if err != nil {
+		return ref, err
+	}
+	if !found {
+		ref.Missing = true
+		return ref, nil
+	}
+	files, _, err := hashArchive(zipped)
+	if err != nil {
+		return ref, err
+	}
+	ref.Files = files
+	return ref, nil
+}
+
 // hashArchive returns the SHA-256 and the MD5 of every file of a release's archive, by its path
 // under the archive's top directory, within the bounds on entries and expanded bytes.
 func hashArchive(zipped []byte) (sha map[string][]string, md5s map[string]string, err error) {

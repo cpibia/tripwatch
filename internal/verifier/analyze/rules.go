@@ -1784,8 +1784,11 @@ func releaseChanges(app, prev web.AppReport, published map[string]Published) []F
 	for _, r := range app.Releases {
 		if old, ok := before[r.Root]; ok && lowerVersion(r.Version, old) {
 			title := "Plugin downgraded: " + r.Slug
-			if r.Ecosystem == web.EcosystemWordPressCore {
+			switch r.Ecosystem {
+			case web.EcosystemWordPressCore:
 				title = "WordPress downgraded"
+			case web.EcosystemWordPressTheme:
+				title = "Theme downgraded: " + r.Slug
 			}
 			out = append(out, Finding{Fingerprint: "release-downgrade:" + r.Root + ":" + r.Version, Severity: "medium",
 				Title: title,

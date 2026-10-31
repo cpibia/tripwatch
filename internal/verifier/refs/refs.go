@@ -24,6 +24,8 @@ const (
 	WordPressPlugin = "wordpress-plugin"
 	// WordPressCore is WordPress itself; its key's Slug is the locale of the release.
 	WordPressCore = "wordpress-core"
+	// WordPressTheme is a theme of WordPress's directory.
+	WordPressTheme = "wordpress-theme"
 	// wordPressAPI is the source of WordPress's MD5 lists, the cross-check of the core's archive.
 	wordPressAPI = "wordpress-api"
 )
@@ -47,7 +49,7 @@ func (k Key) Valid() bool {
 		return false
 	}
 	switch k.Ecosystem {
-	case WordPressPlugin:
+	case WordPressPlugin, WordPressTheme:
 		return slugPattern.MatchString(k.Slug)
 	case WordPressCore:
 		return localePattern.MatchString(k.Slug)
@@ -59,6 +61,7 @@ func (k Key) Valid() bool {
 var DefaultSources = map[string]string{
 	WordPressPlugin: "https://downloads.wordpress.org",
 	WordPressCore:   "https://downloads.wordpress.org",
+	WordPressTheme:  "https://downloads.wordpress.org",
 	wordPressAPI:    "https://api.wordpress.org",
 }
 
@@ -91,8 +94,11 @@ func (f *Fetcher) Fetch(ctx context.Context, k Key) (store.ContentRef, error) {
 	if err != nil || base.Host == "" {
 		return ref, fmt.Errorf("refs: no source for %s", k.Ecosystem)
 	}
-	if k.Ecosystem == WordPressCore {
+	switch k.Ecosystem {
+	case WordPressCore:
 		return f.fetchCore(ctx, k, base, sources[wordPressAPI])
+	case WordPressTheme:
+		return f.fetchTheme(ctx, k, base)
 	}
 	u := base.JoinPath("plugin-checksums", k.Slug, k.Version+".json")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)

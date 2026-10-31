@@ -25,6 +25,7 @@ type PackageRelease struct {
 const (
 	EcosystemWordPressPlugin = "wordpress-plugin"
 	EcosystemWordPressCore   = "wordpress-core"
+	EcosystemWordPressTheme  = "wordpress-theme"
 )
 
 // Bounds of the releases read in one application: packages, files looked at for a plugin's header
@@ -38,17 +39,19 @@ const (
 var (
 	wpLocale      = regexp.MustCompile(`\$wp_local_package\s*=\s*['"]([a-z]{2,3}(?:_[A-Z]{2})?(?:_[a-z]{2,10})?)['"]`)
 	pluginName    = regexp.MustCompile(`(?mi)^[ \t/*#@]*Plugin Name:`)
+	themeName     = regexp.MustCompile(`(?mi)^[ \t/*#@]*Theme Name:`)
 	pluginVersion = regexp.MustCompile(`(?mi)^[ \t/*#@]*Version:[ \t]*([0-9][0-9A-Za-z.+-]{0,31})[ \t]*\r?$`)
 )
 
-// pluginReleases names the release of each WordPress plugin a changed file belongs to, from the
-// plugin's header: the main file is the one named after the plugin's directory, or the first PHP
-// file of the directory with a "Plugin Name:" header, as WordPress finds it.
-func (s *scanner) pluginReleases(changes []FileChange) []PackageRelease {
+// packageReleases names the release of each WordPress plugin or theme a changed file belongs to,
+// from its header: a plugin's main file is the one named after its directory, or the first PHP
+// file of the directory with a "Plugin Name:" header, as WordPress finds it; a theme's is its
+// style.css.
+func (s *scanner) packageReleases(changes []FileChange) []PackageRelease {
 	var out []PackageRelease
 	seen := map[string]bool{}
 	for _, c := range changes {
-		root, slug, ok := pluginRoot(c.Path)
+		root, slug, kind, ok := packageRoot(c.Path)
 		if !ok || seen[root] {
 			continue
 		}
@@ -56,11 +59,29 @@ func (s *scanner) pluginReleases(changes []FileChange) []PackageRelease {
 		if len(out) == maxPackageReleases {
 			break
 		}
-		if version := s.pluginVersion(root, slug); version != "" {
-			out = append(out, PackageRelease{Root: root, Ecosystem: EcosystemWordPressPlugin, Slug: slug, Version: version})
+		var version string
+		if kind == EcosystemWordPressTheme {
+			version = s.themeVersion(root)
+		} else {
+			version = s.pluginVersion(root, slug)
+		}
+		if version != "" {
+			out = append(out, PackageRelease{Root: root, Ecosystem: kind, Slug: slug, Version: version})
 		}
 	}
 	return out
+}
+
+// themeVersion reads a theme's version from the header of its style.css.
+func (s *scanner) themeVersion(root string) string {
+	head, ok := s.head(path.Join(strings.TrimPrefix(root, "/"), "style.css"))
+	if !ok || !themeName.Match(head) {
+		return ""
+	}
+	if m := pluginVersion.FindSubmatch(head); m != nil {
+		return string(m[1])
+	}
+	return ""
 }
 
 // coreRelease names the WordPress release of an install whose files outside wp-content changed:
@@ -89,18 +110,20 @@ func (s *scanner) coreRelease(changes []FileChange) (PackageRelease, bool) {
 	return PackageRelease{Root: app.Path, Ecosystem: EcosystemWordPressCore, Slug: locale, Version: app.Version}, true
 }
 
-// pluginRoot returns the directory of the plugin p is in, and the plugin's slug.
-func pluginRoot(p string) (root, slug string, ok bool) {
-	i := strings.Index(p, "/wp-content/plugins/")
-	if i < 0 {
-		return "", "", false
+// packageRoot returns the directory of the plugin or theme p is in, its slug and its ecosystem.
+func packageRoot(p string) (root, slug, kind string, ok bool) {
+	for _, d := range []struct{ dir, kind string }{{"/wp-content/plugins/", EcosystemWordPressPlugin}, {"/wp-content/themes/", EcosystemWordPressTheme}} {
+		i := strings.Index(p, d.dir)
+		if i < 0 {
+			continue
+		}
+		slug, _, found := strings.Cut(p[i+len(d.dir):], "/")
+		if !found || slug == "" {
+			return "", "", "", false
+		}
+		return p[:i] + d.dir + slug, slug, d.kind, true
 	}
-	rest := p[i+len("/wp-content/plugins/"):]
-	slug, _, found := strings.Cut(rest, "/")
-	if !found || slug == "" {
-		return "", "", false
-	}
-	return p[:i] + "/wp-content/plugins/" + slug, slug, true
+	return "", "", "", false
 }
 
 func (s *scanner) pluginVersion(root, slug string) string {

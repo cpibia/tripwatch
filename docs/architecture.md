@@ -425,14 +425,15 @@ not need a database.
 
 ## Content references
 
-Implemented for WordPress plugins and core (`internal/verifier/refs`, `refs/core.go` for the
-core's archive and MD5 cross-check, `store/contentrefs.go`, the sensor's
+Implemented for WordPress plugins, themes and core (`internal/verifier/refs`, `refs/core.go` for
+the archives of the core, checked against WordPress's MD5 list, and of themes, for which no list
+exists, `store/contentrefs.go`, the sensor's
 `releases.go`, `releaseChanges` in the rules), opt-in with `TRIPWATCH_CONTENT_REFERENCES=on`: the
 sensor names the release of each plugin with changed files from its header, the verifier
 fetches WordPress's `plugin-checksums` list for it within the bounds below, and a changed file
 whose SHA-256 the release lists at its path raises nothing, while one the release lacks or has
 with other content is high. WordPress's list carries no sizes, so the SHA-256 alone decides.
-Not yet done: WordPress themes (from release archives), Drupal, and leaving files
+Not yet done: Drupal, and leaving files
 that match their release out of the sensor's skimmer search, which needs the verifier to tell
 the sensor; until then every changed file is still read. The rest of this section is the design
 those follow.

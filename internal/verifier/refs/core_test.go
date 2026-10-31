@@ -99,3 +99,33 @@ func TestCoreReference(t *testing.T) {
 		t.Error("an archive past its expanded bound gave a reference")
 	}
 }
+
+// A theme's release is hashed from its archive in WordPress's directory.
+func TestThemeReference(t *testing.T) {
+	files := map[string]string{"style.css": "/* Theme Name: Calm */", "functions.php": "<?php // calm"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/theme/calm.1.4.zip" {
+			http.NotFound(w, r)
+			return
+		}
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		for name, content := range files {
+			fw, _ := zw.Create("calm/" + name)
+			_, _ = fw.Write([]byte(content))
+		}
+		_ = zw.Close()
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+	r := resolver(t, srv.URL)
+	r.Fetcher.Sources = map[string]string{WordPressTheme: srv.URL}
+	ref, ok := r.Lookup(context.Background(), "web-01", Key{WordPressTheme, "calm", "1.4"})
+	want := sha256.Sum256([]byte("<?php // calm"))
+	if !ok || ref.Files["functions.php"][0] != hex.EncodeToString(want[:]) {
+		t.Errorf("theme reference = %+v, %v", ref, ok)
+	}
+	if _, ok := r.Lookup(context.Background(), "web-01", Key{WordPressTheme, "calm", "9.9"}); ok {
+		t.Error("a release the directory lacks gave a reference")
+	}
+}
