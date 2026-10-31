@@ -22,6 +22,10 @@ import (
 // Ecosystems the references are fetched for.
 const (
 	WordPressPlugin = "wordpress-plugin"
+	// WordPressCore is WordPress itself; its key's Slug is the locale of the release.
+	WordPressCore = "wordpress-core"
+	// wordPressAPI is the source of WordPress's MD5 lists, the cross-check of the core's archive.
+	wordPressAPI = "wordpress-api"
 )
 
 // Key names a release.
@@ -33,17 +37,29 @@ type Key struct {
 // ever reach a URL, so no host, path or query can be put in one.
 var (
 	slugPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
+	localePattern  = regexp.MustCompile(`^[a-z]{2,3}(_[A-Z]{2})?(_[a-z]{2,10})?$`)
 	versionPattern = regexp.MustCompile(`^[0-9][0-9A-Za-z.+-]{0,31}$`)
 )
 
 // Valid reports whether the key may be fetched.
 func (k Key) Valid() bool {
-	return k.Ecosystem == WordPressPlugin && slugPattern.MatchString(k.Slug) && versionPattern.MatchString(k.Version)
+	if !versionPattern.MatchString(k.Version) {
+		return false
+	}
+	switch k.Ecosystem {
+	case WordPressPlugin:
+		return slugPattern.MatchString(k.Slug)
+	case WordPressCore:
+		return localePattern.MatchString(k.Slug)
+	}
+	return false
 }
 
 // DefaultSources are where each ecosystem's references come from.
 var DefaultSources = map[string]string{
 	WordPressPlugin: "https://downloads.wordpress.org",
+	WordPressCore:   "https://downloads.wordpress.org",
+	wordPressAPI:    "https://api.wordpress.org",
 }
 
 // maxReferenceBytes bounds one downloaded list of checksums; the largest plugins list a few
@@ -75,6 +91,9 @@ func (f *Fetcher) Fetch(ctx context.Context, k Key) (store.ContentRef, error) {
 	if err != nil || base.Host == "" {
 		return ref, fmt.Errorf("refs: no source for %s", k.Ecosystem)
 	}
+	if k.Ecosystem == WordPressCore {
+		return f.fetchCore(ctx, k, base, sources[wordPressAPI])
+	}
 	u := base.JoinPath("plugin-checksums", k.Slug, k.Version+".json")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -102,6 +121,34 @@ func (f *Fetcher) Fetch(ctx context.Context, k Key) (store.ContentRef, error) {
 	}
 	ref.Files, err = pluginChecksums(raw)
 	return ref, err
+}
+
+// get downloads u, at most limit bytes; a 404 is found false.
+func (f *Fetcher) get(ctx context.Context, u *url.URL, limit int64) (body []byte, found bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	resp, err := f.client(u.Host).Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return nil, false, nil
+	default:
+		return nil, false, fmt.Errorf("refs: %s: %s", u.Redacted(), resp.Status)
+	}
+	body, err = io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(body)) > limit {
+		return nil, false, ErrTooLarge
+	}
+	return body, true, nil
 }
 
 // client is the fetcher's client, kept to the source's host: a redirect elsewhere is refused.
