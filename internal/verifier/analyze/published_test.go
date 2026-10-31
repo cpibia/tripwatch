@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/discovery"
@@ -107,5 +108,34 @@ func TestReleaseRules(t *testing.T) {
 	}
 	if lowerVersion("1.10", "1.9") || !lowerVersion("1.9", "1.10") || lowerVersion("2.0", "2.0") || !lowerVersion("2.0", "2.0.1") {
 		t.Error("lowerVersion compares wrongly")
+	}
+}
+
+// The core's release judges the files outside wp-content, which plugins' releases judge.
+func TestPublishedCore(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer srv.Close()
+	st, err := store.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	now := time.Now()
+	if err := st.PutContentRef(context.Background(), store.ContentRef{Ecosystem: refs.WordPressCore, Slug: "it_IT", Version: "6.6.2",
+		Files: map[string][]string{"wp-includes/load.php": {"aaaa"}, "wp-content/index.php": {"bbbb"}}}, now); err != nil {
+		t.Fatal(err)
+	}
+	a := &Analyzer{Refs: &refs.Resolver{Store: st, Fetcher: &refs.Fetcher{Sources: map[string]string{}}, Enabled: true, PerRound: 5, PerHostDay: 20}}
+	state := State{Web: &web.Result{Apps: []web.AppReport{{
+		Application: discovery.Application{Path: "/var/www/blog"},
+		Releases:    []web.PackageRelease{{Root: "/var/www/blog", Ecosystem: web.EcosystemWordPressCore, Slug: "it_IT", Version: "6.6.2"}},
+		Changes: []web.FileChange{
+			{Path: "/var/www/blog/wp-includes/load.php", Change: web.ChangeModified, SHA256: "aaaa"},
+			{Path: "/var/www/blog/wp-content/index.php", Change: web.ChangeModified, SHA256: "bbbb"},
+		},
+	}}}}
+	got := a.published(context.Background(), "web-01", state)
+	if len(got) != 1 || got["/var/www/blog/wp-includes/load.php"] != (Published{Release: "WordPress 6.6.2 (it_IT)", Matches: true, Listed: true}) {
+		t.Errorf("published = %+v", got)
 	}
 }

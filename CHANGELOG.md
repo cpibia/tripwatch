@@ -8,6 +8,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The web collector names WordPress's own release, with the locale of wp-includes/version.php,
+  when files outside wp-content changed.
 - The web collector names the release of each WordPress plugin a changed file belongs to, its
   slug and version read from the plugin's header as WordPress finds it (200 plugins at most an
   application, the first 8 KB of a file): the verifier can compare the changed files with that
@@ -51,8 +53,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 ### Verifier
 
 - Content references, off by default (`TRIPWATCH_CONTENT_REFERENCES=on`): the changed files of a
-  WordPress plugin are compared with the plugin's release as published on WordPress.org, by
-  SHA-256 at the same path. An update as published raises nothing, not even the change of its
+  WordPress plugin, and those of WordPress itself outside wp-content, are compared with the
+  release as published on WordPress.org, by SHA-256 at the same path. A core release is made from
+  the official archive for its version and locale, hashed by the verifier within bounds (64 MB,
+  256 MB expanded, 50,000 files) and kept only when every file matches the MD5 list
+  api.wordpress.org publishes. An update as published raises nothing, not even the change of its
   directory; a file the release lacks or has with other content is a high alert naming the
   release; a plugin whose version went down is a medium one. Checksums are fetched from one
   fixed host, slugs and versions checked against strict shapes, at most five fetches an analysis

@@ -20,8 +20,12 @@ type PackageRelease struct {
 	Version   string `json:"version"`
 }
 
-// EcosystemWordPressPlugin is a plugin in a WordPress install's wp-content/plugins.
-const EcosystemWordPressPlugin = "wordpress-plugin"
+// Ecosystems of the releases: a plugin in a WordPress install's wp-content/plugins, and WordPress
+// itself, whose Slug is the locale of the release.
+const (
+	EcosystemWordPressPlugin = "wordpress-plugin"
+	EcosystemWordPressCore   = "wordpress-core"
+)
 
 // Bounds of the releases read in one application: packages, files looked at for a plugin's header
 // in its directory, and the start of each file read for it.
@@ -32,6 +36,7 @@ const (
 )
 
 var (
+	wpLocale      = regexp.MustCompile(`\$wp_local_package\s*=\s*['"]([a-z]{2,3}(?:_[A-Z]{2})?(?:_[a-z]{2,10})?)['"]`)
 	pluginName    = regexp.MustCompile(`(?mi)^[ \t/*#@]*Plugin Name:`)
 	pluginVersion = regexp.MustCompile(`(?mi)^[ \t/*#@]*Version:[ \t]*([0-9][0-9A-Za-z.+-]{0,31})[ \t]*\r?$`)
 )
@@ -56,6 +61,32 @@ func (s *scanner) pluginReleases(changes []FileChange) []PackageRelease {
 		}
 	}
 	return out
+}
+
+// coreRelease names the WordPress release of an install whose files outside wp-content changed:
+// the version discovery read, the locale from wp-includes/version.php (en_US without one).
+func (s *scanner) coreRelease(changes []FileChange) (PackageRelease, bool) {
+	app := s.report.Application
+	if app.Framework != "wordpress" || app.Version == "" {
+		return PackageRelease{}, false
+	}
+	core := false
+	for _, c := range changes {
+		if rest, ok := strings.CutPrefix(c.Path, app.Path+"/"); ok && !strings.HasPrefix(rest, "wp-content/") {
+			core = true
+			break
+		}
+	}
+	if !core {
+		return PackageRelease{}, false
+	}
+	locale := "en_US"
+	if head, ok := s.head(path.Join(strings.TrimPrefix(app.Path, "/"), "wp-includes/version.php")); ok {
+		if m := wpLocale.FindSubmatch(head); m != nil {
+			locale = string(m[1])
+		}
+	}
+	return PackageRelease{Root: app.Path, Ecosystem: EcosystemWordPressCore, Slug: locale, Version: app.Version}, true
 }
 
 // pluginRoot returns the directory of the plugin p is in, and the plugin's slug.
@@ -99,17 +130,23 @@ func (s *scanner) pluginVersion(root, slug string) string {
 // headerVersion reads the version of a plugin's header at the start of a file, and whether the
 // file has one.
 func (s *scanner) headerVersion(name string) (string, bool) {
-	f, err := s.src.FS.Open(name)
-	if err != nil {
-		return "", false
-	}
-	defer func() { _ = f.Close() }()
-	head, err := io.ReadAll(io.LimitReader(f, headerBytes))
-	if err != nil || !pluginName.Match(head) {
+	head, ok := s.head(name)
+	if !ok || !pluginName.Match(head) {
 		return "", false
 	}
 	if m := pluginVersion.FindSubmatch(head); m != nil {
 		return string(m[1]), true
 	}
 	return "", false
+}
+
+// head reads the first headerBytes of a file.
+func (s *scanner) head(name string) ([]byte, bool) {
+	f, err := s.src.FS.Open(name)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	head, err := io.ReadAll(io.LimitReader(f, headerBytes))
+	return head, err == nil
 }

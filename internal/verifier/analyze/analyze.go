@@ -560,16 +560,21 @@ func (a *Analyzer) published(ctx context.Context, host string, st State) map[str
 			if !ok {
 				continue
 			}
+			name := rel.Slug + " " + rel.Version
+			if rel.Ecosystem == web.EcosystemWordPressCore {
+				name = "WordPress " + rel.Version + " (" + rel.Slug + ")"
+			}
 			for _, c := range app.Changes {
 				p, inside := strings.CutPrefix(c.Path, rel.Root+"/")
-				if !inside || c.Change == web.ChangeRemoved {
+				// The core's wp-content holds the plugins and themes, judged by their own releases.
+				if !inside || c.Change == web.ChangeRemoved || rel.Ecosystem == web.EcosystemWordPressCore && strings.HasPrefix(p, "wp-content/") {
 					continue
 				}
 				if out == nil {
 					out = map[string]Published{}
 				}
 				sums := ref.Files[p]
-				out[c.Path] = Published{Release: rel.Slug + " " + rel.Version, Listed: len(sums) > 0,
+				out[c.Path] = Published{Release: name, Listed: len(sums) > 0,
 					Matches: c.SHA256 != "" && slices.Contains(sums, c.SHA256)}
 			}
 		}

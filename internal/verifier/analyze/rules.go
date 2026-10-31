@@ -1783,8 +1783,12 @@ func releaseChanges(app, prev web.AppReport, published map[string]Published) []F
 	}
 	for _, r := range app.Releases {
 		if old, ok := before[r.Root]; ok && lowerVersion(r.Version, old) {
+			title := "Plugin downgraded: " + r.Slug
+			if r.Ecosystem == web.EcosystemWordPressCore {
+				title = "WordPress downgraded"
+			}
 			out = append(out, Finding{Fingerprint: "release-downgrade:" + r.Root + ":" + r.Version, Severity: "medium",
-				Title: "Plugin downgraded: " + r.Slug,
+				Title: title,
 				Detail: fmt.Sprintf("%s went from %s to %s since the previous snapshot. A release older than the one in place may have a hole the newer one closed; its files match it as published, so nothing else is raised.",
 					r.Root, old, r.Version)})
 		}

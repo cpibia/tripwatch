@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cpibia/tripwatch/internal/collector"
+	"github.com/cpibia/tripwatch/internal/discovery"
 )
 
 // A changed file names the release of its plugin, read from the plugin's header as WordPress
@@ -42,5 +43,32 @@ func TestPluginReleases(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("releases = %+v", got)
+	}
+}
+
+// An install whose files outside wp-content changed names its WordPress release with the locale
+// of wp-includes/version.php; one whose changes are all in wp-content names none.
+func TestCoreRelease(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "var/www/blog/wp-includes"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "var/www/blog/wp-includes/version.php"), []byte("<?php\n$wp_version = '6.6.2';\n$wp_local_package = 'it_IT';\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &scanner{src: collector.NewSource(root), budget: newHashBudget(), findings: map[string]int{}}
+	s.report.Application = discovery.Application{Path: "/var/www/blog", Framework: "wordpress", Version: "6.6.2"}
+	got, ok := s.coreRelease([]FileChange{{Path: "/var/www/blog/wp-includes/load.php", Change: ChangeModified}})
+	if !ok || got != (PackageRelease{Root: "/var/www/blog", Ecosystem: EcosystemWordPressCore, Slug: "it_IT", Version: "6.6.2"}) {
+		t.Errorf("core release = %+v, %v", got, ok)
+	}
+	if _, ok := s.coreRelease([]FileChange{{Path: "/var/www/blog/wp-content/plugins/x/x.php", Change: ChangeModified}}); ok {
+		t.Error("changes in wp-content alone named the core")
+	}
+	if err := os.WriteFile(filepath.Join(root, "var/www/blog/wp-includes/version.php"), []byte("<?php $wp_version = '6.6.2';"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.coreRelease([]FileChange{{Path: "/var/www/blog/index.php"}}); got.Slug != "en_US" {
+		t.Errorf("locale without one: %q", got.Slug)
 	}
 }

@@ -799,7 +799,9 @@ alerts (90) and `TRIPWATCH_KEEP_RESOLVED_MINOR_DAYS` for resolved medium and low
 more than the others). Snapshots that are evidence of an open alert stay past their retention.
 
 Content references are off by default. With `TRIPWATCH_CONTENT_REFERENCES=on` the verifier
-compares the changed files of each WordPress plugin with the plugin's release as published: a
+compares the changed files of each WordPress plugin, and of WordPress itself outside wp-content,
+with the release as published (the core's from its official archive, checked against the MD5
+list of api.wordpress.org): a
 file with the SHA-256 the release lists at its path is the update's own and raises nothing, one
 the release does not have, or has with other content, raises a high alert naming the release,
 and a plugin whose version went down raises a medium one. The checksums come from
