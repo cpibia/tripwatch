@@ -219,8 +219,9 @@ collector goes through a single view of the filesystem (`rootFS` in `internal/co
 - on Linux the path is first resolved with `O_PATH`, which does not open the file: a device or a
   FIFO undergoes no operation at all. `fstat` on the descriptor reads its type, and only regular
   files and directories are reopened for reading, through `/proc/self/fd`, on the same inode;
-  reads are `O_NONBLOCK|O_NOCTTY` in any case, and `O_NOATIME` where the kernel allows it (root
-  may ask it of any file), so access times do not show what the sensor reads;
+  reads are `O_NONBLOCK|O_NOCTTY` in any case, and `O_NOATIME` where the kernel allows it (the
+  file's owner, or `CAP_FOWNER`, which the systemd unit keeps for this; without it the sensor
+  falls back to a plain open), so access times do not show what the sensor reads;
 - a decoy, known by its device and inode, is refused on the `O_PATH` descriptor before any
   reopening, for reading and for the attributes alike: no collector or watcher opens one, by its
   path or a link, so a read of a decoy is never the sensor's. A path other than the decoy's own

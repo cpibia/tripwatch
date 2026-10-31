@@ -13,7 +13,9 @@ RestartSec=5
 # Runs as root to read every file, but with only the capabilities needed to observe; it reads
 # input planted by attackers, so the rest of the surface is closed. CAP_NET_ADMIN is what the
 # kernel asks to subscribe to process events; nothing else in the sensor configures the network.
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_AUDIT_READ CAP_NET_ADMIN
+# CAP_FOWNER lets it open other users' files with O_NOATIME, so its reads leave their access
+# times as they were; it changes no file's owner, mode or times.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_AUDIT_READ CAP_NET_ADMIN CAP_FOWNER
 AmbientCapabilities=
 NoNewPrivileges=yes
 ProtectSystem=strict

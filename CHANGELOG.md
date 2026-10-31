@@ -14,7 +14,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
   included, and the other paths found leading to one, and is reported with an empty list when
   there are none, or when the file is refused, with the reason in its errors. No collector or
   watcher opens a decoy, by its path or a link, attributes included. Files the sensor reads are
-  opened with `O_NOATIME` where the kernel allows it.
+  opened with `O_NOATIME` where the kernel allows it; the systemd unit adds `CAP_FOWNER`
+  to its capabilities so that this holds for other users' files too.
 - The web collector names the release of each drupal.org project in a Drupal site's
   modules/contrib, themes/contrib or profiles/contrib, from the project and version drupal.org's
   packaging writes into its .info.yml. Releases are named for every package installed, changed or
