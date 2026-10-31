@@ -628,10 +628,10 @@ Positions advance only after the snapshot has been delivered.
 ## Detection compared
 
 <!-- bench:start -->
-Across 43 attack scenarios reproduced in a Debian container (commit `e227079`), how many each
+Across 44 attack scenarios reproduced in a Debian container (commit `9fcf6ea`), how many each
 tool detects with its default configuration:
 
-![Scenarios detected out of 43: tripwatch 43, AIDE 35, rkhunter 4, debsums 1](bench/detection.svg)
+![Scenarios detected out of 44: tripwatch 44, AIDE 36, rkhunter 4, debsums 1](bench/detection.svg)
 
 | Category | Scenarios | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|:-:|
@@ -639,10 +639,10 @@ tool detects with its default configuration:
 | Privileges | 4 | 4 | 4 | 0 | 0 |
 | System integrity | 5 | 5 | 5 | 1 | 1 |
 | Processes and network | 6 | 6 | 1 | 1 | 0 |
-| Web applications | 11 | 11 | 11 | 0 | 0 |
+| Web applications | 12 | 12 | 12 | 0 | 0 |
 | Limits: attacks between two checks, and traps | 4 | 4 | 1 | 0 | 0 |
-| **Total** | **43** | **43** | **35** | **4** | **1** |
-| **Named** | | 38 | 0 | 3 | 0 |
+| **Total** | **44** | **44** | **36** | **4** | **1** |
+| **Named** | | 39 | 0 | 3 | 0 |
 
 Named means the output identifies the technique, not only the changed file; method in bench/RESULTS.md.
 
@@ -650,7 +650,7 @@ Noise on routine changes (a plugin update, a package with a hook, log rotation, 
 
 | Routine change | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Update of a WordPress plugin, its version and sixty files rewritten | 1 | 0 | 0 | 0 |
+| Update of a WordPress plugin, its version and sixty files rewritten | 0 | 0 | 0 | 0 |
 | Installation of a package that ships a login hook | 1 | 6 | 0 | 0 |
 | Rotation of the system logs, as logrotate does every night | 0 | 4 | 0 | 0 |
 | Deploy that rewrites the site's code with a new release | 1 | 0 | 0 | 0 |

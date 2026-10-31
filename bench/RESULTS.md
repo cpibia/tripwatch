@@ -1,6 +1,6 @@
 # Detection benchmark
 
-Commit `e227079`, 2026-10-30, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1017-azure. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
+Commit `9fcf6ea`, 2026-10-31, container Debian GNU/Linux 12 (bookworm) on amd64, kernel 7.0.0-1014-aws. Tools compared: AIDE 0.18.3, rkhunter 1.4.6-11, debsums 3.0.2.1,
 with the default configuration of their Debian packages. Regenerate with `bench/run.sh`.
 
 ## Method
@@ -92,6 +92,7 @@ The control scenario, with no attack, produces no differences for any tool.
 | Web shell opened by a bare short tag in a data file the application includes | ✅ named | ✅ | ❌ | ❌ |
 | Code in a data file hidden behind a heredoc whose label is longer than usual | ✅ named | ✅ | ❌ | ❌ |
 | Card skimmer in a theme with the field's name split into pieces | ✅ named | ✅ | ❌ | ❌ |
+| Backdoor without a known signature in a file of a public plugin | ✅ named | ✅ | ❌ | ❌ |
 
 ### Limits: attacks between two checks, and traps
 
@@ -108,7 +109,7 @@ Reported beyond the clean run; fewer is better.
 
 | Routine change | tripwatch | AIDE | rkhunter | debsums |
 |---|:-:|:-:|:-:|:-:|
-| Update of a WordPress plugin, its version and sixty files rewritten | 1 | 0 | 0 | 0 |
+| Update of a WordPress plugin, its version and sixty files rewritten | 0 | 0 | 0 | 0 |
 | Installation of a package that ships a login hook | 1 | 6 | 0 | 0 |
 | Rotation of the system logs, as logrotate does every night | 0 | 4 | 0 | 0 |
 | Deploy that rewrites the site's code with a new release | 1 | 0 | 0 | 0 |
@@ -119,7 +120,7 @@ Measured on the control scenario, in the same container.
 
 | Tool | Time | Peak memory |
 |---|--:|--:|
-| tripwatch | 0.8 s | 32 MB |
-| AIDE | 25.3 s | 40 MB |
-| rkhunter | 97.7 s | 11 MB |
-| debsums | 0.6 s | 13 MB |
+| tripwatch | 0.8 s | 33 MB |
+| AIDE | 22.8 s | 41 MB |
+| rkhunter | 81.4 s | 11 MB |
+| debsums | 0.5 s | 13 MB |

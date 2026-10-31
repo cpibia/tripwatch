@@ -1,7 +1,7 @@
-commit	e227079
+commit	9fcf6ea
 arch	amd64
 aide	0.18.3
 rkhunter	1.4.6-11
 debsums	3.0.2.1
 os	Debian GNU/Linux 12 (bookworm)
-kernel	7.0.0-1017-azure
+kernel	7.0.0-1014-aws
