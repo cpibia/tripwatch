@@ -702,7 +702,7 @@ func TestIssuesOrderedBySeverity(t *testing.T) {
 func TestFindingRankMatchesSeverity(t *testing.T) {
 	rank := map[string]int{"critical": 3, "high": 2, "medium": 1, "": 0}
 	for _, kind := range []string{web.KindSkimmer, web.KindActiveSVG, web.KindScriptInUploads, web.KindCodeInUploads, web.KindPolyglotImage, web.KindSignature,
-		web.KindHiddenScript, web.KindHiddenInData, web.KindEncodedBlob, web.KindSuspiciousSymlink, web.KindExternalSymlink, web.KindAppInData, web.KindOverrideInData, web.KindCodeInData} {
+		web.KindHiddenScript, web.KindHiddenInData, web.KindEncodedBlob, web.KindSuspiciousSymlink, web.KindExternalSymlink, web.KindAppInData, web.KindOverrideInData, web.KindCodeInData, web.KindPaymentWithHost} {
 		for _, sigs := range [][]string{nil, {"eval"}, {"obfuscation"}, {"handler_directive"}} {
 			sev, _ := webFinding(web.Finding{Kind: kind, Signatures: sigs})
 			if got := web.FindingRank(kind, sigs); got != rank[sev] {

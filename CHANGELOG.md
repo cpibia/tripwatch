@@ -50,12 +50,21 @@ verifier, so it is clear which of the two needs updating. Versions follow
   `action` names another host, quoted or not; `setAttribute('src'|'href'|'action', ...)`,
   `Object.assign` with one of those properties, `import()`, `new Audio` and `new Worker`. A
   payment field's name is read as CSS selectors match it: CSS escapes decoded (`\63 vv` is
-  `cvv`), and a name's start, middle and end given by selectors on one element
-  (`[name^=card][name$=number]`) put together, also when they leave out up to half of a known
-  field name between them. A payment field's name inside base64 data, the payload of a data URI
+  `cvv`), comments, namespaces and `:is()`/`:where()` dropped, and a name's start, middle and end
+  given by selectors on one element (`[name^=card][name$=number]`) put together, for `name`, `id`,
+  `placeholder`, `aria-label`, `autocomplete` (`cc-number`, `cc-csc`, `cc-exp`) and `data-*`
+  attributes; parts that cover at least half of a known field name count, one side alone too
+  unless it is only a generic part such as `number`. A payment field's name inside base64 data, the payload of a data URI
   that a string holds (a quote, `data:`, a media type and `;base64,` before it) or a whole quoted literal that decodes into data that is not text, is chance and not counted;
   a run of code or of joined strings in the same letters (`(0+0+...+cardnumber.value)`) is
   never taken for it. The clean corpus flags the same files.
+- A changed script that reads a payment field and names another host, without a way out the
+  strict search knows (jQuery markup, `srcset`, CSS `url()`, `srcdoc`, a fragment parsed from
+  markup...), is reported as `payment_field_with_host`, a medium alert. On a corpus of 2,776
+  clean scripts (WordPress, WooCommerce, three payment gateways, Elementor, Contact Form 7) it
+  marks 11, all in payment gateways
+  (Stripe, WooPayments, PayPal); with content references on, a gateway's file that matches its
+  release as published raises nothing.
 - The families search, around each fixed word, the whole statement or line it is in (at most
   4 KB each way), regions that touch merged into one: a call through seventy brackets or a host
   with a 63-character label is no longer longer than the window, and a file made only of those

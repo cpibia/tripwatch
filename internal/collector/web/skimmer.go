@@ -21,10 +21,14 @@ import (
 
 // KindSkimmer is a script or a template, changed since the previous run, that reads payment
 // fields and sends them out or hides how: what a card skimmer injected into a shop looks like.
-// KindActiveSVG is an SVG image among the uploads that runs script when shown.
+// KindPaymentWithHost is a changed script that reads a payment field and names another host,
+// without a way out the search knows: a payment library does as much, and so does a skimmer that
+// sends through a channel no pattern lists. KindActiveSVG is an SVG image among the uploads that
+// runs script when shown.
 const (
-	KindSkimmer   = "payment_skimmer"
-	KindActiveSVG = "active_svg_in_upload_dir"
+	KindSkimmer         = "payment_skimmer"
+	KindPaymentWithHost = "payment_field_with_host"
+	KindActiveSVG       = "active_svg_in_upload_dir"
 )
 
 // skimmerExtensions are the files a skimmer is injected into: scripts, templates, images that
@@ -35,7 +39,7 @@ var skimmerExtensions = []string{".js", ".mjs", ".html", ".htm", ".phtml", ".svg
 // their own relative endpoints or through their own SDK; a skimmer reads them and sends them
 // to a host of its own, or hides the code that does.
 var (
-	paymentFields = regexp.MustCompile(`(?i)cc[_-]?(?:number|num|cid|exp|owner)|card[_-]?(?:number|holder|cvc|cvv|expir)|cardnumber|\bcvv2?\b|\bcvc\b|security[_-]?code|payment\[cc_|expir(?:y|ation)[_-]?(?:month|year|date)`)
+	paymentFields = regexp.MustCompile(`(?i)cc[_-]?(?:number|num|cid|csc|exp|owner)|card[_-]?(?:number|holder|cvc|cvv|expir)|cardnumber|\bcvv2?\b|\bcvc\b|security[_-]?code|payment\[cc_|expir(?:y|ation)[_-]?(?:month|year|date)`)
 	exfiltration  = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|` + newCall("EventSource") + `|['"]no-cors['"]|` + urlSink + `[\s(]*(?:[0-9a-z_$]+\s*,[\s(]*)?(?:['"]POST['"]\s*,\s*)?` + urlLiteral + `|` + markupURL)
 	obfuscation   = regexp.MustCompile(`(?i)\batob\s*\(|String\.fromCharCode|` + newCall("Function") + `|\beval\s*\(|\bunescape\s*\(|(?:\\x[0-9a-f]{2}){8}|['"][A-Za-z0-9+/]{400,}={0,2}['"]`)
 	formHarvest   = regexp.MustCompile(`(?i)querySelectorAll\s*\(\s*['"](?:input|form|select)|\.elements\b|` + newCall("FormData"))
@@ -62,6 +66,10 @@ var (
 	charCodes       = regexp.MustCompile(`(?i)String\.fromCharCode\s*\(\s*((?:0x[0-9a-f]{1,2}|\d{1,3})(?:\s*,\s*(?:0x[0-9a-f]{1,2}|\d{1,3})){2,200})\s*\)`)
 	escapeRun       = regexp.MustCompile(`(?i)(?:\\x[0-9a-f]{2}|\\u00[0-9a-f]{2}){4,}`)
 )
+
+// externalHost is a URL naming another host where a script or a style writes one: in a string,
+// a template, CSS's url() or an attribute's value.
+var externalHost = regexp.MustCompile(`['"\x60(=]\s*(?:https?:|wss?:)?//[a-z0-9\[]`)
 
 // urlLiteral is a string naming another host, as the tokenizer's rendering writes a URL: a name
 // with or without dots, an IPv4 address, or an IPv6 one in brackets.
@@ -396,83 +404,131 @@ func folded(pattern string) *regexp.Regexp {
 }
 
 // attrSelector is an attribute selector on a name: [name^=card], [name$="number"], [name*=cvv].
-var attrSelector = regexp.MustCompile(`(?i)\[\s*name\s*([~|^$*]?)=\s*(?:"([^"]{1,64})"|'([^']{1,64})'|([^'"\]\s]{1,64}))\s*(?:i\s*)?\]`)
+// attrSelector is an attribute selector on an attribute that names a field, in any namespace,
+// with or without its case flag: [name^=card], [*|id$="number" i], [autocomplete="cc-csc"].
+var attrSelector = regexp.MustCompile(`(?i)\[\s*(?:[a-z*]*\|)?(name|id|placeholder|aria-label|autocomplete|data-[a-z0-9-]{1,32})\s*([~|^$*]?)=\s*(?:"([^"]{1,64})"|'([^']{1,64})'|([^'"\]\s]{1,64}))\s*(?:[is]\s*)?\]`)
+
+// selectorNoise is what a selector may hold without changing which element it names: comments,
+// and the :is() and :where() that only group (their closing brackets are skipped between parts).
+var selectorNoise = regexp.MustCompile(`/\*[^*]{0,64}\*/|:(?:is|where|matches|-webkit-any|-moz-any)\(`)
 
 // paymentNames are the names paymentFields knows, for a name a selector gives only in part.
 var paymentNames = []string{
-	"cc_number", "cc_num", "cc_cid", "cc_exp", "cc_owner", "card_number", "cardnumber", "card_holder",
+	"cc_number", "cc_num", "cc_cid", "cc_csc", "cc_exp", "cc_owner", "card_number", "cardnumber", "card_holder",
 	"card_cvc", "card_cvv", "card_expir", "cvv2", "cvc", "security_code", "expiry_month", "expiry_year",
 	"expiration_month", "expiration_year", "expiry_date", "expiration_date",
 }
 
+// genericParts are ends of a payment field's name that just as many other fields have: a
+// selector giving only one of them says nothing of a card.
+var genericParts = []string{"number", "num", "code", "date", "month", "year", "holder", "owner", "name"}
+
 // cssNames is what the CSS selectors in text name, as the browser matches them: escapes decoded
-// (\63 vv is cvv), and the parts of a name that selectors on one element give apart (start,
-// contains, end: [name^=card][name$=number]) put together. When start and end cover at least half
-// of a payment field's name, the rest between them, that name is written whole.
+// (\63 vv is cvv), comments and :is()/:where() dropped, and the parts of a name that selectors on
+// one element give apart (start, contains, end: [name^=card][name$=number]) put together, for
+// each attribute that names a field. Blanks in a value ("Card number") are written as "_". When
+// the parts cover at least half of a payment field's name, the rest unknown, that name is written
+// whole.
 func cssNames(text []byte) []byte {
-	if !bytes.Contains(text, []byte("name")) && !bytes.Contains(text, []byte(`\`)) {
+	if !bytes.Contains(text, []byte("=")) && !bytes.Contains(text, []byte(`\`)) {
 		return nil
 	}
-	plain := cssUnescape(text)
+	unescaped := cssUnescape(text)
+	plain := selectorNoise.ReplaceAll(unescaped, nil)
+	type parts struct{ start, middle, end string }
 	var out []byte
-	var start, middle, end string
+	compound := map[string]*parts{}
 	flush := func() {
-		if start == "" && middle == "" && end == "" {
-			return
-		}
-		out = append(append(out, ' '), start+middle+end...)
-		x, y := strings.ToLower(start), strings.ToLower(end)
-		for _, k := range paymentNames {
-			if partOf(x, y, k) {
-				out = append(append(out, ' '), k...)
+		for _, p := range compound {
+			out = append(append(out, ' '), p.start+p.middle+p.end...)
+			x, m, y := strings.ToLower(p.start), strings.ToLower(p.middle), strings.ToLower(p.end)
+			for _, k := range paymentNames {
+				if partOf(x, m, y, k) {
+					out = append(append(out, ' '), k...)
+				}
 			}
 		}
-		start, middle, end = "", "", ""
+		clear(compound)
 	}
 	last := -1
 	for _, m := range attrSelector.FindAllSubmatchIndex(plain, maxDecoded) {
-		if m[0] != last {
+		if last < 0 || len(bytes.Trim(plain[last:m[0]], ")")) > 0 {
 			flush()
 		}
 		last = m[1]
 		var v string
-		for g := 2; g <= 4; g++ {
+		for g := 3; g <= 5; g++ {
 			if m[2*g] >= 0 {
-				v = string(plain[m[2*g]:m[2*g+1]])
+				v = strings.Join(strings.Fields(string(plain[m[2*g]:m[2*g+1]])), "_")
 			}
 		}
-		switch string(plain[m[2]:m[3]]) {
+		attr := strings.ToLower(string(plain[m[2]:m[3]]))
+		p := compound[attr]
+		if p == nil {
+			p = &parts{}
+			compound[attr] = p
+		}
+		switch string(plain[m[4]:m[5]]) {
 		case "^", "|":
-			start = v
+			p.start = v
 		case "$":
-			end = v
+			p.end = v
 		default:
-			middle += v
+			p.middle += v
 		}
 	}
 	flush()
-	if len(out) == 0 && len(plain) == len(text) {
+	if len(out) == 0 && len(unescaped) == len(text) {
 		return nil
 	}
-	return append(out, plain...)
+	return append(out, unescaped...)
 }
 
-// partOf reports whether a name starting with start and ending with end can be the name k: some
-// head of k ends start and some tail of k begins end, and together they cover at least half of k.
-func partOf(start, end, k string) bool {
-	start, end = strings.ReplaceAll(start, "-", "_"), strings.ReplaceAll(end, "-", "_")
-	if start == "" || end == "" {
-		return false
+// partOf reports whether a name starting with start, holding middle and ending with end can be
+// the name k: a head of k ends start, a tail of k begins end, or a piece of k is in middle, and
+// what they give of k covers at least half of it. One side alone that is only a generic part
+// ("number") is not enough.
+func partOf(start, middle, end, k string) bool {
+	norm := func(s string) string { return strings.ReplaceAll(s, "-", "_") }
+	start, middle, end = norm(start), norm(middle), norm(end)
+	if strings.Contains(start, k) || strings.Contains(middle, k) || strings.Contains(end, k) {
+		return true
 	}
+	need := max(4, (len(k)+1)/2)
+	head, tail := 0, 0
 	for p := min(len(k)-1, len(start)); p >= 1; p-- {
-		if !strings.HasSuffix(start, k[:p]) {
-			continue
+		if strings.HasSuffix(start, k[:p]) {
+			head = p
+			break
 		}
-		for q := min(len(k)-p, len(end)); q >= 1; q-- {
-			if strings.HasPrefix(end, k[len(k)-q:]) && p+q >= max(3, (len(k)+1)/2) {
-				return true
+	}
+	for q := min(len(k)-1, len(end)); q >= 1; q-- {
+		if strings.HasPrefix(end, k[len(k)-q:]) {
+			tail = q
+			break
+		}
+	}
+	inner := ""
+	for n := min(len(k)-1, len(middle)); n >= need && inner == ""; n-- {
+		for i := 0; i+n <= len(k); i++ {
+			if strings.Contains(middle, k[i:i+n]) {
+				inner = k[i : i+n]
+				break
 			}
 		}
+	}
+	generic := func(part string) bool {
+		return slices.Contains(genericParts, strings.Trim(part, "_"))
+	}
+	switch {
+	case head > 0 && tail > 0 && head+tail <= len(k):
+		return head+tail >= need
+	case head >= need:
+		return !generic(k[:head])
+	case tail >= need:
+		return !generic(k[len(k)-tail:])
+	case inner != "":
+		return !generic(inner)
 	}
 	return false
 }
@@ -661,6 +717,8 @@ func jsEscape(b []byte) ([]byte, int) {
 // skimmerFamilies are the families of a skimmer seen in a file, gathered across its pieces.
 type skimmerFamilies struct {
 	fields, harvest, exits, sends, hidden, key bool
+	// host is a URL naming another host anywhere in the script, whatever takes it.
+	host bool
 	// constants are the string constants folded so far, kept from one piece to the next.
 	constants *foldConstants
 }
@@ -693,6 +751,7 @@ func (f *skimmerFamilies) scan(content []byte) {
 	f.harvest = f.harvest || matchNear(formHarvestLower, lower, harvestAnchors, nil)
 	f.exits = f.exits || matchNear(exfiltrationLower, lower, exitAnchors, nil)
 	f.sends = f.sends || matchNear(sendsLower, lower, sendAnchors, nil)
+	f.host = f.host || bytes.Contains(lower, []byte("//")) && externalHost.Match(lower)
 	f.hidden = f.hidden || hidden(content) || hidden(bare)
 	f.key = f.key || bytes.Contains(text, []byte("sk_live_")) && secretKey.Match(text)
 }
@@ -917,8 +976,12 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 		s.issues = append(s.issues, fmt.Sprintf("%s: strings built past what the skimmer search follows: %d constants used, brackets deeper than %d: %v", c.Path, len(k.used), maxBracketDepth, k.deep))
 	}
 	sigs := append(fam.verdict(), svg...)
+	kind := KindSkimmer
+	if len(sigs) == 0 && fam.fields && fam.host {
+		kind, sigs = KindPaymentWithHost, []string{"payment_fields", "external_host"}
+	}
 	// A skimmer the bound on findings left out leaves its script pending, read again next run.
-	if len(sigs) > 0 && s.add(KindSkimmer, name, fs.FileInfoToDirEntry(info), sigs) == nil {
+	if len(sigs) > 0 && s.add(kind, name, fs.FileInfoToDirEntry(info), sigs) == nil {
 		return false
 	}
 	return !s.expired(ctx) && fileCtx.Err() == nil

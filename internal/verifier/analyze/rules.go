@@ -1385,6 +1385,11 @@ func Evaluate(prev *State, cur State) []Finding {
 				if sev == "" {
 					continue
 				}
+				// A payment library reads card fields and names its gateway: one that matches its
+				// release as published is that library.
+				if f.Kind == web.KindPaymentWithHost && cur.Published[f.Path].Matches {
+					continue
+				}
 				detail := f.Path
 				// Size and hash tell one file from another at the same path, for the operator
 				// and for the evidence kept of each content.
@@ -2049,6 +2054,8 @@ func webFinding(f web.Finding) (string, string) {
 		return "medium", "Hidden file in data directories"
 	case web.KindSkimmer:
 		return "critical", "Payment skimmer in changed code"
+	case web.KindPaymentWithHost:
+		return "medium", "Payment field read and an external host in the same script"
 	case web.KindActiveSVG:
 		if slices.Contains(f.Signatures, "obfuscation") {
 			return "critical", "SVG with hidden script in upload directories"

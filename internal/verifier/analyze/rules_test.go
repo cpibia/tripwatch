@@ -1193,6 +1193,20 @@ func TestDecoyChanges(t *testing.T) {
 	}
 }
 
+// A payment field read with another host named is a medium alert, and nothing when the script is
+// its release as published: a payment gateway's own.
+func TestPaymentFieldWithHostAlert(t *testing.T) {
+	cur := baseState()
+	cur.Web = &web.Result{Apps: []web.AppReport{{Findings: []web.Finding{
+		{Kind: web.KindPaymentWithHost, File: collector.File{Path: "/var/www/shop/js/a.js"}},
+		{Kind: web.KindPaymentWithHost, File: collector.File{Path: "/var/www/shop/wp-content/plugins/gateway/pay.js"}}}}}}
+	cur.Published = map[string]Published{"/var/www/shop/wp-content/plugins/gateway/pay.js": {Release: "gateway 1.0", Matches: true, Listed: true}}
+	got := fingerprints(Evaluate(nil, cur))
+	if !slices.Contains(got, "medium web:payment_field_with_host:/var/www/shop/js/a.js") || slices.ContainsFunc(got, func(f string) bool { return strings.Contains(f, "gateway") }) {
+		t.Errorf("got %v", got)
+	}
+}
+
 // A decoy missing from the first snapshot, a second hard link and a path found leading to a decoy
 // are conditions; a sensor that stops reporting decoys loses them all; a decoy missing and then
 // put in place is no alert.
