@@ -1019,10 +1019,8 @@ A systemd unit with security restrictions is in [deploy/systemd](deploy/systemd)
 6. External checks and canary tokens.
 7. rpm ndb databases (SUSE).
 8. PostgreSQL databases for the application profiles (Django, Rails, Drupal on PostgreSQL).
-9. Content references for application code: the verifier, which unlike the sensor may reach the
-   network, compares the hashes of changed files of a CMS core, its plugins and themes with the
-   checksums their registries publish, so that a package update is told apart from code written
-   into the package with its version file touched.
+9. Content references for more registries (Composer packages, npm, Magento), beyond WordPress
+   and drupal.org, which the verifier already checks with `TRIPWATCH_CONTENT_REFERENCES=on`.
 
 ## Status
 
