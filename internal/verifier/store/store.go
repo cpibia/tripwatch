@@ -207,6 +207,17 @@ CREATE TABLE IF NOT EXISTS channels (
 	last_error   TEXT NOT NULL DEFAULT '',
 	last_try     INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS content_refs (
+	ecosystem  TEXT NOT NULL,
+	slug       TEXT NOT NULL,
+	version    TEXT NOT NULL,
+	missing    INTEGER NOT NULL,
+	files      BLOB NOT NULL,
+	size       INTEGER NOT NULL,
+	fetched_at INTEGER NOT NULL,
+	used_at    INTEGER NOT NULL,
+	PRIMARY KEY (ecosystem, slug, version)
+);
 CREATE TABLE IF NOT EXISTS update_order (
 	id         INTEGER PRIMARY KEY CHECK (id = 1),
 	version    TEXT NOT NULL,
