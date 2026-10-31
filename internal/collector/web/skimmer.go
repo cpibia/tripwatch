@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // KindSkimmer is a script or a template, changed since the previous run, that reads payment
@@ -90,7 +91,7 @@ var (
 // hidden reports obfuscation in b: a decoder, a constructed function, eval, a run of escapes, a
 // long base64 literal, or a string turned around at run time.
 func hidden(b []byte) bool {
-	return matchNear(obfuscationLower, lowerASCII(b), hiddenAnchors) || longBase64(b) || reversed.Match(b)
+	return matchNear(obfuscationLower, lowerFold(b), hiddenAnchors) || longBase64(b) || reversed.Match(b)
 }
 
 // longBase64 reports a quoted literal of 400 or more base64 characters, as obfuscation's pattern
@@ -124,12 +125,21 @@ func longBase64(b []byte) bool {
 	return false
 }
 
-// matchNear runs re only around each place an anchor occurs, in a window wider than any match of
-// re (at most 24 bytes before its anchor and 64 after; spacing longer than that in the source is
-// gone from the tokenizer's rendering, searched with it): the same answer as running it on the whole text, without
-// trying an alternation without a literal prefix at every byte.
+// maxStatementReach bounds how far a region of matchNear reaches from an anchor to the end of
+// its statement, on either side.
+const maxStatementReach = 4 << 10
+
+// matchNear runs re only in the regions of text around the places an anchor occurs: from the
+// start of the anchor's statement or line to its end (at most maxStatementReach away), regions
+// that touch merged into one, so that every byte is looked at a bounded number of times however
+// many anchors there are, and a match as long as its statement is whole. Only a match over an
+// anchor counts: a "\b" at a region's edge where no statement ends is no edge of the text. The
+// same answer as running re on the whole text, without trying an alternation with no literal
+// prefix at every byte.
 func matchNear(re *regexp.Regexp, text []byte, anchors []string) bool {
-	const before, after = 24, 64
+	// anchorEnd[i] is one past the longest anchor starting at i, 0 when none does.
+	anchorEnd := make([]int32, len(text))
+	found := false
 	for _, a := range anchors {
 		for off := 0; ; {
 			i := bytes.Index(text[off:], []byte(a))
@@ -137,34 +147,93 @@ func matchNear(re *regexp.Regexp, text []byte, anchors []string) bool {
 				break
 			}
 			i += off
-			// Only a match over the anchor counts: a "\b" at the window's edge is no edge of
-			// the text.
-			start := max(0, i-before)
-			for _, m := range re.FindAllIndex(text[start:min(len(text), i+len(a)+after)], -1) {
-				if start+m[0] <= i && i < start+m[1] {
-					return true
-				}
-			}
+			anchorEnd[i] = max(anchorEnd[i], int32(i+len(a))) //nolint:gosec // within a piece of a few MB
+			found = true
 			off = i + 1
 		}
 	}
-	return false
+	if !found {
+		return false
+	}
+	statementEnd := func(c byte) bool { return c == ';' || c == '\n' || c == '\r' }
+	regionStart, regionEnd := -1, -1
+	search := func() bool {
+		for _, m := range re.FindAllIndex(text[regionStart:regionEnd], -1) {
+			for j := regionStart + m[0]; j < regionStart+m[1]; j++ {
+				if anchorEnd[j] != 0 {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i := range text {
+		if anchorEnd[i] == 0 {
+			continue
+		}
+		if regionStart < 0 || i > regionEnd {
+			// A new region: back to the start of the statement, never into the region before.
+			if regionStart >= 0 && search() {
+				return true
+			}
+			floor := max(i-maxStatementReach, regionEnd, 0)
+			regionStart = i
+			for regionStart > floor && !statementEnd(text[regionStart-1]) {
+				regionStart--
+			}
+			regionEnd = regionStart
+		}
+		// Forward to the end of the anchor's statement, from where the region already reaches.
+		end, limit := max(regionEnd, int(anchorEnd[i])), min(len(text), int(anchorEnd[i])+maxStatementReach)
+		for end < limit && !statementEnd(text[end]) {
+			end++
+		}
+		regionEnd = end
+	}
+	return search()
 }
 
-// lowerASCII returns b with its ASCII letters in lower case.
-func lowerASCII(b []byte) []byte {
-	out := make([]byte, len(b))
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			c += 'a' - 'A'
+// foldsToASCII maps the runes outside ASCII that fold to an ASCII letter (ſ to s, the Kelvin sign
+// to k) to that letter in lower case, built from Unicode's simple folding, which Go's (?i) uses.
+var foldsToASCII = func() map[rune]byte {
+	m := map[rune]byte{}
+	for c := 'a'; c <= 'z'; c++ {
+		for r := unicode.SimpleFold(c); r != c; r = unicode.SimpleFold(r) {
+			if r >= utf8.RuneSelf {
+				m[r] = byte(c)
+			}
 		}
-		out[i] = c
+	}
+	return m
+}()
+
+// lowerFold returns b in lower case as the patterns of the families read it: ASCII letters
+// lowered, and the runes that fold to one of them made that letter, as Go's (?i) matched them.
+func lowerFold(b []byte) []byte {
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); {
+		c := b[i]
+		if c < utf8.RuneSelf {
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			out = append(out, c)
+			i++
+			continue
+		}
+		r, n := utf8.DecodeRune(b[i:])
+		if a, ok := foldsToASCII[r]; ok {
+			out = append(out, a)
+		} else {
+			out = append(out, b[i:i+n]...)
+		}
+		i += n
 	}
 	return out
 }
 
 // folded compiles a case-insensitive pattern as a case-sensitive one to run on text in lower case
-// (lowerASCII): the same matches on ASCII, several times faster than Go's (?i), which folds every
+// (lowerFold): the same matches on ASCII, several times faster than Go's (?i), which folds every
 // character it compares.
 func folded(pattern string) *regexp.Regexp {
 	pattern = strings.TrimPrefix(pattern, "(?i)")
@@ -198,7 +267,7 @@ func decoded(content []byte) []byte {
 	// Each search runs only on a file that holds its literal part: most hold none, and the
 	// patterns cost far more than the look.
 	has := func(lit string) bool { return bytes.Contains(content, []byte(lit)) }
-	lower := lowerASCII(content)
+	lower := lowerFold(content)
 	hasFold := func(lit string) bool { return bytes.Contains(lower, []byte(lit)) }
 	for _, m := range when(has("atob"), atobLiteral).FindAllSubmatchIndex(content, maxDecoded) {
 		b, err := base64.StdEncoding.DecodeString(string(content[m[2]:m[3]]))
@@ -344,10 +413,11 @@ func (f *skimmerFamilies) scan(content []byte) {
 	// The searches run on the source, on the strings it decodes and folds, and on the source as
 	// the tokenizer read it, where comments, spacing and escapes no longer hide a call.
 	folded, code, bare := foldStrings(content, f.constants)
-	if extra := append(append(decoded(content), folded...), code...); len(extra) > 0 {
+	// Decoders run on the rendering too, where globalThis["at"+"ob"](...) reads as .atob(...).
+	if extra := append(append(append(decoded(content), decoded(code)...), folded...), code...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)
 	}
-	lower := lowerASCII(text)
+	lower := lowerFold(text)
 	f.fields = f.fields || matchNear(paymentFieldsLower, lower, paymentAnchors)
 	f.harvest = f.harvest || matchNear(formHarvestLower, lower, harvestAnchors)
 	f.exits = f.exits || matchNear(exfiltrationLower, lower, exitAnchors)
@@ -532,28 +602,43 @@ func (s *scanner) inspectChanged(ctx context.Context, c FileChange) bool {
 	// One file cannot take the rest of the run: past its own time it is left, and stays pending.
 	fileCtx, cancel := context.WithTimeout(ctx, maxSkimmerFileTime)
 	defer cancel()
-	f, err := s.src.FS.Open(name)
-	if err != nil {
-		return true
-	}
-	defer func() { _ = f.Close() }()
 	var fam skimmerFamilies
 	var svg []string
-	r := textReader(io.LimitReader(f, info.Size()))
 	buf := make([]byte, skimmerChunk+skimmerOverlap)
-	kept := 0
-	for {
-		n, err := io.ReadFull(r, buf[kept:])
-		piece := buf[:kept+n]
-		fam.scan(piece)
-		if strings.EqualFold(path.Ext(name), ".svg") && svg == nil {
-			svg = svgSignals(piece)
+	read := func(decode bool) (guessed, ok bool) {
+		f, err := s.src.FS.Open(name)
+		if err != nil {
+			return false, false
 		}
-		if err != nil || s.expired(ctx) || fileCtx.Err() != nil {
-			break
+		defer func() { _ = f.Close() }()
+		r := io.LimitReader(f, info.Size())
+		if decode {
+			r, guessed = textReader(r)
 		}
-		// The end of a piece is read again with the next, so a pattern cut in two is whole once.
-		kept = copy(buf, piece[pieceCut(piece):])
+		kept := 0
+		for {
+			n, err := io.ReadFull(r, buf[kept:])
+			piece := buf[:kept+n]
+			fam.scan(piece)
+			if strings.EqualFold(path.Ext(name), ".svg") && svg == nil {
+				svg = svgSignals(piece)
+			}
+			if err != nil || s.expired(ctx) || fileCtx.Err() != nil {
+				return guessed, true
+			}
+			// The end of a piece is read again with the next, so a pattern cut in two is whole once.
+			kept = copy(buf, piece[pieceCut(piece):])
+		}
+	}
+	guessed, ok := read(true)
+	if !ok {
+		return true
+	}
+	// UTF-16 told without a byte order mark may be UTF-8 holding zero bytes in a comment or a
+	// string, which a browser runs as it is: the file is read both ways.
+	if guessed {
+		fam.constants = nil
+		read(false)
 	}
 	// Strings built past what the search follows are named, not judged: more constants used
 	// than any clean script of thousands holds (689 at most), or brackets deeper than matched.

