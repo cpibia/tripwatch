@@ -102,6 +102,9 @@ type State struct {
 	// Published judges the changed files of packages whose public release is known, by path; it
 	// is filled by the analyzer from content references, never by the sensor.
 	Published map[string]Published
+	// KnownReleases are the releases the verifier remembers for the host, by package root,
+	// whatever snapshot named them last; empty for a host it has none for yet.
+	KnownReleases map[string]store.HostRelease
 }
 
 // Published is what a changed file of a package is next to its public release: Release names the
@@ -458,7 +461,23 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 		since = prev.TakenAt
 	}
 	state.Published = a.published(ctx, host, state)
+	known, err := a.Store.HostReleases(ctx, host)
+	if err != nil {
+		a.Log.Error("load host releases", "host", host, "err", err)
+	}
+	state.KnownReleases = known
 	findings := a.dropReported(ctx, host, since, Evaluate(prev, state))
+	if state.Web != nil {
+		var seen []store.HostRelease
+		for _, app := range state.Web.Apps {
+			for _, r := range app.Releases {
+				seen = append(seen, store.HostRelease{Root: r.Root, Ecosystem: r.Ecosystem, Slug: r.Slug, Version: r.Version})
+			}
+		}
+		if err := a.Store.SetHostReleases(ctx, host, seen, a.Now()); err != nil {
+			a.Log.Error("keep host releases", "host", host, "err", err)
+		}
+	}
 	for _, name := range lost {
 		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:baseline-lost:" + name, Severity: "high",
 			Title:  "Collector " + name + " has nothing to compare with",

@@ -805,7 +805,9 @@ with the release as published (the core's from its official archive, checked aga
 list of api.wordpress.org): a
 file with the SHA-256 the release lists at its path is the update's own and raises nothing, one
 the release does not have, or has with other content, raises a high alert naming the release,
-and a plugin whose version went down raises a medium one. The checksums come from
+and a package the server never had, or whose version went down from the last the verifier saw,
+raises a medium one: published does not mean harmless, and the verifier remembers each server's
+releases across snapshots. The checksums come from
 `downloads.wordpress.org` only, once per release for all the servers, kept in the database
 (2 GB at most, the least used dropped first), at most five fetches per analysis round and fifty
 per server a day; a release the source lacks is asked again after a day. Turning it on tells

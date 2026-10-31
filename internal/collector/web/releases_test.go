@@ -49,30 +49,36 @@ func TestPluginReleases(t *testing.T) {
 	}
 }
 
-// An install whose files outside wp-content changed names its WordPress release with the locale
-// of wp-includes/version.php; one whose changes are all in wp-content names none.
-func TestCoreRelease(t *testing.T) {
+// An install names its WordPress release with the locale of wp-includes/version.php, en_US
+// without one, and every plugin installed, changed or not, the changed ones first.
+func TestCoreAndInstalledReleases(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "var/www/blog/wp-includes"), 0o750); err != nil {
-		t.Fatal(err)
+	write := func(p, content string) {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(root, "var/www/blog/wp-includes/version.php"), []byte("<?php\n$wp_version = '6.6.2';\n$wp_local_package = 'it_IT';\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	write("var/www/blog/wp-includes/version.php", "<?php\n$wp_version = '6.6.2';\n$wp_local_package = 'it_IT';\n")
+	write("var/www/blog/wp-content/plugins/shop/shop.php", "<?php\n/*\nPlugin Name: Shop\nVersion: 1.2.3\n*/\n")
+	write("var/www/blog/wp-content/plugins/forms/forms.php", "<?php\n/*\nPlugin Name: Forms\nVersion: 5.9\n*/\n")
 	s := &scanner{src: collector.NewSource(root), budget: newHashBudget(), findings: map[string]int{}}
 	s.report.Application = discovery.Application{Path: "/var/www/blog", Framework: "wordpress", Version: "6.6.2"}
-	got, ok := s.coreRelease([]FileChange{{Path: "/var/www/blog/wp-includes/load.php", Change: ChangeModified}})
-	if !ok || got != (PackageRelease{Root: "/var/www/blog", Ecosystem: EcosystemWordPressCore, Slug: "it_IT", Version: "6.6.2"}) {
-		t.Errorf("core release = %+v, %v", got, ok)
+	got := s.releases([]FileChange{{Path: "/var/www/blog/wp-content/plugins/shop/shop.php", Change: ChangeModified}})
+	want := []PackageRelease{
+		{Root: "/var/www/blog", Ecosystem: EcosystemWordPressCore, Slug: "it_IT", Version: "6.6.2"},
+		{Root: "/var/www/blog/wp-content/plugins/shop", Ecosystem: EcosystemWordPressPlugin, Slug: "shop", Version: "1.2.3"},
+		{Root: "/var/www/blog/wp-content/plugins/forms", Ecosystem: EcosystemWordPressPlugin, Slug: "forms", Version: "5.9"},
 	}
-	if _, ok := s.coreRelease([]FileChange{{Path: "/var/www/blog/wp-content/plugins/x/x.php", Change: ChangeModified}}); ok {
-		t.Error("changes in wp-content alone named the core")
+	if !slices.Equal(got, want) {
+		t.Errorf("releases = %+v", got)
 	}
-	if err := os.WriteFile(filepath.Join(root, "var/www/blog/wp-includes/version.php"), []byte("<?php $wp_version = '6.6.2';"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := s.coreRelease([]FileChange{{Path: "/var/www/blog/index.php"}}); got.Slug != "en_US" {
-		t.Errorf("locale without one: %q", got.Slug)
+	write("var/www/blog/wp-includes/version.php", "<?php $wp_version = '6.6.2';")
+	if core, _ := s.coreRelease(); core.Slug != "en_US" {
+		t.Errorf("locale without one: %q", core.Slug)
 	}
 }
 

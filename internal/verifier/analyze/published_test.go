@@ -5,12 +5,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/discovery"
+	"github.com/cpibia/tripwatch/internal/protocol"
 	"github.com/cpibia/tripwatch/internal/verifier/refs"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 )
@@ -102,9 +104,24 @@ func TestReleaseRules(t *testing.T) {
 	if _, ok := got["web-change:code:"+root+":new"]; !ok {
 		t.Errorf("the directory with a file off its release is not raised: %v", got)
 	}
-	down := Evaluate(&State{Web: app("1.10.0", "old")}, State{Web: app("1.9.5", "new", update...), Published: matched})
-	if len(down) != 1 || down[0].Severity != "medium" || !strings.Contains(down[0].Title, "downgraded") {
+	// The verifier remembers the last version of each package whatever snapshot named it: a
+	// downgrade is raised even when the snapshot before named the package with no change.
+	known := map[string]store.HostRelease{root: {Root: root, Ecosystem: web.EcosystemWordPressPlugin, Slug: "shop", Version: "2.0.0"}}
+	down := Evaluate(prev, State{Web: app("1.0.0", "new", update...), Published: matched, KnownReleases: known})
+	if len(down) != 1 || down[0].Severity != "medium" || down[0].Title != "Plugin downgraded: shop" {
 		t.Errorf("downgrade: %+v", down)
+	}
+	// A plugin the host never had is raised as installed even when it matches its release; on a
+	// host with nothing remembered yet, the first snapshot only records.
+	other := map[string]store.HostRelease{"/var/www/blog": {Root: "/var/www/blog", Ecosystem: web.EcosystemWordPressCore, Slug: "en_US", Version: "6.6.2"}}
+	added := []web.FileChange{{Path: root + "/shop.php", Change: web.ChangeAdded, SHA256: "aaaa"}}
+	addedMatch := map[string]Published{root + "/shop.php": {Release: "shop 1.2.3", Matches: true, Listed: true}}
+	got2 := Evaluate(prev, State{Web: app("1.2.3", "new", added...), Published: addedMatch, KnownReleases: other})
+	if len(got2) != 1 || got2[0].Severity != "medium" || got2[0].Title != "Plugin installed: shop" {
+		t.Errorf("installed: %+v", got2)
+	}
+	if got := Evaluate(prev, State{Web: app("1.2.3", "new", added...), Published: addedMatch, KnownReleases: map[string]store.HostRelease{}}); len(got) != 0 {
+		t.Errorf("first snapshot: %+v", got)
 	}
 	if lowerVersion("1.10", "1.9") || !lowerVersion("1.9", "1.10") || lowerVersion("2.0", "2.0") || !lowerVersion("2.0", "2.0.1") {
 		t.Error("lowerVersion compares wrongly")
@@ -137,5 +154,49 @@ func TestPublishedCore(t *testing.T) {
 	got := a.published(context.Background(), "web-01", state)
 	if len(got) != 1 || got["/var/www/blog/wp-includes/load.php"] != (Published{Release: "WordPress 6.6.2 (it_IT)", Matches: true, Listed: true}) {
 		t.Errorf("published = %+v", got)
+	}
+}
+
+// End to end, with snapshots as the sensor sends them (every package's release, changed or not):
+// the verifier remembers each package's version across snapshots, so a downgrade is raised when
+// the snapshot before named the plugin with nothing changed, and a plugin the host never had is
+// raised as installed although it matches its release.
+func TestReleasesRemembered(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	shop := "/var/www/blog/wp-content/plugins/shop"
+	files := "/var/www/blog/wp-content/plugins/filemgr"
+	if err := h.store.PutContentRef(ctx, store.ContentRef{Ecosystem: refs.WordPressPlugin, Slug: "filemgr", Version: "6.0",
+		Files: map[string][]string{"filemgr.php": {"c1"}}}, h.clock); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.PutContentRef(ctx, store.ContentRef{Ecosystem: refs.WordPressPlugin, Slug: "shop", Version: "1.0",
+		Files: map[string][]string{"shop.php": {"a1"}}}, h.clock); err != nil {
+		t.Fatal(err)
+	}
+	h.an.Refs = &refs.Resolver{Store: h.store, Fetcher: &refs.Fetcher{Sources: map[string]string{}}, Enabled: true, PerRound: 5, PerHostDay: 20, Now: func() time.Time { return h.clock }}
+	snap := func(hash, releases, changes string) string {
+		return `{"snapshot":{"results":{"web":{"apps":[{"path":"/var/www/blog","framework":"wordpress","dir_hashes":{"/var/www/blog/wp-content/plugins":"` + hash +
+			`"},"releases":[` + releases + `],"changes":[` + changes + `],"change_count":` + strconv.Itoa(strings.Count(changes, `"path"`)) + `}]}}}}`
+	}
+	rel := func(root, slug, version string) string {
+		return `{"root":"` + root + `","ecosystem":"wordpress-plugin","slug":"` + slug + `","version":"` + version + `"}`
+	}
+	h.deliver(protocol.KindSnapshot, gz(t, snap("a", rel(shop, "shop", "2.0"), "")))
+	h.analyse()
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, snap("a", rel(shop, "shop", "2.0"), "")))
+	h.analyse()
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, snap("b", rel(shop, "shop", "1.0"), `{"path":"`+shop+`/shop.php","change":"modified","sha256":"a1"}`)))
+	h.analyse()
+	if _, ok := h.open()["web-change:release-downgrade:"+shop+":1.0"]; !ok {
+		t.Errorf("the downgrade is not raised: %v", h.open())
+	}
+	h.clock = h.clock.Add(time.Hour)
+	h.deliver(protocol.KindSnapshot, gz(t, snap("c", rel(shop, "shop", "1.0")+","+rel(files, "filemgr", "6.0"), `{"path":"`+files+`/filemgr.php","change":"added","sha256":"c1"}`)))
+	h.analyse()
+	if a, ok := h.open()["web-change:release-installed:"+files+":6.0"]; !ok || a.Severity != "medium" {
+		t.Errorf("the installed plugin is not raised: %v", h.open())
 	}
 }

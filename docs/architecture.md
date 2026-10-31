@@ -484,8 +484,13 @@ then judges each changed file under that root:
 - different from it, or absent from it: a high alert naming the release it should match,
   "differs from <slug> <version> as published", and the file read for skimmers whatever the size
   of the change;
-- a version lower than the previous snapshot's: a medium alert, since a downgrade to a
-  vulnerable release passes every file check.
+- a version lower than the last one the verifier remembers for that host and root, from any
+  snapshot (the sensor names every package's release, changed or not, and the verifier keeps
+  them in `host_releases`): a medium alert, since a downgrade to a vulnerable release passes
+  every file check;
+- a package the host never had, judged against its release: a medium "installed" alert even
+  when it matches, since published does not mean harmless (a slug can be squatted, a release
+  can be malicious). A host with nothing remembered yet only records.
 
 **Effect on the skimmer search.** None on the sensor, which reads every changed script (see the
 choice above). On the verifier, a package updated as a whole raises nothing when its files match

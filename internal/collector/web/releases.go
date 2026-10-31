@@ -34,6 +34,7 @@ const (
 const (
 	maxPackageReleases = 200
 	maxHeaderFiles     = 50
+	maxHeaderReads     = 1000
 	headerBytes        = 8 << 10
 )
 
@@ -46,6 +47,49 @@ var (
 	drupalInfoVersion = regexp.MustCompile(`(?m)^version:[ \t]*['"]?([0-9][0-9A-Za-z.+-]{0,31})['"]?[ \t]*\r?$`)
 	pluginVersion     = regexp.MustCompile(`(?mi)^[ \t/*#@]*Version:[ \t]*([0-9][0-9A-Za-z.+-]{0,31})[ \t]*\r?$`)
 )
+
+// releases names the release of WordPress itself and of every plugin, theme or drupal.org project
+// installed in the application, those with changed files first so that the bound keeps them: the
+// verifier remembers them, to tell a package installed or downgraded since.
+func (s *scanner) releases(changes []FileChange) []PackageRelease {
+	var out []PackageRelease
+	if core, ok := s.coreRelease(); ok {
+		out = append(out, core)
+	}
+	paths := make([]FileChange, 0, len(changes))
+	paths = append(paths, changes...)
+	for _, dir := range s.packageParents() {
+		entries, err := fs.ReadDir(s.src.FS, strings.TrimPrefix(dir, "/"))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				// A path inside the package is all packageRoot needs.
+				paths = append(paths, FileChange{Path: dir + "/" + e.Name() + "/."})
+			}
+		}
+	}
+	return append(out, s.packageReleases(paths)...)
+}
+
+// packageParents are the directories whose children are packages with public releases.
+func (s *scanner) packageParents() []string {
+	app := s.report.Application
+	switch app.Framework {
+	case "wordpress":
+		return []string{app.Path + "/wp-content/plugins", app.Path + "/wp-content/themes"}
+	case "drupal":
+		var out []string
+		for _, docroot := range []string{"", "/web", "/docroot"} {
+			for _, kind := range []string{"modules", "themes", "profiles"} {
+				out = append(out, app.Path+docroot+"/"+kind+"/contrib")
+			}
+		}
+		return out
+	}
+	return nil
+}
 
 // packageReleases names the release of each WordPress plugin or theme a changed file belongs to,
 // from its header: a plugin's main file is the one named after its directory, or the first PHP
@@ -108,21 +152,11 @@ func (s *scanner) themeVersion(root string) string {
 	return ""
 }
 
-// coreRelease names the WordPress release of an install whose files outside wp-content changed:
-// the version discovery read, the locale from wp-includes/version.php (en_US without one).
-func (s *scanner) coreRelease(changes []FileChange) (PackageRelease, bool) {
+// coreRelease names the WordPress release of an install: the version discovery read, the locale
+// from wp-includes/version.php (en_US without one).
+func (s *scanner) coreRelease() (PackageRelease, bool) {
 	app := s.report.Application
 	if app.Framework != "wordpress" || app.Version == "" {
-		return PackageRelease{}, false
-	}
-	core := false
-	for _, c := range changes {
-		if rest, ok := strings.CutPrefix(c.Path, app.Path+"/"); ok && !strings.HasPrefix(rest, "wp-content/") {
-			core = true
-			break
-		}
-	}
-	if !core {
 		return PackageRelease{}, false
 	}
 	locale := "en_US"
@@ -190,8 +224,11 @@ func (s *scanner) headerVersion(name string) (string, bool) {
 	return "", false
 }
 
-// head reads the first headerBytes of a file.
+// head reads the first headerBytes of a file, within maxHeaderReads files an application.
 func (s *scanner) head(name string) ([]byte, bool) {
+	if s.headerReads++; s.headerReads > maxHeaderReads {
+		return nil, false
+	}
 	f, err := s.src.FS.Open(name)
 	if err != nil {
 		return nil, false

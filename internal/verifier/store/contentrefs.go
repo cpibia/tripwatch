@@ -111,3 +111,44 @@ func (s *Store) PutContentRef(ctx context.Context, ref ContentRef, now time.Time
 	}
 	return nil
 }
+
+// HostRelease is the last release a host's sensor named for a package's root.
+type HostRelease struct {
+	Root, Ecosystem, Slug, Version string
+}
+
+// maxHostReleases bounds the packages remembered for a host: a sensor naming new roots at every
+// snapshot pushes out the ones it named least recently, never another host's.
+const maxHostReleases = 5000
+
+// HostReleases returns the releases remembered for a host, by root.
+func (s *Store) HostReleases(ctx context.Context, host string) (map[string]HostRelease, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT root, ecosystem, slug, version FROM host_releases WHERE host_id = ?`, host)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]HostRelease{}
+	for rows.Next() {
+		var r HostRelease
+		if err := rows.Scan(&r.Root, &r.Ecosystem, &r.Slug, &r.Version); err != nil {
+			return nil, err
+		}
+		out[r.Root] = r
+	}
+	return out, rows.Err()
+}
+
+// SetHostReleases remembers the releases a host's snapshot named, keeping the others.
+func (s *Store) SetHostReleases(ctx context.Context, host string, releases []HostRelease, now time.Time) error {
+	for _, r := range releases {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO host_releases (host_id, root, ecosystem, slug, version, seen_at) VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (host_id, root) DO UPDATE SET ecosystem = excluded.ecosystem, slug = excluded.slug, version = excluded.version, seen_at = excluded.seen_at`,
+			host, r.Root, r.Ecosystem, r.Slug, r.Version, now.Unix()); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM host_releases WHERE host_id = ? AND root NOT IN (
+		SELECT root FROM host_releases WHERE host_id = ? ORDER BY seen_at DESC LIMIT ?)`, host, host, maxHostReleases)
+	return err
+}

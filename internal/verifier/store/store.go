@@ -218,6 +218,15 @@ CREATE TABLE IF NOT EXISTS content_refs (
 	used_at    INTEGER NOT NULL,
 	PRIMARY KEY (ecosystem, slug, version)
 );
+CREATE TABLE IF NOT EXISTS host_releases (
+	host_id   TEXT NOT NULL,
+	root      TEXT NOT NULL,
+	ecosystem TEXT NOT NULL,
+	slug      TEXT NOT NULL,
+	version   TEXT NOT NULL,
+	seen_at   INTEGER NOT NULL,
+	PRIMARY KEY (host_id, root)
+);
 CREATE TABLE IF NOT EXISTS update_order (
 	id         INTEGER PRIMARY KEY CHECK (id = 1),
 	version    TEXT NOT NULL,

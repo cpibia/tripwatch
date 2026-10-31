@@ -302,6 +302,7 @@ func (c *Collector) Collect(ctx context.Context, src collector.Source) (any, err
 			if next := s.finishManifest(ctx, c.StateDir); next != "" {
 				manifests = append(manifests, next)
 			}
+			s.report.Releases = s.releases(s.report.Changes)
 		}
 		// A scan cut short once is a slow run; one cut run after run leaves the application's
 		// code unread, which whoever fills it with files can cause: the count goes to the
@@ -403,15 +404,17 @@ func (b *hashBudget) take(n int64) bool {
 
 type scanner struct {
 	// behind says the run left changed scripts of the application unread for skimmers.
-	behind  bool
-	src     collector.Source
-	root    string
-	profile *discovery.Profile
-	sites   []discovery.Site
-	report  AppReport
-	issues  collector.Issues
-	uploads []string
-	data    []string
+	behind bool
+	// headerReads counts the files read for a package's release, bounded by maxHeaderReads.
+	headerReads int
+	src         collector.Source
+	root        string
+	profile     *discovery.Profile
+	sites       []discovery.Site
+	report      AppReport
+	issues      collector.Issues
+	uploads     []string
+	data        []string
 	// nested are the roots of applications inside this one, scanned on their own with their
 	// own profile.
 	nested []string

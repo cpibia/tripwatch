@@ -19,6 +19,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/discovery"
+	"github.com/cpibia/tripwatch/internal/verifier/store"
 	"github.com/cpibia/tripwatch/internal/watch"
 	"github.com/cpibia/tripwatch/internal/weblog"
 )
@@ -1421,7 +1422,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				for _, f := range scripts {
 					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
-				for _, f := range releaseChanges(app, pa, cur.Published) {
+				for _, f := range releaseChanges(app, cur.KnownReleases, cur.Published) {
 					change("web-change", f.Fingerprint, f.Severity, f.Title, f.Detail)
 				}
 			}
@@ -1758,10 +1759,12 @@ func scriptChanges(app web.AppReport, published map[string]Published) []Finding 
 
 // releaseChanges raises the changed files of a package that differ from its public release: a
 // file the release does not have, or has with other content, was not put there by the release,
-// and a file that matches it byte for byte is the release's own and raises nothing. A package
-// whose release went down since the previous snapshot is raised too: a downgrade to a release
+// and a file that matches it byte for byte is the release's own and raises nothing. Published is
+// not harmless, though: a package the host never had, judged against its release, is raised as
+// installed (a squatted or malicious slug matches its own release), and one whose release went
+// down from the last the verifier saw, in any snapshot, is raised as downgraded, since a release
 // with a known hole passes every file comparison.
-func releaseChanges(app, prev web.AppReport, published map[string]Published) []Finding {
+func releaseChanges(app web.AppReport, known map[string]store.HostRelease, published map[string]Published) []Finding {
 	var out []Finding
 	for _, c := range app.Changes {
 		p, ok := published[c.Path]
@@ -1777,20 +1780,27 @@ func releaseChanges(app, prev web.AppReport, published map[string]Published) []F
 			Detail: fmt.Sprintf("%s was %s in %s, and is not as %s publishes it: %s.\nSHA-256 %s",
 				c.Path, c.Change, app.Path, p.Release, why, orNone(c.SHA256))})
 	}
-	before := map[string]string{}
-	for _, r := range prev.Releases {
-		before[r.Root] = r.Version
+	judged := map[string]bool{}
+	for p := range published {
+		for _, r := range app.Releases {
+			if strings.HasPrefix(p, r.Root+"/") {
+				judged[r.Root] = true
+			}
+		}
 	}
 	for _, r := range app.Releases {
-		if old, ok := before[r.Root]; ok && lowerVersion(r.Version, old) {
-			title := "Plugin downgraded: " + r.Slug
-			switch r.Ecosystem {
-			case web.EcosystemWordPressCore:
+		kind := releaseKind(r.Ecosystem)
+		if _, had := known[r.Root]; !had && len(known) > 0 && judged[r.Root] && r.Ecosystem != web.EcosystemWordPressCore {
+			out = append(out, Finding{Fingerprint: "release-installed:" + r.Root + ":" + r.Version, Severity: "medium",
+				Title: kind + " installed: " + r.Slug,
+				Detail: fmt.Sprintf("%s %s appeared at %s. Its files match the release as published, which says what it is, not that it is wanted: a slug can be squatted, and a published release can be malicious.",
+					r.Slug, r.Version, r.Root)})
+		}
+		if old, ok := known[r.Root]; ok && lowerVersion(r.Version, old.Version) {
+			old := old.Version
+			title := kind + " downgraded: " + r.Slug
+			if r.Ecosystem == web.EcosystemWordPressCore {
 				title = "WordPress downgraded"
-			case web.EcosystemWordPressTheme:
-				title = "Theme downgraded: " + r.Slug
-			case web.EcosystemDrupalProject:
-				title = "Drupal project downgraded: " + r.Slug
 			}
 			out = append(out, Finding{Fingerprint: "release-downgrade:" + r.Root + ":" + r.Version, Severity: "medium",
 				Title: title,
@@ -1799,6 +1809,17 @@ func releaseChanges(app, prev web.AppReport, published map[string]Published) []F
 		}
 	}
 	return out
+}
+
+// releaseKind names what a package of an ecosystem is.
+func releaseKind(ecosystem string) string {
+	switch ecosystem {
+	case web.EcosystemWordPressTheme:
+		return "Theme"
+	case web.EcosystemDrupalProject:
+		return "Drupal project"
+	}
+	return "Plugin"
 }
 
 // releasedIn reports a directory whose every change is a file matching its public release, all of

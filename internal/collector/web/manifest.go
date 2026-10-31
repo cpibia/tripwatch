@@ -493,10 +493,6 @@ func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
 			s.report.Changes, s.report.ChangeCount = changes, count
-			s.report.Releases = s.packageReleases(changes)
-			if core, ok := s.coreRelease(changes); ok {
-				s.report.Releases = append([]PackageRelease{core}, s.report.Releases...)
-			}
 			// Scripts the run had no time or budget left to read for skimmers, however many,
 			// keep their old entry in the manifest handed on, so that the next run finds them
 			// changed and reads them: taken in as seen, a skimmer among them would never be read

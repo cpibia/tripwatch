@@ -9,8 +9,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 ### Sensor
 
 - The web collector names the release of each drupal.org project in a Drupal site's
-  modules/contrib, themes/contrib or profiles/contrib with changed files, from the project and
-  version drupal.org's packaging writes into its .info.yml.
+  modules/contrib, themes/contrib or profiles/contrib, from the project and version drupal.org's
+  packaging writes into its .info.yml. Releases are named for every package installed, changed or
+  not (200 an application, those with changed files first, 1,000 files read for headers), and
+  WordPress's own release always.
 - The web collector names WordPress's own release, with the locale of wp-includes/version.php,
   when files outside wp-content changed.
 - The web collector names the release of each WordPress plugin or theme a changed file belongs
@@ -68,7 +70,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
   256 MB expanded, 50,000 files) and kept only when every file matches the MD5 list
   api.wordpress.org publishes. An update as published raises nothing, not even the change of its
   directory; a file the release lacks or has with other content is a high alert naming the
-  release; a plugin whose version went down is a medium one. Checksums are fetched from one
+  release. Published is not harmless: a plugin, theme or project the host never had is a medium
+  "installed" alert even when it matches its release (a slug can be squatted, a release can be
+  malicious), and one whose version went down from the last the verifier saw for that host, in
+  any snapshot, is a medium "downgraded" one; the verifier remembers each host's releases (5,000
+  packages a host at most), whatever snapshot named them, and the first snapshot only records. Checksums are fetched from one
   fixed host, slugs and versions checked against strict shapes, at most five fetches an analysis
   round and fifty a server a day, kept in the database up to 2 GB. A release the source lacks or
   could not give (an error, a timeout, a list too large or malformed) is remembered for a day,
