@@ -24,7 +24,7 @@ mkdir -p "$work/src" "$work/ctx"
 git archive HEAD | tar -x -C "$work/src"
 (cd "$work/src" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$work/ctx/tripwatch-sensor" ./cmd/tripwatch-sensor \
   && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$work/ctx/judge" ./bench/judge)
-cp -R bench/Dockerfile bench/probe.sh bench/fixture bench/scenarios "$work/ctx/"
+cp -R bench/Dockerfile bench/probe.sh bench/refs.sh bench/fixture bench/scenarios "$work/ctx/"
 docker build -q -t "$image" "$work/ctx" >/dev/null
 
 docker run --rm "$image" sh -c '

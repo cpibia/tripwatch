@@ -12,7 +12,9 @@ COPY fixture/ /
 COPY tripwatch-sensor /usr/local/sbin/tripwatch-sensor
 COPY judge /usr/local/bin/judge
 COPY probe.sh /bench/probe.sh
+COPY refs.sh /bench/refs.sh
 COPY scenarios/ /bench/scenarios/
 
 RUN chown -R www-data:www-data /var/www \
+ && /bench/refs.sh \
  && /bench/probe.sh baseline

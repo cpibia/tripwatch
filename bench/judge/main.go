@@ -2,34 +2,49 @@
 // tripwatch-sensor -watch-only, read from standard input, and prints each alert they raise as a
 // JSON object: the benchmark counts what the verifier would raise, not what the sensor saw.
 //
-//	judge -snapshots <before> <after> [events]
+//	judge [-refs <dir>] -snapshots <before> <after> [events]
 //
 // applies the verifier's snapshot rules to two snapshots printed by tripwatch-sensor instead,
 // the second compared with the first, and prints the alerts the same way; with the event batches
 // the watchers printed meanwhile, it leaves out what an event already reported, as the verifier
-// does with the events it stored.
+// does with the events it stored; with -refs, the changed files of packages are judged against
+// content references served locally from the fixtures in dir, as the verifier does with references
+// turned on.
 package main
 
 import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/cpibia/tripwatch/internal/verifier/analyze"
+	"github.com/cpibia/tripwatch/internal/verifier/refs"
+	"github.com/cpibia/tripwatch/internal/verifier/store"
 	"github.com/cpibia/tripwatch/internal/watch"
 )
 
 func main() {
-	if (len(os.Args) == 4 || len(os.Args) == 5) && os.Args[1] == "-snapshots" {
+	args := os.Args[1:]
+	refsDir := ""
+	if i := slices.Index(args, "-refs"); i >= 0 && i+1 < len(args) {
+		refsDir = args[i+1]
+		args = slices.Delete(args, i, i+2)
+	}
+	if (len(args) == 3 || len(args) == 4) && args[0] == "-snapshots" {
 		events := ""
-		if len(os.Args) == 5 {
-			events = os.Args[4]
+		if len(args) == 4 {
+			events = args[3]
 		}
-		if err := snapshots(os.Args[2], os.Args[3], events); err != nil {
+		if err := snapshots(args[1], args[2], events, refsDir); err != nil {
 			fmt.Fprintln(os.Stderr, "judge:", err)
 			os.Exit(1)
 		}
@@ -77,7 +92,7 @@ func main() {
 
 // snapshots prints the alerts the verifier raises on the snapshot in after, compared with the one
 // in before, but for the file contents the events in the file named events reported.
-func snapshots(before, after, events string) error {
+func snapshots(before, after, events, refsDir string) error {
 	prev, err := readSnapshot(before)
 	if err != nil {
 		return err
@@ -85,6 +100,13 @@ func snapshots(before, after, events string) error {
 	cur, err := readSnapshot(after)
 	if err != nil {
 		return err
+	}
+	if refsDir != "" {
+		if cur.Published, err = published(refsDir, cur); err != nil {
+			return err
+		}
+		// The verifier remembers the releases of earlier snapshots; the bench has one.
+		cur.KnownReleases = analyze.KnownFrom(prev)
 	}
 	reported, err := reportedContents(events)
 	if err != nil {
@@ -100,6 +122,26 @@ func snapshots(before, after, events string) error {
 		}
 	}
 	return nil
+}
+
+// published judges the snapshot's changed files against content references served from the
+// fixtures in dir, on a local server, as the verifier does with references turned on: the bench
+// never reaches the network.
+func published(dir string, st analyze.State) (map[string]analyze.Published, error) {
+	srv := httptest.NewServer(http.FileServer(http.Dir(dir)))
+	defer srv.Close()
+	tmp, err := os.MkdirTemp("", "judge-refs")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	db, err := store.Open(filepath.Join(tmp, "refs.db"))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	r := &refs.Resolver{Store: db, Fetcher: &refs.Fetcher{Sources: map[string]string{refs.WordPressPlugin: srv.URL}}, Enabled: true, PerRound: 50, PerHostDay: 500}
+	return analyze.PublishedFor(context.Background(), r, "bench", st), nil
 }
 
 // reportedContents returns the path and content of every file event in the batches of a file.

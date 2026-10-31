@@ -71,12 +71,13 @@ mention() {
 }
 
 # alerts lists the alerts the verifier raises after a scenario: on the snapshot, compared with
-# the baseline's, but for what the watchers reported, and on what the watchers saw while it ran.
+# the baseline's, but for what the watchers reported, with content references served from the
+# fixtures of refs.sh, and on what the watchers saw while it ran.
 alerts() {
   if [ -f "$EVENTS" ]; then
-    judge -snapshots "$BEFORE/tripwatch.out.snap" "$AFTER/tripwatch.out.snap" "$EVENTS" 2>/dev/null
+    judge -refs /bench/refs -snapshots "$BEFORE/tripwatch.out.snap" "$AFTER/tripwatch.out.snap" "$EVENTS" 2>/dev/null
   else
-    judge -snapshots "$BEFORE/tripwatch.out.snap" "$AFTER/tripwatch.out.snap" 2>/dev/null
+    judge -refs /bench/refs -snapshots "$BEFORE/tripwatch.out.snap" "$AFTER/tripwatch.out.snap" 2>/dev/null
   fi
   cat "$AFTER/tripwatch.out.events"
 }

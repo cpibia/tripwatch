@@ -569,13 +569,19 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 // published compares the changed files of each package with a public release to that release as
 // published, when references are on and the release's reference can be had within the bounds.
 func (a *Analyzer) published(ctx context.Context, host string, st State) map[string]Published {
-	if a.Refs == nil || st.Web == nil {
+	return PublishedFor(ctx, a.Refs, host, st)
+}
+
+// PublishedFor judges a snapshot's changed files against their releases with a resolver, as the
+// analyzer does; the benchmark's judge uses it with references served from fixtures.
+func PublishedFor(ctx context.Context, r *refs.Resolver, host string, st State) map[string]Published {
+	if r == nil || st.Web == nil {
 		return nil
 	}
 	var out map[string]Published
 	for _, app := range st.Web.Apps {
 		for _, rel := range app.Releases {
-			ref, ok := a.Refs.Lookup(ctx, host, refs.Key{Ecosystem: rel.Ecosystem, Slug: rel.Slug, Version: rel.Version})
+			ref, ok := r.Lookup(ctx, host, refs.Key{Ecosystem: rel.Ecosystem, Slug: rel.Slug, Version: rel.Version})
 			if !ok {
 				continue
 			}
@@ -596,6 +602,20 @@ func (a *Analyzer) published(ctx context.Context, host string, st State) map[str
 				out[c.Path] = Published{Release: name, Listed: len(sums) > 0,
 					Matches: c.SHA256 != "" && slices.Contains(sums, c.SHA256)}
 			}
+		}
+	}
+	return out
+}
+
+// KnownFrom returns the releases a snapshot names, by root, as the analyzer remembers them.
+func KnownFrom(st State) map[string]store.HostRelease {
+	out := map[string]store.HostRelease{}
+	if st.Web == nil {
+		return out
+	}
+	for _, app := range st.Web.Apps {
+		for _, r := range app.Releases {
+			out[r.Root] = store.HostRelease{Root: r.Root, Ecosystem: r.Ecosystem, Slug: r.Slug, Version: r.Version}
 		}
 	}
 	return out
