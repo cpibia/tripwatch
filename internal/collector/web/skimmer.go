@@ -36,7 +36,7 @@ var skimmerExtensions = []string{".js", ".mjs", ".html", ".htm", ".phtml", ".svg
 // to a host of its own, or hides the code that does.
 var (
 	paymentFields = regexp.MustCompile(`(?i)cc[_-]?(?:number|num|cid|exp|owner)|card[_-]?(?:number|holder|cvc|cvv|expir)|cardnumber|\bcvv2?\b|\bcvc\b|security[_-]?code|payment\[cc_|expir(?:y|ation)[_-]?(?:month|year|date)`)
-	exfiltration  = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|` + newCall("EventSource") + `|['"]no-cors['"]|` + urlSink + `[\s(]*(?:[0-9a-z_$]+\s*,[\s(]*)?(?:['"]POST['"]\s*,\s*)?` + urlLiteral)
+	exfiltration  = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|` + newCall("EventSource") + `|['"]no-cors['"]|` + urlSink + `[\s(]*(?:[0-9a-z_$]+\s*,[\s(]*)?(?:['"]POST['"]\s*,\s*)?` + urlLiteral + `|` + markupURL)
 	obfuscation   = regexp.MustCompile(`(?i)\batob\s*\(|String\.fromCharCode|` + newCall("Function") + `|\beval\s*\(|\bunescape\s*\(|(?:\\x[0-9a-f]{2}){8}|['"][A-Za-z0-9+/]{400,}={0,2}['"]`)
 	formHarvest   = regexp.MustCompile(`(?i)querySelectorAll\s*\(\s*['"](?:input|form|select)|\.elements\b|` + newCall("FormData"))
 	secretKey     = regexp.MustCompile(`\bsk_live_[0-9A-Za-z]{16,}`)
@@ -65,13 +65,19 @@ var (
 
 // urlLiteral is a string naming another host, as the tokenizer's rendering writes a URL: a name
 // with or without dots, an IPv4 address, or an IPv6 one in brackets.
-const urlLiteral = `['"](?:https?:|wss?:)?//(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])`
+const urlLiteral = `['"]` + urlHost
+
+const urlHost = `(?:https?:|wss?:)?//(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])`
+
+// markupURL is markup written into the page that loads from another host: an element's src, a
+// link's href or a form's action, its value quoted or not, as HTML allows.
+const markupURL = `(?:document\s*\.\s*write(?:ln)?|(?:inner|outer)html\s*\+?=|insertadjacenthtml)[^;]{0,512}?\b(?:src|action|href)\s*=\s*\\?['"]?` + urlHost
 
 // urlSink is what takes the URL a skimmer sends to: a call (also through .call, .apply, a
 // Request, an EventSource, the base of a URL, a sequence expression), an option, or a property a
 // browser loads from (an image's or a script's src, a link's or the location's href, a form's
 // action).
-const urlSink = `(?:fetch\s*\)?|\.open|\$\.(?:ajax|post|get)|url\s*:|\bfetch\s*\.\s*(?:call|apply)\s*\(\s*[a-z0-9_$]*\s*,|reflect\.apply\s*\(\s*fetch\s*,\s*[a-z0-9_$]*\s*,\s*\[|new\s+(?:request|eventsource)|new\s+url\s*\([^()]{0,512},|\.(?:src|href|action)\s*=|\blocation\s*=|\blocation\s*\.\s*(?:assign|replace)|\bwindow\s*\.\s*open)`
+const urlSink = `(?:setattribute\s*\(\s*['"](?:src|href|action)['"]\s*,|object\s*\.\s*assign\s*\([^;]{0,512}?\b(?:src|href|action)\s*:|\bimport\s*\(|new\s+(?:audio|(?:shared)?worker)|fetch\s*\)?|\.open|\$\.(?:ajax|post|get)|url\s*:|\bfetch\s*\.\s*(?:call|apply)\s*\(\s*[a-z0-9_$]*\s*,|reflect\.apply\s*\(\s*fetch\s*,\s*[a-z0-9_$]*\s*,\s*\[|new\s+(?:request|eventsource)|new\s+url\s*\([^()]{0,512},|\.(?:src|href|action)\s*=|\blocation\s*=|\blocation\s*\.\s*(?:assign|replace)|\bwindow\s*\.\s*open)`
 
 // newCall matches a constructor called with new, also through parentheses or a global object
 // (new(Image)(), new window.Image()).
@@ -93,9 +99,10 @@ func when(present bool, re *regexp.Regexp) *regexp.Regexp {
 var (
 	paymentAnchors = []string{"cc", "card", "cvv", "cvc", "security", "expir"}
 	harvestAnchors = []string{"queryselectorall", "elements", "formdata"}
-	exitAnchors    = []string{"new", "sendbeacon", "no-cors", "fetch", ".open", "$.", "url", "src", "href", "action", "location", "call", "apply"}
-	sendAnchors    = []string{"new", "sendbeacon", "fetch", "open"}
-	hiddenAnchors  = []string{"atob", "fromcharcode", "new", "eval", "unescape", `\x`}
+	exitAnchors    = []string{"new", "sendbeacon", "no-cors", "fetch", ".open", "$.", "url", "src", "href", "action", "location", "call", "apply",
+		"write", "html", "setattribute", "assign", "import"}
+	sendAnchors   = []string{"new", "sendbeacon", "fetch", "open"}
+	hiddenAnchors = []string{"atob", "fromcharcode", "new", "eval", "unescape", `\x`}
 )
 
 // hidden reports obfuscation in b: a decoder, a constructed function, eval, a run of escapes, a
@@ -220,27 +227,79 @@ var foldsToASCII = func() map[rune]byte {
 	return m
 }()
 
-// inBase64 reports a match inside a run of base64 longer than any field name, such as an image
-// in a data URI, where "cvv" between a "+" and a "/" is chance, not a field: names hidden in base64
-// are decoded on their own (decoded).
-func inBase64(text []byte, m []int) bool {
-	const run = 48
+// inBase64 reports a match inside base64 data, where "cvv" between a "+" and a "/" is chance and
+// not a field: the payload of a data: URI with ";base64,", or a whole quoted literal that decodes
+// as base64 into data that is not text. Never a run of code that happens to use the same letters,
+// such as (0+0+...+cardnumber.value), nor short strings joined. Names hidden in base64 meant to be
+// read are decoded on their own (decoded).
+//
+// text is in lower case (lowerFold), so a literal is decoded from original, the same text with its
+// case, through offsets when folding moved them. Between valuesFrom and valuesTo text holds string
+// values without their quotes (foldStrings): a run there is data when the same run is a quoted
+// literal of data before valuesFrom.
+func inBase64(original []byte, offsets []int32, text []byte, valuesFrom, valuesTo int, m []int) bool {
+	const minRun, maxScan, maxLookups = 48, 64 << 10, 16
 	b64 := func(c byte) bool {
 		return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '+' || c == '/'
-	}
-	start, end := m[0], m[1]
-	for start > 0 && b64(text[start-1]) && m[0]-start < run {
-		start--
-	}
-	for end < len(text) && b64(text[end]) && end-m[1] < run {
-		end++
 	}
 	for i := m[0]; i < m[1]; i++ {
 		if !b64(text[i]) {
 			return false
 		}
 	}
-	return end-start >= run
+	start, end := m[0], m[1]
+	for start > 0 && b64(text[start-1]) && m[0]-start < maxScan {
+		start--
+	}
+	for end < len(text) && b64(text[end]) && end-m[1] < maxScan {
+		end++
+	}
+	if end-start < minRun || start == 0 {
+		return false
+	}
+	if text[start-1] == ',' && bytes.HasSuffix(text[:start-1], []byte(";base64")) {
+		return true
+	}
+	pad := end
+	for pad < len(text) && pad-end < 2 && text[pad] == '=' {
+		pad++
+	}
+	quotedData := func(start, pad int) bool {
+		quote := text[start-1]
+		if quote != '\'' && quote != '"' && quote != '`' || pad >= len(text) || text[pad] != quote {
+			return false
+		}
+		if offsets != nil {
+			start, pad = int(offsets[start]), int(offsets[pad])
+		}
+		data, err := base64.StdEncoding.DecodeString(string(original[start:pad]))
+		if err != nil || len(data) == 0 {
+			return false
+		}
+		binary := 0
+		for _, c := range data {
+			if c < 0x09 || 0x0d < c && c < 0x20 || c > 0x7e {
+				binary++
+			}
+		}
+		return binary*10 >= len(data)
+	}
+	if start < valuesFrom || start >= valuesTo {
+		return quotedData(start, pad)
+	}
+	run := text[start:pad]
+	for off, n := 1, 0; off < valuesFrom && n < maxLookups; n++ {
+		k := bytes.Index(text[off:valuesFrom], run)
+		if k < 0 {
+			return false
+		}
+		k += off
+		if quotedData(k, k+len(run)) {
+			return true
+		}
+		off = k + 1
+	}
+	return false
 }
 
 // lowerFold returns b in lower case as the patterns of the families read it: ASCII letters
@@ -268,6 +327,28 @@ func lowerFold(b []byte) []byte {
 	return out
 }
 
+// foldOffsets maps each byte of lowerFold(b) to its offset in b.
+func foldOffsets(b []byte) []int32 {
+	out := make([]int32, 0, len(b))
+	for i := 0; i < len(b); {
+		if b[i] < utf8.RuneSelf {
+			out = append(out, int32(i)) //nolint:gosec // within a piece of a few MB
+			i++
+			continue
+		}
+		r, n := utf8.DecodeRune(b[i:])
+		if _, ok := foldsToASCII[r]; ok {
+			out = append(out, int32(i)) //nolint:gosec // within a piece of a few MB
+		} else {
+			for k := range n {
+				out = append(out, int32(i+k)) //nolint:gosec // within a piece of a few MB
+			}
+		}
+		i += n
+	}
+	return out
+}
+
 // folded compiles a case-insensitive pattern as a case-sensitive one to run on text in lower case
 // (lowerFold): the same matches on ASCII, several times faster than Go's (?i), which folds every
 // character it compares.
@@ -289,6 +370,121 @@ func folded(pattern string) *regexp.Regexp {
 	}
 	return regexp.MustCompile(b.String())
 }
+
+// attrSelector is an attribute selector on a name: [name^=card], [name$="number"], [name*=cvv].
+var attrSelector = regexp.MustCompile(`(?i)\[\s*name\s*([~|^$*]?)=\s*(?:"([^"]{1,64})"|'([^']{1,64})'|([^'"\]\s]{1,64}))\s*(?:i\s*)?\]`)
+
+// paymentNames are the names paymentFields knows, for a name a selector gives only in part.
+var paymentNames = []string{
+	"cc_number", "cc_num", "cc_cid", "cc_exp", "cc_owner", "card_number", "cardnumber", "card_holder",
+	"card_cvc", "card_cvv", "card_expir", "cvv2", "cvc", "security_code", "expiry_month", "expiry_year",
+	"expiration_month", "expiration_year", "expiry_date", "expiration_date",
+}
+
+// cssNames is what the CSS selectors in text name, as the browser matches them: escapes decoded
+// (\63 vv is cvv), and the parts of a name that selectors on one element give apart (start,
+// contains, end: [name^=card][name$=number]) put together. When start and end cover at least half
+// of a payment field's name, the rest between them, that name is written whole.
+func cssNames(text []byte) []byte {
+	if !bytes.Contains(text, []byte("name")) && !bytes.Contains(text, []byte(`\`)) {
+		return nil
+	}
+	plain := cssUnescape(text)
+	var out []byte
+	var start, middle, end string
+	flush := func() {
+		if start == "" && middle == "" && end == "" {
+			return
+		}
+		out = append(append(out, ' '), start+middle+end...)
+		x, y := strings.ToLower(start), strings.ToLower(end)
+		for _, k := range paymentNames {
+			if partOf(x, y, k) {
+				out = append(append(out, ' '), k...)
+			}
+		}
+		start, middle, end = "", "", ""
+	}
+	last := -1
+	for _, m := range attrSelector.FindAllSubmatchIndex(plain, maxDecoded) {
+		if m[0] != last {
+			flush()
+		}
+		last = m[1]
+		var v string
+		for g := 2; g <= 4; g++ {
+			if m[2*g] >= 0 {
+				v = string(plain[m[2*g]:m[2*g+1]])
+			}
+		}
+		switch string(plain[m[2]:m[3]]) {
+		case "^", "|":
+			start = v
+		case "$":
+			end = v
+		default:
+			middle += v
+		}
+	}
+	flush()
+	if len(out) == 0 && len(plain) == len(text) {
+		return nil
+	}
+	return append(out, plain...)
+}
+
+// partOf reports whether a name starting with start and ending with end can be the name k: some
+// head of k ends start and some tail of k begins end, and together they cover at least half of k.
+func partOf(start, end, k string) bool {
+	start, end = strings.ReplaceAll(start, "-", "_"), strings.ReplaceAll(end, "-", "_")
+	if start == "" || end == "" {
+		return false
+	}
+	for p := min(len(k)-1, len(start)); p >= 1; p-- {
+		if !strings.HasSuffix(start, k[:p]) {
+			continue
+		}
+		for q := min(len(k)-p, len(end)); q >= 1; q-- {
+			if strings.HasPrefix(end, k[len(k)-q:]) && p+q >= max(3, (len(k)+1)/2) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cssUnescape decodes CSS escapes: a backslash and one to six hexadecimal digits, with one
+// optional blank after, is that character; a backslash and any other character is that character.
+func cssUnescape(b []byte) []byte {
+	if !bytes.Contains(b, []byte(`\`)) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' || i+1 >= len(b) {
+			out = append(out, b[i])
+			continue
+		}
+		j := i + 1
+		for j < len(b) && j-i <= 6 && isHex(b[j]) {
+			j++
+		}
+		if j == i+1 {
+			out = append(out, b[j])
+			i = j
+			continue
+		}
+		v, _ := strconv.ParseUint(string(b[i+1:j]), 16, 32)
+		out = utf8.AppendRune(out, rune(v)) //nolint:gosec // at most six hexadecimal digits
+		if j < len(b) && (b[j] == ' ' || b[j] == '\t' || b[j] == '\n') {
+			j++
+		}
+		i = j - 1
+	}
+	return out
+}
+
+func isHex(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F' }
 
 // maxDecoded bounds the literals decoded from one file.
 const maxDecoded = 256
@@ -453,12 +649,23 @@ func (f *skimmerFamilies) scan(content []byte) {
 	// The searches run on the source, on the strings it decodes and folds, and on the source as
 	// the tokenizer read it, where comments, spacing and escapes no longer hide a call.
 	folded, code, bare := foldStrings(content, f.constants)
-	// Decoders run on the rendering too, where globalThis["at"+"ob"](...) reads as .atob(...).
-	if extra := append(append(append(decoded(content), decoded(code)...), folded...), code...); len(extra) > 0 {
+	// Decoders run on the rendering too, where globalThis["at"+"ob"](...) reads as .atob(...), and
+	// so do the CSS selectors its strings hold, unescaped and with split names put together.
+	before := append(decoded(content), decoded(code)...)
+	if extra := append(append(append(slices.Clip(before), folded...), code...), cssNames(code)...); len(extra) > 0 {
 		text = append(slices.Clip(content), extra...)
 	}
 	lower := lowerFold(text)
-	f.fields = f.fields || matchNear(paymentFieldsLower, lower, paymentAnchors, inBase64)
+	var offsets []int32
+	if len(lower) != len(text) {
+		offsets = foldOffsets(text)
+	}
+	// lowerFold works rune by rune, so the folded values start where the parts before them end.
+	valuesFrom := len(lowerFold(content)) + len(lowerFold(before))
+	valuesTo := valuesFrom + len(lowerFold(folded))
+	f.fields = f.fields || matchNear(paymentFieldsLower, lower, paymentAnchors, func(lower []byte, m []int) bool {
+		return inBase64(text, offsets, lower, valuesFrom, valuesTo, m)
+	})
 	f.harvest = f.harvest || matchNear(formHarvestLower, lower, harvestAnchors, nil)
 	f.exits = f.exits || matchNear(exfiltrationLower, lower, exitAnchors, nil)
 	f.sends = f.sends || matchNear(sendsLower, lower, sendAnchors, nil)

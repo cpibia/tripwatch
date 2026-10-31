@@ -38,9 +38,17 @@ verifier, so it is clear which of the two needs updating. Versions follow
   before its first substitution; a URL held in a constant, written in place of its name; the URL
   passed through brackets, a sequence (`(0,'https://...')`), `.call`, `Reflect.apply`, a
   `Request`, the base of a `URL`; and an image's or a script's `src`, a link's or the location's
-  `href`, a form's `action`, `location.assign`, `window.open` and `EventSource`. A payment field's
-  name inside a long base64 run, such as an image in a data URI, is chance and not counted. The
-  clean corpus flags the same files.
+  `href`, a form's `action`, `location.assign`, `window.open` and `EventSource`; markup written
+  with `document.write`, `innerHTML`, `outerHTML` or `insertAdjacentHTML` whose `src`, `href` or
+  `action` names another host, quoted or not; `setAttribute('src'|'href'|'action', ...)`,
+  `Object.assign` with one of those properties, `import()`, `new Audio` and `new Worker`. A
+  payment field's name is read as CSS selectors match it: CSS escapes decoded (`\63 vv` is
+  `cvv`), and a name's start, middle and end given by selectors on one element
+  (`[name^=card][name$=number]`) put together, also when they leave out up to half of a known
+  field name between them. A payment field's name inside base64 data, the payload of a data URI
+  or a whole quoted literal that decodes into data that is not text, is chance and not counted;
+  a run of code or of joined strings in the same letters (`(0+0+...+cardnumber.value)`) is
+  never taken for it. The clean corpus flags the same files.
 - The families search, around each fixed word, the whole statement or line it is in (at most
   4 KB each way), regions that touch merged into one: a call through seventy brackets or a host
   with a 63-character label is no longer longer than the window, and a file made only of those
