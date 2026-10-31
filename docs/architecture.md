@@ -478,18 +478,17 @@ then judges each changed file under that root:
 
 - equal to the reference, which means the same size and the same SHA-256 as the file of that
   path in that release, never a path or a version alone: an update, no "Script changed" alert,
-  and not read for skimmers; the signature search still reads it;
+  and still read for skimmers and signatures by the sensor, which does not know the verdict;
 - different from it, or absent from it: a high alert naming the release it should match,
   "differs from <slug> <version> as published", and the file read for skimmers whatever the size
   of the change;
 - a version lower than the previous snapshot's: a medium alert, since a downgrade to a
   vulnerable release passes every file check.
 
-**Effect on the skimmer search.** The rule that leaves out a package changed as a whole (SEC-171,
-decoys by the dozen at the same version) becomes: files that match their release are not read
-for skimmers, the others always are; every file still goes through the signature search. Decoys written next to a skimmer cannot match a published release, so
-they no longer protect it, and an update of sixty files costs sixty lookups instead of a
-judgement on its size.
+**Effect on the skimmer search.** None on the sensor, which reads every changed script (see the
+choice above). On the verifier, a package updated as a whole raises nothing when its files match
+the release, so an update no longer needs to be told from decoys by its size, and decoys written
+next to a skimmer cannot match a published release.
 
 **Cache and limits.** References are immutable: one fetch per ecosystem, slug, version and
 locale for the whole fleet, kept in the verifier's database (a table of path and hash per
