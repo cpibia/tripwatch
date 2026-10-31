@@ -4,9 +4,11 @@ go 1.27.3
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1
+	github.com/tdewolff/parse/v2 v2.8.18
 	golang.org/x/crypto v0.57.0
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.60.1
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -19,5 +21,4 @@ require (
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )

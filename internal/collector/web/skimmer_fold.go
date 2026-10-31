@@ -134,8 +134,9 @@ func jsTokens(content []byte, regexAfterClose, module bool, from *brackets, carr
 				newline = true
 			}
 			i = min(i+j+4, len(content))
-		// "*/" ends a comment whose start lay in an earlier piece, never starts a pattern.
-		case c == '/' && (i == 0 || content[i-1] != '*') && i >= regexFailedUntil && regexAllowed(out, regexAfterClose):
+		// A comment open where the piece starts is in the state the piece before carried: a "/"
+		// after "*" here is a division or a pattern like any other.
+		case c == '/' && i >= regexFailedUntil && regexAllowed(out, regexAfterClose):
 			end, closed := regexEnd(content, i)
 			scanned += max(end-i, 1)
 			switch {
@@ -209,7 +210,7 @@ func jsTokens(content []byte, regexAfterClose, module bool, from *brackets, carr
 				kind = '0'
 			}
 			if w := string(name); kind == 'n' && (w == "function" || w == "class") && !afterDot(out) {
-				b.declare(b.statementStart(out, w == "class"))
+				b.declare(b.statementStart(out, w == "class", newline))
 			}
 			out = append(out, jsToken{kind: kind, text: string(name)})
 			i = j
@@ -482,10 +483,14 @@ func (b *brackets) brace(before []jsToken, newline bool) byte {
 				return ctxBlock
 			}
 		case ":":
-			// A property's value inside an object; a label's, a case's block or a conditional's
-			// object elsewhere, which a tokenizer cannot tell apart.
+			// A property's value inside an object; a label's block when the name before ":"
+			// starts a statement; a case's block or a conditional's object elsewhere, which a
+			// tokenizer cannot tell apart.
 			if b.top() == ctxObject {
 				return ctxObject
+			}
+			if n >= 2 && before[n-2].kind == 'n' && !reserved(before[n-2].text) && b.statementStart(before[:n-2], false, before[n-2].newline) == ctxBlock {
+				return ctxBlock
 			}
 		case "=", "(", "[", ",", "?", "+", "-", "*", "%", "!", "~", "&", "|", "^", "<", "/", "${":
 			return ctxObject
@@ -510,7 +515,40 @@ func (b *brackets) brace(before []jsToken, newline bool) byte {
 			return ctxObject
 		}
 	}
+	// A line break after a finished expression ends the statement, as no "{" may follow one
+	// on its line: a block starts.
+	if newline && expressionEnd(p) {
+		return ctxBlock
+	}
 	return ctxUnknown
+}
+
+// expressionEnd reports a token an expression can end with and no "{", "function" or "class"
+// may follow on its line: a name that is no keyword waiting for an operand, a literal, or a
+// closing bracket.
+func expressionEnd(t jsToken) bool {
+	switch t.kind {
+	case '0', 's', 'r':
+		return true
+	case 'n':
+		switch t.text {
+		case "typeof", "case", "in", "of", "new", "delete", "void", "throw", "instanceof", "yield", "await", "extends", "else", "do", "async", "export", "default":
+			return false
+		}
+		return true
+	case 'p':
+		return t.text == "]" || t.text == "`" || t.text == "++" || t.text == "--"
+	}
+	return false
+}
+
+// reserved reports a word that cannot be a label.
+func reserved(w string) bool {
+	switch w {
+	case "case", "default", "return", "typeof", "in", "of", "new", "delete", "void", "throw", "instanceof", "yield", "await", "this", "true", "false", "null":
+		return true
+	}
+	return false
 }
 
 // statements reports a context whose content is statements.
@@ -568,7 +606,7 @@ func afterDot(before []jsToken) bool {
 
 // statementStart says whether a function or class named after these tokens is a declaration,
 // an expression, or, where a tokenizer cannot be sure, neither: the context its body opens.
-func (b *brackets) statementStart(before []jsToken, class bool) byte {
+func (b *brackets) statementStart(before []jsToken, class, newline bool) byte {
 	declaration, expression := byte(ctxBlock), byte(ctxFuncExpr)
 	if class {
 		declaration, expression = ctxClass, ctxClassExpr
@@ -581,6 +619,11 @@ func (b *brackets) statementStart(before []jsToken, class bool) byte {
 		return declaration
 	}
 	p := before[n-1]
+	if newline && n == len(before) && expressionEnd(p) {
+		// A line break after a finished expression ends the statement (no "function" or
+		// "class" may follow one on its line): this one starts the next.
+		return declaration
+	}
 	switch p.kind {
 	case 'p':
 		switch p.text {

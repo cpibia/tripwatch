@@ -13,6 +13,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
   each ASCII character of its start. The file's size, already counted in the run's budget, bounds
   the work. One without a mark whose start is mostly outside ASCII, which only a charset the
   server or the page declares makes UTF-16, is read as it is: a limit of the rule.
+- The tokenizer of the skimmer search is checked in the tests against a JavaScript parser,
+  `github.com/tdewolff/parse/v2` (a test dependency only, in no binary), on 20,000 generated
+  scripts dense in the places a "/" or a quote can be misread, and with `WEB_CORPUS` on every
+  script of a corpus: on the 16,663 valid generated scripts it finds the same strings and
+  patterns, and on the 1,975 valid scripts of the corpus the same number of patterns. The
+  comparison found three mistakes, fixed: a "/" after "*" never started a pattern (`a */re/`), and
+  a label's block and a statement after a finished expression and a line break were taken as
+  uncertain.
 - The skimmer search costs a fifth of what it did in 0.1.42: about 0.1 s per MB of changed
   script on generated input and 0.25 on real bundles, against 1.1. Go's case-insensitive
   patterns folded every character and tried their alternatives at every byte: the text is now put
