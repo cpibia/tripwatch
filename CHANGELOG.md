@@ -40,6 +40,17 @@ verifier, so it is clear which of the two needs updating. Versions follow
   `card`, `fetch`, `sendBeacon`, `atob`...), with the same answers, which a test checks against
   the full patterns on generated text. The clean corpus reads in 18 s, was 100.
 
+### Verifier
+
+- Content references, off by default (`TRIPWATCH_CONTENT_REFERENCES=on`): the changed files of a
+  WordPress plugin are compared with the plugin's release as published on WordPress.org, by
+  SHA-256 at the same path. An update as published raises nothing, not even the change of its
+  directory; a file the release lacks or has with other content is a high alert naming the
+  release; a plugin whose version went down is a medium one. Checksums are fetched from one
+  fixed host, slugs and versions checked against strict shapes, at most five fetches an analysis
+  round and fifty a server a day, kept in the database up to 2 GB, a release the source lacks
+  remembered for a day. Signatures and the skimmer search still read every changed file.
+
 ## [0.1.42] - 2026-10-30
 
 What changes for an operator, in short; the details follow by component.
