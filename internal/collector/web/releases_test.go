@@ -75,3 +75,33 @@ func TestCoreRelease(t *testing.T) {
 		t.Errorf("locale without one: %q", got.Slug)
 	}
 }
+
+// A changed file of a drupal.org module names the project and version its packaged .info.yml
+// gives; a module without them, or outside a Drupal site, names none.
+func TestDrupalReleases(t *testing.T) {
+	root := t.TempDir()
+	write := func(p, content string) {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("var/www/site/web/modules/contrib/token/token.info.yml", "name: Token\ntype: module\n\n# Information added by Drupal.org packaging script on 2026-10-30\nversion: '8.x-1.18'\nproject: 'token'\n")
+	write("var/www/site/web/modules/contrib/devel/devel.info.yml", "name: Devel\ntype: module\n")
+	s := &scanner{src: collector.NewSource(root), budget: newHashBudget(), findings: map[string]int{}}
+	changes := []FileChange{
+		{Path: "/var/www/site/web/modules/contrib/token/token.module", Change: ChangeModified},
+		{Path: "/var/www/site/web/modules/contrib/devel/devel.module", Change: ChangeModified},
+	}
+	if got := s.packageReleases(changes); len(got) != 0 {
+		t.Errorf("outside a Drupal site: %+v", got)
+	}
+	s.report.Application = discovery.Application{Path: "/var/www/site", Framework: "drupal"}
+	want := []PackageRelease{{Root: "/var/www/site/web/modules/contrib/token", Ecosystem: EcosystemDrupalProject, Slug: "token", Version: "8.x-1.18"}}
+	if got := s.packageReleases(changes); !slices.Equal(got, want) {
+		t.Errorf("releases = %+v", got)
+	}
+}

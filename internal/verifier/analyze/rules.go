@@ -1789,6 +1789,8 @@ func releaseChanges(app, prev web.AppReport, published map[string]Published) []F
 				title = "WordPress downgraded"
 			case web.EcosystemWordPressTheme:
 				title = "Theme downgraded: " + r.Slug
+			case web.EcosystemDrupalProject:
+				title = "Drupal project downgraded: " + r.Slug
 			}
 			out = append(out, Finding{Fingerprint: "release-downgrade:" + r.Root + ":" + r.Version, Severity: "medium",
 				Title: title,

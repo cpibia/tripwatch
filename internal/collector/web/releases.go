@@ -26,6 +26,7 @@ const (
 	EcosystemWordPressPlugin = "wordpress-plugin"
 	EcosystemWordPressCore   = "wordpress-core"
 	EcosystemWordPressTheme  = "wordpress-theme"
+	EcosystemDrupalProject   = "drupal-project"
 )
 
 // Bounds of the releases read in one application: packages, files looked at for a plugin's header
@@ -37,10 +38,13 @@ const (
 )
 
 var (
-	wpLocale      = regexp.MustCompile(`\$wp_local_package\s*=\s*['"]([a-z]{2,3}(?:_[A-Z]{2})?(?:_[a-z]{2,10})?)['"]`)
-	pluginName    = regexp.MustCompile(`(?mi)^[ \t/*#@]*Plugin Name:`)
-	themeName     = regexp.MustCompile(`(?mi)^[ \t/*#@]*Theme Name:`)
-	pluginVersion = regexp.MustCompile(`(?mi)^[ \t/*#@]*Version:[ \t]*([0-9][0-9A-Za-z.+-]{0,31})[ \t]*\r?$`)
+	wpLocale   = regexp.MustCompile(`\$wp_local_package\s*=\s*['"]([a-z]{2,3}(?:_[A-Z]{2})?(?:_[a-z]{2,10})?)['"]`)
+	pluginName = regexp.MustCompile(`(?mi)^[ \t/*#@]*Plugin Name:`)
+	themeName  = regexp.MustCompile(`(?mi)^[ \t/*#@]*Theme Name:`)
+	// drupal.org's packaging writes the project and its version into each .info.yml.
+	drupalInfoProject = regexp.MustCompile(`(?m)^project:[ \t]*['"]?([a-z][a-z0-9_]{0,99})['"]?[ \t]*\r?$`)
+	drupalInfoVersion = regexp.MustCompile(`(?m)^version:[ \t]*['"]?([0-9][0-9A-Za-z.+-]{0,31})['"]?[ \t]*\r?$`)
+	pluginVersion     = regexp.MustCompile(`(?mi)^[ \t/*#@]*Version:[ \t]*([0-9][0-9A-Za-z.+-]{0,31})[ \t]*\r?$`)
 )
 
 // packageReleases names the release of each WordPress plugin or theme a changed file belongs to,
@@ -60,9 +64,15 @@ func (s *scanner) packageReleases(changes []FileChange) []PackageRelease {
 			break
 		}
 		var version string
-		if kind == EcosystemWordPressTheme {
+		switch kind {
+		case EcosystemWordPressTheme:
 			version = s.themeVersion(root)
-		} else {
+		case EcosystemDrupalProject:
+			if s.report.Framework != "drupal" {
+				continue
+			}
+			slug, version = s.drupalRelease(root, slug)
+		default:
 			version = s.pluginVersion(root, slug)
 		}
 		if version != "" {
@@ -70,6 +80,20 @@ func (s *scanner) packageReleases(changes []FileChange) []PackageRelease {
 		}
 	}
 	return out
+}
+
+// drupalRelease reads a drupal.org project's short name and version from the .info.yml named
+// after its directory, as drupal.org's packaging writes them; none for a checkout without them.
+func (s *scanner) drupalRelease(root, dir string) (project, version string) {
+	head, ok := s.head(path.Join(strings.TrimPrefix(root, "/"), dir+".info.yml"))
+	if !ok {
+		return "", ""
+	}
+	p, v := drupalInfoProject.FindSubmatch(head), drupalInfoVersion.FindSubmatch(head)
+	if p == nil || v == nil {
+		return "", ""
+	}
+	return string(p[1]), string(v[1])
 }
 
 // themeVersion reads a theme's version from the header of its style.css.
@@ -112,7 +136,10 @@ func (s *scanner) coreRelease(changes []FileChange) (PackageRelease, bool) {
 
 // packageRoot returns the directory of the plugin or theme p is in, its slug and its ecosystem.
 func packageRoot(p string) (root, slug, kind string, ok bool) {
-	for _, d := range []struct{ dir, kind string }{{"/wp-content/plugins/", EcosystemWordPressPlugin}, {"/wp-content/themes/", EcosystemWordPressTheme}} {
+	for _, d := range []struct{ dir, kind string }{
+		{"/wp-content/plugins/", EcosystemWordPressPlugin}, {"/wp-content/themes/", EcosystemWordPressTheme},
+		{"/modules/contrib/", EcosystemDrupalProject}, {"/themes/contrib/", EcosystemDrupalProject}, {"/profiles/contrib/", EcosystemDrupalProject},
+	} {
 		i := strings.Index(p, d.dir)
 		if i < 0 {
 			continue

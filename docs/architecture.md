@@ -425,7 +425,8 @@ not need a database.
 
 ## Content references
 
-Implemented for WordPress plugins, themes and core (`internal/verifier/refs`, `refs/core.go` for
+Implemented for WordPress plugins, themes and core and for drupal.org projects
+(`internal/verifier/refs`, `refs/drupal.go` for the release history and its archive, `refs/core.go` for
 the archives of the core, checked against WordPress's MD5 list, and of themes, for which no list
 exists, `store/contentrefs.go`, the sensor's
 `releases.go`, `releaseChanges` in the rules), opt-in with `TRIPWATCH_CONTENT_REFERENCES=on`: the
@@ -433,7 +434,8 @@ sensor names the release of each plugin with changed files from its header, the 
 fetches WordPress's `plugin-checksums` list for it within the bounds below, and a changed file
 whose SHA-256 the release lists at its path raises nothing, while one the release lacks or has
 with other content is high. WordPress's list carries no sizes, so the SHA-256 alone decides.
-Not yet done: Drupal. The rest of this section is the design it follows.
+Drupal's core is left out: installed with Composer, its files sit where no release archive puts
+them. The rest of this section is the design these follow.
 
 **No channel to the sensor, by choice.** Files that match their release are still read by the
 sensor's skimmer search: telling the sensor which files to skip would need a channel from the

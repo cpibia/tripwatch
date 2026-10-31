@@ -8,6 +8,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The web collector names the release of each drupal.org project in a Drupal site's
+  modules/contrib, themes/contrib or profiles/contrib with changed files, from the project and
+  version drupal.org's packaging writes into its .info.yml.
 - The web collector names WordPress's own release, with the locale of wp-includes/version.php,
   when files outside wp-content changed.
 - The web collector names the release of each WordPress plugin or theme a changed file belongs
@@ -56,7 +59,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - Content references, off by default (`TRIPWATCH_CONTENT_REFERENCES=on`): the changed files of a
   WordPress plugin or theme, and those of WordPress itself outside wp-content, are compared with
   the release as published on WordPress.org, by SHA-256 at the same path. A theme's release is
-  made from its archive in WordPress's directory, which no checksum list cross-checks. A core release is made from
+  made from its archive in WordPress's directory, which no checksum list cross-checks. A
+  drupal.org module, theme or profile is compared with its release too: the zip archive its
+  release history names, which must come from ftp.drupal.org with the size and MD5 the history
+  gives. Drupal's core is not compared: installed with Composer, its files sit where no archive
+  puts them. A core release is made from
   the official archive for its version and locale, hashed by the verifier within bounds (64 MB,
   256 MB expanded, 50,000 files) and kept only when every file matches the MD5 list
   api.wordpress.org publishes. An update as published raises nothing, not even the change of its

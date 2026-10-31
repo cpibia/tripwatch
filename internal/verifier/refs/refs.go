@@ -26,6 +26,10 @@ const (
 	WordPressCore = "wordpress-core"
 	// WordPressTheme is a theme of WordPress's directory.
 	WordPressTheme = "wordpress-theme"
+	// DrupalProject is a module or theme of drupal.org, its Slug the project's short name.
+	DrupalProject = "drupal-project"
+	// drupalFiles is the host Drupal's archives must come from.
+	drupalFiles = "drupal-files"
 	// wordPressAPI is the source of WordPress's MD5 lists, the cross-check of the core's archive.
 	wordPressAPI = "wordpress-api"
 )
@@ -40,6 +44,7 @@ type Key struct {
 var (
 	slugPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
 	localePattern  = regexp.MustCompile(`^[a-z]{2,3}(_[A-Z]{2})?(_[a-z]{2,10})?$`)
+	drupalPattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,99}$`)
 	versionPattern = regexp.MustCompile(`^[0-9][0-9A-Za-z.+-]{0,31}$`)
 )
 
@@ -53,6 +58,8 @@ func (k Key) Valid() bool {
 		return slugPattern.MatchString(k.Slug)
 	case WordPressCore:
 		return localePattern.MatchString(k.Slug)
+	case DrupalProject:
+		return drupalPattern.MatchString(k.Slug)
 	}
 	return false
 }
@@ -62,6 +69,8 @@ var DefaultSources = map[string]string{
 	WordPressPlugin: "https://downloads.wordpress.org",
 	WordPressCore:   "https://downloads.wordpress.org",
 	WordPressTheme:  "https://downloads.wordpress.org",
+	DrupalProject:   "https://updates.drupal.org",
+	drupalFiles:     "https://ftp.drupal.org",
 	wordPressAPI:    "https://api.wordpress.org",
 }
 
@@ -99,6 +108,8 @@ func (f *Fetcher) Fetch(ctx context.Context, k Key) (store.ContentRef, error) {
 		return f.fetchCore(ctx, k, base, sources[wordPressAPI])
 	case WordPressTheme:
 		return f.fetchTheme(ctx, k, base)
+	case DrupalProject:
+		return f.fetchDrupal(ctx, k, base, sources[drupalFiles])
 	}
 	u := base.JoinPath("plugin-checksums", k.Slug, k.Version+".json")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
