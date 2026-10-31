@@ -26,6 +26,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector/system"
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/discovery"
+	"github.com/cpibia/tripwatch/internal/verifier/refs"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
 	"github.com/cpibia/tripwatch/internal/watch"
 )
@@ -98,6 +99,17 @@ type State struct {
 	// maxCollectorIssues of them each; IssueCounts counts them all.
 	Issues      map[string][]string
 	IssueCounts map[string]int
+	// Published judges the changed files of packages whose public release is known, by path; it
+	// is filled by the analyzer from content references, never by the sensor.
+	Published map[string]Published
+}
+
+// Published is what a changed file of a package is next to its public release: Release names the
+// release, Matches says its SHA-256 is one the release lists for its path, Listed that the
+// release has a file at that path at all.
+type Published struct {
+	Release         string
+	Matches, Listed bool
 }
 
 // maxCollectorIssues bounds the issues kept of one collector.
@@ -215,6 +227,9 @@ type Analyzer struct {
 	Store *store.Store
 	Now   func() time.Time
 	Log   *slog.Logger
+	// Refs gives the published content of public components; nil leaves changes unjudged
+	// against their releases.
+	Refs *refs.Resolver
 }
 
 // Worker analyses pending snapshots, oldest first, until ctx ends. wake signals new ones; a
@@ -438,6 +453,7 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	if prev != nil && prev.TakenAt.After(since) {
 		since = prev.TakenAt
 	}
+	state.Published = a.published(ctx, host, state)
 	findings := a.dropReported(ctx, host, since, Evaluate(prev, state))
 	for _, name := range lost {
 		findings = append(findings, Finding{Kind: "sensor", Fingerprint: "sensor:baseline-lost:" + name, Severity: "high",
@@ -525,6 +541,37 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			a.Log.Error("resolve alerts", "host", host, "kind", kind, "err", err)
 		}
 	}
+}
+
+// published compares the changed files of each package with a public release to that release as
+// published, when references are on and the release's reference can be had within the bounds.
+func (a *Analyzer) published(ctx context.Context, host string, st State) map[string]Published {
+	if a.Refs == nil || st.Web == nil {
+		return nil
+	}
+	a.Refs.NewRound()
+	var out map[string]Published
+	for _, app := range st.Web.Apps {
+		for _, rel := range app.Releases {
+			ref, ok := a.Refs.Lookup(ctx, host, refs.Key{Ecosystem: rel.Ecosystem, Slug: rel.Slug, Version: rel.Version})
+			if !ok {
+				continue
+			}
+			for _, c := range app.Changes {
+				p, inside := strings.CutPrefix(c.Path, rel.Root+"/")
+				if !inside || c.Change == web.ChangeRemoved {
+					continue
+				}
+				if out == nil {
+					out = map[string]Published{}
+				}
+				sums := ref.Files[p]
+				out[c.Path] = Published{Release: rel.Slug + " " + rel.Version, Listed: len(sums) > 0,
+					Matches: c.SHA256 != "" && slices.Contains(sums, c.SHA256)}
+			}
+		}
+	}
+	return out
 }
 
 // maxReportedChecks bounds the event lookups of one snapshot: past it, findings are kept, and

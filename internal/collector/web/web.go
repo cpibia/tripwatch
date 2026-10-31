@@ -141,6 +141,8 @@ type AppReport struct {
 	// absent on a first run and when the sensor keeps no state.
 	Changes     []FileChange `json:"changes,omitempty"`
 	ChangeCount int          `json:"change_count,omitempty"`
+	// Releases are the public releases the packages with changed files say they are.
+	Releases []PackageRelease `json:"releases,omitempty"`
 	// UnreadScripts are changed scripts that runs in a row left unread for skimmers, for lack of
 	// time or budget: decoys written to keep a skimmer from being read show here.
 	UnreadScripts []UnreadScript `json:"unread_scripts,omitempty"`

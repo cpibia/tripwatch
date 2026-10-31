@@ -8,6 +8,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- The web collector names the release of each WordPress plugin a changed file belongs to, its
+  slug and version read from the plugin's header as WordPress finds it (200 plugins at most an
+  application, the first 8 KB of a file): the verifier can compare the changed files with that
+  release as published.
 - A script saved in UTF-16 is decoded to UTF-8 before the skimmer search, as a browser decodes
   it: told by its byte order mark, little or big endian, or without one by the zero byte beside
   each ASCII character of its start. The file's size, already counted in the run's budget, bounds
