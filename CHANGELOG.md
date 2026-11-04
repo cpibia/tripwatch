@@ -6,6 +6,29 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.43] - 2026-11-04
+
+What changes for an operator, in short; the details follow by component.
+
+- **New alerts.** A changed script that reads a payment field and names another host, without a
+  way out the strict search knows, raises a medium alert that only a person closes; payment
+  gateways updated while content references are off can raise it (11 of 2,776 clean scripts in
+  the test corpus, all in gateways). The skimmer search reads UTF-16 scripts, URLs as a browser
+  parses them, and field names in CSS selectors and in `id`, `placeholder`, `aria-label` and
+  `autocomplete` attributes.
+- **Content references**, off by default (`TRIPWATCH_CONTENT_REFERENCES=on` on the verifier):
+  changed files of WordPress plugins, themes and core, and of drupal.org projects, are compared
+  with their release as published; a file that matches raises nothing, one that differs is a
+  high alert, and a package installed or downgraded a medium one.
+- **Decoys**, only where `/etc/tripwatch/decoys` exists (owned by root, mode 0600, one absolute
+  path a line): the sensor never opens them, and one removed, changed, given another hard link
+  or no longer reported is a high alert. Reads of decoys in real time come in a later release.
+- **Capabilities.** The systemd unit adds `CAP_FOWNER`, so that the sensor opens other users'
+  files without changing their access times. Sensors installed from the `.deb` or `.rpm` get the
+  new unit with the update; a sensor installed by hand as a static binary keeps its unit until
+  it is replaced by hand.
+- **Upgrade.** Update the verifier, then the sensors.
+
 ### Sensor
 
 - Decoy files: the paths listed in `/etc/tripwatch/decoys` (`-decoys-file`), one absolute path
@@ -1719,7 +1742,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.42...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.43...HEAD
+[0.1.43]: https://github.com/cpibia/tripwatch/compare/v0.1.42...v0.1.43
 [0.1.42]: https://github.com/cpibia/tripwatch/compare/v0.1.41...v0.1.42
 [0.1.41]: https://github.com/cpibia/tripwatch/compare/v0.1.40...v0.1.41
 [0.1.40]: https://github.com/cpibia/tripwatch/compare/v0.1.39...v0.1.40
