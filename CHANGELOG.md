@@ -6,6 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.44] - 2026-11-05
+
+What changes for an operator, in short; the details follow by component.
+
+- **Less noise behind proxies.** A scanner that probes every site behind a reverse proxy for a
+  script in an upload path, and gets a failure, no longer raises a high alert per path: the
+  request is told a probe as it is on a single site. Requests answered 2xx, posts, commands in
+  the parameters and scripts that exist on disk stay serious.
+- **Upgrade.** Only the sensors change; the verifier image is rebuilt with the same behaviour.
+
 ### Sensor
 
 - A failed request for a script in an upload path, sent by a scanner to every site behind a
@@ -1751,7 +1761,8 @@ First public release.
   `verifier.env.example` attached to the release.
 - Build provenance attestations for every file and for the image.
 
-[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.43...HEAD
+[Unreleased]: https://github.com/cpibia/tripwatch/compare/v0.1.44...HEAD
+[0.1.44]: https://github.com/cpibia/tripwatch/compare/v0.1.43...v0.1.44
 [0.1.43]: https://github.com/cpibia/tripwatch/compare/v0.1.42...v0.1.43
 [0.1.42]: https://github.com/cpibia/tripwatch/compare/v0.1.41...v0.1.42
 [0.1.41]: https://github.com/cpibia/tripwatch/compare/v0.1.40...v0.1.41
