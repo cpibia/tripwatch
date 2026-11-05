@@ -6,6 +6,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A failed request for a script in an upload path, sent by a scanner to every site behind a
+  proxy, is told a probe again: past the four logs an event keeps, a log whose sites only answer
+  or pass the request on no longer leaves the answer open. An nginx location that answers every
+  request itself (`return`) or refuses it (`deny all`, `return 4xx`, `internal`) runs nothing,
+  unless a named location running scripts can take the refusal through `error_page`. On a proxy
+  in front of about thirty sites these probes made over 300 high alerts in a week.
+
 ## [0.1.43] - 2026-11-04
 
 What changes for an operator, in short; the details follow by component.

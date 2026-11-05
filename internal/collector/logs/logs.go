@@ -120,29 +120,41 @@ type Event struct {
 	path   string
 	ipSeen map[string]struct{}
 	// logs are the logs the requests came from, beyond the first one (Log), up to
-	// maxLogsPerEvent: each has its own set of sites. moreLogs says some were left out.
+	// maxLogsPerEvent: each has its own set of sites. moreLogs says some that could have run
+	// the script were left out; passing, up to maxPassingLogs, are left-out logs whose sites only
+	// answer or pass the request on, and so tell nothing of the file.
 	logs     []string
 	moreLogs bool
+	passing  []string
 }
 
 const (
 	maxSampleIPs     = 5
 	maxIPsPerEvent   = 1000
 	maxEventsPerRule = maxEvents / 4
-	// A request is usually logged once per scheme a site listens on: a few logs per event.
+	// A request is usually logged once per scheme a site listens on: a few logs per event. A
+	// scanner sweeping every site behind a proxy reaches many more, most of which pass it on.
 	maxLogsPerEvent = 4
+	maxPassingLogs  = 64
 	maxEventFiles   = 4
 )
 
-func (e *Event) addLog(log string) {
-	if e.Log == "/"+log || slices.Contains(e.logs, log) {
+func (r *runState) addLog(e *Event, log string) {
+	if e.moreLogs || e.Log == "/"+log || slices.Contains(e.logs, log) || slices.Contains(e.passing, log) {
 		return
 	}
-	if len(e.logs) == maxLogsPerEvent {
-		e.moreLogs = true
+	if len(e.logs) < maxLogsPerEvent {
+		e.logs = append(e.logs, log)
 		return
 	}
-	e.logs = append(e.logs, log)
+	script := weblog.ScriptPath(e.path)
+	if sites := r.sites[log]; len(sites) > 0 && !slices.ContainsFunc(sites, func(s discovery.Site) bool { return !s.RunsNothing(script) }) {
+		if len(e.passing) < maxPassingLogs {
+			e.passing = append(e.passing, log)
+		}
+		return
+	}
+	e.moreLogs = true
 }
 
 func (e *Event) addIP(ip string) {
@@ -767,7 +779,7 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 		e.Count++
 		e.Last = req.Time
 		e.addIP(req.IP)
-		e.addLog(log)
+		r.addLog(e, log)
 	}
 }
 

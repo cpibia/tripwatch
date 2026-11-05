@@ -316,6 +316,7 @@ func nginxLocations(block []directive, expand func(string) string, upstreams *[]
 			case "deny":
 				l.Denied = first(inner.Args) == "all"
 			case "return":
+				l.answers = true
 				l.Denied = l.Denied || strings.HasPrefix(first(inner.Args), "4")
 			case "internal":
 				l.Denied = true

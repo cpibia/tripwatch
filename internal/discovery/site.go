@@ -56,6 +56,9 @@ type Location struct {
 	Locations []Location `json:"locations,omitempty"`
 
 	re *regexp.Regexp
+	// answers says the location answers every request itself with "return": no file is served
+	// and no script reached.
+	answers bool
 }
 
 func (l *Location) isRegex() bool {
@@ -140,8 +143,10 @@ func deepest(l *Location, uri string) *Location {
 }
 
 // RunsNothing reports whether nginx answers a request for uri without running anything on this
-// host: the server block answers every request itself, or the location hands it to a proxy
-// (not to FastCGI), whose own log tells what ran there.
+// host: the server block or the location answers every request itself, the location refuses it,
+// or it hands it to a proxy (not to FastCGI), whose own log tells what ran there. A refusal can
+// still reach a script through error_page and a named location that runs one, so a site holding
+// such a location is not taken at its refusals.
 func (s *Site) RunsNothing(uri string) bool {
 	if s.Server != ServerNginx {
 		return false
@@ -150,7 +155,21 @@ func (s *Site) RunsNothing(uri string) bool {
 		return true
 	}
 	l := findLocation(s.Locations, uri)
-	return l != nil && l.Upstream != "" && !l.Executes
+	switch {
+	case l == nil:
+		return false
+	case l.answers && !l.Denied, l.Upstream != "" && !l.Executes:
+		return true
+	case l.Denied:
+		return !namedExecutes(s.Locations)
+	}
+	return false
+}
+
+func namedExecutes(locs []Location) bool {
+	return slices.ContainsFunc(locs, func(l Location) bool {
+		return strings.HasPrefix(l.Pattern, "@") && l.Executes || namedExecutes(l.Locations)
+	})
 }
 
 // maxScriptFiles bounds the places ScriptFiles names for one request.

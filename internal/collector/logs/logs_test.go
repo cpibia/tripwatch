@@ -620,6 +620,9 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		server { root /var/www/c; access_log /var/log/nginx/c.log; location / { proxy_pass http://127.0.0.1:9000; } }
 		server { listen 80; access_log /var/log/nginx/redirect.log; return 301 https://$host$request_uri; }
 		server { listen 443; access_log /var/log/nginx/d.log; location / { proxy_pass https://d_backend; } }
+		server { listen 80 default_server; access_log /var/log/nginx/edge.log; location / { return 444; } }
+		server { listen 80; access_log /var/log/nginx/edge.log; location /.well-known/acme-challenge/ { root /var/www/acme; } location / { return 301 https://$host$request_uri; } }
+		server { listen 80; access_log /var/log/nginx/err.log; error_page 403 = @php; location / { deny all; } location @php { fastcgi_pass unix:/run/php.sock; } }
 	}`)
 	write("var/www/b/uploads/shell.php", "<?php")
 	h.writeLog(logLine("203.0.113.7", "GET", "/wp-content/uploads/probe.php", 404) +
@@ -629,6 +632,10 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		logLine("203.0.113.11", "GET", "/files/about.php", 404))
 	write("var/log/nginx/other.access.log", logLine("203.0.113.9", "GET", "/media/z.php", 404))
 	write("var/log/nginx/redirect.log", logLine("203.0.113.10", "GET", "/tmp/phpinfo.php", 301))
+	// Locations that refuse or redirect every request run nothing, unless a refusal can fall
+	// back to a named location that runs scripts.
+	write("var/log/nginx/edge.log", logLine("203.0.113.12", "GET", "/wp-content/uploads/edge.php", 444))
+	write("var/log/nginx/err.log", logLine("203.0.113.13", "GET", "/wp-content/uploads/err.php", 403))
 	// The same probe over http and https, logged by two proxies, and one also logged by the site
 	// behind a proxy, which runs scripts: that site's roots tell.
 	write("var/log/nginx/d.log", logLine("203.0.113.11", "GET", "/images/about.php", 404)+
@@ -650,9 +657,46 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		"/media/z.php":                  "",
 		"/images/about.php":             "elsewhere",
 		"/files/about.php":              "missing",
+		"/wp-content/uploads/edge.php":  "elsewhere",
+		"/wp-content/uploads/err.php":   "missing",
 	} {
 		if v, ok := got[uri]; !ok || v != want {
 			t.Errorf("%s: on disk %q (event %v), want %q", uri, v, ok, want)
 		}
+	}
+}
+
+// A scanner sweeping every site behind a proxy reaches more logs than an event keeps; those
+// whose sites pass the request on leave the verdict to the others, and one that could have run
+// the script leaves it open.
+func TestSweepAcrossProxiedSites(t *testing.T) {
+	h := newHost(t)
+	write := func(name, content string) {
+		t.Helper()
+		p := filepath.Join(h.root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var conf strings.Builder
+	conf.WriteString("http {\n")
+	for i := range 2 * maxLogsPerEvent {
+		fmt.Fprintf(&conf, "server { listen 443; server_name s%d.example.com; access_log /var/log/nginx/s%d.log; location / { proxy_pass https://s%d_backend; } }\n", i, i, i)
+		write(fmt.Sprintf("var/log/nginx/s%d.log", i), logLine("203.0.113.7", "GET", "/images/sweep.php", 404)+
+			logLine("203.0.113.7", "GET", "/images/open.php", 404))
+	}
+	conf.WriteString("server { root /var/www/a; access_log /var/log/nginx/php.log; location ~ \\.php$ { fastcgi_pass unix:/run/php.sock; } }\n}")
+	write("etc/nginx/nginx.conf", conf.String())
+	write("var/log/nginx/php.log", logLine("203.0.113.7", "GET", "/images/open.php", 404))
+
+	got := map[string]string{}
+	for _, e := range h.run().Events {
+		got[e.Evidence.Request] = e.OnDisk
+	}
+	if got["/images/sweep.php"] != "elsewhere" || got["/images/open.php"] != "" {
+		t.Errorf("on disk: %q", got)
 	}
 }
