@@ -399,12 +399,21 @@ At the end of a run the collector looks up the script each event names (`weblog.
 the sites that write the event's log (`discovery.Site.ScriptFiles`): every root of the nginx
 site, both as root and as alias of its location, or Apache's `DocumentRoot` and the `Alias`
 directives matching the request, so naming too many places can only make a file look present.
-The answer (`on_disk`: `present`, `missing`, or empty) is left open for Caddy, a request its
-location or a named fallback location may proxy, an Apache site with any proxy (`ProxyPass`,
+The answer (`on_disk`: `present`, `missing`, `elsewhere`, or empty) is left open for Caddy, a
+request a named fallback location may proxy, an Apache site with any proxy (`ProxyPass`,
 `ProxyPassMatch`, a `RewriteRule` with the `P` flag) or an `AliasMatch`, a root with a variable
-or relative, an event seen in more than one log, an error other than "does not exist",
-or past 4,096 lookups a run. The verifier drops events for a missing script that did not
-succeed (status outside 2xx), and adds to the detail when a requested script exists.
+or relative, an error other than "does not exist", or past 4,096 lookups a run. A log whose nginx
+sites run nothing for the request (`Site.RunsNothing`: the server block or the location answers
+it with `return`, the location refuses it with `deny all`, `return 4xx` or `internal` and no named
+location running scripts can take the refusal through `error_page`, or it hands it to a proxy)
+says nothing of the file and is left aside; when every log the event came from is such a log the
+answer is `elsewhere`, and the files the request would have reached in the sites behind the proxy
+are named when the configuration tells them. An event keeps four logs besides the first; past
+that a log left aside changes nothing (up to 64 are remembered so as not to judge them again),
+and only one that could have run the script leaves the answer open, so a scanner sweeping every
+site behind a proxy is judged like a probe on a single site. The verifier drops a GET or HEAD
+that did not succeed (status outside 2xx) for a script `missing` or `elsewhere`, unless it
+carries a command in its parameters, and adds to the detail when a requested script exists.
 
 `internal/collector/logs` reads files with a cap per line (`MaxLineLength`; beyond it, it skips to
 the next line without keeping the bytes in memory), per file and per round, and with bounded maps
