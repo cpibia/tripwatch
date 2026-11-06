@@ -119,7 +119,9 @@ func TestFilesReportChanges(t *testing.T) {
 		if e.Path == "/srv/app/uploads/2026/10/log.php" && e.Op == OpWrite && !e.Inert {
 			t.Errorf("a log behind an exit not marked inert: %+v", e)
 		}
-		if e.Path == "/srv/app/uploads/2026/10/x.php" && e.Inert {
+		// The creation may be read while the file is still empty, which runs nothing; the
+		// content comes with the write.
+		if e.Path == "/srv/app/uploads/2026/10/x.php" && e.Size > 0 && e.Inert {
 			t.Errorf("a web shell marked inert: %+v", e)
 		}
 		if e.Path == "/etc/sudoers.d/90-x" && e.Op == OpWrite && (e.SHA256 == "" || e.Size == 0) {
