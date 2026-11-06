@@ -6,6 +6,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.47] - 2026-11-06
+
+- **Upgrade.** Only the sensors change; the verifier image is rebuilt with the same behaviour.
+
 ### Sensor
 
 - A log reached under two names (RHEL's `/etc/httpd/logs` is a link to `/var/log/httpd`) is read

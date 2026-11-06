@@ -604,7 +604,8 @@ it is a plain identifier. The collector is disabled with `-app-db=false`.
 ## Web server logs
 
 The `weblog` collector reads the logs named in the nginx, Apache and Caddy configurations and
-those in the standard locations, resuming where it stopped. Recognized formats are nginx and
+those in the standard locations, resuming where it stopped; a log reached under two names (RHEL's
+`/etc/httpd/logs` links to `/var/log/httpd`) is read once, under the configuration's. Recognized formats are nginx and
 Apache combined (also with extra trailing fields) and Caddy's JSON. The rules look for scripts
 requested in upload directories, known webshell names, commands in parameters, POSTs to static
 files or to endpoints that only serve files, access to sensitive files (`.env`, `.git`, backups),
