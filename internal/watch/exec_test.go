@@ -154,7 +154,12 @@ func TestClassifyExec(t *testing.T) {
 		fromCron:    func(p system.Process) bool { return p.PPID == 77 },
 		fromRuntime: func(p system.Process) bool { return p.PPID == 88 },
 		owner: func(f string) (int, bool) {
-			if strings.HasPrefix(f, "/home/ubuntu/") && !strings.HasSuffix(f, "/root-owned.sh") {
+			switch {
+			case strings.HasSuffix(f, "/absent"):
+				return 0, false
+			case f == "/usr/local/sbin":
+				return 1000, true
+			case strings.HasPrefix(f, "/home/ubuntu/") && !strings.HasSuffix(f, "/root-owned.sh"):
 				return 1000, true
 			}
 			return 0, true
@@ -223,6 +228,9 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i -fnoreply@example.com"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/sbin/sendmail -t -i -fadmin@example.com"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/sbin/sendmail -bs"}, ""},
+		// A program missing from a directory only root writes runs nothing; one a user could put there may.
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/sbin/absent -t -i"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- /usr/local/sbin/absent -t -i"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/dash", Cmdline: "sh -c -- id"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/sbin/sendmail -t -i; id"}, ReasonWebShell},
 		// An upload plugin scanning a file with ClamAV; with anything more it is a shell command.

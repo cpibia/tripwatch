@@ -302,7 +302,13 @@ func (c execContext) delegated(command string) bool {
 		if c.owner == nil {
 			return false
 		}
-		if uid, ok := c.owner(program); !ok || uid != 0 {
+		// A program that is not there runs nothing (PHP's mail() on a host without a mail server):
+		// only the directory's owner can put one there before the shell looks.
+		uid, ok := c.owner(program)
+		if !ok {
+			uid, ok = c.owner(path.Dir(program))
+		}
+		if !ok || uid != 0 {
 			return false
 		}
 	}
