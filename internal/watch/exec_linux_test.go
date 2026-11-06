@@ -74,7 +74,8 @@ func TestExecsReportStarts(t *testing.T) {
 	if err := exec.CommandContext(t.Context(), payload, "0.3").Run(); err != nil { //nolint:gosec // the test's own copy
 		t.Fatal(err)
 	}
-	web := exec.CommandContext(t.Context(), "/bin/sh", "-c", "sleep 0.3")
+	// A command the shell interprets: one program with literal arguments is the application's.
+	web := exec.CommandContext(t.Context(), "/bin/sh", "-c", "sleep 0.3; true")
 	web.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 33, Gid: 33}}
 	if os.Getuid() == 0 {
 		if err := web.Run(); err != nil {
