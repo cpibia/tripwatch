@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -301,6 +302,40 @@ func TestPackageToolsInScratch(t *testing.T) {
 	} {
 		if got := judge(tc.path, tc.uid, tc.pm); got != tc.want {
 			t.Errorf("%s uid %d package manager %v: %q, want %q", tc.path, *tc.uid, tc.pm, got, tc.want)
+		}
+	}
+}
+
+// A lock file created empty and removed never held a program; one written in between, or read
+// with content once, is a drop whatever size it had when it went.
+func TestEmptyScratchFile(t *testing.T) {
+	root := uint32(0)
+	at := time.Now()
+	judge := func(events ...watch.Event) int {
+		removal := watch.Event{At: at.Add(2 * time.Second), Class: watch.ClassScratch, Op: watch.OpDelete, Path: "/run/lock/lvm/P_global"}
+		for i := range events {
+			events[i].At, events[i].Class, events[i].Path = at.Add(time.Duration(i)*time.Millisecond), watch.ClassScratch, removal.Path
+		}
+		history := func(string, time.Time) []watch.Event { return append(slices.Clone(events), removal) }
+		return len(EvaluateEvents([]watch.Event{removal}, false, history))
+	}
+	lock := watch.Event{Op: watch.OpCreate, SHA256: emptySHA256, Mode: "-rwx------", UID: &root}
+	chmod := watch.Event{Op: watch.OpAttrib, SHA256: emptySHA256, Mode: "-rwx------", UID: &root}
+	written := watch.Event{Op: watch.OpWrite, SHA256: emptySHA256, Mode: "-rwx------", UID: &root}
+	unread := watch.Event{Op: watch.OpAttrib, Mode: "-rwx------", UID: &root}
+	full := watch.Event{Op: watch.OpAttrib, Size: 7284, SHA256: strings.Repeat("d", 64), Mode: "-rwx------", UID: &root}
+	for name, tc := range map[string]struct {
+		events []watch.Event
+		want   int
+	}{
+		"lock file":                {[]watch.Event{lock, chmod}, 0},
+		"written then truncated":   {[]watch.Event{lock, written}, 1},
+		"read once with content":   {[]watch.Event{lock, full}, 1},
+		"content not read in time": {[]watch.Event{lock, unread}, 1},
+		"appeared with content":    {[]watch.Event{full}, 1},
+	} {
+		if got := judge(tc.events...); got != tc.want {
+			t.Errorf("%s: %d findings, want %d", name, got, tc.want)
 		}
 	}
 }

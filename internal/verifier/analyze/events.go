@@ -79,6 +79,31 @@ func packageTool(first, last watch.Event) bool {
 	return rootOwned(first) && (first.PackageManager || last.PackageManager) && packageScratch.MatchString(last.Path)
 }
 
+// emptySHA256 is the SHA-256 of no bytes.
+const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// neverHeldContent reports a removed file that was empty every time it was read and never
+// written between appearing and going: a lock or marker file (LVM's /run/lock/lvm/P_global),
+// which runs nothing. Content comes only through a write, which inotify always reports, so a
+// program written, run, then truncated before it was read still counts.
+func neverHeldContent(removal, first watch.Event, history History) bool {
+	if first.SHA256 != emptySHA256 {
+		return false
+	}
+	for _, h := range history(removal.Path, first.At) {
+		if h.At.After(removal.At) {
+			break
+		}
+		if h.Op == watch.OpDelete {
+			continue
+		}
+		if h.Op == watch.OpWrite || h.SHA256 != emptySHA256 {
+			return false
+		}
+	}
+	return true
+}
+
 // rootOwned reports an event on a file root owns, which no other user can have made.
 func rootOwned(e watch.Event) bool {
 	return e.UID != nil && *e.UID == 0 && notAnotherUsers(e)
@@ -174,7 +199,7 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		// /tmp all day, never fold root's or the web server's into an aggregate.
 		if e.Op == watch.OpDelete {
 			if first, ok := appeared(e, history); ok {
-				if packageTool(first, e) {
+				if packageTool(first, e) || neverHeldContent(e, first, history) {
 					return Finding{}, false
 				}
 				sev := "high"

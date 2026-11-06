@@ -192,7 +192,10 @@ are passed over only outside the scratch directories, where dpkg never writes th
 scratch directories root's file under a name an upgrade writes there (apt-extracttemplates'
 `<package>.config.XXXXXX` directly in `/tmp` or `/var/tmp`, the trees in `mkinitramfs_XXXXXX/`
 and `dracut.XXXXXXX/`) raises nothing while the lock is held, and root's other drops removed
-within the window are lowered: the removal carries no owner, so the file as it appeared decides. If the transport cannot seal a batch because an earlier envelope is still pending,
+within the window are lowered: the removal carries no owner, so the file as it appeared decides. A
+file removed that was empty each time it was read and never written in between (a lock file)
+held no program and raises nothing: content comes only through a write, which inotify reports,
+so one written, run and truncated before it was read is still a drop. If the transport cannot seal a batch because an earlier envelope is still pending,
 the batcher keeps it in a queue of 4,096 events and retries with a backoff up to a minute. A
 batch the verifier refuses for its size, which the transport drops from the chain, is not taken
 for delivered: its events go again in batches half the size of the refused one, root's first,
