@@ -157,3 +157,24 @@ func TestDpkgStatesLargeStatus(t *testing.T) {
 		t.Fatalf("states %v, issues %v", st, issues)
 	}
 }
+
+// A package removed but not purged keeps its version in the status file, without the list of its
+// files' checksums: it is not a package whose checksums can change.
+func TestDpkgStatesSkipRemovedPackages(t *testing.T) {
+	status := "Package: php-fpm\nStatus: deinstall ok config-files\nVersion: 8.4.11-1\nArchitecture: amd64\nConffiles:\n /etc/php/fpm/php-fpm.conf 0123\n\n" +
+		"Package: old\nStatus: purge ok not-installed\nVersion: 1.0\nArchitecture: amd64\n\n" +
+		"Package: bash\nStatus: install ok installed\nVersion: 5.2-1\nArchitecture: amd64\n\n" +
+		"Package: half\nStatus: install reinstreq half-installed\nVersion: 2.0\nArchitecture: amd64\n"
+	fsys := fstest.MapFS{"var/lib/dpkg/status": &fstest.MapFile{Data: []byte(status)}}
+	var issues collector.Issues
+	st := dpkgStates(fsys, &issues)
+	if _, ok := st["php-fpm"]; ok {
+		t.Error("a package removed with its conffiles kept is in the states")
+	}
+	if _, ok := st["old"]; ok {
+		t.Error("a purged package is in the states")
+	}
+	if st["bash"].Version != "5.2-1" || st["half"].Version != "2.0" || len(issues) != 0 {
+		t.Errorf("states %v, issues %v", st, issues)
+	}
+}

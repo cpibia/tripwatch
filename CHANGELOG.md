@@ -14,6 +14,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A changed script naming only an expiry date, with no card number, holder or security code, has
   no payment field: syntax highlighters' SQL grammars, bundled in Laravel's exception page since
   12.38, raised a critical skimmer alert at every framework update.
+- A package removed but not purged (dpkg's `config-files` state) is left out of the package
+  states: dpkg deletes its checksum list and keeps its version, which read as checksums
+  rewritten without an upgrade, a high alert per package after every removal.
 
 ## [0.1.45] - 2026-11-06
 

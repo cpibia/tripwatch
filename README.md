@@ -416,7 +416,8 @@ that verifies its content against the checksum its package records (the snapshot
 SHA-256 of the verified files of those directories): proof of what the file is, so a critical
 alert closes too. A root intruder who rewrites the checksums of the very package being upgraded
 at that moment is a limit; rewriting those of any other package is the "checksums changed
-without an upgrade" alert. A program root drops in `/tmp` or `/var/tmp` and removes is one severity
+without an upgrade" alert (a package removed without being purged, whose checksum list dpkg
+deletes while its version stays in the status file, is not counted). A program root drops in `/tmp` or `/var/tmp` and removes is one severity
 lower too, and raises nothing under the names an upgrade uses there (apt's
 `<package>.config.XXXXXX` scripts, the `mkinitramfs_` and `dracut.` build trees); the same names
 owned by the web server's user stay critical. The server's page lists its latest events and says whether the watchers run.

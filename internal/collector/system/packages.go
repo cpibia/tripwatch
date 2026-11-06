@@ -113,11 +113,15 @@ func dpkgStates(fsys fs.FS, issues *collector.Issues) map[string]PackageState {
 	defer func() { _ = file.Close() }()
 	out := map[string]PackageState{}
 	conffiles := map[string]string{}
-	var pkg, arch, version string
+	var pkg, arch, version, status string
 	var conf strings.Builder
 	inConffiles := false
 	flush := func() {
-		if pkg != "" && version != "" && len(out) < maxPackageStates {
+		// A package removed but not purged keeps its version and conffiles in the status file,
+		// while dpkg deletes the list of its files' checksums: it has nothing installed to verify,
+		// and taking it in would read every removal as checksums rewritten at the same version.
+		removed := strings.HasSuffix(status, " config-files") || strings.HasSuffix(status, " not-installed")
+		if pkg != "" && version != "" && !removed && len(out) < maxPackageStates {
 			// A multi-arch package's files are named with its architecture: only the name that
 			// has an .md5sums is kept, the plain one otherwise.
 			name := pkg
@@ -127,7 +131,7 @@ func dpkgStates(fsys fs.FS, issues *collector.Issues) map[string]PackageState {
 			out[name] = PackageState{Version: clipField(version)}
 			conffiles[name] = conf.String()
 		}
-		pkg, arch, version, inConffiles = "", "", "", false
+		pkg, arch, version, status, inConffiles = "", "", "", "", false
 		conf.Reset()
 	}
 	limited := &io.LimitedReader{R: file, N: maxStatusRead + 1}
@@ -145,6 +149,8 @@ func dpkgStates(fsys fs.FS, issues *collector.Issues) map[string]PackageState {
 			arch = strings.TrimPrefix(line, "Architecture: ")
 		case strings.HasPrefix(line, "Version: "):
 			version = strings.TrimPrefix(line, "Version: ")
+		case strings.HasPrefix(line, "Status: "):
+			status = strings.TrimPrefix(line, "Status: ")
 		case line == "Conffiles:":
 			inConffiles = true
 			continue
