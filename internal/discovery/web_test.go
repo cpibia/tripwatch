@@ -307,6 +307,7 @@ func TestApacheSites(t *testing.T) {
 		Listen:           []string{"*:80"},
 		Root:             "/var/www/blog",
 		AccessLogs:       []string{"/var/log/apache2/blog_access.log"},
+		ErrorLogs:        []string{"/var/log/apache2/error.log"},
 		Upstreams:        []string{"http://127.0.0.1:9000/"},
 		ScriptExtensions: phpHandlerExtensions,
 	}
@@ -328,6 +329,38 @@ func TestApacheWithoutPHPAndMainServer(t *testing.T) {
 	}
 	if sites[0].Executes("/index.php") {
 		t.Error("PHP is not configured: nothing executes")
+	}
+}
+
+// A virtual host takes from the main server what it does not set, wherever the main server's
+// directives sit in the files: the root it serves, the logs it writes, the aliases.
+func TestApacheVhostInheritsMainServer(t *testing.T) {
+	fsys := fstest.MapFS{
+		"etc/httpd/conf/httpd.conf":  text("ServerRoot /etc/httpd\nInclude conf.d/*.conf\nDocumentRoot \"/var/www/html\"\nCustomLog logs/access_log combined\nErrorLog logs/error_log\nAlias /icons/ /usr/share/httpd/icons/\n"),
+		"etc/httpd/conf.d/ssl.conf":  text("<VirtualHost _default_:443>\nErrorLog logs/ssl_error_log\nTransferLog logs/ssl_access_log\n</VirtualHost>\n"),
+		"etc/httpd/conf.d/site.conf": text("<VirtualHost *:443>\nServerName site.example.com\nDocumentRoot /var/www/site/web\n</VirtualHost>\n"),
+	}
+	sites, _, _ := ApacheSites(fsys)
+	if len(sites) != 3 {
+		t.Fatalf("sites = %+v", sites)
+	}
+	byConfig := map[string]Site{}
+	for _, s := range sites {
+		byConfig[s.Config] = s
+	}
+	ssl, site := byConfig["/etc/httpd/conf.d/ssl.conf"], byConfig["/etc/httpd/conf.d/site.conf"]
+	if ssl.Root != "/var/www/html" || !slices.Equal(ssl.AccessLogs, []string{"/etc/httpd/logs/ssl_access_log"}) || !slices.Equal(ssl.ErrorLogs, []string{"/etc/httpd/logs/ssl_error_log"}) {
+		t.Errorf("ssl.conf vhost: %+v", ssl)
+	}
+	if site.Root != "/var/www/site/web" || !slices.Equal(site.AccessLogs, []string{"/etc/httpd/logs/access_log"}) || !slices.Equal(site.ErrorLogs, []string{"/etc/httpd/logs/error_log"}) {
+		t.Errorf("vhost without logs: %+v", site)
+	}
+	files, ok := ssl.ScriptFiles("/media/api/info.php")
+	if !ok || !slices.Equal(files, []string{"/var/www/html/media/api/info.php"}) {
+		t.Errorf("ssl.conf vhost files: %v %v", files, ok)
+	}
+	if files, ok := site.ScriptFiles("/icons/x.php"); !ok || !slices.Contains(files, "/usr/share/httpd/icons/x.php") {
+		t.Errorf("main server's alias: %v %v", files, ok)
 	}
 }
 

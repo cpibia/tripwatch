@@ -55,6 +55,7 @@ func ApacheSites(fsys fs.FS) ([]Site, []string, collector.Issues) {
 		p := &apacheParser{fsys: fsys, root: c.root, vars: apacheEnv(fsys, c.root), issues: &issues, budget: newConfigBudget("apache")}
 		p.main = Site{Server: ServerApache, Config: "/" + c.conf}
 		p.parseFile(c.conf, 0)
+		p.inherit()
 
 		sites := p.sites
 		if p.main.Root != "" {
@@ -68,6 +69,33 @@ func ApacheSites(fsys fs.FS) ([]Site, []string, collector.Issues) {
 		return sites, p.budget.files, issues
 	}
 	return nil, nil, issues
+}
+
+// inherit gives each virtual host what it leaves to the main server, as Apache merges them once
+// the whole configuration is read: a vhost without DocumentRoot serves the main one (as the
+// _default_:443 of RHEL's ssl.conf does), one without CustomLog or ErrorLog logs where the main
+// server does, and the main server's aliases and proxies apply to every vhost.
+func (p *apacheParser) inherit() {
+	m := p.main
+	for i := range p.sites {
+		s := &p.sites[i]
+		if s.Root == "" {
+			s.Root = m.Root
+		}
+		if len(s.AccessLogs) == 0 {
+			s.AccessLogs = slices.Clone(m.AccessLogs)
+		}
+		if len(s.ErrorLogs) == 0 {
+			s.ErrorLogs = slices.Clone(m.ErrorLogs)
+		}
+		s.aliases = append(slices.Clone(m.aliases), s.aliases...)
+		for _, u := range m.Upstreams {
+			if !slices.Contains(s.Upstreams, u) {
+				s.Upstreams = append(s.Upstreams, u)
+			}
+		}
+		s.opaque = s.opaque || m.opaque
+	}
 }
 
 // apacheEnv reads the variables Debian's apache2ctl exports before starting httpd.

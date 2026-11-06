@@ -404,7 +404,9 @@ per-IP state to correlate chains. The verifier will use the same code on raw log
 At the end of a run the collector looks up the script each event names (`weblog.ScriptPath`) in
 the sites that write the event's log (`discovery.Site.ScriptFiles`): every root of the nginx
 site, both as root and as alias of its location, or Apache's `DocumentRoot` and the `Alias`
-directives matching the request, so naming too many places can only make a file look present.
+directives matching the request, so naming too many places can only make a file look present. An
+Apache virtual host takes from the main server what it does not set, as Apache merges them: the
+`DocumentRoot` (RHEL's `_default_:443` in `ssl.conf` has none), the logs, the aliases and proxies.
 The answer (`on_disk`: `present`, `missing`, `elsewhere`, or empty) is left open for Caddy, a
 request a named fallback location may proxy, an Apache site with any proxy (`ProxyPass`,
 `ProxyPassMatch`, a `RewriteRule` with the `P` flag) or an `AliasMatch`, a root with a variable
