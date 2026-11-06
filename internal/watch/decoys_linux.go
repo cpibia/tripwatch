@@ -57,10 +57,14 @@ type Decoys struct {
 	recent  map[int]*procOpens
 	pending []decoyRead
 
+	// Urgent, when set, takes root's reads of a decoy, which no other account can crowd out.
+	Urgent chan<- Event
 	// Dropped counts reads not delivered because the consumer did not keep up; Overflow, the
 	// times the kernel's queue overflowed and events were lost.
 	Dropped  atomic.Int64
 	Overflow atomic.Int64
+	// CapDropErr says why CAP_SYS_ADMIN could not be given up after fanotify started.
+	CapDropErr error
 }
 
 type fileKey struct{ dev, ino uint64 }
@@ -83,13 +87,16 @@ type decoyRead struct {
 	ev   Event
 }
 
-// NewDecoys starts fanotify. It needs CAP_SYS_ADMIN.
+// NewDecoys starts fanotify. It needs CAP_SYS_ADMIN, given up once started: marking files and
+// directories, and reading the events, need it no more.
 func NewDecoys(src collector.Source, out chan<- Event) (*Decoys, error) {
 	fd, err := unix.FanotifyInit(unix.FAN_CLASS_NOTIF|unix.FAN_CLOEXEC|unix.FAN_NONBLOCK, unix.O_RDONLY|unix.O_LARGEFILE|unix.O_CLOEXEC|unix.O_NOATIME)
 	if err != nil {
 		return nil, err
 	}
-	return &Decoys{fd: fd, src: src, proc: src.FS, out: out, now: time.Now, self: os.Getpid(), files: map[fileKey]string{}, recent: map[int]*procOpens{}}, nil
+	d := &Decoys{fd: fd, src: src, proc: src.FS, out: out, now: time.Now, self: os.Getpid(), files: map[fileKey]string{}, recent: map[int]*procOpens{}}
+	d.CapDropErr = dropCapability(unix.CAP_SYS_ADMIN)
+	return d, nil
 }
 
 func (d *Decoys) Close() error { return unix.Close(d.fd) }
@@ -266,8 +273,12 @@ func (d *Decoys) decide(now time.Time, all bool) {
 		if d.sweep(r) {
 			r.ev.Reason = ReasonSweep
 		}
+		out := d.out
+		if d.Urgent != nil && r.ev.User != nil && *r.ev.User == 0 {
+			out = d.Urgent
+		}
 		select {
-		case d.out <- r.ev:
+		case out <- r.ev:
 		default:
 			d.Dropped.Add(1)
 		}

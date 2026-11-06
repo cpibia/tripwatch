@@ -11,8 +11,10 @@ import (
 
 // Decoys is a stand-in outside Linux, where fanotify does not exist.
 type Decoys struct {
-	Dropped  atomic.Int64
-	Overflow atomic.Int64
+	Urgent     chan<- Event
+	Dropped    atomic.Int64
+	Overflow   atomic.Int64
+	CapDropErr error
 }
 
 func NewDecoys(collector.Source, chan<- Event) (*Decoys, error) { return nil, ErrUnsupported }

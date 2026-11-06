@@ -92,20 +92,21 @@ func NewExecs(src collector.Source, out chan<- Event) (*Execs, error) {
 		return nil, err
 	}
 	x := &Execs{src: src, out: out, now: time.Now, fd: fd, webUsers: map[int]bool{}}
-	x.CapDropErr = dropNetAdmin()
+	x.CapDropErr = dropCapability(unix.CAP_NET_ADMIN)
 	return x, nil
 }
 
-// dropNetAdmin gives up CAP_NET_ADMIN once the subscription exists: receiving needs no
-// capability, and a sensor reading hostile input should not keep the power to reconfigure the
-// network. Capabilities are per thread, so the change is applied to every thread of the process.
-func dropNetAdmin() error {
+// dropCapability gives up a capability once what needed it exists: CAP_NET_ADMIN after the
+// subscription to process events, CAP_SYS_ADMIN after fanotify's start. Receiving needs neither,
+// and a sensor reading hostile input should not keep the power they give. Capabilities are per
+// thread, so the change is applied to every thread of the process.
+func dropCapability(c int) error {
 	hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
 	var data [2]unix.CapUserData
 	if err := unix.Capget(&hdr, &data[0]); err != nil {
 		return err
 	}
-	const bit = uint32(1) << unix.CAP_NET_ADMIN
+	bit := uint32(1) << c
 	if data[0].Effective&bit == 0 && data[0].Permitted&bit == 0 {
 		return nil
 	}
