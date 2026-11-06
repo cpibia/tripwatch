@@ -6,6 +6,51 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.45] - 2026-11-06
+
+What changes for an operator, in short; the details follow by component.
+
+- **Less noise from upgrades.** What a system upgrade writes no longer raises critical alerts:
+  apt's configuration scripts and the initramfs trees in the scratch directories, empty lock
+  files, dpkg's staging names in the sudo and polkit directories, and privilege or start-up
+  files whose content a later snapshot verifies against their package's checksum.
+- **Shells of the PHP pool judged by what they run.** A shell that only starts one program of the
+  system with literal arguments is the application's work, whatever the program (mail, scanners,
+  PDF and image tools); one running what an intruder runs stays a web shell's.
+- **Less noise from logs and scanners.** JSON logs quoting a compiled view's `<?php` in a stack
+  trace no longer raise code inside a data file; a scanner's failed sweep on Apache, where a
+  virtual host serves the main server's root, is told a probe.
+- **Removal confirmed.** The Servers page shows when a revoked host's sensor removed itself, or
+  that the removal is not confirmed.
+- **Upgrade.** Both the verifier and the sensors change; update the verifier first.
+
+### Sensor
+
+- A shell the web server's user starts to run one program of the system (by name, or root's
+  file in the system's directories), with literal arguments and at most its errors redirected,
+  is no longer a web shell, unless the program is a shell, an interpreter, a network tool, one
+  an intruder uses to look around, read files, gain privileges or move files, or one that starts
+  another program itself. A shell running a root-owned script from the system's directories
+  counts the same. This replaces the matches for sendmail and ClamAV. `php -l` checks syntax and
+  runs no script.
+- In data files, two namespace separators in a row (`\\`, how JSON logs write class names) make a
+  block code PHP cannot compile: its weak signals no longer count.
+- An Apache virtual host takes from the main server what it does not set: `DocumentRoot`, logs,
+  aliases and proxies.
+- The packages collector reports the SHA-256 of packaged files of the privilege and start-up
+  directories that match their package's checksum.
+- After the uninstall order removed it, the sensor reports the removal, signed with its key.
+
+### Verifier
+
+- Root's files under the names apt, mkinitramfs and dracut use in the scratch directories, while
+  a package manager runs, raise nothing; root's other transient drops during an upgrade are one
+  severity lower. A file that never held content raises nothing.
+- Files in a privilege directory that sudo or polkit never reads raise nothing.
+- A snapshot closes the real-time alerts of privilege and start-up files written while a package
+  manager ran whose content it verified against the package's checksum.
+- `/v1/removed` accepts a revoked host's signed removal report.
+
 ## [0.1.44] - 2026-11-05
 
 What changes for an operator, in short; the details follow by component.
