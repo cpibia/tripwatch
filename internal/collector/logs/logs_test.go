@@ -666,6 +666,48 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 	}
 }
 
+// Apache's virtual hosts that set no log write to the main server's, and those that set no
+// document root serve from its: a probe in that log is looked up in every root that writes it.
+func TestScriptsLookedUpOnDiskInheritedApacheLog(t *testing.T) {
+	h := newHost(t)
+	write := func(name, content string) {
+		t.Helper()
+		p := filepath.Join(h.root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("etc/httpd/conf/httpd.conf", `ServerRoot "/etc/httpd"
+Listen 80
+DocumentRoot "/var/www/html"
+CustomLog "logs/access_log" combined
+IncludeOptional conf.d/*.conf
+`)
+	write("etc/httpd/conf.d/site.conf", `<VirtualHost *:443>
+ServerName www.example.com
+DocumentRoot /var/www/site/web
+</VirtualHost>
+<VirtualHost *:80>
+ServerName app.example.com
+</VirtualHost>
+`)
+	write("var/www/site/web/media/kept.php", "<?php")
+	write("etc/httpd/logs/access_log", logLine("203.0.113.7", "GET", "/media/api/info.php", 400)+
+		logLine("203.0.113.7", "GET", "/media/kept.php", 400))
+	got := map[string]string{}
+	for _, e := range h.run().Events {
+		got[e.Evidence.Request] = e.OnDisk
+	}
+	for uri, want := range map[string]string{"/media/api/info.php": "missing", "/media/kept.php": "present"} {
+		if got[uri] != want {
+			t.Errorf("%s: on disk %q, want %q (events %v)", uri, got[uri], want, got)
+		}
+	}
+}
+
 // A scanner sweeping every site behind a proxy reaches more logs than an event keeps; those
 // whose sites pass the request on leave the verdict to the others, and one that could have run
 // the script leaves it open.
