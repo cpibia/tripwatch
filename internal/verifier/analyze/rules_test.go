@@ -1236,3 +1236,26 @@ func TestDecoyConditions(t *testing.T) {
 		t.Errorf("a decoy put in place raised: %v", got)
 	}
 }
+
+// A set-user-ID program an upgrade replaced with its package's copy is low; one that does not
+// match what its package records stays high.
+func TestNewPrivilegedFileVerifiedByPackage(t *testing.T) {
+	uid0 := uint32(0)
+	cur := State{
+		Privileged: &system.PrivilegedResult{Files: []collector.File{
+			{Path: "/usr/bin/passwd", Mode: "urwxr-xr-x", UID: &uid0, GID: &uid0, SHA256: "aa"},
+			{Path: "/usr/bin/su", Mode: "urwxr-xr-x", UID: &uid0, GID: &uid0, SHA256: "bb"},
+		}},
+		Packages: &system.PackagesResult{Verified: []system.VerifiedFile{{Path: "/usr/bin/passwd", SHA256: "aa"}, {Path: "/usr/bin/su", SHA256: "old"}}},
+	}
+	prev := State{Privileged: &system.PrivilegedResult{}}
+	got := map[string]string{}
+	for _, f := range Evaluate(&prev, cur) {
+		if f.Kind == "privileged-change" {
+			got[f.Fingerprint] = f.Severity
+		}
+	}
+	if got["privileged-change:new:root|/usr/bin/passwd:aa"] != "low" || got["privileged-change:new:root|/usr/bin/su:bb"] != "high" {
+		t.Errorf("severities %v", got)
+	}
+}

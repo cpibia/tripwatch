@@ -45,8 +45,9 @@ type ModifiedFile struct {
 	Config  bool   `json:"config,omitempty"`
 }
 
-// VerifiedFile is a file of a privilege or start-up directory that matches the checksum its
-// package recorded, with the SHA-256 of its content: what the real-time events report.
+// VerifiedFile is a file of a privilege or start-up directory, or a set-user-ID or set-group-ID
+// program, that matches the checksum its package recorded, with the SHA-256 of its content: what
+// the real-time events and the privileged collector report.
 type VerifiedFile struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
@@ -254,7 +255,7 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 			res.Modified = append(res.Modified, ModifiedFile{Path: "/" + f.path, Package: f.pkg, Config: f.config})
 			continue
 		}
-		if len(res.Verified) < maxVerified && slices.ContainsFunc(verifiedDirs, func(d string) bool { return f.path == d || strings.HasSuffix(d, "/") && strings.HasPrefix(f.path, d) }) {
+		if len(res.Verified) < maxVerified && (slices.ContainsFunc(verifiedDirs, func(d string) bool { return f.path == d || strings.HasSuffix(d, "/") && strings.HasPrefix(f.path, d) }) || setID(src.FS, f.path)) {
 			if content, err := checksum(src.FS, f.path, sha256.New); err == nil {
 				res.Verified = append(res.Verified, VerifiedFile{Path: "/" + f.path, SHA256: hex.EncodeToString(content)})
 			}
@@ -274,6 +275,13 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 	}
 	res.Hidden = hiddenEntries(src.FS, owned)
 	return res, nil
+}
+
+// setID reports a regular file with the set-user-ID or set-group-ID bit: an upgrade replaces
+// such programs, and the verifier tells the package's copy from another by its content.
+func setID(fsys fs.FS, name string) bool {
+	info, err := fs.Lstat(fsys, name)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&(fs.ModeSetuid|fs.ModeSetgid) != 0
 }
 
 func checksum(fsys fs.FS, name string, newHash func() hash.Hash) ([]byte, error) {

@@ -380,14 +380,21 @@ func TestPackagesVerifiedPrivilegeFiles(t *testing.T) {
 		"var/lib/dpkg/status": text("Package: polkitd\nStatus: install ok installed\nVersion: 126-2\n\n"),
 		"var/lib/dpkg/info/polkitd.md5sums": text(md5hex("rules") + "  usr/share/polkit-1/rules.d/50-default.rules\n" +
 			md5hex("original admin") + "  usr/share/polkit-1/rules.d/49-admin.rules\n" +
-			md5hex("daemon") + "  usr/lib/polkit-1/polkitd\n"),
+			md5hex("daemon") + "  usr/lib/polkit-1/polkitd\n" +
+			md5hex("helper") + "  usr/lib/polkit-1/polkit-agent-helper-1\n" +
+			md5hex("helper") + "  usr/lib/polkit-1/planted-helper\n"),
 		"usr/share/polkit-1/rules.d/50-default.rules": text("rules"),
 		"usr/share/polkit-1/rules.d/49-admin.rules":   text("edited admin"),
 		"usr/lib/polkit-1/polkitd":                    text("daemon"),
+		// A set-user-ID program is reported with its content when it is the package's copy.
+		"usr/lib/polkit-1/polkit-agent-helper-1": &fstest.MapFile{Data: []byte("helper"), Mode: fs.ModeSetuid | 0o755},
+		"usr/lib/polkit-1/planted-helper":        &fstest.MapFile{Data: []byte("planted"), Mode: fs.ModeSetuid | 0o755},
 	}
 	res := collect[PackagesResult](t, Packages{}, collector.Source{FS: fsys})
 	sum := sha256.Sum256([]byte("rules"))
-	want := []VerifiedFile{{Path: "/usr/share/polkit-1/rules.d/50-default.rules", SHA256: hex.EncodeToString(sum[:])}}
+	helper := sha256.Sum256([]byte("helper"))
+	want := []VerifiedFile{{Path: "/usr/share/polkit-1/rules.d/50-default.rules", SHA256: hex.EncodeToString(sum[:])},
+		{Path: "/usr/lib/polkit-1/polkit-agent-helper-1", SHA256: hex.EncodeToString(helper[:])}}
 	if !slices.Equal(res.Verified, want) {
 		t.Errorf("verified = %+v, want %+v", res.Verified, want)
 	}

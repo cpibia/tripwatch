@@ -1349,7 +1349,10 @@ func Evaluate(prev *State, cur State) []Finding {
 	if p := cur.Privileged; p != nil {
 		// Computed once per snapshot: per file they made a hostile snapshot quadratic.
 		privGIDs, groupsOf := privilegedGIDs(cur), memberships(cur.Accounts)
-		var known set
+		var known, packageVerified set
+		if cur.Packages != nil {
+			packageVerified = setOf(cur.Packages.Verified, func(v system.VerifiedFile) string { return v.Path + "\x00" + v.SHA256 })
+		}
 		if prev != nil && prev.Privileged != nil {
 			known = setOf(prev.Privileged.Files, func(q fileT) string { return q.Path + "\x00" + q.SHA256 })
 		}
@@ -1367,7 +1370,14 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
 				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
-				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, "high", "New privileged file: "+f.Path, "Mode "+f.Mode+", owner "+owner+".")
+				// An upgrade replaces set-user-ID programs: one that matches the checksum its
+				// package records is the package's copy. Checksums rewritten by hand to make a
+				// planted copy pass are the "checksums changed without an upgrade" alert.
+				sev, detail := "high", "Mode "+f.Mode+", owner "+owner+"."
+				if packageVerified.has(f.Path + "\x00" + f.SHA256) {
+					sev, detail = "low", detail+" It matches the checksum its package records: an installation or an upgrade."
+				}
+				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, sev, "New privileged file: "+f.Path, detail)
 			}
 		}
 	}
