@@ -380,6 +380,16 @@ func TestHostPageAndRevoke(t *testing.T) {
 	if _, body := h.get("/hosts/web-01"); strings.Contains(body, `action="/hosts/web-01/revoke"`) || !strings.Contains(body, "revoked") {
 		t.Fatal("revoked host still offers revocation or hides its state")
 	}
+	// The servers page says whether the revoked host's sensor reported its removal.
+	if _, body := h.get("/hosts"); !strings.Contains(body, "removal not confirmed") {
+		t.Fatal("an unconfirmed removal is not shown as such")
+	}
+	if err := h.store.Stopped(ctx, "web-01", now, "package_removed", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := h.get("/hosts"); strings.Contains(body, "removal not confirmed") || !strings.Contains(body, "sensor removed") {
+		t.Fatal("a reported removal is not shown")
+	}
 }
 
 func TestAlertViews(t *testing.T) {

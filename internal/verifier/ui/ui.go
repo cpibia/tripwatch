@@ -617,6 +617,8 @@ type hostRow struct {
 	// Facts and Outdated come from the host's latest snapshot and sensor start.
 	Facts    store.HostFacts
 	Outdated bool
+	// Removed is when the sensor of a revoked host reported its removal; zero while it has not.
+	Removed time.Time
 }
 
 // More is the number of unresolved alerts besides the one shown.
@@ -1788,6 +1790,9 @@ func (s *server) servers(w http.ResponseWriter, r *http.Request, se session) {
 		row.Facts = facts[h.ID]
 		row.Outdated = !h.Revoked && outdated(row.Facts.SensorVersion, d.Release)
 		if h.Revoked {
+			if run, err := s.Store.Run(ctx, h.ID); err == nil && run.StopReason == "package_removed" {
+				row.Removed = run.StoppedAt
+			}
 			d.Revoked = append(d.Revoked, row)
 			continue
 		}

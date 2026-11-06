@@ -240,6 +240,35 @@ func RenewIfDue(ctx context.Context, hc *http.Client, verifierURL string, id *pk
 	return true, id.Replace([]byte(r.Cert), keyPEM)
 }
 
+// ReportRemoval tells the verifier, outside the envelope chain, that the uninstall order removed
+// this host's sensor: a revoked host's chain is stopped at an envelope the verifier refused, so the
+// report is signed on its own (protocol.SignRemoval) and sent over the same mutual TLS.
+func ReportRemoval(ctx context.Context, hc *http.Client, verifierURL, payload, signature string) error {
+	u, err := url.Parse(verifierURL)
+	if err != nil {
+		return err
+	}
+	u.Path, u.RawQuery = "/v1/removed", ""
+	body, err := json.Marshal(map[string]string{"payload": payload, "signature": signature})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("verifier answered %s: %s", resp.Status, bytes.TrimSpace(msg))
+	}
+	return nil
+}
+
 // Enroll registers this host with a one-time token and returns its bundle. The TLS key and the
 // signing key are generated here and only their public halves are sent; the verifier is
 // trusted only if its chain ends in the CA the token names.

@@ -281,7 +281,10 @@ the signature and the version (never older than its own), then installs in a tra
 unit, outside its own service, the file only if it matches the signed hash: a release changed
 after the order installs nothing. Revoking a server likewise tells its sensor, by an order naming
 that host and signed the same way, to remove itself: the package is purged (or the service, its
-unit and the binary removed), and `/etc/tripwatch` and `/var/lib/tripwatch` are deleted.
+unit and the binary removed), and `/etc/tripwatch` and `/var/lib/tripwatch` are deleted. Once
+removed, and before its keys are deleted, the sensor reports the removal on its own, signed with
+its key and over its certificate (the revoked host's envelope chain stays stopped): the Servers
+page shows "sensor removed" with the time, or "removal not confirmed" while no report came.
 Whoever controls the verifier's console can therefore update every sensor to a published release,
 or remove a sensor by revoking its server; neither reaches a host whose sensor runs without
 systemd, nor installs anything but the files of a release as they were when the order was given.

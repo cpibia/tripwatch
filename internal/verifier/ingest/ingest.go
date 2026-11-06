@@ -42,6 +42,8 @@ const (
 	Path       = "/v1/envelopes"
 	RenewPath  = "/v1/renew"
 	EnrollPath = "/v1/enroll"
+	// RemovedPath is where the sensor of a revoked host reports that the uninstall order removed it.
+	RemovedPath = "/v1/removed"
 )
 
 // A host may send at most SnapshotBurst snapshots per SnapshotWindow: more would only let a
@@ -206,7 +208,7 @@ func (s *Server) lock(ctx context.Context, host string) (func(), bool) {
 func (s *Server) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	w := &statusWriter{ResponseWriter: rw}
 	defer func() { s.counts.add(requestKind(r), w.status) }()
-	if r.Method != http.MethodPost || (r.URL.Path != Path && r.URL.Path != RenewPath && r.URL.Path != EnrollPath) {
+	if r.Method != http.MethodPost || (r.URL.Path != Path && r.URL.Path != RenewPath && r.URL.Path != EnrollPath && r.URL.Path != RemovedPath) {
 		http.NotFound(w, r)
 		return
 	}
@@ -221,6 +223,10 @@ func (s *Server) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == RenewPath {
 		s.renew(w, r)
+		return
+	}
+	if r.URL.Path == RemovedPath {
+		s.removed(w, r)
 		return
 	}
 	s.once.Do(func() { s.snapshots = make(chan struct{}, ConcurrentSnapshots) })
@@ -513,6 +519,61 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 // renew issues a new client certificate, for a key the sensor generated, to an enrolled host
 // whose current one, the one this connection was made with, expires within the renewal window. Earlier requests are refused,
 // so a host cannot mint certificates at will.
+// removed records the report of a revoked host's sensor that the uninstall order removed it: only
+// a revoked host's, over its current certificate and signed with its key. It is the stop of the
+// sensor with the reason a removal gives, so the console shows when the removal took place.
+func (s *Server) removed(w http.ResponseWriter, r *http.Request) {
+	presented := r.TLS.PeerCertificates[0]
+	identity := presented.Subject.CommonName
+	now := s.Now()
+	ctx := r.Context()
+	unlock, ok := s.lock(ctx, identity)
+	if !ok {
+		return
+	}
+	defer unlock()
+	host, err := s.Store.Host(ctx, identity)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		http.Error(w, "host not enrolled", http.StatusForbidden)
+		return
+	case err != nil:
+		s.fail(w, err)
+		return
+	case !host.Revoked:
+		http.Error(w, "host not revoked", http.StatusConflict)
+		return
+	}
+	if !s.currentCertificate(ctx, w, host, presented, now) {
+		return
+	}
+	if !s.allowSmall(identity, now) {
+		http.Error(w, "too many requests, retry later", http.StatusTooManyRequests)
+		return
+	}
+	var req struct {
+		Payload   string `json:"payload"`
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "malformed removal report", http.StatusBadRequest)
+		return
+	}
+	if _, err := protocol.VerifyRemoval(req.Payload, req.Signature, host.PublicKey, identity); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if run, err := s.Store.Run(ctx, identity); err == nil && run.StopReason == "package_removed" && !run.StoppedAt.IsZero() {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.Store.Stopped(ctx, identity, now, "package_removed", false); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
 	presented := r.TLS.PeerCertificates[0]
 	identity := presented.Subject.CommonName

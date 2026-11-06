@@ -141,3 +141,49 @@ func VerifyUninstall(payload, signature string, pub ed25519.PublicKey, host stri
 	}
 	return order, nil
 }
+
+const removedDomain = "tripwatch/removed/v1\n"
+
+// RemovalReport is what the sensor of a revoked host signs once the uninstall order removed it,
+// with the key it signs envelopes with: the verifier records that the removal took place.
+type RemovalReport struct {
+	HostID    string    `json:"host_id"`
+	Version   string    `json:"version"`
+	RemovedAt time.Time `json:"removed_at"`
+}
+
+// SignRemoval encodes report and signs it with the host's signing key.
+func SignRemoval(report RemovalReport, key ed25519.PrivateKey) (payload, signature string, err error) {
+	data, err := json.Marshal(report)
+	if err != nil {
+		return "", "", err
+	}
+	sig := ed25519.Sign(key, append([]byte(removedDomain), data...))
+	return base64.RawURLEncoding.EncodeToString(data), base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// VerifyRemoval checks a removal report against the host's signing key and that it names host.
+func VerifyRemoval(payload, signature string, pub ed25519.PublicKey, host string) (RemovalReport, error) {
+	var report RemovalReport
+	if len(payload) > 1024 || len(signature) > 128 {
+		return report, errors.New("removal report too large")
+	}
+	data, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		return report, fmt.Errorf("removal report: %w", err)
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(signature)
+	if err != nil {
+		return report, fmt.Errorf("removal signature: %w", err)
+	}
+	if len(pub) != ed25519.PublicKeySize || !ed25519.Verify(pub, append([]byte(removedDomain), data...), sig) {
+		return report, errors.New("removal report: bad signature")
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		return report, fmt.Errorf("removal report: %w", err)
+	}
+	if report.HostID != host {
+		return report, fmt.Errorf("removal report for %q, not this host", report.HostID)
+	}
+	return report, nil
+}

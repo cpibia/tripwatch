@@ -64,3 +64,30 @@ func TestUninstallOrderNamesItsHost(t *testing.T) {
 		t.Error("an uninstall order verified as an update order")
 	}
 }
+
+// A removal report verifies only for the host it names, under that host's key, and never passes
+// for an uninstall order or the other way round.
+func TestRemovalReportNamesItsHost(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(nil)
+	other, _, _ := ed25519.GenerateKey(nil)
+	payload, sig, err := SignRemoval(RemovalReport{HostID: "web-01", Version: "0.1.45", RemovedAt: time.Unix(1, 0).UTC()}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := VerifyRemoval(payload, sig, pub, "web-01"); err != nil || r.Version != "0.1.45" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if _, err := VerifyRemoval(payload, sig, pub, "web-02"); err == nil {
+		t.Error("a report for another host verified")
+	}
+	if _, err := VerifyRemoval(payload, sig, other, "web-01"); err == nil {
+		t.Error("verified under another key")
+	}
+	if _, err := VerifyUninstall(payload, sig, pub, "web-01"); err == nil {
+		t.Error("a removal report verified as an uninstall order")
+	}
+	order, orderSig, _ := SignUninstall(UninstallOrder{HostID: "web-01"}, key)
+	if _, err := VerifyRemoval(order, orderSig, pub, "web-01"); err == nil {
+		t.Error("an uninstall order verified as a removal report")
+	}
+}

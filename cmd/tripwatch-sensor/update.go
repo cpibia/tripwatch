@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/buildinfo"
 	"github.com/cpibia/tripwatch/internal/protocol"
 	"github.com/cpibia/tripwatch/internal/selfupdate"
+	"github.com/cpibia/tripwatch/internal/transport"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
 )
 
@@ -174,7 +176,12 @@ func applyUninstall(bundlePath, stateDir string) error {
 	if bundlePath == "" || stateDir == "" {
 		return errors.New("needs -bundle and -state-dir")
 	}
-	bundle, _, err := pki.LoadBundle(bundlePath)
+	bundle, key, err := pki.LoadBundle(bundlePath)
+	if err != nil {
+		return err
+	}
+	// The client certificate is loaded before the purge, which may take the renewed one away.
+	identity, err := bundle.ClientIdentity(stateDir)
 	if err != nil {
 		return err
 	}
@@ -215,7 +222,22 @@ func applyUninstall(bundlePath, stateDir string) error {
 	if err != nil {
 		return fmt.Errorf("removing the sensor: %w", err)
 	}
+	reportRemoval(ctx, bundle, key, identity)
 	return errors.Join(removeOwn(filepath.Dir(bundlePath), bundlePath), removeOwn(stateDir, ""))
+}
+
+// reportRemoval tells the verifier the removal took place, best effort: the sensor is gone either
+// way, and the verifier then shows the removal as not confirmed.
+func reportRemoval(ctx context.Context, bundle pki.Bundle, key ed25519.PrivateKey, identity *pki.Identity) {
+	payload, sig, err := protocol.SignRemoval(protocol.RemovalReport{HostID: bundle.HostID, Version: buildinfo.Version, RemovedAt: time.Now().UTC()}, key)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "removal not reported:", err)
+		return
+	}
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: identity.TLS()}, Timeout: 30 * time.Second}
+	if err := transport.ReportRemoval(ctx, hc, bundle.VerifierURL, payload, sig); err != nil {
+		fmt.Fprintln(os.Stderr, "removal not reported:", err)
+	}
 }
 
 // removeOwn removes dir whole when it is tripwatch's own directory, or else only file.

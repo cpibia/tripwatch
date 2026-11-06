@@ -57,6 +57,8 @@ func requestKind(r *http.Request) string {
 		return "enroll"
 	case RenewPath:
 		return "renew"
+	case RemovedPath:
+		return "removed"
 	}
 	switch k := protocol.Kind(r.Header.Get(KindHeader)); k {
 	case protocol.KindSnapshot, protocol.KindHeartbeat, protocol.KindEvent:

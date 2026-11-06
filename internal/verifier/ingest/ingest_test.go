@@ -931,6 +931,50 @@ func TestRevokedHostIsToldToUninstall(t *testing.T) {
 	}
 }
 
+// A revoked host's sensor reports its removal over its certificate, signed with its key: the
+// stop is recorded once with the reason a removal gives. An enrolled host cannot report one, nor
+// can a report signed with another key.
+func TestRevokedHostReportsRemoval(t *testing.T) {
+	h := newHarness(t)
+	_, b := h.sensor("web-01")
+	ctx := context.Background()
+	id, err := b.ClientIdentity("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: id.TLS()}, Timeout: 5 * time.Second}
+	key, _ := b.SigningPrivateKey()
+	_, other, _ := ed25519.GenerateKey(nil)
+	report := func(k ed25519.PrivateKey) error {
+		payload, sig, err := protocol.SignRemoval(protocol.RemovalReport{HostID: "web-01", Version: "0.1.45", RemovedAt: now}, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return transport.ReportRemoval(ctx, hc, b.VerifierURL, payload, sig)
+	}
+	if err := report(key); err == nil {
+		t.Fatal("an enrolled host reported a removal")
+	}
+	if err := h.store.Revoke(ctx, "web-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := report(other); err == nil {
+		t.Fatal("a report signed with another key was accepted")
+	}
+	h.clock = now.Add(time.Minute)
+	if err := report(key); err != nil {
+		t.Fatal(err)
+	}
+	h.clock = now.Add(time.Hour)
+	if err := report(key); err != nil {
+		t.Fatal(err)
+	}
+	run, err := h.store.Run(ctx, "web-01")
+	if err != nil || run.StopReason != "package_removed" || !run.StoppedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("run = %+v, %v", run, err)
+	}
+}
+
 // Heartbeats lost while the verifier itself restarted are not the sensor's gap.
 func TestHeartbeatGapAcrossAVerifierRestart(t *testing.T) {
 	h := newHarness(t)
