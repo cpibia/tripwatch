@@ -348,6 +348,16 @@ func (c *codeSearch) stepCode(d []byte, i int, final bool) int {
 		if longHeredocLabel(d[i:]) {
 			c.add("long_heredoc_label")
 		}
+	case '\\':
+		if !more(2) {
+			return 0
+		}
+		// A name never holds two separators in a row: PHP refuses the file. JSON logs write
+		// every class name that way (Illuminate\\Foundation), and a stack trace quoting a
+		// compiled view's "<?php" would otherwise read on as code through its calls.
+		if i+1 < len(d) && d[i+1] == '\\' {
+			c.broken = true
+		}
 	case '_':
 		// PHP compiles nothing after __halt_compiler: what follows cannot break the block.
 		if !more(len(haltCompiler)) {

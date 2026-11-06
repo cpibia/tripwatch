@@ -292,8 +292,10 @@ the signatures, a list of dangerous calls and commands in backticks, without its
 with runs of blanks folded, block after block without overlap, so the cost stays linear. Binary
 files (a PDF, an archive) hold an open tag every few megabytes by chance, and the random "code"
 after it soon holds a backtick or a word like `exec(`: a block whose code holds, outside its
-strings and comments, a control byte PHP 8 refuses to compile loses those two weak signals,
-while the named signatures still count. A heredoc whose label is longer than the 128 bytes the lexer follows, or comes
+strings and comments, a control byte PHP 8 refuses to compile, or two namespace separators in a
+row (`\\`, how JSON logs write every class name, so that a stack trace quoting a compiled view's
+`<?php` does not read on as code through its calls), loses those two weak signals, while the
+named signatures still count. A heredoc whose label is longer than the 128 bytes the lexer follows, or comes
 after more than 16 blanks, is a signature of its own (`long_heredoc_label`): its body could
 otherwise open a comment or close the block in front of the code after it. `__halt_compiler`
 ends the block, since PHP compiles nothing after it: binary data appended to a payload cannot hide it. Code interpolated in a
