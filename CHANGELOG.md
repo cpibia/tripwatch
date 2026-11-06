@@ -26,6 +26,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A package removed but not purged (dpkg's `config-files` state) is left out of the package
   states: dpkg deletes its checksum list and keeps its version, which read as checksums
   rewritten without an upgrade, a high alert per package after every removal.
+- The decoy watcher gives up `CAP_SYS_ADMIN` as soon as fanotify has started, as the process
+  watcher does with `CAP_NET_ADMIN`; it is not wired into the sensor yet.
 
 ### Verifier
 
