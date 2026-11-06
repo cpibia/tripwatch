@@ -79,6 +79,22 @@ func packageTool(first, last watch.Event) bool {
 	return rootOwned(first) && (first.PackageManager || last.PackageManager) && packageScratch.MatchString(last.Path)
 }
 
+// neverConsulted reports a file in a privilege directory that what grants privileges never reads,
+// whoever writes it: sudo skips the files of an included directory whose name holds a "." or ends
+// in "~", and polkit loads from its rules directories only the files named *.rules. dpkg's staging
+// names (x.rules.dpkg-new, README.dpkg-tmp) are of this kind; the name a file is renamed to is an
+// event of its own.
+func neverConsulted(p string) bool {
+	dir, name := path.Dir(p), path.Base(p)
+	switch dir {
+	case "/etc/sudoers.d":
+		return strings.Contains(name, ".") || strings.HasSuffix(name, "~")
+	case "/etc/polkit-1/rules.d", "/usr/share/polkit-1/rules.d":
+		return !strings.HasSuffix(name, ".rules")
+	}
+	return false
+}
+
 // emptySHA256 is the SHA-256 of no bytes.
 const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
@@ -267,6 +283,9 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		return Finding{}, false
 
 	case watch.ClassPrivilege:
+		if neverConsulted(e.Path) {
+			return Finding{}, false
+		}
 		return systemChange(e, "privilege-config", "critical", "Privilege configuration changed",
 			"Who may become root is decided here: a line added is root for whoever it names.")
 

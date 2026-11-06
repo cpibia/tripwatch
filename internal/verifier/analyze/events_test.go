@@ -339,3 +339,28 @@ func TestEmptyScratchFile(t *testing.T) {
 		}
 	}
 }
+
+// What sudo and polkit never read grants nothing, whoever wrote it: dpkg's staging names among
+// them. The names they read stay critical, during an upgrade too.
+func TestPrivilegeNamesNeverConsulted(t *testing.T) {
+	root := uint32(0)
+	for p, want := range map[string]int{
+		"/usr/share/polkit-1/rules.d/50-default.rules.dpkg-new":   0,
+		"/usr/share/polkit-1/rules.d/50-default.rules.dpkg-tmp":   0,
+		"/etc/polkit-1/rules.d/x.rules~":                          0,
+		"/etc/sudoers.d/README.dpkg-new":                          0,
+		"/etc/sudoers.d/ops.bak":                                  0,
+		"/etc/sudoers.d/ops~":                                     0,
+		"/usr/share/polkit-1/rules.d/50-default.rules":            1,
+		"/etc/polkit-1/rules.d/10-admin.rules":                    1,
+		"/etc/sudoers.d/ops":                                      1,
+		"/etc/sudoers":                                            1,
+		"/etc/polkit-1/localauthority/50-local.d/x.pkla.dpkg-new": 1,
+	} {
+		e := watch.Event{At: time.Now(), Class: watch.ClassPrivilege, Op: watch.OpCreate, Path: p, SHA256: strings.Repeat("a", 64), UID: &root, PackageManager: true}
+		got := EvaluateEvents([]watch.Event{e}, true, nil)
+		if len(got) != want || want == 1 && got[0].Severity != "critical" {
+			t.Errorf("%s: %+v, want %d critical", p, got, want)
+		}
+	}
+}

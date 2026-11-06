@@ -404,7 +404,9 @@ removed. While a package manager runs (a process
 of root holds the lock of dpkg, rpm or apk: a process merely named `dpkg` does not count),
 changes to services, scheduled tasks and start-up scripts are one severity lower; changes to who
 may become root, to accounts, to SSH keys and to library preloading never are, nor are process
-starts and uploads. A program root drops in `/tmp` or `/var/tmp` and removes is one severity
+starts and uploads. A file in a privilege directory that sudo or polkit never reads raises nothing,
+whoever writes it: in `sudoers.d` a name with a `.` or ending in `~`, in polkit's `rules.d`
+anything not named `*.rules` (dpkg's `.dpkg-new` and `.dpkg-tmp` staging names among them). A program root drops in `/tmp` or `/var/tmp` and removes is one severity
 lower too, and raises nothing under the names an upgrade uses there (apt's
 `<package>.config.XXXXXX` scripts, the `mkinitramfs_` and `dracut.` build trees); the same names
 owned by the web server's user stay critical. The server's page lists its latest events and says whether the watchers run.
