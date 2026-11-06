@@ -120,6 +120,8 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 		event("/uploads/gone.php", 200, "missing"),
 		event("/uploads/proxied.php", 404, "elsewhere"),
 		event("/uploads/proxied-ok.php", 200, "elsewhere"),
+		event("/tmp/debug.inc.php.old", 404, "static"),
+		event("/tmp/served.php.old", 200, "static"),
 		{Rule: "sensitive_file", Severity: "high", Method: "GET", Status: 200, Log: "/var/log/nginx/proxy.log", OnDisk: "elsewhere",
 			Files: []string{"/srv/shop/test.php"}, FileExists: true, Evidence: logs.AttackerControlled{Request: "/test.php"}},
 		{Rule: "command_in_parameters", Severity: "high", Method: "GET", Status: 404, Log: "/var/log/nginx/access.log", OnDisk: "missing",
@@ -140,7 +142,7 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 		}
 	}
 	slices.Sort(got)
-	if want := []string{"GET /test.php", "GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?cmd=id", "POST /uploads/posted-then-deleted.php"}; !slices.Equal(got, want) {
+	if want := []string{"GET /test.php", "GET /tmp/served.php.old", "GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?cmd=id", "POST /uploads/posted-then-deleted.php"}; !slices.Equal(got, want) {
 		t.Errorf("alerts for %v, want %v", got, want)
 	}
 }

@@ -262,6 +262,10 @@ func scriptIsLast(p string) bool {
 	return i >= 0 && i == len(segs)-1
 }
 
+// ScriptLike reports a path with a script extension on any segment, or a double extension such
+// as x.php.jpg or x.php.old that some server configurations still hand to the interpreter.
+func ScriptLike(p string) bool { return hasScriptSegment(p) }
+
 // hasScriptSegment matches a script extension on any segment, and double extensions such as
 // x.php.jpg that some server configurations still hand to the interpreter.
 func hasScriptSegment(p string) bool {

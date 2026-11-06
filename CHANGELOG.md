@@ -12,7 +12,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   inert when the snapshot scan would withdraw it (a plugin's log behind an `exit`, a template
   Drupal compiled, an empty placeholder, an `.htaccess` that makes nothing executable); the content
   judged is the one hashed.
-
+- A request for a backup of a script (`x.php.old`, `x.php.swp`) in a log written only by nginx
+  sites, none of which hands that name to an interpreter or a proxy, is told `static`: it ran no
+  code. Apache, whose handlers may run such a name, still leaves it unknown.
 - A shell of the web server's user that starts a program missing from a directory root owns
   (PHP's `mail()` on a host without a mail server) is the application's work: it runs nothing,
   and only root can put the program there.
@@ -27,6 +29,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 - A real-time event of an upload directory marked inert raises nothing, as the snapshot scan
   withdraws the same file; one written and removed within minutes stays critical.
+- A failed GET for a name the sensor tells `static` is a probe, like one for a missing script.
 
 ## [0.1.45] - 2026-11-06
 

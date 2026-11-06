@@ -629,7 +629,9 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		logLine("203.0.113.7", "GET", "/uploads/shell.php/x.jpg", 404) +
 		logLine("203.0.113.7", "GET", "/api/files/x.php", 404) +
 		logLine("203.0.113.7", "GET", "/.env", 404) +
-		logLine("203.0.113.11", "GET", "/files/about.php", 404))
+		logLine("203.0.113.11", "GET", "/files/about.php", 404) +
+		logLine("203.0.113.7", "GET", "/tmp/debug.inc.php.old", 404) +
+		logLine("203.0.113.7", "GET", "/api/debug.inc.php.old", 404))
 	write("var/log/nginx/other.access.log", logLine("203.0.113.9", "GET", "/media/z.php", 404))
 	write("var/log/nginx/redirect.log", logLine("203.0.113.10", "GET", "/tmp/phpinfo.php", 301))
 	// Locations that refuse or redirect every request run nothing, unless a refusal can fall
@@ -659,6 +661,9 @@ func TestScriptsLookedUpOnDisk(t *testing.T) {
 		"/files/about.php":              "missing",
 		"/wp-content/uploads/edge.php":  "elsewhere",
 		"/wp-content/uploads/err.php":   "missing",
+		// A backup of a script no location hands to PHP ran nothing; one a proxy may get is open.
+		"/tmp/debug.inc.php.old": "static",
+		"/api/debug.inc.php.old": "",
 	} {
 		if v, ok := got[uri]; !ok || v != want {
 			t.Errorf("%s: on disk %q (event %v), want %q", uri, v, ok, want)
@@ -696,12 +701,14 @@ ServerName app.example.com
 `)
 	write("var/www/site/web/media/kept.php", "<?php")
 	write("etc/httpd/logs/access_log", logLine("203.0.113.7", "GET", "/media/api/info.php", 400)+
-		logLine("203.0.113.7", "GET", "/media/kept.php", 400))
+		logLine("203.0.113.7", "GET", "/media/kept.php", 400)+
+		logLine("203.0.113.7", "GET", "/media/info.php.old", 400))
 	got := map[string]string{}
 	for _, e := range h.run().Events {
 		got[e.Evidence.Request] = e.OnDisk
 	}
-	for uri, want := range map[string]string{"/media/api/info.php": "missing", "/media/kept.php": "present"} {
+	// Apache hands x.php.old to PHP when a handler names .php: that stays unknown.
+	for uri, want := range map[string]string{"/media/api/info.php": "missing", "/media/kept.php": "present", "/media/info.php.old": ""} {
 		if got[uri] != want {
 			t.Errorf("%s: on disk %q, want %q (events %v)", uri, got[uri], want, got)
 		}

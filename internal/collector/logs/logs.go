@@ -109,7 +109,8 @@ type Event struct {
 	Evidence  AttackerControlled `json:"attacker_controlled"`
 	// OnDisk says whether the script the requests named exists in the document roots of the
 	// sites writing the log: "present", "missing", "elsewhere" when every site answers it
-	// itself or passes it to a proxy, or empty when that cannot be told.
+	// itself or passes it to a proxy, "static" when the name is no script by its extension and no
+	// site writing the log hands it to an interpreter, or empty when that cannot be told.
 	OnDisk string `json:"on_disk,omitempty"`
 	// Files are the host paths the requested script would be at, up to maxEventFiles: in the
 	// sites writing the log, or, for a proxy, in the sites behind it answering the same names.
@@ -992,7 +993,13 @@ const maxScriptStats = 4096
 // known and was looked at: a file under any of them makes it present.
 func (r *runState) onDisk(e *Event) string {
 	script := weblog.ScriptPath(e.path)
-	if !weblog.IsScript(script) || e.moreLogs {
+	if e.moreLogs {
+		return ""
+	}
+	if !weblog.IsScript(script) {
+		if weblog.ScriptLike(script) {
+			return r.notRun(e)
+		}
 		return ""
 	}
 	// The same request is often in several logs: scanners try http and https, which a proxy
@@ -1028,6 +1035,30 @@ func (r *runState) onDisk(e *Event) string {
 		return "present"
 	}
 	return "missing"
+}
+
+// notRun tells a request for a name that is no script by its extension but that a server may
+// still hand to PHP (x.php.old, x.php.swp, a backup an editor left). Apache's handlers match any
+// extension in the name, so that stays unknown; nginx runs only what a location passes to an
+// interpreter, so when every site writing the logs is nginx's, none runs the name and none may
+// hand it to a proxy, the request ran no code here.
+func (r *runState) notRun(e *Event) string {
+	for _, log := range append([]string{strings.TrimPrefix(e.Log, "/")}, e.logs...) {
+		sites := r.sites[log]
+		if len(sites) == 0 {
+			return ""
+		}
+		for i := range sites {
+			s := &sites[i]
+			if s.Server != discovery.ServerNginx || s.Executes(e.path) {
+				return ""
+			}
+			if _, ok := s.ScriptFiles(e.path); !ok {
+				return ""
+			}
+		}
+	}
+	return "static"
 }
 
 // behindProxy names the files a request a proxy passed on would have reached in the sites
