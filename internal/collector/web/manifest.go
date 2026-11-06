@@ -98,9 +98,11 @@ func newManifestWriter(stateDir, app string) (*manifestWriter, error) {
 	return &manifestWriter{f: f, w: bufio.NewWriterSize(f, 64<<10), next: next}, nil
 }
 
-// add records a file. Paths come in the walk's order; one out of it would make the comparison
-// wrong, so the manifest is given up instead.
-func (m *manifestWriter) add(name, sum string) {
+// add records a file, and with a hashed file the identity hashLarge would fingerprint it by
+// (identityPrefix), so that a later run that only fingerprints it can tell it unchanged. Paths
+// come in the walk's order; one out of it would make the comparison wrong, so the manifest is
+// given up instead.
+func (m *manifestWriter) add(name, sum, identity string) {
 	if m == nil || m.broken {
 		return
 	}
@@ -115,7 +117,7 @@ func (m *manifestWriter) add(name, sum string) {
 	m.last = name
 	m.n++
 	// The path is quoted: file names may hold tabs and line breaks.
-	if _, err := fmt.Fprintf(m.w, "%s %s\n", strconv.Quote(name), sum); err != nil {
+	if _, err := fmt.Fprintf(m.w, "%s\n", manifestLine(name, sum, identity)); err != nil {
 		m.fail(err.Error())
 	}
 }
@@ -157,12 +159,27 @@ func comparePaths(a, b string) int {
 	}
 }
 
+// identityPrefix marks the last field of a manifest line: the size, change time and inode of a
+// file that was hashed, as unhashedPrefix fingerprints one the hash budget left unhashed.
+const (
+	identityPrefix = "m="
+	unhashedPrefix = "unhashed:"
+)
+
+func manifestLine(name, sum, identity string) string {
+	if identity == "" {
+		return strconv.Quote(name) + " " + sum
+	}
+	return strconv.Quote(name) + " " + sum + " " + identityPrefix + identity
+}
+
 type manifestReader struct {
-	sc   *bufio.Scanner
-	path string
-	sum  string
-	done bool
-	err  error
+	sc       *bufio.Scanner
+	path     string
+	sum      string
+	identity string
+	done     bool
+	err      error
 }
 
 func newManifestReader(f *os.File) *manifestReader {
@@ -179,7 +196,13 @@ func (r *manifestReader) advance() {
 		return
 	}
 	line := r.sc.Text()
+	r.identity = ""
 	i := strings.LastIndexByte(line, ' ')
+	if i >= 0 && strings.HasPrefix(line[i+1:], identityPrefix) {
+		r.identity = line[i+1+len(identityPrefix):]
+		line = line[:i]
+		i = strings.LastIndexByte(line, ' ')
+	}
 	if i < 0 {
 		r.done, r.err = true, errors.New("malformed manifest line")
 		return
@@ -208,15 +231,27 @@ func pendingRuns(sum string) int {
 	return runs
 }
 
-// changedSum reports whether two entries of a file in two manifests name different content, as
-// the comparison of manifests judges it.
-func changedSum(old, now string) bool {
-	// A file hashed in one run and only fingerprinted in the other (the hash budget ran out)
-	// cannot be compared; two fingerprints can, since a rewrite changes the change time or the
-	// inode. A link to a release's shared file is hashed with its content since that file is
-	// inspected: the first run that does is not a change.
+// changedEntry reports whether two entries of a file in two manifests name different content, as
+// the comparison of manifests judges it, with the identities recorded next to hashed entries. A file hashed
+// in one run and only fingerprinted in the other (where the hash budget runs out moves with what
+// the other applications hold) is compared by identity: a rewrite changes the change time or the
+// inode, which no one sets back, so that moving the budget's end over a file cannot hide its
+// change. Without a recorded identity (a manifest of an earlier version) the two cannot be
+// compared. Two fingerprints compare as they are. A link to a release's shared file is hashed
+// with its content since that file is inspected: the first run that does is not a change.
+func changedEntry(old, oldIdentity, now, nowIdentity string) bool {
 	firstContent := strings.HasPrefix(old, "link:") && strings.HasPrefix(now, old+":")
-	return old != now && !firstContent && strings.HasPrefix(old, "unhashed:") == strings.HasPrefix(now, "unhashed:")
+	if old == now || firstContent {
+		return false
+	}
+	oldUnhashed, nowUnhashed := strings.HasPrefix(old, unhashedPrefix), strings.HasPrefix(now, unhashedPrefix)
+	switch {
+	case oldUnhashed && !nowUnhashed:
+		return nowIdentity != "" && nowIdentity != strings.TrimPrefix(old, unhashedPrefix)
+	case !oldUnhashed && nowUnhashed:
+		return oldIdentity != "" && oldIdentity != strings.TrimPrefix(now, unhashedPrefix)
+	}
+	return true
 }
 
 // maxReportedUnread bounds the scripts named as left unread for runs in a row.
@@ -258,15 +293,15 @@ func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, int, bool, 
 			}
 			old.advance()
 		}
-		before := ""
+		before, beforeIdentity := "", ""
 		if !old.done && old.path == now.path {
-			before = old.sum
+			before, beforeIdentity = old.sum, old.identity
 		}
 		entry := now.sum
 		p := "/" + now.path
 		// A pending entry stays pending until the script is read, whatever this run made of it:
 		// a run whose hash budget ran out leaves an unhashed entry that compares to nothing.
-		if slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(p))) && (before == "" || pendingRuns(before) > 0 || changedSum(before, now.sum)) && run.pending(p) {
+		if slices.Contains(skimmerExtensions, strings.ToLower(path.Ext(p))) && (before == "" || pendingRuns(before) > 0 || changedEntry(before, beforeIdentity, now.sum, now.identity)) && run.pending(p) {
 			runs := pendingRuns(before) + 1
 			base := before
 			if runs > 1 {
@@ -278,7 +313,11 @@ func keepPending(prev, next string, run skimmerRun) ([]UnreadScript, int, bool, 
 				longCount++
 			}
 		}
-		if _, err := fmt.Fprintf(w, "%s %s\n", strconv.Quote(now.path), entry); err != nil {
+		identity := now.identity
+		if entry != now.sum {
+			identity = ""
+		}
+		if _, err := fmt.Fprintf(w, "%s\n", manifestLine(now.path, entry, identity)); err != nil {
 			_ = out.Close()
 			return nil, 0, false, err
 		}
@@ -437,7 +476,7 @@ func diffManifests(prev, cur string) ([]FileChange, int, skimmerCandidates, erro
 			emit(FileChange{Path: "/" + now.path, Change: ChangeAdded, SHA256: contentHash(now.sum)})
 			now.advance()
 		default:
-			if changedSum(old.sum, now.sum) {
+			if changedEntry(old.sum, old.identity, now.sum, now.identity) {
 				emit(FileChange{Path: "/" + now.path, Change: ChangeModified, SHA256: contentHash(now.sum), pending: pendingRuns(old.sum)})
 			}
 			old.advance()
@@ -492,7 +531,7 @@ func (s *scanner) finishManifest(ctx context.Context, stateDir string) string {
 		if err != nil {
 			s.issues = append(s.issues, fmt.Sprintf("%s: previous manifest unreadable, changed files not named: %v", s.report.Path, err))
 		} else {
-			s.report.Changes, s.report.ChangeCount = changes, count
+			s.report.Changes, s.report.ChangeCount, s.report.Compared = changes, count, true
 			// Scripts the run had no time or budget left to read for skimmers, however many,
 			// keep their old entry in the manifest handed on, so that the next run finds them
 			// changed and reads them: taken in as seen, a skimmer among them would never be read

@@ -133,8 +133,8 @@ func TestManifestFailuresAndStaleManifests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.add("var/www/shop/b.php", "x")
-	m.add("var/www/shop/a.php", "x")
+	m.add("var/www/shop/b.php", "x", "")
+	m.add("var/www/shop/a.php", "x", "")
 	s := &scanner{manifest: m, report: AppReport{Application: discovery.Application{Path: "/var/www/shop"}}}
 	if next := s.finishManifest(context.Background(), state); next != "" || len(s.issues) != 1 || !strings.Contains(s.issues[0], "manifest not written, changed files not named: files listed out of order") {
 		t.Errorf("next %q, issues %v", next, s.issues)
@@ -249,8 +249,8 @@ func TestUnreadScriptsStayPending(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		m.add("var/www/shop/a.js", strings.Repeat("b", 64))
-		m.add("var/www/shop/b.js", strings.Repeat("c", 64))
+		m.add("var/www/shop/a.js", strings.Repeat("b", 64), "")
+		m.add("var/www/shop/b.js", strings.Repeat("c", 64), "")
 		s = &scanner{src: collector.NewSource(t.TempDir()), manifest: m, budget: newHashBudget(), findings: map[string]int{}, report: AppReport{Application: discovery.Application{Path: "/var/www/shop"}}}
 		next := s.finishManifest(ctx, state)
 		if next == "" {
@@ -414,5 +414,75 @@ func TestPendingScriptsCannotBePushedOut(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(next); !strings.Contains(string(data), "pending:3:"+strings.Repeat("a", 64)) { //nolint:gosec // the test's own directory
 		t.Errorf("unhashed run cleared the pending entry:\n%s", data)
+	}
+}
+
+// Where the hash budget runs out moves from run to run with what the other applications hold: a
+// file hashed in one run and only fingerprinted in the next is the same file while its size,
+// change time and inode are, and a changed one when they are not, however the budget fell.
+func TestManifestAcrossTheHashBudgetsEdge(t *testing.T) {
+	prev := MaxHashBytesPerRun
+	t.Cleanup(func() { MaxHashBytesPerRun = prev })
+	tr := newTree(t)
+	tr.file("var/www/shop/bin/magento", "#!/usr/bin/env php")
+	tr.file("var/www/shop/app/etc/di.xml", "<config/>")
+	tr.file("var/www/shop/pub/index.php", "<?php require 'app/bootstrap.php';")
+	tr.file("var/www/shop/pub/static/a.js", strings.Repeat("a", 4096))
+	tr.file("var/www/shop/pub/static/b.js", strings.Repeat("b", 4096))
+	c := &Collector{StateDir: t.TempDir()}
+	collect := func(budget int64) AppReport {
+		t.Helper()
+		MaxHashBytesPerRun = budget
+		out, err := c.Collect(context.Background(), collector.NewSource(tr.root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range out.(Result).Apps {
+			if a.Path == "/var/www/shop" {
+				return a
+			}
+		}
+		t.Fatal("application not found")
+		return AppReport{}
+	}
+	hashed := collect(1 << 30)
+	fingerprinted := collect(0)
+	if fingerprinted.DirHashes["/var/www/shop/pub"] == hashed.DirHashes["/var/www/shop/pub"] {
+		t.Fatal("the budget made no difference to the directory's hash: the test proves nothing")
+	}
+	if !fingerprinted.Compared || fingerprinted.ChangeCount != 0 {
+		t.Errorf("unchanged files across the budget's edge: compared %v, changes %+v", fingerprinted.Compared, fingerprinted.Changes)
+	}
+	if back := collect(1 << 30); back.ChangeCount != 0 {
+		t.Errorf("back to hashed: %+v", back.Changes)
+	}
+	// A rewrite at the same size while the budget's edge moves over the file is still named.
+	tr.file("var/www/shop/pub/static/a.js", strings.Repeat("z", 4096))
+	if changed := collect(0); changed.ChangeCount != 1 || changed.Changes[0].Path != "/var/www/shop/pub/static/a.js" {
+		t.Errorf("rewrite hidden by the budget's edge: %+v", changed.Changes)
+	}
+}
+
+func TestChangedEntryAcrossFingerprints(t *testing.T) {
+	sha, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	for _, c := range []struct {
+		old, oldID, now, nowID string
+		want                   bool
+	}{
+		{sha, "size:1:ctime:2:id:3", "unhashed:size:1:ctime:2:id:3", "", false},
+		{sha, "size:1:ctime:2:id:3", "unhashed:size:1:ctime:9:id:3", "", true},
+		{sha, "", "unhashed:size:1:ctime:9:id:3", "", false},
+		{"unhashed:size:1:ctime:2:id:3", "", sha, "size:1:ctime:2:id:3", false},
+		{"unhashed:size:1:ctime:2:id:3", "", sha, "size:1:ctime:5:id:3", true},
+		{"unhashed:size:1:ctime:2:id:3", "", "unhashed:size:1:ctime:5:id:3", "", true},
+		{sha, "size:1:ctime:2:id:3", other, "size:1:ctime:2:id:3", true},
+		{sha, "x", sha, "y", false},
+	} {
+		if got := changedEntry(c.old, c.oldID, c.now, c.nowID); got != c.want {
+			t.Errorf("%.20s (%s) -> %.20s (%s): %v, want %v", c.old, c.oldID, c.now, c.nowID, got, c.want)
+		}
 	}
 }

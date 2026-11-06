@@ -341,8 +341,13 @@ manifest replaces the old one only once that snapshot is delivered, like the log
 a snapshot that is lost is compared again. A scan cut short keeps the old manifest; a manifest
 that cannot be written (a full state directory, more than a million code files) is an issue
 naming why, not a silent stop. Files too large to hash (or reached once the hash budget is spent)
-are compared by their fingerprint of size, change time and inode when both runs have one, and
-named as modified without a hash. Manifests no run has rewritten for seven days (an application
+are compared by their fingerprint of size, change time and inode, and named as modified without
+a hash. A hashed file's manifest entry records the same identity, so that one hashed in a run and
+only fingerprinted in the next (where the budget runs out moves with what the other applications
+hold) is unchanged while its identity is: a rewrite changes the change time or the inode, so
+moving the budget's end over a file cannot hide its change. The report then says the files were
+compared, and the verifier raises no "code changed" for a directory whose hash moved with none of
+its files among the changes. Manifests no run has rewritten for seven days (an application
 that is gone, a `.next` of a run that never finished) are removed. The scripts,
 templates and SVG images among the changes are kept apart from the other changes in the diff, so
 that changed files of other kinds cannot push them out, and read for a card skimmer

@@ -6,6 +6,26 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.48] - 2026-11-06
+
+- **No more "Code changed" from the hash budget.** On a host whose applications hold more than
+  the 8 GiB hashed a run, where the budget ran out moved every hour, and directories whose files
+  never changed raised "Code changed" run after run.
+- **Upgrade.** Both the verifier and the sensors change; update the verifier first.
+
+### Sensor
+
+- A hashed file's manifest entry records its size, change time and inode, and a file hashed in
+  one run and only fingerprinted in the next is compared by them: unchanged while they are, named
+  as modified when they are not, so the budget's edge moved over a file cannot hide its change.
+- The application's report says when its code files were compared one by one (`compared`).
+
+### Verifier
+
+- A directory whose hash moved, in an application whose files were compared one by one with none
+  of the directory's among the changes, raises no "Code changed": only how its files were
+  fingerprinted changed.
+
 ## [0.1.47] - 2026-11-06
 
 - **Upgrade.** Only the sensors change; the verifier image is rebuilt with the same behaviour.

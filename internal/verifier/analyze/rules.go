@@ -1461,7 +1461,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				var dirs []string
 				for _, dir := range slices.Sorted(maps.Keys(app.DirHashes)) {
 					sum := app.DirHashes[dir]
-					if old, ok := pa.DirHashes[dir]; ok && old != sum && !onlyDataChanged(app, dir) && !releasedIn(app, dir, cur.Published) {
+					if old, ok := pa.DirHashes[dir]; ok && old != sum && !onlyDataChanged(app, dir) && !releasedIn(app, dir, cur.Published) && !sameFilesIn(app, dir) {
 						if bulk {
 							dirs = append(dirs, dir)
 							continue
@@ -2053,6 +2053,14 @@ func onlyDataChanged(app web.AppReport, dir string) bool {
 		}
 	}
 	return seen
+}
+
+// sameFilesIn reports a directory whose hash moved while the sensor compared every code file with
+// the previous run's and named no change in it: its files were fingerprinted otherwise (by size,
+// change time and inode where the hash budget ran out, or hashed where it had not), the content
+// is the same. The comparison tells a rewrite by its identity, so a change still shows.
+func sameFilesIn(app web.AppReport, dir string) bool {
+	return app.Compared && app.ChangeCount == len(app.Changes) && changedIn(app.Changes, dir) == ""
 }
 
 func changedIn(changes []web.FileChange, dir string) string {

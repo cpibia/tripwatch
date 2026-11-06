@@ -141,6 +141,10 @@ type AppReport struct {
 	// absent on a first run and when the sensor keeps no state.
 	Changes     []FileChange `json:"changes,omitempty"`
 	ChangeCount int          `json:"change_count,omitempty"`
+	// Compared says the code files were compared with the previous run's one by one: then a
+	// directory whose hash moved with no file of it among the changes holds the same content, only
+	// fingerprinted otherwise where the hash budget ran out.
+	Compared bool `json:"compared,omitempty"`
 	// Releases are the public releases the packages with changed files say they are.
 	Releases []PackageRelease `json:"releases,omitempty"`
 	// UnreadScripts are changed scripts that runs in a row left unread for skimmers, for lack of
@@ -403,6 +407,8 @@ func (b *hashBudget) take(n int64) bool {
 }
 
 type scanner struct {
+	// identity is what hashLarge would fingerprint the file it last hashed by, for the manifest.
+	identity string
 	// behind says the run left changed scripts of the application unread for skimmers.
 	behind bool
 	// headerReads counts the files read for a package's release, bounded by maxHeaderReads.
@@ -715,15 +721,16 @@ func (s *scanner) walk(ctx context.Context, dir string, depth int, inUploads, in
 			if sum := s.sharedContent(name); sum != "" {
 				childHash += ":" + sum
 			}
-			s.manifest.add(name, childHash)
+			s.manifest.add(name, childHash, "")
 		case e.IsDir():
 			if e.Name() == ".git" {
 				continue
 			}
 			childHash = s.walk(ctx, name, depth+1, false, childThirdParty)
 		case e.Type().IsRegular():
+			s.identity = ""
 			childHash = s.inspectFile(name, e, false, false, true)
-			s.manifest.add(name, childHash)
+			s.manifest.add(name, childHash, s.identity)
 		default:
 			continue
 		}
@@ -1363,14 +1370,16 @@ func (s *scanner) codeInData(name string, e fs.DirEntry, content []byte, complet
 // change time and inode stand in for the hash, an issue records it, and only the edges are
 // read.
 func (s *scanner) hashLarge(name string, info fs.FileInfo, keepEdges bool) (string, []byte) {
-	if info.Size() <= collector.MaxHashSize && s.budget.take(info.Size()) {
-		return s.hashStream(name, keepEdges)
-	}
 	// The modification time can be set back by the file's owner; the change time and the
 	// inode cannot, so a rewrite at the same size still changes the surrogate.
 	ctime, _ := collector.ChangeTime(info)
 	id, _ := collector.FileID(info)
-	surrogate := fmt.Sprintf("unhashed:size:%d:ctime:%d:id:%s", info.Size(), ctime, id)
+	identity := fmt.Sprintf("size:%d:ctime:%d:id:%s", info.Size(), ctime, id)
+	if info.Size() <= collector.MaxHashSize && s.budget.take(info.Size()) {
+		s.identity = identity
+		return s.hashStream(name, keepEdges)
+	}
+	surrogate := unhashedPrefix + identity
 	if info.Size() > collector.MaxHashSize {
 		s.issues = append(s.issues, fmt.Sprintf("/%s not hashed: %d bytes, over %d", name, info.Size(), collector.MaxHashSize))
 	}

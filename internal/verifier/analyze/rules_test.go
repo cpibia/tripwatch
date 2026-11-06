@@ -890,9 +890,9 @@ func TestSensorUpdateLeavesNoAlerts(t *testing.T) {
 // custom application writing next to its code; a script among them, or an incomplete list,
 // is a change of code.
 func TestCodeChangeOfDataFilesOnly(t *testing.T) {
-	app := func(changes []web.FileChange, count int) State {
+	app := func(changes []web.FileChange, count int, compared ...bool) State {
 		return State{Web: &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/srv/site"},
-			DirHashes: map[string]string{"/srv/site/captcha": "new"}, Changes: changes, ChangeCount: count}}}}
+			DirHashes: map[string]string{"/srv/site/captcha": "new"}, Changes: changes, ChangeCount: count, Compared: len(compared) > 0}}}}
 	}
 	prev := State{Web: &web.Result{Apps: []web.AppReport{{Application: discovery.Application{Path: "/srv/site"}, DirHashes: map[string]string{"/srv/site/captcha": "old"}}}}}
 	data := []web.FileChange{{Path: "/srv/site/captcha/NoSession1", Change: "modified"}}
@@ -904,6 +904,12 @@ func TestCodeChangeOfDataFilesOnly(t *testing.T) {
 		"data only":       {app(data, 1), false},
 		"a script":        {app(script, 2), true},
 		"incomplete list": {app(data, 5), true},
+		// The files were compared one by one and none of the directory changed: only how they were
+		// fingerprinted did, where the hash budget ran out.
+		"same files":               {app(nil, 0, true), false},
+		"same files, not compared": {app(nil, 0), true},
+		"a change elsewhere":       {app([]web.FileChange{{Path: "/srv/site/other/x.js", Change: "modified"}}, 1, true), false},
+		"a script, compared":       {app(script, 2, true), true},
 	} {
 		got := slices.ContainsFunc(Evaluate(&prev, tc.cur), func(f Finding) bool {
 			return strings.HasPrefix(f.Fingerprint, "web-change:code:/srv/site/captcha") || strings.Contains(f.Detail, "Its directory's code changed: /srv/site/captcha")
