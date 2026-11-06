@@ -346,21 +346,36 @@ func logFiles(src collector.Source) (access, errorLogs []string, sites, backends
 			served[n] = append(served[n], i)
 		}
 	}
-	add := func(list []string, p string) []string {
+	// A log is known by the file it is, not by its name: RHEL's /etc/httpd/logs is a link to
+	// /var/log/httpd, and the same file read under both names put each request in two logs, the
+	// second with no site to look its script up in. The first name, the configuration's, stays.
+	var accessInfo, errorInfo []fs.FileInfo
+	add := func(list *[]string, infos *[]fs.FileInfo, p string, others ...[]fs.FileInfo) string {
 		if p == "" || strings.Contains(p, "$") {
-			return list
+			return ""
 		}
 		p = collector.Rel(p)
-		if info, err := fs.Stat(fsys, p); err != nil || !info.Mode().IsRegular() || slices.Contains(list, p) {
-			return list
+		info, err := fs.Stat(fsys, p)
+		if err != nil || !info.Mode().IsRegular() {
+			return ""
 		}
-		return append(list, p)
+		for i, known := range *infos {
+			if (*list)[i] == p || os.SameFile(known, info) {
+				return (*list)[i]
+			}
+		}
+		for _, o := range others {
+			if slices.ContainsFunc(o, func(known fs.FileInfo) bool { return os.SameFile(known, info) }) {
+				return ""
+			}
+		}
+		*list, *infos = append(*list, p), append(*infos, info)
+		return p
 	}
 	for _, s := range inv.Sites {
 		for _, p := range s.AccessLogs {
-			access = add(access, p)
-			rel := collector.Rel(p)
-			if !slices.Contains(access, rel) {
+			rel := add(&access, &accessInfo, p)
+			if rel == "" {
 				continue
 			}
 			sites[rel] = append(sites[rel], s)
@@ -379,19 +394,17 @@ func logFiles(src collector.Source) (access, errorLogs []string, sites, backends
 			}
 		}
 		for _, p := range s.ErrorLogs {
-			errorLogs = add(errorLogs, p)
+			add(&errorLogs, &errorInfo, p)
 		}
 	}
 	for _, pattern := range defaultAccessLogs {
 		for _, p := range collector.Glob(fsys, pattern) {
-			access = add(access, "/"+p)
+			add(&access, &accessInfo, "/"+p)
 		}
 	}
 	for _, pattern := range defaultErrorLogs {
 		for _, p := range collector.Glob(fsys, pattern) {
-			if !slices.Contains(access, p) {
-				errorLogs = add(errorLogs, "/"+p)
-			}
+			add(&errorLogs, &errorInfo, "/"+p, accessInfo)
 		}
 	}
 	return access, errorLogs, sites, backends

@@ -715,6 +715,35 @@ ServerName app.example.com
 	}
 }
 
+// RHEL's /etc/httpd/logs is a link to /var/log/httpd: the log the configuration names and the one
+// found in the usual place are one file, read once under the configuration's name, so that its
+// sites tell whether a requested script is there.
+func TestLogReachedThroughALinkReadOnce(t *testing.T) {
+	h := newHost(t)
+	write := func(name, content string) {
+		t.Helper()
+		p := filepath.Join(h.root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("etc/httpd/conf/httpd.conf", "ServerRoot \"/etc/httpd\"\nDocumentRoot \"/var/www/html\"\nCustomLog \"logs/access_log\" combined\n")
+	write("var/log/httpd/access_log", logLine("203.0.113.7", "GET", "/wp-content/uploads/index.php", 400))
+	if err := os.Symlink("../../var/log/httpd", filepath.Join(h.root, "etc/httpd/logs")); err != nil {
+		t.Fatal(err)
+	}
+	res := h.run()
+	if len(res.Files) != 1 || res.Files[0].Path != "/etc/httpd/logs/access_log" {
+		t.Errorf("files read: %+v", res.Files)
+	}
+	if len(res.Events) != 1 || res.Events[0].OnDisk != "missing" {
+		t.Errorf("events: %+v", res.Events)
+	}
+}
+
 // A scanner sweeping every site behind a proxy reaches more logs than an event keeps; those
 // whose sites pass the request on leave the verdict to the others, and one that could have run
 // the script leaves it open.

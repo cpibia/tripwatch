@@ -6,6 +6,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A log reached under two names (RHEL's `/etc/httpd/logs` is a link to `/var/log/httpd`) is read
+  once, under the name the configuration gives it: each request was counted twice, and the second
+  name, with no site attached, left whether a requested script exists unknown, so every failed
+  probe stayed a high alert.
+
 ## [0.1.46] - 2026-11-06
 
 What changes for an operator, in short; the details follow by component.
