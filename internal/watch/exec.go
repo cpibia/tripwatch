@@ -206,6 +206,11 @@ var reconTools = []string{
 	"timeout", "nice", "ionice", "stdbuf", "xargs", "chroot", "unshare", "nsenter", "flock", "script", "expect", "watch",
 	"time", "command", "strace", "ltrace", "gdb", "taskset", "chrt", "prlimit", "setpriv", "capsh", "sg", "newgrp", "systemd-run",
 	"start-stop-daemon", "daemonize", "screen", "tmux",
+	// Network clients beyond webTools, interpreters and editors that run code or commands,
+	// compilers that build a tool, and the clients of a container runtime.
+	"openssl", "git", "rsync", "dig", "nslookup", "host", "ping", "traceroute", "tracepath", "whois", "ssh-keyscan",
+	"java", "jjs", "groovy", "tclsh", "wish", "vim", "vi", "view", "ex", "ed", "emacs", "nano", "man",
+	"make", "gcc", "cc", "g++", "clang", "as", "ld", "go", "docker", "podman", "kubectl", "crictl", "ctr", "nerdctl",
 }
 
 // delegatedRedirect is the redirection a program run for the application ends with: its errors
