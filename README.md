@@ -398,7 +398,10 @@ removed. While a package manager runs (a process
 of root holds the lock of dpkg, rpm or apk: a process merely named `dpkg` does not count),
 changes to services, scheduled tasks and start-up scripts are one severity lower; changes to who
 may become root, to accounts, to SSH keys and to library preloading never are, nor are process
-starts and uploads. The server's page lists its latest events and says whether the watchers run.
+starts and uploads. A program root drops in `/tmp` or `/var/tmp` and removes is one severity
+lower too, and raises nothing under the names an upgrade uses there (apt's
+`<package>.config.XXXXXX` scripts, the `mkinitramfs_` and `dracut.` build trees); the same names
+owned by the web server's user stay critical. The server's page lists its latest events and says whether the watchers run.
 
 The snapshots back the watchers up: a start-up, login, network or loader hook added or changed
 since the previous snapshot is an alert (high for system files, medium in a home) unless a

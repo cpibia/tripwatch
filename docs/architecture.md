@@ -188,7 +188,11 @@ process name. It is read when each event is queued, not when its batch leaves, a
 root's files: services, scheduled tasks and start-up files of another user, or in a home, and the
 web server's files in the scratch directories keep their severity, since anyone can read when
 the lock is held. The names a package manager stages a file under (`.dpkg-new`, `.rpmnew`...)
-are passed over only outside the scratch directories, where dpkg never writes them. If the transport cannot seal a batch because an earlier envelope is still pending,
+are passed over only outside the scratch directories, where dpkg never writes them. In the
+scratch directories root's file under a name an upgrade writes there (apt-extracttemplates'
+`<package>.config.XXXXXX` directly in `/tmp` or `/var/tmp`, the trees in `mkinitramfs_XXXXXX/`
+and `dracut.XXXXXXX/`) raises nothing while the lock is held, and root's other drops removed
+within the window are lowered: the removal carries no owner, so the file as it appeared decides. If the transport cannot seal a batch because an earlier envelope is still pending,
 the batcher keeps it in a queue of 4,096 events and retries with a backoff up to a minute. A
 batch the verifier refuses for its size, which the transport drops from the chain, is not taken
 for delivered: its events go again in batches half the size of the refused one, root's first,

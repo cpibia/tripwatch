@@ -262,3 +262,45 @@ func TestStagingNamesNotInScratch(t *testing.T) {
 		t.Errorf("root's file lowered %v, the web user's %v", lowered(a), lowered(b))
 	}
 }
+
+// What an upgrade leaves in the scratch directories, root's while apt holds its lock, raises
+// nothing: apt's config scripts, the initramfs trees. The same names without a package manager or
+// owned by the web server's user stay critical; root's other drops during an upgrade are lowered.
+func TestPackageToolsInScratch(t *testing.T) {
+	web, root := uint32(33), uint32(0)
+	at := time.Now()
+	judge := func(p string, uid *uint32, pm bool) string {
+		drop := []watch.Event{
+			{At: at, Class: watch.ClassScratch, Op: watch.OpAttrib, Path: p, SHA256: strings.Repeat("a", 64), Mode: "-rwxr-xr-x", UID: uid, WebUser: uid == &web, PackageManager: pm},
+			{At: at.Add(time.Second), Class: watch.ClassScratch, Op: watch.OpDelete, Path: p, PackageManager: pm},
+		}
+		history := func(string, time.Time) []watch.Event { return drop[:1] }
+		var sev []string
+		for _, f := range EvaluateEvents(drop, false, history) {
+			sev = append(sev, f.Severity)
+		}
+		return strings.Join(sev, ",")
+	}
+	for _, tc := range []struct {
+		path string
+		uid  *uint32
+		pm   bool
+		want string
+	}{
+		{"/tmp/ca-certificates.config.51xlqb", &root, true, ""},
+		{"/tmp/landscape-common.config.iTeHyo", &root, true, ""},
+		{"/var/tmp/mkinitramfs_KE0s5y/init", &root, true, ""},
+		{"/var/tmp/dracut.d5kSaDi/initramfs/shutdown", &root, true, ""},
+		{"/tmp/ca-certificates.config.51xlqb", &root, false, "high,critical"},
+		{"/tmp/ca-certificates.config.51xlqb", &web, true, "high,critical"},
+		{"/var/tmp/mkinitramfs_KE0s5y/init", &web, true, "high,critical"},
+		{"/tmp/x.config.abc", &root, true, "medium,high"},
+		{"/tmp/sub/x.config.abcdef", &root, true, "medium,high"},
+		{"/dev/shm/x.config.abcdef", &root, true, "medium,high"},
+		{"/tmp/.dropper", &root, true, "medium,high"},
+	} {
+		if got := judge(tc.path, tc.uid, tc.pm); got != tc.want {
+			t.Errorf("%s uid %d package manager %v: %q, want %q", tc.path, *tc.uid, tc.pm, got, tc.want)
+		}
+	}
+}

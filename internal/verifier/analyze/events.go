@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,6 +63,20 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 func packageTemp(p string) bool {
 	return slices.ContainsFunc([]string{".dpkg-new", ".dpkg-tmp", ".dpkg-old", ".dpkg-dist", ".rpmnew", ".rpmsave", ".rpmorig", ".apk-new"},
 		func(suffix string) bool { return strings.HasSuffix(p, suffix) })
+}
+
+// packageScratch matches what apt and the initramfs builders it runs leave in the scratch
+// directories during an upgrade: the maintainer's config script apt-extracttemplates writes to
+// /tmp as <package>.config.XXXXXX, runs and removes, and the trees mkinitramfs and dracut build in
+// mkinitramfs_XXXXXX and dracut.XXXXXXX.
+var packageScratch = regexp.MustCompile(`^(?:/var)?/tmp/(?:[a-z0-9][a-z0-9+.-]*\.config\.[A-Za-z0-9]{6}$|(?:mkinitramfs_|dracut\.)[A-Za-z0-9]{6,7}/)`)
+
+// packageTool reports root's file under one of packageScratch's names, written while a package
+// manager of root held its lock. Only root's: the web server's user can read when apt holds its
+// lock and pick the same name, but cannot make the file root's; root dropping a tool has no need
+// to hide behind an upgrade.
+func packageTool(first, last watch.Event) bool {
+	return rootOwned(first) && (first.PackageManager || last.PackageManager) && packageScratch.MatchString(last.Path)
 }
 
 // rootOwned reports an event on a file root owns, which no other user can have made.
@@ -159,14 +174,26 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		// /tmp all day, never fold root's or the web server's into an aggregate.
 		if e.Op == watch.OpDelete {
 			if first, ok := appeared(e, history); ok {
+				if packageTool(first, e) {
+					return Finding{}, false
+				}
 				sev := "high"
 				if first.WebUser || (first.UID != nil && *first.UID == 0) {
 					sev = "critical"
 				}
-				return event("scratch-transient", owner(first)+"|"+e.Path+occurrence(first), sev, "Executable dropped in "+dir+" and removed",
-					fmt.Sprintf("%s was written at %s and removed at %s: a program dropped, most likely run and deleted so that nothing stays on disk. %s",
-						e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))), true
+				detail := fmt.Sprintf("%s was written at %s and removed at %s: a program dropped, most likely run and deleted so that nothing stays on disk. %s",
+					e.Path, first.At.Format("15:04:05"), e.At.Format("15:04:05"), describeFile(first))
+				// The removal carries no owner, so EvaluateEvents cannot tell root's drop from
+				// another user's: the file as it appeared says whose it was.
+				if rootOwned(first) && (first.PackageManager || e.PackageManager) {
+					sev = lower(sev)
+					detail += " A package manager was running at the time: an installation or an upgrade may have made this change."
+				}
+				return event("scratch-transient", owner(first)+"|"+e.Path+occurrence(first), sev, "Executable dropped in "+dir+" and removed", detail), true
 			}
+			return Finding{}, false
+		}
+		if packageTool(e, e) {
 			return Finding{}, false
 		}
 		if !watch.Executable(e.Mode) {
