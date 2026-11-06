@@ -359,7 +359,11 @@ what changes there within two seconds, in signed event envelopes of the same cha
   `rpm-tmp.XXXXXX` from rpm, dnf5, microdnf, PackageKit or the system's Python running
   dnf or yum. Some shells of the web server's user are its own work: `sh -c` running sendmail
   with options only (PHP's `mail()`); ClamAV scanning one uploaded file, with options only
-  (the upload plugins of CMSs); an error reporter reading the project's git root (Flare
+  (the upload plugins of CMSs); Ghostscript, pdftk or qpdf with options and paths only, the
+  shell running them included when the tool is a root-owned script in `/usr/bin` or
+  `/usr/local/bin` (plugins filling, merging or checking PDFs; Ghostscript never with
+  `-dNOSAFER`, `-dDELAYSAFER`, `-c` or a `%pipe%` output, and no tool reading its arguments
+  from an `@` file); an error reporter reading the project's git root (Flare
   and Ignition, `echo $(git rev-parse --show-toplevel)`, matched whole); and a framework
   command (`php artisan ...`, `bin/console`, `bin/magento`) whose parent is that framework's
   scheduler or worker, not the PHP pool, with nothing a shell interprets but the redirection to

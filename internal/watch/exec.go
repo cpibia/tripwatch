@@ -197,6 +197,28 @@ var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Z
 // plugins write it, to a file named 1).
 var virusScanCommand = regexp.MustCompile(`^/usr/(?:local/)?bin/clamd?scan(?: +--?[a-z][a-z-]*(?:=[A-Za-z0-9_./-]+)?)* +(?:'[^']*'|[^\s;&|$` + "`" + `<>()'"\\]+)(?: 2>&1| 2> ?1)?$`)
 
+// documentCommand is a PDF tool run on files, as CMS plugins do to fill a form, merge or check
+// the PDFs they make: the tool by name or from the system's directories, then words of options and
+// paths only (no "@" to read arguments from a file, no "%" for Ghostscript's %pipe% device), its
+// errors at most sent to the output the plugin reads or silenced. Whatever the tool is made to do
+// by a crafted file, a shell or a download it starts has the tool, not the shell, as its parent
+// and is reported on its own.
+var documentCommand = regexp.MustCompile(`^(?:/usr/(?:local/)?bin/)?(gs|pdftk|qpdf)((?: +[A-Za-z0-9_./=+:,-]+)*)(?: 2>&1| 2> ?/dev/null)?$`)
+
+// unsafeGhostscript are the options that turn Ghostscript's sandbox off or run PostScript given on
+// the command line: with them it opens any file and runs any command.
+var unsafeGhostscript = []string{"-dNOSAFER", "-dDELAYSAFER", "-dNOSAFETY", "-c", "-dDELAYBIND"}
+
+func documentTool(command string) bool {
+	m := documentCommand.FindStringSubmatch(command)
+	if m == nil {
+		return false
+	}
+	return m[1] != "gs" || !slices.ContainsFunc(strings.Fields(m[2]), func(f string) bool {
+		return slices.ContainsFunc(unsafeGhostscript, func(o string) bool { return strings.EqualFold(f, o) })
+	})
+}
+
 // terminalQuery is a console library asking for the terminal's size or settings, as Symfony's
 // Console does (under Laravel's artisan, Composer, Drush and Magento's CLI) at every command:
 // stty run alone, or through the shell, its output silenced or filtered for the columns.
@@ -222,8 +244,8 @@ func plainCommand(command string) (string, bool) {
 }
 
 // routineShell reports a shell the web server's user starts for its own work, which a webshell
-// cannot pass for: PHP's mail() running the configured sendmail, ClamAV scanning an upload, an
-// error reporter reading the project's git root, and a framework's scheduler or
+// cannot pass for: PHP's mail() running the configured sendmail, ClamAV scanning an upload, a PDF
+// tool working on files, an error reporter reading the project's git root, and a framework's scheduler or
 // queue worker running one of its commands. The scheduler is the parent, not something named in
 // the command: the shells a webshell starts have the PHP pool as their parent.
 func (c execContext) routineShell(p system.Process, tool string) bool {
@@ -237,7 +259,7 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	_, command, ok := strings.Cut(rawCommand(p), " -c ")
 	if !ok {
-		return false
+		return c.documentScript(p)
 	}
 	// Symfony's mailer ends the shell's options with "--" before the command.
 	command = strings.TrimPrefix(command, "-- ")
@@ -251,7 +273,7 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	// Queue supervisors replace the shell with the worker.
 	command = strings.TrimPrefix(command, "exec ")
 	if sendmailCommand.MatchString(command) || virusScanCommand.MatchString(command) || terminalQuery.MatchString(command) ||
-		slices.Contains(errorReporterCommands, command) {
+		slices.Contains(errorReporterCommands, command) || documentTool(command) {
 		return true
 	}
 	command, plain := plainCommand(command)
@@ -260,6 +282,24 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	parent, ok := c.parent(p)
 	return ok && parent.UID == p.UID && c.frameworkCommand(rawCommand(parent))
+}
+
+// documentScript reports a shell running a PDF tool installed as a shell script (pdftk is often a
+// wrapper around its Java jar): root's file in the system's directories, which the web server's
+// user cannot change, given the arguments documentTool allows.
+func (c execContext) documentScript(p system.Process) bool {
+	fields := strings.Fields(rawCommand(p))
+	if len(fields) < 2 || c.owner == nil {
+		return false
+	}
+	script := fields[1]
+	if dir := path.Dir(script); dir != "/usr/bin" && dir != "/usr/local/bin" {
+		return false
+	}
+	if uid, ok := c.owner(script); !ok || uid != 0 {
+		return false
+	}
+	return documentTool(strings.Join(fields[1:], " "))
 }
 
 // frameworkCommand reports whether a command line runs PHP on a framework's command-line entry

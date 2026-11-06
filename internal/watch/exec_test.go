@@ -231,6 +231,20 @@ func TestClassifyExec(t *testing.T) {
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /var/www/site/uploads/forms/12/a.jpg 2> 1"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /var/www/site/uploads/forms/12/a.jpg 2> 1.php"}, ReasonWebShell},
 		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/bin/clamdscan --no-summary /tmp/x 2>&1; id"}, ReasonWebShell},
+		// A plugin filling, merging or checking PDFs; with anything more, Ghostscript's sandbox
+		// off or code given inline, it is a shell command.
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /usr/local/bin/pdftk /var/www/site/wp-content/plugins/forms/template.pdf fill_form /tmp/forms/a-94d2.fdf output /tmp/forms/a-94d2.pdf flatten 2>&1"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "/bin/bash /usr/local/bin/pdftk /var/www/site/template.pdf fill_form /tmp/forms/a.fdf output /tmp/forms/a.pdf flatten"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c gs -dNOPAUSE -dBATCH -sDEVICE=nullpage /var/www/site/wp-content/uploads/wp-temp-pdf/check_6ae8.57455097.pdf 2>&1"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -sOutputFile=/var/www/site/tmp/merged.pdf /var/www/site/tmp/a.pdf /var/www/site/tmp/b.pdf 2>&1"}, ""},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c gs -dNOSAFER -sDEVICE=nullpage /tmp/x.pdf"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c gs -dBATCH -c quit"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c gs -sOutputFile=%pipe%id /tmp/x.pdf"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c qpdf @/tmp/args"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c pdftk /tmp/a.pdf output /tmp/b.pdf; id"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "sh -c /tmp/gs /tmp/a.pdf"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "/bin/bash /tmp/pdftk /tmp/a.pdf output /tmp/b.pdf"}, ReasonWebShell},
+		{system.Process{UID: 33, PPID: 5, Exe: "/usr/bin/bash", Cmdline: "/bin/bash /usr/local/bin/backup.sh"}, ReasonWebShell},
 		// Symfony's Console asks for the terminal's size; anything more is a shell command.
 		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "stty -a"}, ""},
 		{system.Process{UID: 33, PPID: 5, Exe: "/bin/busybox", Cmdline: "stty"}, ""},
