@@ -206,6 +206,12 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		if e.Op == watch.OpAttrib && e.Mode == "" {
 			return Finding{}, false
 		}
+		// What the snapshot scan withdraws (a log behind an exit, a compiled template, an
+		// .htaccess that makes nothing executable) raises nothing as it is written either. A file
+		// written and removed stays critical above: what it held in between is not known.
+		if e.Inert {
+			return Finding{}, false
+		}
 		return event("upload-script", e.Path, "high", what+" appeared in an upload directory",
 			fmt.Sprintf("%s: %s. Upload directories hold what visitors send; a script there is how a webshell lands, and a server configuration file there can make the server run what is uploaded next.", e.Path, describeFile(e))), true
 

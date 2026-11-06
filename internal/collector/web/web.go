@@ -1651,3 +1651,28 @@ func IsScript(name string) bool { return isScript(strings.ToLower(path.Base(name
 // IsOverride reports whether a file of this name changes how the web server treats its
 // directory, such as an .htaccess.
 func IsOverride(name string) bool { return slices.Contains(overrideNames, path.Base(name)) }
+
+// InertInUploads reports a script or a server configuration file of an upload directory whose
+// whole content the scan withdraws: a PHP file with no open tag, an exit in front of a log, data
+// alone, an empty placeholder, or a template Drupal compiled that carries no signature; a
+// configuration file that makes nothing executable. The real-time rules judge a file written
+// there alike, so that what no snapshot reports raises nothing as it is written either.
+func InertInUploads(name string, content []byte) bool {
+	base := strings.ToLower(path.Base(name))
+	if IsOverride(base) {
+		return !handlerDirective.Match(content)
+	}
+	ext := path.Ext(base)
+	if !strings.HasPrefix(ext, ".php") && ext != ".phtml" && ext != ".phar" {
+		return false
+	}
+	switch {
+	case !bytes.Contains(content, []byte("<?")), exitGuarded(content), isPlaceholder(content):
+		return true
+	case compiledTwig(strings.TrimPrefix(name, "/"), content):
+		sigs := matchSignatures(content, true)
+		return len(sigs) == 0 || slices.Equal(sigs, []string{"encoded_blob"})
+	}
+	ok, _ := dataOnlyWhy(content)
+	return ok
+}

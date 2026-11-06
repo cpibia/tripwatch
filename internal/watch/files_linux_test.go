@@ -87,6 +87,7 @@ func TestFilesReportChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
+	write("srv/app/uploads/2026/10/log.php", "<?php exit; ?>\n[2026-11-06] request failed\n")
 	write("srv/app/uploads/2026/10/x.php", "<?php system($_GET['c']);")
 	if err := os.Remove(filepath.Join(root, "srv/app/uploads/2026/10/x.php")); err != nil {
 		t.Fatal(err)
@@ -97,7 +98,7 @@ func TestFilesReportChanges(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	write("home/alice/.ssh/authorized_keys", "ssh-ed25519 AAAA test\n")
 
-	got := collect(t, ch, 8)
+	got := collect(t, ch, 9)
 	for _, w := range []struct{ class, op, path string }{
 		{ClassPrivilege, OpWrite, "/etc/sudoers.d/90-x"},
 		{ClassAccounts, OpCreate, "/etc/passwd"},
@@ -114,6 +115,12 @@ func TestFilesReportChanges(t *testing.T) {
 	for _, e := range got {
 		if e.Path == "/etc/unrelated.conf" {
 			t.Error("an unwatched name was reported")
+		}
+		if e.Path == "/srv/app/uploads/2026/10/log.php" && e.Op == OpWrite && !e.Inert {
+			t.Errorf("a log behind an exit not marked inert: %+v", e)
+		}
+		if e.Path == "/srv/app/uploads/2026/10/x.php" && e.Inert {
+			t.Errorf("a web shell marked inert: %+v", e)
 		}
 		if e.Path == "/etc/sudoers.d/90-x" && e.Op == OpWrite && (e.SHA256 == "" || e.Size == 0) {
 			t.Errorf("no hash for the written file: %+v", e)

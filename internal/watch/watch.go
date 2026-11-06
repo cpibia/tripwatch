@@ -82,6 +82,9 @@ type Event struct {
 	// Root marks the root of a watched place moved away or removed: until it is back, nothing
 	// in it is seen.
 	Root bool `json:"root,omitempty"`
+	// Inert marks a script or a server configuration file of an upload directory whose content,
+	// read whole and matching SHA256, runs nothing by the scan's rules (web.InertInUploads).
+	Inert bool `json:"inert,omitempty"`
 	// WebUser marks a file in a scratch directory owned by the web server's user.
 	WebUser bool `json:"web_user,omitempty"`
 	// Owner names the account other than root whose home or crontab the path is in: that

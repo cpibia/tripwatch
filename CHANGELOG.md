@@ -8,6 +8,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Sensor
 
+- A script or a server configuration file written in an upload directory is read whole and marked
+  inert when the snapshot scan would withdraw it (a plugin's log behind an `exit`, a template
+  Drupal compiled, an empty placeholder, an `.htaccess` that makes nothing executable); the content
+  judged is the one hashed.
+
 - A shell of the web server's user that starts a program missing from a directory root owns
   (PHP's `mail()` on a host without a mail server) is the application's work: it runs nothing,
   and only root can put the program there.
@@ -17,6 +22,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A package removed but not purged (dpkg's `config-files` state) is left out of the package
   states: dpkg deletes its checksum list and keeps its version, which read as checksums
   rewritten without an upgrade, a high alert per package after every removal.
+
+### Verifier
+
+- A real-time event of an upload directory marked inert raises nothing, as the snapshot scan
+  withdraws the same file; one written and removed within minutes stays critical.
 
 ## [0.1.45] - 2026-11-06
 

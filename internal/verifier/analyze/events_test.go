@@ -130,6 +130,8 @@ func TestEvaluateEvents(t *testing.T) {
 		{"generator", watch.Event{Class: watch.ClassService, Op: watch.OpCreate, Path: "/etc/systemd/system-generators/x"}, false, "service high"},
 		{"image upload", watch.Event{Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/srv/app/uploads/a.jpg"}, false, ""},
 		{"htaccess upload", watch.Event{Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/srv/app/uploads/.htaccess"}, true, "upload-script high"},
+		{"log behind an exit", watch.Event{Class: watch.ClassUpload, Op: watch.OpWrite, Path: "/srv/app/uploads/plugin/debug-log.php", Inert: true}, false, ""},
+		{"htaccess that denies", watch.Event{Class: watch.ClassUpload, Op: watch.OpCreate, Path: "/srv/app/uploads/.htaccess", Inert: true}, false, ""},
 		{"old script removed", watch.Event{At: t0, Class: watch.ClassUpload, Op: watch.OpDelete, Path: "/srv/app/uploads/old.php"}, false, ""},
 		{"probe gone from the web root", watch.Event{At: t0, Class: watch.ClassWebRoot, Op: watch.OpDelete, Path: "/srv/app/public/health_check.php"}, false, "webroot-transient critical"},
 		{"script deployed to the web root", watch.Event{At: t0, Class: watch.ClassWebRoot, Op: watch.OpCreate, Path: "/srv/app/public/index.php"}, false, ""},

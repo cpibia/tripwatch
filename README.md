@@ -401,7 +401,9 @@ ones, nor noise in the uploads or in a user's home root's changes) and judges th
 (not one cron starts, where that account also runs scheduled jobs: a crontab it planted is
 reported by the schedule rules), root gained through an unknown set-user-ID program, a change to who may become root or to library
 preloading are critical. A script or an `.htaccess` landing in an upload directory, new SSH keys,
-services, scheduled tasks and start-up scripts are high. What a snapshot an hour later could not
+services, scheduled tasks and start-up scripts are high (not a file whose whole content the
+snapshot scan would withdraw: a log behind an `exit`, a template Drupal compiled, an empty
+placeholder, an `.htaccess` that makes nothing executable). What a snapshot an hour later could not
 show is critical too: a script that appears in the uploads and is gone within 15 minutes, an SSH
 key file written and removed, or changed and put back, a loader configuration file written and
 removed. While a package manager runs (a process

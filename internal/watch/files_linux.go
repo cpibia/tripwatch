@@ -4,6 +4,8 @@ package watch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -846,12 +848,27 @@ func (f *Files) describe(class, op, p string, isDir bool) Event {
 		return e
 	}
 	e.Size, e.SHA256, e.UID, e.Mode = file.Size, file.SHA256, file.UID, file.Mode
+	if class == ClassUpload && (web.IsScript(p) || web.IsOverride(p)) {
+		e.Inert = f.inert(p, e.SHA256)
+	}
 	if systemClass(class) {
 		f.mu.Lock()
 		e.PrevSHA256 = f.remember(p, e.SHA256)
 		f.mu.Unlock()
 	}
 	return e
+}
+
+// inert reads a file of the uploads whole and reports whether its content runs nothing. Only
+// the content that was hashed counts: one rewritten between the two reads is not judged, and its
+// rewrite is an event of its own.
+func (f *Files) inert(p, sum string) bool {
+	data, err := fs.ReadFile(f.src.FS, collector.Rel(p))
+	if err != nil || sum == "" {
+		return false
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:]) == sum && web.InertInUploads(p, data)
 }
 
 // rootDir reports whether only root can change the entries of a directory and of every
