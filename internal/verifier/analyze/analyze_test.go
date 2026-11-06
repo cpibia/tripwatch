@@ -20,6 +20,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/discovery"
 	"github.com/cpibia/tripwatch/internal/protocol"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
+	"github.com/cpibia/tripwatch/internal/watch"
 )
 
 var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
@@ -731,5 +732,54 @@ func TestIssueNotes(t *testing.T) {
 		if issueNote(issue) != note {
 			t.Errorf("%q: note %v", issue, !note)
 		}
+	}
+}
+
+// A privilege file written while a package manager ran closes once a snapshot verifies that its
+// content is what the package records; another content, or one written with no package manager
+// running, keeps its alert.
+func TestPackageVerifiedEventsResolve(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	rules, other, plain := "/usr/share/polkit-1/rules.d/50-default.rules", "/usr/share/polkit-1/rules.d/49-admin.rules", "/etc/sudoers.d/ops"
+	good, bad := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	var stored []store.Event
+	for i, ev := range []watch.Event{
+		{Class: watch.ClassPrivilege, Op: watch.OpCreate, Path: rules, SHA256: good, PackageManager: true},
+		{Class: watch.ClassPrivilege, Op: watch.OpCreate, Path: other, SHA256: bad, PackageManager: true},
+		{Class: watch.ClassPrivilege, Op: watch.OpWrite, Path: plain, SHA256: good},
+	} {
+		ev.At = h.clock
+		data, _ := json.Marshal(ev)
+		stored = append(stored, store.Event{HostID: "web-01", Seq: uint64(i + 1), At: h.clock, Class: ev.Class, Op: ev.Op, Path: ev.Path, PackageManager: ev.PackageManager, Data: data})
+		for _, f := range EvaluateEvents([]watch.Event{ev}, ev.PackageManager, nil) {
+			if _, err := h.store.Raise(ctx, store.Alert{HostID: "web-01", Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}, h.clock); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := h.store.AddEvents(ctx, stored, h.clock); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.open()); n != 3 {
+		t.Fatalf("%d alerts open before the snapshot", n)
+	}
+	h.clock = h.clock.Add(30 * time.Minute)
+	verified := `[{"path":"` + rules + `","sha256":"` + good + `"},{"path":"` + other + `","sha256":"` + good + `"},{"path":"` + plain + `","sha256":"` + good + `"}]`
+	h.deliver(protocol.KindSnapshot, gz(t, `{"snapshot":{"taken_at":"`+h.clock.Format(time.RFC3339)+`","results":{"packages":{"manager":"dpkg","verified":`+verified+`}}}}`))
+	ids, _ := h.store.PendingSnapshots(ctx, 10)
+	for _, id := range ids {
+		h.an.RunSnapshot(ctx, id)
+	}
+	open := h.open()
+	var paths []string
+	for fp, a := range open {
+		if a.Kind == EventKind {
+			paths = append(paths, fp)
+		}
+	}
+	slices.Sort(paths)
+	if len(paths) != 2 || !strings.Contains(paths[0], plain) || !strings.Contains(paths[1], other) {
+		t.Errorf("open real-time alerts = %v, want the other content and the write without a package manager", paths)
 	}
 }

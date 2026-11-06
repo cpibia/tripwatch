@@ -560,12 +560,61 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 			}
 		}
 	}
+	if state.Packages != nil {
+		a.resolvePackaged(ctx, host, state.Packages.Verified)
+	}
 	for _, kind := range StateKinds {
 		if err := a.Store.ResolveMissing(ctx, host, kind, current[kind], a.Now()); err != nil {
 			a.Log.Error("resolve alerts", "host", host, "kind", kind, "err", err)
 		}
 	}
 }
+
+// packagedWindow is how far back the real-time events a snapshot's verified files can explain go:
+// an upgrade spans a snapshot or two.
+const packagedWindow = 24 * time.Hour
+
+// maxPackagedEvents bounds the events one snapshot checks against its verified files.
+const maxPackagedEvents = 2048
+
+// resolvePackaged closes the real-time alerts of privilege and start-up files written while a
+// package manager ran, whose content is what the installed package records for that path as this
+// snapshot verified it: a package installed them. It is proof of what the file is, not absence
+// of evidence, so critical alerts close too. A file someone else wrote, or changed since, keeps
+// its alert, and so does one whose content the sensor could not read in time.
+func (a *Analyzer) resolvePackaged(ctx context.Context, host string, verified []system.VerifiedFile) {
+	if len(verified) == 0 {
+		return
+	}
+	sums := make(map[string]string, len(verified))
+	for _, v := range verified[:min(len(verified), maxVerifiedFiles)] {
+		sums[v.Path] = v.SHA256
+	}
+	events, err := a.Store.PackageManagerEvents(ctx, host, a.Now().Add(-packagedWindow), maxPackagedEvents)
+	if err != nil {
+		a.Log.Error("load package manager events", "host", host, "err", err)
+		return
+	}
+	for _, se := range events {
+		var e watch.Event
+		if json.Unmarshal(se.Data, &e) != nil || e.SHA256 == "" || e.Path != se.Path || sums[e.Path] != e.SHA256 {
+			continue
+		}
+		e.Class, e.PackageManager = se.Class, true
+		for _, f := range EvaluateEvents([]watch.Event{e}, true, nil) {
+			id, err := a.Store.AlertID(ctx, host, f.Fingerprint)
+			if err != nil {
+				continue
+			}
+			if err := a.Store.Resolve(ctx, id, "package-verified", a.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+				a.Log.Error("resolve packaged alert", "host", host, "alert", id, "err", err)
+			}
+		}
+	}
+}
+
+// maxVerifiedFiles bounds the verified files read from one snapshot.
+const maxVerifiedFiles = 4096
 
 // published compares the changed files of each package with a public release to that release as
 // published, when references are on and the release's reference can be had within the bounds.

@@ -45,6 +45,20 @@ type ModifiedFile struct {
 	Config  bool   `json:"config,omitempty"`
 }
 
+// VerifiedFile is a file of a privilege or start-up directory that matches the checksum its
+// package recorded, with the SHA-256 of its content: what the real-time events report.
+type VerifiedFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+// verifiedDirs are the directories whose packaged files are reported as verified, so that the
+// verifier can tell what a package installed there during an upgrade from what someone else wrote.
+var verifiedDirs = []string{"etc/sudoers", "etc/doas.conf", "etc/sudoers.d/", "etc/polkit-1/", "usr/share/polkit-1/", "etc/pam.d/", "etc/profile.d/", "etc/security/"}
+
+// maxVerified bounds the verified files reported.
+const maxVerified = 2048
+
 type PackagesResult struct {
 	Manager string `json:"manager"`
 	// DatabaseSHA256 fingerprints the package database itself (status and checksum lists): with
@@ -64,6 +78,7 @@ type PackagesResult struct {
 	Checked  int                     `json:"checked"`
 	Modified []ModifiedFile          `json:"modified"`
 	Missing  []string                `json:"missing,omitempty"`
+	Verified []VerifiedFile          `json:"verified,omitempty"`
 	Unowned  []string                `json:"unowned"`
 	// UnownedLinks are symlinks in the binary directories that no package installed, such as a
 	// sudo in /usr/local/bin, which comes first in PATH, pointing to a payload.
@@ -231,6 +246,12 @@ func (Packages) Collect(ctx context.Context, src collector.Source) (any, error) 
 		res.Checked++
 		if encode(sum) != f.checksum {
 			res.Modified = append(res.Modified, ModifiedFile{Path: "/" + f.path, Package: f.pkg, Config: f.config})
+			continue
+		}
+		if len(res.Verified) < maxVerified && slices.ContainsFunc(verifiedDirs, func(d string) bool { return f.path == d || strings.HasSuffix(d, "/") && strings.HasPrefix(f.path, d) }) {
+			if content, err := checksum(src.FS, f.path, sha256.New); err == nil {
+				res.Verified = append(res.Verified, VerifiedFile{Path: "/" + f.path, SHA256: hex.EncodeToString(content)})
+			}
 		}
 	}
 

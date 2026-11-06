@@ -406,7 +406,13 @@ changes to services, scheduled tasks and start-up scripts are one severity lower
 may become root, to accounts, to SSH keys and to library preloading never are, nor are process
 starts and uploads. A file in a privilege directory that sudo or polkit never reads raises nothing,
 whoever writes it: in `sudoers.d` a name with a `.` or ending in `~`, in polkit's `rules.d`
-anything not named `*.rules` (dpkg's `.dpkg-new` and `.dpkg-tmp` staging names among them). A program root drops in `/tmp` or `/var/tmp` and removes is one severity
+anything not named `*.rules` (dpkg's `.dpkg-new` and `.dpkg-tmp` staging names among them). A
+privilege or start-up file written while a package manager ran is closed by the next snapshot
+that verifies its content against the checksum its package records (the snapshot reports the
+SHA-256 of the verified files of those directories): proof of what the file is, so a critical
+alert closes too. A root intruder who rewrites the checksums of the very package being upgraded
+at that moment is a limit; rewriting those of any other package is the "checksums changed
+without an upgrade" alert. A program root drops in `/tmp` or `/var/tmp` and removes is one severity
 lower too, and raises nothing under the names an upgrade uses there (apt's
 `<package>.config.XXXXXX` scripts, the `mkinitramfs_` and `dracut.` build trees); the same names
 owned by the web server's user stay critical. The server's page lists its latest events and says whether the watchers run.

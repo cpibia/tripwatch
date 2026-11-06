@@ -373,6 +373,26 @@ func TestPackagesDpkg(t *testing.T) {
 	}
 }
 
+// The packaged files of the privilege and start-up directories that match their package's
+// checksum are reported with the SHA-256 of their content; a modified one, or one elsewhere, is not.
+func TestPackagesVerifiedPrivilegeFiles(t *testing.T) {
+	fsys := fstest.MapFS{
+		"var/lib/dpkg/status": text("Package: polkitd\nStatus: install ok installed\nVersion: 126-2\n\n"),
+		"var/lib/dpkg/info/polkitd.md5sums": text(md5hex("rules") + "  usr/share/polkit-1/rules.d/50-default.rules\n" +
+			md5hex("original admin") + "  usr/share/polkit-1/rules.d/49-admin.rules\n" +
+			md5hex("daemon") + "  usr/lib/polkit-1/polkitd\n"),
+		"usr/share/polkit-1/rules.d/50-default.rules": text("rules"),
+		"usr/share/polkit-1/rules.d/49-admin.rules":   text("edited admin"),
+		"usr/lib/polkit-1/polkitd":                    text("daemon"),
+	}
+	res := collect[PackagesResult](t, Packages{}, collector.Source{FS: fsys})
+	sum := sha256.Sum256([]byte("rules"))
+	want := []VerifiedFile{{Path: "/usr/share/polkit-1/rules.d/50-default.rules", SHA256: hex.EncodeToString(sum[:])}}
+	if !slices.Equal(res.Verified, want) {
+		t.Errorf("verified = %+v, want %+v", res.Verified, want)
+	}
+}
+
 func TestPackagesApk(t *testing.T) {
 	sum := sha1.Sum([]byte("busybox")) //nolint:gosec // see import
 	fsys := fstest.MapFS{
