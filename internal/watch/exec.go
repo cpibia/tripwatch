@@ -145,6 +145,8 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 			script = path.Clean(script)
 		}
 	}
+	// PHP's syntax check reads the script and runs none of it.
+	linted := strings.HasPrefix(tool, "php") && lintOnly(rawCommand(p))
 	switch {
 	case p.ExeDeleted:
 		return ReasonDeleted, script
@@ -153,7 +155,7 @@ func classifyExec(p system.Process, c execContext) (reason, script string) {
 	case c.webUsers[p.UID] && slices.Contains(webTools, tool) && (c.fromCron == nil || !c.fromCron(p)) &&
 		(c.fromRuntime == nil || !c.fromRuntime(p)) && !c.routineShell(p, tool):
 		return ReasonWebShell, script
-	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !c.ownCronJob(p, script) && !c.packageScript(p, script) && !c.frameworkCLI(script)):
+	case (unusual(exe) && !c.ownCronJob(p, exe)) || (unusual(script) && !linted && !c.ownCronJob(p, script) && !c.packageScript(p, script) && !c.frameworkCLI(script)):
 		return ReasonUnusualPath, script
 	}
 	return "", script
@@ -187,15 +189,28 @@ func rawCommand(p system.Process) string {
 	return strings.Join(p.Args, " ")
 }
 
-// sendmailCommand is the command PHP's mail() hands to sh -c: the configured sendmail with its
-// options and nothing a shell would interpret.
-var sendmailCommand = regexp.MustCompile(`^/usr/(?:s?bin|lib)/sendmail(?: +-[A-Za-z][^\s;&|$` + "`" + `<>()'"\\]*)*$`)
+// reconTools are what an intruder runs through a web shell to look around, read secrets, gain
+// privileges, move files or stop what watches, and the programs that start another one directly:
+// the shell that runs one of them is a web shell's whatever the command looks like. Shells,
+// interpreters and network tools are webTools.
+var reconTools = []string{
+	"id", "whoami", "uname", "hostname", "hostnamectl", "groups", "getent", "w", "who", "last", "lastlog", "users",
+	"cat", "tac", "head", "tail", "more", "less", "strings", "od", "hexdump", "grep", "egrep", "fgrep", "rg", "awk", "gawk", "mawk", "sed",
+	"find", "locate", "ls", "dir", "tree", "stat", "pwd", "env", "printenv", "set", "export", "history",
+	"ps", "pstree", "top", "htop", "pgrep", "lsof", "netstat", "ss", "ip", "ifconfig", "route", "arp", "iptables", "nft",
+	"df", "du", "mount", "findmnt", "lsblk", "free", "lscpu", "lsb_release", "dmesg", "sysctl", "systemctl", "service", "journalctl",
+	"sudo", "su", "pkexec", "doas", "runuser", "chown", "chgrp", "setcap", "getcap", "kill", "pkill", "killall",
+	"cp", "mv", "ln", "rm", "dd", "tee", "install", "mkfifo", "mknod", "tar", "mysqldump", "pg_dump", "mysql", "psql", "sqlite3",
+	// They start the program named in their arguments themselves, without a shell that would be
+	// judged: "timeout 5 id" would leave id unseen.
+	"timeout", "nice", "ionice", "stdbuf", "xargs", "chroot", "unshare", "nsenter", "flock", "script", "expect", "watch",
+	"time", "command", "strace", "ltrace", "gdb", "taskset", "chrt", "prlimit", "setpriv", "capsh", "sg", "newgrp", "systemd-run",
+	"start-stop-daemon", "daemonize", "screen", "tmux",
+}
 
-// virusScanCommand is ClamAV run on one uploaded file, as the upload plugins of CMSs do: the
-// scanner from the system's directories, options only, and one file, single-quoted (where the
-// shell expands nothing) or plain, its errors sent to the output the plugin reads (or, as some
-// plugins write it, to a file named 1).
-var virusScanCommand = regexp.MustCompile(`^/usr/(?:local/)?bin/clamd?scan(?: +--?[a-z][a-z-]*(?:=[A-Za-z0-9_./-]+)?)* +(?:'[^']*'|[^\s;&|$` + "`" + `<>()'"\\]+)(?: 2>&1| 2> ?1)?$`)
+// delegatedRedirect is the redirection a program run for the application ends with: its errors
+// sent to the output PHP reads (or, as some plugins write it, to a file named 1), or silenced.
+var delegatedRedirect = regexp.MustCompile(`(?: 2>&1| 2> ?1| 2> ?/dev/null| > ?/dev/null 2>&1| > ?/dev/null)$`)
 
 // terminalQuery is a console library asking for the terminal's size or settings, as Symfony's
 // Console does (under Laravel's artisan, Composer, Drush and Magento's CLI) at every command:
@@ -222,9 +237,9 @@ func plainCommand(command string) (string, bool) {
 }
 
 // routineShell reports a shell the web server's user starts for its own work, which a webshell
-// cannot pass for: PHP's mail() running the configured sendmail, ClamAV scanning an upload, an
-// error reporter reading the project's git root, and a framework's scheduler or
-// queue worker running one of its commands. The scheduler is the parent, not something named in
+// cannot pass for: a single program of the system run with literal arguments (see delegated), an
+// error reporter reading the project's git root, and a framework's scheduler or queue worker
+// running one of its commands. The scheduler is the parent, not something named in
 // the command: the shells a webshell starts have the PHP pool as their parent.
 func (c execContext) routineShell(p system.Process, tool string) bool {
 	// Alpine's sh is BusyBox.
@@ -237,7 +252,7 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	_, command, ok := strings.Cut(rawCommand(p), " -c ")
 	if !ok {
-		return false
+		return c.systemScript(p)
 	}
 	// Symfony's mailer ends the shell's options with "--" before the command.
 	command = strings.TrimPrefix(command, "-- ")
@@ -250,8 +265,7 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	// Queue supervisors replace the shell with the worker.
 	command = strings.TrimPrefix(command, "exec ")
-	if sendmailCommand.MatchString(command) || virusScanCommand.MatchString(command) || terminalQuery.MatchString(command) ||
-		slices.Contains(errorReporterCommands, command) {
+	if terminalQuery.MatchString(command) || slices.Contains(errorReporterCommands, command) || c.delegated(command) {
 		return true
 	}
 	command, plain := plainCommand(command)
@@ -260,6 +274,89 @@ func (c execContext) routineShell(p system.Process, tool string) bool {
 	}
 	parent, ok := c.parent(p)
 	return ok && parent.UID == p.UID && c.frameworkCommand(rawCommand(parent))
+}
+
+// delegated reports a shell command that only starts one program for the application, as PHP's
+// mail(), upload scanners, PDF and image tools do: the program by name or from the system's
+// directories and owned by root, literal arguments, at most an error redirection, and a program
+// that is neither a shell, an interpreter, a network tool nor one of reconTools. Judged on what
+// it is, not on a list of known programs: whatever the program then starts (Ghostscript's
+// %pipe%, an exploit through a crafted file) is a process of its own, judged the same way, and a
+// program by name found first on a PATH the web shell set runs from where it was dropped, which
+// classifyExec reports.
+func (c execContext) delegated(command string) bool {
+	words, ok := literalWords(delegatedRedirect.ReplaceAllString(command, ""))
+	if !ok || len(words) == 0 || strings.Contains(words[0], "=") {
+		return false
+	}
+	program := words[0]
+	if strings.Contains(program, "/") {
+		if path.Clean(program) != program || !slices.ContainsFunc(systemBinDirs, func(d string) bool { return strings.HasPrefix(program, d) }) {
+			return false
+		}
+		if c.owner == nil {
+			return false
+		}
+		if uid, ok := c.owner(program); !ok || uid != 0 {
+			return false
+		}
+	}
+	return delegatedProgram(path.Base(program))
+}
+
+// literalWords splits a shell command into the words the shell passes on unchanged, and false
+// when the shell would interpret anything: a separator, a pipe, a redirection, an expansion, a
+// substitution, a glob, a brace, a tilde, a comment or an escape. Single quotes keep anything
+// literal; double quotes anything but "$", "`", "\" and "!".
+func literalWords(command string) ([]string, bool) {
+	var words []string
+	var word strings.Builder
+	inWord := false
+	for i := 0; i < len(command); i++ {
+		switch b := command[i]; {
+		case b == ' ':
+			if inWord {
+				words, inWord = append(words, word.String()), false
+				word.Reset()
+			}
+			continue
+		case b == '\'' || b == '"':
+			j := strings.IndexByte(command[i+1:], b)
+			if j < 0 || b == '"' && strings.ContainsAny(command[i+1:i+1+j], "$`\\!") {
+				return nil, false
+			}
+			word.WriteString(command[i+1 : i+1+j])
+			i += j + 1
+		case strings.IndexByte(";&|$`<>()\\*?[]{}~!#\t\n\r", b) >= 0:
+			return nil, false
+		default:
+			word.WriteByte(b)
+		}
+		inWord = true
+	}
+	if inWord {
+		words = append(words, word.String())
+	}
+	return words, true
+}
+
+// delegatedProgram reports a program a shell may start for the application: not a shell, an
+// interpreter (PHP included: a framework's commands are judged by their parent), a network
+// tool or one of reconTools.
+func delegatedProgram(name string) bool {
+	tool := toolName("/"+name, "")
+	return !slices.Contains(webTools, tool) && !slices.Contains(interpreters, tool) && !strings.HasPrefix(tool, "php") && !slices.Contains(reconTools, tool)
+}
+
+// systemScript reports a shell running a script installed in the system's directories, as
+// programs shipped as shell wrappers are (pdftk around its jar): root's file there, which the web
+// server's user cannot change, with literal arguments and a name delegated allows.
+func (c execContext) systemScript(p system.Process) bool {
+	fields := strings.Fields(rawCommand(p))
+	if len(fields) < 2 || strings.HasPrefix(fields[1], "-") {
+		return false
+	}
+	return c.delegated(strings.Join(fields[1:], " "))
 }
 
 // frameworkCommand reports whether a command line runs PHP on a framework's command-line entry
@@ -293,6 +390,25 @@ func (c execContext) frameworkCLI(script string) bool {
 		return false
 	}
 	return !slices.ContainsFunc(c.uploads, func(u string) bool { return strings.HasPrefix(script, strings.TrimSuffix(u, "/")+"/") })
+}
+
+// lintOnly reports a PHP command line that only checks syntax: -l (or --syntax-check) and none of
+// the options that run code given inline, per line of input, interactively or as a server.
+func lintOnly(cmdline string) bool {
+	fields := strings.Fields(cmdline)
+	lint := false
+	for _, f := range fields[min(1, len(fields)):] {
+		switch f {
+		case "-l", "--syntax-check":
+			lint = true
+		case "-r", "-B", "-R", "-E", "-F", "-a", "-S", "-t", "--run", "--process-begin", "--process-code", "--process-end", "--process-file", "--interactive":
+			return false
+		}
+		if strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") && len(f) > 2 && strings.ContainsAny(f[1:], "rBREFaSt") {
+			return false
+		}
+	}
+	return lint
 }
 
 // ownCronJob reports whether a program from an unusual place is an account's own scheduled job:

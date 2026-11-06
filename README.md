@@ -357,9 +357,15 @@ what changes there within two seconds, in signed event envelopes of the same cha
   named the way the package manager names it, started by the package manager's own executable:
   `<package>.config.XXXXXX` from the system's perl running `/usr/sbin/dpkg-preconfigure`,
   `rpm-tmp.XXXXXX` from rpm, dnf5, microdnf, PackageKit or the system's Python running
-  dnf or yum. Some shells of the web server's user are its own work: `sh -c` running sendmail
-  with options only (PHP's `mail()`); ClamAV scanning one uploaded file, with options only
-  (the upload plugins of CMSs); an error reporter reading the project's git root (Flare
+  dnf or yum. Some shells of the web server's user are its own work: a shell that only starts one
+  program of the system (by name, or root's file in the system's directories) with literal
+  arguments and at most its errors redirected, as PHP's `mail()`, upload scanners, PDF and image
+  tools do, unless the program is a shell, an interpreter, a network tool, one an intruder uses
+  to look around, read files, gain privileges or move files (`id`, `cat`, `find`, `sudo`, `cp`...),
+  or one that starts another program itself (`timeout`, `xargs`, `nice`...); the same holds for a
+  shell running a root-owned script from the system's directories (a program shipped as a shell
+  wrapper). What such a program starts in turn is judged on its own. PHP run with `-l` only
+  checks syntax and runs no script. Also: an error reporter reading the project's git root (Flare
   and Ignition, `echo $(git rev-parse --show-toplevel)`, matched whole); and a framework
   command (`php artisan ...`, `bin/console`, `bin/magento`) whose parent is that framework's
   scheduler or worker, not the PHP pool, with nothing a shell interprets but the redirection to
