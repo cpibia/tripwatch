@@ -1259,3 +1259,36 @@ func TestNewPrivilegedFileVerifiedByPackage(t *testing.T) {
 		t.Errorf("severities %v", got)
 	}
 }
+
+// Units and generators a package installed, equal to its checksum, are low; dpkg's /lib name for
+// a file reached through /usr/lib counts. Others keep their severity.
+func TestNewUnitsVerifiedByPackage(t *testing.T) {
+	file := func(p, sum string) collector.File { return collector.File{Path: p, SHA256: sum} }
+	cur := State{
+		Services: &system.ServicesResult{
+			Units:      []system.Unit{{File: file("/usr/lib/systemd/system/usbmuxd.service", "aa")}, {File: file("/etc/systemd/system/x.service", "bb")}},
+			Generators: []collector.File{file("/usr/lib/systemd/system-generators/netplan", "cc"), file("/etc/systemd/system-generators/y", "dd")},
+		},
+		Packages: &system.PackagesResult{Verified: []system.VerifiedFile{
+			{Path: "/usr/lib/systemd/system/usbmuxd.service", SHA256: "aa"},
+			{Path: "/lib/systemd/system-generators/netplan", SHA256: "cc"},
+		}},
+	}
+	prev := State{Services: &system.ServicesResult{}}
+	got := map[string]string{}
+	for _, f := range Evaluate(&prev, cur) {
+		if f.Kind == "persistence-change" {
+			got[f.Fingerprint] = f.Severity
+		}
+	}
+	for fp, want := range map[string]string{
+		"persistence-change:unit:root|/usr/lib/systemd/system/usbmuxd.service":    "low",
+		"persistence-change:unit:root|/etc/systemd/system/x.service":              "medium",
+		"persistence-change:generator:/usr/lib/systemd/system-generators/netplan": "low",
+		"persistence-change:generator:/etc/systemd/system-generators/y":           "high",
+	} {
+		if got[fp] != want {
+			t.Errorf("%s: %q, want %q (all %v)", fp, got[fp], want, got)
+		}
+	}
+}

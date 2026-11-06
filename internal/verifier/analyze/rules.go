@@ -813,6 +813,32 @@ func dockerDNS(so system.Socket) bool {
 // container runtimes without running anything.
 var unjudgedHooks = map[string]bool{"/etc/ld.so.preload": true, "/etc/hosts": true, "/etc/resolv.conf": true}
 
+// packageCopyNote says why a change to a packaged file is low.
+const packageCopyNote = "It matches the checksum its package records: an installation or an upgrade."
+
+// verifiedFiles are the files the packages collector found equal to the checksum their package
+// records, by path and content. dpkg may record a file under /lib that the system reaches through
+// /usr/lib (or the reverse, after the /usr merge): either name counts.
+type verifiedFiles set
+
+func verifiedOf(p *system.PackagesResult) verifiedFiles {
+	if p == nil {
+		return nil
+	}
+	return verifiedFiles(setOf(p.Verified, func(v system.VerifiedFile) string { return v.Path + "\x00" + v.SHA256 }))
+}
+
+func (v verifiedFiles) has(p, sum string) bool {
+	if sum == "" {
+		return false
+	}
+	alias := strings.TrimPrefix(p, "/usr")
+	if alias == p {
+		alias = "/usr" + p
+	}
+	return set(v).has(p+"\x00"+sum) || set(v).has(alias+"\x00"+sum)
+}
+
 // set is a membership test built once per snapshot: comparing two snapshots stays linear in
 // their size, however many entries a hostile sensor sends.
 type set map[string]struct{}
@@ -840,6 +866,7 @@ func setOf[T any](items []T, key func(T) string) set {
 // snapshot of a host only state rules apply: everything would otherwise be "new".
 func Evaluate(prev *State, cur State) []Finding {
 	var out []Finding
+	verified := verifiedOf(cur.Packages)
 	add := func(f Finding) { out = append(out, f) }
 	state := func(kind, fp, sev, title, detail string) {
 		add(Finding{Kind: kind, Fingerprint: kind + ":" + fp, Severity: sev, Title: title, Detail: detail, State: true, Owner: kindOwner(kind)})
@@ -1137,12 +1164,20 @@ func Evaluate(prev *State, cur State) []Finding {
 				}
 			}
 			if knownUnits != nil && !knownUnits.has(u.Path) && !sensorOwnUnit(u) && !scopeUnit(u.Path) {
-				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, "medium", "New systemd service", u.Path+"\n"+strings.Join(u.Exec, "\n"))
+				sev, detail := "medium", u.Path+"\n"+strings.Join(u.Exec, "\n")
+				if verified.has(u.Path, u.SHA256) {
+					sev, detail = "low", detail+"\n"+packageCopyNote
+				}
+				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, sev, "New systemd service", detail)
 			}
 		}
 		for _, g := range s.Generators {
 			if knownGenerators != nil && !knownGenerators.has(g.Path) {
-				change("persistence-change", "generator:"+g.Path, "high", "New systemd generator", g.Path+": root runs it at every boot.")
+				sev, detail := "high", g.Path+": root runs it at every boot."
+				if verified.has(g.Path, g.SHA256) {
+					sev, detail = "low", detail+" "+packageCopyNote
+				}
+				change("persistence-change", "generator:"+g.Path, sev, "New systemd generator", detail)
 			}
 		}
 	}
@@ -1349,10 +1384,7 @@ func Evaluate(prev *State, cur State) []Finding {
 	if p := cur.Privileged; p != nil {
 		// Computed once per snapshot: per file they made a hostile snapshot quadratic.
 		privGIDs, groupsOf := privilegedGIDs(cur), memberships(cur.Accounts)
-		var known, packageVerified set
-		if cur.Packages != nil {
-			packageVerified = setOf(cur.Packages.Verified, func(v system.VerifiedFile) string { return v.Path + "\x00" + v.SHA256 })
-		}
+		var known set
 		if prev != nil && prev.Privileged != nil {
 			known = setOf(prev.Privileged.Files, func(q fileT) string { return q.Path + "\x00" + q.SHA256 })
 		}
@@ -1374,8 +1406,8 @@ func Evaluate(prev *State, cur State) []Finding {
 				// package records is the package's copy. Checksums rewritten by hand to make a
 				// planted copy pass are the "checksums changed without an upgrade" alert.
 				sev, detail := "high", "Mode "+f.Mode+", owner "+owner+"."
-				if packageVerified.has(f.Path + "\x00" + f.SHA256) {
-					sev, detail = "low", detail+" It matches the checksum its package records: an installation or an upgrade."
+				if verified.has(f.Path, f.SHA256) {
+					sev, detail = "low", detail+" "+packageCopyNote
 				}
 				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, sev, "New privileged file: "+f.Path, detail)
 			}

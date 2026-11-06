@@ -15,8 +15,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A request for a backup of a script (`x.php.old`, `x.php.swp`) in a log written only by nginx
   sites, none of which hands that name to an interpreter or a proxy, is told `static`: it ran no
   code. Apache, whose handlers may run such a name, still leaves it unknown.
-- The packages collector reports the SHA-256 of the set-user-ID and set-group-ID programs whose
-  content matches their package's checksum.
+- The packages collector reports the SHA-256 of the set-user-ID and set-group-ID programs, and of
+  the systemd units and generators, whose content matches their package's checksum.
 - A shell of the web server's user that starts a program missing from a directory root owns
   (PHP's `mail()` on a host without a mail server) is the application's work: it runs nothing,
   and only root can put the program there.
@@ -32,8 +32,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - A real-time event of an upload directory marked inert raises nothing, as the snapshot scan
   withdraws the same file; one written and removed within minutes stays critical.
 - A failed GET for a name the sensor tells `static` is a probe, like one for a missing script.
-- A new or changed set-user-ID program that matches its package's checksum is low: an upgrade
-  replaced it. One that does not stays high.
+- A new or changed set-user-ID program, a new systemd unit or generator that matches its
+  package's checksum is low: an upgrade installed it. One that does not keeps its severity.
 
 ## [0.1.45] - 2026-11-06
 

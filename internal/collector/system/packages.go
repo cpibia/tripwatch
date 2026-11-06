@@ -55,10 +55,11 @@ type VerifiedFile struct {
 
 // verifiedDirs are the directories whose packaged files are reported as verified, so that the
 // verifier can tell what a package installed there during an upgrade from what someone else wrote.
-var verifiedDirs = []string{"etc/sudoers", "etc/doas.conf", "etc/sudoers.d/", "etc/polkit-1/", "usr/share/polkit-1/", "etc/pam.d/", "etc/profile.d/", "etc/security/"}
+var verifiedDirs = []string{"etc/sudoers", "etc/doas.conf", "etc/sudoers.d/", "etc/polkit-1/", "usr/share/polkit-1/", "etc/pam.d/", "etc/profile.d/", "etc/security/",
+	"lib/systemd/system/", "usr/lib/systemd/system/", "lib/systemd/system-generators/", "usr/lib/systemd/system-generators/"}
 
 // maxVerified bounds the verified files reported.
-const maxVerified = 2048
+const maxVerified = 4096
 
 type PackagesResult struct {
 	Manager string `json:"manager"`
