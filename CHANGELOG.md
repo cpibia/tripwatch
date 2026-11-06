@@ -6,6 +6,20 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.46] - 2026-11-06
+
+What changes for an operator, in short; the details follow by component.
+
+- **Less noise from upgrades and removals.** set-user-ID programs, systemd units and generators
+  that match their package's checksum are low; a package removed without purge no longer reads
+  as checksums rewritten.
+- **Less noise from the uploads and from scanners.** A plugin's log behind an `exit`, Drupal's
+  compiled templates and an `.htaccess` that makes nothing executable raise nothing as they are
+  written; a failed probe for `x.php.old` on nginx sites that run nothing of it is a probe.
+- **Fewer false criticals.** PHP's `mail()` on a host without a mail server is not a web shell;
+  Laravel's exception page bundle is not a skimmer.
+- **Upgrade.** Both the verifier and the sensors change; update the verifier first.
+
 ### Sensor
 
 - A script or a server configuration file written in an upload directory is read whole and marked
