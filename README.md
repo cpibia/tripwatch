@@ -361,7 +361,8 @@ what changes there within two seconds, in signed event envelopes of the same cha
   `<package>.config.XXXXXX` from the system's perl running `/usr/sbin/dpkg-preconfigure`,
   `rpm-tmp.XXXXXX` from rpm, dnf5, microdnf, PackageKit or the system's Python running
   dnf or yum. Some shells of the web server's user are its own work: a shell that only starts one
-  program of the system (by name, or root's file in the system's directories) with literal
+  program of the system (by name, or root's file in the system's directories, or a program missing
+  from a directory root owns, which runs nothing) with literal
   arguments and at most its errors redirected, as PHP's `mail()`, upload scanners, PDF and image
   tools do, unless the program is a shell, an interpreter, a network tool, one an intruder uses
   to look around, read files, gain privileges or move files (`id`, `cat`, `find`, `sudo`, `cp`...),
@@ -505,7 +506,7 @@ For each application the `web` collector produces:
   checked on a corpus of clean applications; very long encoded blobs are reported separately as
   a weak indicator;
 - **payment skimmers**: scripts, templates and SVG images among the files changed since the
-  previous snapshot are read for payment fields (also when hidden in `atob` literals, split across them, reversed, in `fromCharCode` lists or
+  previous snapshot are read for a card's payment fields (an expiry date alone is not one; also when hidden in `atob` literals, split across them, reversed, in `fromCharCode` lists or
   escapes)
   with an exit to another host (`new Image`, `sendBeacon`, `WebSocket`, a request to an absolute
   URL) or with obfuscation (`atob`, `fromCharCode`, `new Function`, `eval`), and for live secret

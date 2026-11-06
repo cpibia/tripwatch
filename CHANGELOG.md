@@ -6,6 +6,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A shell of the web server's user that starts a program missing from a directory root owns
+  (PHP's `mail()` on a host without a mail server) is the application's work: it runs nothing,
+  and only root can put the program there.
+- A changed script naming only an expiry date, with no card number, holder or security code, has
+  no payment field: syntax highlighters' SQL grammars, bundled in Laravel's exception page since
+  12.38, raised a critical skimmer alert at every framework update.
+
 ## [0.1.45] - 2026-11-06
 
 What changes for an operator, in short; the details follow by component.

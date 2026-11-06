@@ -39,7 +39,9 @@ var skimmerExtensions = []string{".js", ".mjs", ".html", ".htm", ".phtml", ".svg
 // their own relative endpoints or through their own SDK; a skimmer reads them and sends them
 // to a host of its own, or hides the code that does.
 var (
-	paymentFields = regexp.MustCompile(`(?i)cc[_-]?(?:number|num|cid|csc|exp|owner)|card[_-]?(?:number|holder|cvc|cvv|expir)|cardnumber|\bcvv2?\b|\bcvc\b|security[_-]?code|payment\[cc_|expir(?:y|ation)[_-]?(?:month|year|date)`)
+	// paymentFields name a card's own fields. An expiry date alone is not one: it is worth nothing
+	// without the card number, and subscriptions, coupons and SQL grammars name it everywhere.
+	paymentFields = regexp.MustCompile(`(?i)cc[_-]?(?:number|num|cid|csc|exp|owner)|card[_-]?(?:number|holder|cvc|cvv|expir)|cardnumber|\bcvv2?\b|\bcvc\b|security[_-]?code|payment\[cc_`)
 	exfiltration  = regexp.MustCompile(`(?i)` + newCall("Image") + `|\.sendBeacon\s*\(|` + newCall("WebSocket") + `|` + newCall("EventSource") + `|['"]no-cors['"]|` + urlSink + `[\s(]*(?:[0-9a-z_$]+\s*,[\s(]*)?(?:['"]POST['"]\s*,\s*)?` + urlLiteral + `|` + markupURL)
 	obfuscation   = regexp.MustCompile(`(?i)\batob\s*\(|String\.fromCharCode|` + newCall("Function") + `|\beval\s*\(|\bunescape\s*\(|(?:\\x[0-9a-f]{2}){8}|['"][A-Za-z0-9+/]{400,}={0,2}['"]`)
 	formHarvest   = regexp.MustCompile(`(?i)querySelectorAll\s*\(\s*['"](?:input|form|select)|\.elements\b|` + newCall("FormData"))
@@ -105,7 +107,7 @@ func when(present bool, re *regexp.Regexp) *regexp.Regexp {
 
 // paymentAnchors and harvestAnchors are the fixed parts, one in every match of their pattern.
 var (
-	paymentAnchors = []string{"cc", "card", "cvv", "cvc", "security", "expir"}
+	paymentAnchors = []string{"cc", "card", "cvv", "cvc", "security"}
 	harvestAnchors = []string{"queryselectorall", "elements", "formdata"}
 	exitAnchors    = []string{"new", "sendbeacon", "no-cors", "fetch", ".open", "$.", "url", "src", "href", "action", "location", "call", "apply",
 		"write", "html", "setattribute", "assign", "import"}
@@ -418,8 +420,7 @@ var selectorNoise = regexp.MustCompile(`/\*[^*]{0,64}\*/|:(?:is|where|matches|-w
 // paymentNames are the names paymentFields knows, for a name a selector gives only in part.
 var paymentNames = []string{
 	"cc_number", "cc_num", "cc_cid", "cc_csc", "cc_exp", "cc_owner", "card_number", "cardnumber", "card_holder",
-	"card_cvc", "card_cvv", "card_expir", "cvv2", "cvc", "security_code", "expiry_month", "expiry_year",
-	"expiration_month", "expiration_year", "expiry_date", "expiration_date",
+	"card_cvc", "card_cvv", "card_expir", "cvv2", "cvc", "security_code",
 }
 
 // genericParts are ends of a payment field's name that just as many other fields have: a

@@ -346,7 +346,8 @@ named as modified without a hash. Manifests no run has rewritten for seven days 
 that is gone, a `.next` of a run that never finished) are removed. The scripts,
 templates and SVG images among the changes are kept apart from the other changes in the diff, so
 that changed files of other kinds cannot push them out, and read for a card skimmer
-(`payment_skimmer`, critical): payment fields together with an exit to another host or with
+(`payment_skimmer`, critical): a card's payment fields (an expiry date alone is not one: it is
+worth nothing without the card, and subscriptions, coupons and SQL grammars name it) together with an exit to another host or with
 obfuscation, or a live secret payment key. Field names hidden in `atob` literals (adjacent ones joined
 with `+` decoded together), strings turned around with `split("").reverse().join("")`,
 `String.fromCharCode` lists and runs of `\x`/`\u00` escapes are decoded first, and the script's

