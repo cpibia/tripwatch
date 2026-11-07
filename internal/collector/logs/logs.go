@@ -482,7 +482,7 @@ func (r *runState) read(ctx context.Context, name, kind string) error {
 	if kind == "access" {
 		analyzer = weblog.NewAnalyzer()
 	}
-	if err := r.scan(ctx, name, lf.From, analyzer, &lf); err != nil {
+	if err := r.scan(ctx, name, name, lf.From, analyzer, &lf); err != nil {
 		return err
 	}
 	lf.Truncated = lf.To-lf.From >= r.maxBytes && lf.To < info.Size()
@@ -555,7 +555,7 @@ func (r *runState) drainRotated(ctx context.Context, name, kind string, prev pos
 			continue
 		}
 		if inode, ok := collector.Inode(info); ok && inode == prev.Inode && info.Size() >= prev.Offset {
-			r.drain(ctx, sibling, kind, prev.Offset, info.Size())
+			r.drain(ctx, sibling, name, kind, prev.Offset, info.Size())
 			return
 		}
 	}
@@ -580,7 +580,7 @@ func (r *runState) drainCopy(ctx context.Context, name, kind string, prev positi
 		if fingerprint(r.src.FS, sibling, prev.Offset) != prev.Fingerprint {
 			continue
 		}
-		r.drain(ctx, sibling, kind, prev.Offset, info.Size())
+		r.drain(ctx, sibling, name, kind, prev.Offset, info.Size())
 		if !writableByOwnerOf(info, logInfo) {
 			return true
 		}
@@ -600,13 +600,15 @@ func writableByOwnerOf(dup, log fs.FileInfo) bool {
 	return dupUID == logUID || dup.Mode().Perm()&0o022 != 0
 }
 
-func (r *runState) drain(ctx context.Context, name, kind string, from, size int64) {
+// drain reads a rotated copy of the log the configuration names as: its requests are that log's,
+// and the sites writing it are found under that name.
+func (r *runState) drain(ctx context.Context, name, as, kind string, from, size int64) {
 	var analyzer *weblog.Analyzer
 	if kind == "access" {
 		analyzer = weblog.NewAnalyzer()
 	}
 	lf := LogFile{Path: "/" + name, Kind: kind, Size: size, From: from}
-	if err := r.scan(ctx, name, from, analyzer, &lf); err != nil {
+	if err := r.scan(ctx, name, as, from, analyzer, &lf); err != nil {
 		r.res.Issues.Add(err)
 		return
 	}
@@ -616,8 +618,9 @@ func (r *runState) drain(ctx context.Context, name, kind string, from, size int6
 // scan reads complete lines from lf.From, up to maxBytes, and sets lf.To after the last
 // complete line: a line still being written is left for the next run. Of a line longer than
 // MaxLineLength only the head and the tail are kept: the head holds method, path and status,
-// and the tail holds a real line written after a hole of NUL bytes.
-func (r *runState) scan(ctx context.Context, name string, offset int64, analyzer *weblog.Analyzer, lf *LogFile) error {
+// and the tail holds a real line written after a hole of NUL bytes. Requests are attributed to
+// the log as, which differs from name when name is a rotated copy.
+func (r *runState) scan(ctx context.Context, name, as string, offset int64, analyzer *weblog.Analyzer, lf *LogFile) error {
 	lf.To = offset
 	f, err := r.src.FS.Open(name)
 	if err != nil {
@@ -667,7 +670,7 @@ func (r *runState) scan(ctx context.Context, name string, offset int64, analyzer
 			if len(part) == 0 {
 				continue
 			}
-			r.line(name, part, analyzer, lf)
+			r.line(as, part, analyzer, lf)
 		}
 	}
 	return nil

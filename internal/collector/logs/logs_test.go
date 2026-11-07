@@ -140,6 +140,33 @@ func TestRotation(t *testing.T) {
 	}
 }
 
+// Lines drained from the rotated copy belong to the log the configuration names: its sites
+// still tell whether a requested script is on disk.
+func TestRotatedCopyKeepsItsSites(t *testing.T) {
+	h := newHost(t)
+	p := filepath.Join(h.root, "etc/nginx/nginx.conf")
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	conf := `http { server { root /var/www/a/public; access_log /var/log/nginx/access.log; location ~ \.php$ { fastcgi_pass unix:/run/php.sock; } } }`
+	if err := os.WriteFile(p, []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.writeLog(logLine("203.0.113.7", "GET", "/", 200))
+	h.run()
+
+	h.appendLog(logLine("203.0.113.7", "GET", "/wp-content/uploads/probe.php", 404))
+	if err := os.Rename(filepath.Join(h.root, accessLog), filepath.Join(h.root, accessLog+".1")); err != nil {
+		t.Fatal(err)
+	}
+	h.writeLog(logLine("203.0.113.8", "GET", "/", 200))
+
+	res := h.run()
+	if len(res.Events) != 1 || res.Events[0].OnDisk != "missing" || res.Events[0].Log != "/"+accessLog {
+		t.Errorf("events = %+v, want the probe looked up through the configured log", res.Events)
+	}
+}
+
 // logrotate with compress and no delaycompress leaves name.1.gz, not name.1: the lines
 // written after the last run cannot be read, and that must be said.
 func TestRotationWithoutOldFileIsReported(t *testing.T) {
