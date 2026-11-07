@@ -439,7 +439,8 @@ round, if those bytes changed or the file is shorter than the offset, the log wa
 truncated in the same inode, and that is an event. On rotation it looks for the old file among
 its siblings by inode (`.1`, `dateext`, Caddy's dated names) and reads its tail from the saved
 offset; a file emptied in place with a copy next to it whose content matches the saved
-fingerprint is `copytruncate`, not a truncation. If the previous file cannot be found, it says
+fingerprint is `copytruncate`, not a truncation. The lines read from a rotated copy count as the
+configured log's, so the sites writing it still tell whether a requested script exists. If the previous file cannot be found, it says
 so. A stretch without a newline longer than the per-round limit is skipped with an issue instead
 of stalling the offset. Events are capped: beyond the cap an event gets in only in place of a
 strictly less severe one, so a flood of events of one severity does not keep out more severe

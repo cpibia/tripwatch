@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -352,6 +353,56 @@ func TestFilesScratchReportsExecutablesOnly(t *testing.T) {
 	}
 	if !has(got, ClassScratch, OpAttrib, "/tmp/.d") || !has(got, ClassScratch, OpDelete, "/tmp/.d") {
 		t.Fatalf("events = %+v", got)
+	}
+}
+
+// A filesystem only root can mount, found on a directory created in /tmp, is an image attached
+// there, not files written in /tmp; a FUSE mount, which any user can make, is still looked into.
+func TestFilesScratchSkipsRootMounts(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"tmp", "staging/containerd-mount1/bin", "staging/fusemnt/bin"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range []string{"staging/containerd-mount1/bin/busybox", "staging/fusemnt/bin/tool"} {
+		if err := os.WriteFile(filepath.Join(root, p), []byte("\x7fELF"), 0o700); err != nil { //nolint:gosec // the test's programs
+			t.Fatal(err)
+		}
+	}
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.mountedFS = func(dir string) (string, bool) {
+		switch path.Base(dir) {
+		case "containerd-mount1":
+			return "overlay", true
+		case "fusemnt":
+			return "fuse.sshfs", true
+		}
+		return "", false
+	}
+	f.Set(Targets(nil, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	for _, d := range []string{"containerd-mount1", "fusemnt"} {
+		if err := os.Rename(filepath.Join(root, "staging", d), filepath.Join(root, "tmp", d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := collect(t, ch, 3)
+	if !has(got, ClassScratch, OpCreate, "/tmp/fusemnt/bin/tool") {
+		t.Errorf("the program in a FUSE mount was not reported: %+v", got)
+	}
+	for _, e := range got {
+		if strings.HasPrefix(e.Path, "/tmp/containerd-mount1/") {
+			t.Errorf("a file of a root mount was reported: %+v", e)
+		}
 	}
 }
 

@@ -6,6 +6,20 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.49] - 2026-11-07
+
+- **Upgrade.** Only the sensors change; the verifier image is rebuilt with the same behaviour.
+
+### Sensor
+
+- The requests read from a rotated copy of an access log (`access.log.1`, a dated copy) count as
+  the configured log's: under the copy's name no site was attached, so whether a requested script
+  exists stayed unknown and a failed probe read in the copy stayed a high alert.
+- A filesystem mounted on a directory created in a scratch directory is not looked into unless it
+  is FUSE: only root can mount anything else there, and its content is an image attached there,
+  like the snapshot containerd mounts under `/tmp` to unpack an image, whose files each raised
+  "Executable file in /tmp".
+
 ## [0.1.48] - 2026-11-06
 
 - **No more "Code changed" from the hash budget.** On a host whose applications hold more than

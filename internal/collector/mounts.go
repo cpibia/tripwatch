@@ -69,3 +69,26 @@ func UnescapeMount(s string) string {
 	}
 	return b.String()
 }
+
+// MountType returns the type of the filesystem mounted at point (without its leading slash) on
+// the observed host, read from the mount table of its init process. Of mounts stacked on one
+// point the last is the one in sight.
+func MountType(src Source, point string) (string, bool) {
+	lines, err := ReadLines(src.FS, "proc/1/mountinfo")
+	if err != nil {
+		return "", false
+	}
+	var fstype string
+	found := false
+	for _, line := range lines {
+		left, right, ok := strings.Cut(line, " - ")
+		fields, tail := strings.Fields(left), strings.Fields(right)
+		if !ok || len(fields) < 5 || len(tail) < 1 {
+			continue
+		}
+		if strings.Trim(UnescapeMount(fields[4]), "/") == point {
+			fstype, found = tail[0], true
+		}
+	}
+	return fstype, found
+}

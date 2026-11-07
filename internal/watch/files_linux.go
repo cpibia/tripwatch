@@ -80,6 +80,8 @@ type Files struct {
 	// would stay unwatched without that check.
 	roots          map[string]fileID
 	rootsCheckedAt time.Time
+	// mountedFS is mountAt, replaced in tests, which cannot mount.
+	mountedFS func(dir string) (string, bool)
 	// moves are renames of watched directories waiting for their second half, by cookie;
 	// renamed marks the watches whose records already follow a rename.
 	moves   map[uint32]move
@@ -114,7 +116,29 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}, scratchRepeats: map[string]string{}, deferred: map[string]string{}}, nil
+	f := &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}, scratchRepeats: map[string]string{}, deferred: map[string]string{}}
+	f.mountedFS = f.mountAt
+	return f, nil
+}
+
+// mountAt returns the type of the filesystem mounted at dir, when dir is a mount point: a
+// directory on another device than its parent.
+func (f *Files) mountAt(dir string) (string, bool) {
+	id, ok := f.identity(dir)
+	parent, okParent := f.identity(path.Dir(dir))
+	if !ok || !okParent || id.dev == parent.dev {
+		return "", false
+	}
+	return collector.MountType(f.src, collector.Rel(dir))
+}
+
+// rootMount reports a filesystem mounted on dir that only root could have mounted there: any
+// but FUSE, which fusermount lets every user mount on a directory of their own. What is in
+// it was not written in the scratch directory: it is an image or a disk root attached there,
+// like the snapshot containerd mounts under /tmp to unpack or inspect a container image.
+func (f *Files) rootMount(dir string) bool {
+	fstype, ok := f.mountedFS(dir)
+	return ok && fstype != "fuse" && fstype != "fuseblk" && !strings.HasPrefix(fstype, "fuse.")
 }
 
 // fileID tells one inode from another.
@@ -767,6 +791,9 @@ const maxNewEntries = 64
 // watchNew watches a directory created under a recursive target, then reports what is already
 // in it: a file can land there before the watch exists.
 func (f *Files) watchNew(dir string, t Target, depth int) {
+	if t.Class == ClassScratch && f.rootMount(dir) {
+		return
+	}
 	f.mu.Lock()
 	f.add(dir, []Target{t}, depth)
 	f.mu.Unlock()
