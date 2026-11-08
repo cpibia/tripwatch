@@ -6,6 +6,19 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.50] - 2026-11-08
+
+- **Upgrade.** Only the verifier changes; the sensors stay as they are.
+
+### Verifier
+
+- Web request alerts show the HTTP status the request was answered with next to their category
+  in every alert list, a 2xx highlighted, so an answered request is told from a missing page
+  without opening each alert. The status is kept in a new column; the open alerts of an earlier
+  version get it from their detail when the verifier starts.
+- The detail of a web request alert no longer cleans the query along with the path: a traversal
+  in the query (`/?file=../../.env`) read as a request for the file it pointed at.
+
 ## [0.1.49] - 2026-11-07
 
 - **Upgrade.** Only the sensors change; the verifier image is rebuilt with the same behaviour.
