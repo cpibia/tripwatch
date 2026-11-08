@@ -2,7 +2,7 @@
 <header class="head">
   <p class="crumb"><a href="/alerts">Alerts</a></p>
   <h1>{{headline $a.Title}}</h1>
-  <p class="tally">{{template "sevmark" $a}}<span>{{template "kindtag" $a.Kind}}</span><span>{{template "hosttag" $a.HostID}}</span><span>{{status $a.Status}}{{with $a.AckedBy}} · {{.}}{{end}}</span></p>
+  <p class="tally">{{template "sevmark" $a}}<span>{{template "alerttag" $a}}</span><span>{{template "hosttag" $a.HostID}}</span><span>{{status $a.Status}}{{with $a.AckedBy}} · {{.}}{{end}}</span></p>
 </header>
 
 <dl class="facts">

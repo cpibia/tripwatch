@@ -33,7 +33,9 @@ type Finding struct {
 	Severity    string
 	Title       string
 	Detail      string
-	State       bool
+	// HTTPStatus is the status a logged request was answered with, for the web log findings.
+	HTTPStatus int
+	State      bool
 	// Owner is the account the finding is about when it is not root's by nature: a key or a
 	// crontab of another user, a setuid file owned by one. Empty means the kind decides.
 	Owner string
@@ -43,6 +45,18 @@ type Finding struct {
 	// Path and SHA256, when set, name the file content the finding is about: a real-time event
 	// that already reported that content makes it a duplicate.
 	Path, SHA256 string
+}
+
+// requestedPath is the path a logged request named, cleaned, with "?…" when a query followed.
+// Cleaning the query along with it would turn "/?file=../../etc/passwd" into "/etc/passwd", a
+// request for the file itself, which the server never received.
+func requestedPath(request string) string {
+	p, _, found := strings.Cut(request, "?")
+	p = path.Clean("/" + p)
+	if found {
+		return p + "?…"
+	}
+	return p
 }
 
 // owned reports whether only root can have caused a finding: its owner says so, never its kind
@@ -1586,10 +1600,10 @@ func Evaluate(prev *State, cur State) []Finding {
 					continue
 				}
 				attempts[fp] = true
-				add(Finding{Kind: "weblog", Fingerprint: fp, Severity: "medium",
+				add(Finding{Kind: "weblog", Fingerprint: fp, Severity: "medium", HTTPStatus: e.Status,
 					Title: "Web request: " + strings.ReplaceAll(e.Rule, "_", " "),
 					Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s) on %s, log %s.\nRequest text, written by whoever sent it: %s",
-						e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, day, e.Log, e.Evidence.Request)})
+						e.Method, requestedPath(e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, day, e.Log, e.Evidence.Request)})
 				continue
 			}
 			if e.Severity != "critical" && e.Severity != "high" {
@@ -1609,8 +1623,8 @@ func Evaluate(prev *State, cur State) []Finding {
 			case len(e.Files) > 0:
 				onDisk = "\nNo such script on the server, looked for at: " + strings.Join(e.Files, ", ")
 			}
-			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, Title: "Web request: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.%s\nRequest text, written by whoever sent it: %s",
-				e.Method, path.Clean("/"+e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, onDisk, e.Evidence.Request)})
+			add(Finding{Kind: "weblog", Fingerprint: "weblog:" + e.Rule + ":" + script + "|" + e.Evidence.Request + e.Log, Severity: e.Severity, HTTPStatus: e.Status, Title: "Web request: " + strings.ReplaceAll(e.Rule, "_", " "), Detail: fmt.Sprintf("%s %s, status %d, %d requests from %d addresses (first %s), log %s.%s\nRequest text, written by whoever sent it: %s",
+				e.Method, requestedPath(e.Evidence.Request), e.Status, e.Count, max(e.IPs, 1), e.IP, e.Log, onDisk, e.Evidence.Request)})
 		}
 		// A flood that pushed serious events out of the bounded list is itself an alert: it may
 		// have been sent to hide one.

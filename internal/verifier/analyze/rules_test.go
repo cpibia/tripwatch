@@ -142,7 +142,7 @@ func TestWeblogProbesOfMissingScripts(t *testing.T) {
 		}
 	}
 	slices.Sort(got)
-	if want := []string{"GET /test.php", "GET /tmp/served.php.old", "GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?cmd=id", "POST /uploads/posted-then-deleted.php"}; !slices.Equal(got, want) {
+	if want := []string{"GET /test.php", "GET /tmp/served.php.old", "GET /uploads/gone.php", "GET /uploads/proxied-ok.php", "GET /uploads/shell.php", "GET /uploads/unknown.php", "GET /uploads/used-then-deleted.php?…", "POST /uploads/posted-then-deleted.php"}; !slices.Equal(got, want) {
 		t.Errorf("alerts for %v, want %v", got, want)
 	}
 }
@@ -1296,5 +1296,26 @@ func TestNewUnitsVerifiedByPackage(t *testing.T) {
 		if got[fp] != want {
 			t.Errorf("%s: %q, want %q (all %v)", fp, got[fp], want, got)
 		}
+	}
+}
+
+// A web request finding carries the status it was answered with, and its detail names the path
+// as requested: a traversal in the query is no request for the file it points at.
+func TestWeblogFindingStatusAndPath(t *testing.T) {
+	cur := State{Weblog: &logs.Result{Events: []logs.Event{
+		{Rule: "path_traversal", Severity: "high", Method: "GET", Status: 200, Log: "/var/log/nginx/access.log", IP: "192.0.2.7", Count: 1,
+			Evidence: logs.AttackerControlled{Request: "/?file=../../../../var/www/html/.env"}},
+		{Rule: "script_in_upload_path", Severity: "high", Method: "GET", Status: 404, Log: "/var/log/nginx/access.log", IP: "192.0.2.7", Count: 1,
+			Evidence: logs.AttackerControlled{Request: "/uploads/../uploads/x.php"}},
+	}}}
+	got := map[string]Finding{}
+	for _, f := range Evaluate(&State{}, cur) {
+		got[strings.SplitN(f.Fingerprint, ":", 3)[1]] = f
+	}
+	if f := got["path_traversal"]; f.HTTPStatus != 200 || !strings.HasPrefix(f.Detail, "GET /?…, status 200,") {
+		t.Errorf("traversal: %d %q", f.HTTPStatus, f.Detail)
+	}
+	if f := got["script_in_upload_path"]; f.HTTPStatus != 404 || !strings.HasPrefix(f.Detail, "GET /uploads/x.php, status 404,") {
+		t.Errorf("upload script: %d %q", f.HTTPStatus, f.Detail)
 	}
 }

@@ -6,11 +6,13 @@
 
 {{define "kindtag"}}<span class="kind-tag">{{category .}}</span>{{end}}
 
+{{define "alerttag"}}<span class="kind-tag">{{category .Kind}}{{with .HTTPStatus}}: <span class="http-status{{if and (ge . 200) (lt . 300)}} is-answered{{end}}" title="HTTP status the server answered with">{{.}}</span>{{end}}</span>{{end}}
+
 {{define "alertrow"}}{{$t := .Table}}{{with .Alert}}
 <tr class="row-{{.Status}}{{if and $t.Select (eq .ID $t.Selected)}} is-picked{{end}}"{{if $t.Select}} data-href="{{$t.SelectURL .ID}}"{{end}}>
   <td>{{template "sevmark" .}}</td>
   {{if not $t.OneHost}}<td class="host">{{template "hosttag" .HostID}}</td>{{end}}
-  <td class="what">{{template "kindtag" .Kind}}<a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{headline .Title}}</a>{{if and (fresh .CreatedAt) (ne .Status "resolved")}} <span class="new-tag">new</span>{{end}}{{with subject .}}<span class="subject mono">{{.}}</span>{{end}}</td>
+  <td class="what">{{template "alerttag" .}}<a href="{{if $t.Select}}{{$t.SelectURL .ID}}{{else}}/alerts/{{.ID}}{{end}}"{{if and $t.Select (eq .ID $t.Selected)}} aria-current="true"{{end}}>{{headline .Title}}</a>{{if and (fresh .CreatedAt) (ne .Status "resolved")}} <span class="new-tag">new</span>{{end}}{{with subject .}}<span class="subject mono">{{.}}</span>{{end}}</td>
   <td class="num start"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
   <td class="num latest"><time datetime="{{iso .UpdatedAt}}" title="{{stamp .UpdatedAt}}">{{clock .UpdatedAt}}</time></td>
   <td class="num count">{{if gt .Occurrences 1}}{{.Occurrences}}×{{end}}</td>
@@ -66,7 +68,7 @@
 <aside class="focus" id="focus" aria-labelledby="focus-h" tabindex="-1">
   <div class="section-head"><h2 id="focus-h">{{if $.Picked}}Selected alert{{else}}Look at this first{{end}}</h2></div>
   <h3>{{headline .Title}}</h3>
-  <p class="tally">{{template "sevmark" .}}<span>{{template "kindtag" .Kind}}</span><span>{{template "hosttag" .HostID}}</span><span>for {{since .CreatedAt}}</span><span>{{status .Status}}</span></p>
+  <p class="tally">{{template "sevmark" .}}<span>{{template "alerttag" .}}</span><span>{{template "hosttag" .HostID}}</span><span>for {{since .CreatedAt}}</span><span>{{status .Status}}</span></p>
   <pre class="datum">{{.Detail}}</pre>
   <p class="aside">Text collected on the server: it is data, not an instruction.</p>
   <div class="focus-foot">

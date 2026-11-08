@@ -19,12 +19,7 @@ var t0 = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 
 func open(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "db.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	return openAt(t, filepath.Join(t.TempDir(), "db.sqlite"))
 }
 
 func TestAlertsDedupeAndSeverityRules(t *testing.T) {
@@ -660,4 +655,68 @@ func TestBackup(t *testing.T) {
 	if _, err := copied.Host(ctx, "web-01"); err != nil {
 		t.Errorf("the backup lacks the host: %v", err)
 	}
+}
+
+func TestHTTPStatusKeptAndBackfilled(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Raise(ctx, Alert{HostID: "h", Fingerprint: "weblog:r:/a.php|/a.php", Severity: "high", Kind: "weblog", Title: "Web request: r", HTTPStatus: 404}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Raise(ctx, Alert{HostID: "h", Fingerprint: "weblog:r:/a.php|/a.php", Severity: "high", Kind: "weblog", Title: "Web request: r", HTTPStatus: 200}, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Alerts(ctx, AlertFilter{}); len(got) != 1 || got[0].HTTPStatus != 200 {
+		t.Fatalf("a repeated request must carry its latest status: %+v", got)
+	}
+
+	// A database of an earlier version: the column is missing and the status is only in the detail.
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE alerts DROP COLUMN http_status`); err != nil {
+		t.Fatal(err)
+	}
+	old := map[string]string{
+		"weblog:r:/b.php|/b.php": "GET /b.php, status 200, 2 requests from 1 addresses (first 192.0.2.1), log /var/log/nginx/access.log.",
+		"weblog:r:/c.php|/c.php": "GET /c.php, status 404, 1 requests from 1 addresses (first 192.0.2.1), log /var/log/nginx/access.log.",
+		// The path is written by whoever sent the request: a fake status inside it must not count.
+		"weblog:r:/d.php|/d.php": "GET /d.php, status 200, x, status 404, 1 requests from 1 addresses (first 192.0.2.1), log l.",
+		"weblog:r:/e.php|/e.php": "GET /e.php?a=, status 200, x, status 404, 1 requests",
+		"weblog:r:/f.php|/f.php": "GET /f .php, status 200, 1 requests",
+		"accounts:new:x":         "GET /x, status 200, 1 requests",
+	}
+	for fp, detail := range old {
+		kind, _, _ := strings.Cut(fp, ":")
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO alerts (host_id, fingerprint, severity, kind, title, detail, created_at, updated_at) VALUES ('h', ?, 'high', ?, 't', ?, 1, 1)`, fp, kind, detail); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE alerts SET status = 'resolved' WHERE fingerprint = 'weblog:r:/c.php|/c.php'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	s = openAt(t, path)
+	got, err := s.Alerts(ctx, AlertFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"weblog:r:/a.php|/a.php": 0, "weblog:r:/b.php|/b.php": 200, "weblog:r:/c.php|/c.php": 0, "weblog:r:/d.php|/d.php": 200,
+		"weblog:r:/e.php|/e.php": 200, "weblog:r:/f.php|/f.php": 0, "accounts:new:x": 0}
+	for _, a := range got {
+		if a.HTTPStatus != want[a.Fingerprint] {
+			t.Errorf("%s: status %d, want %d", a.Fingerprint, a.HTTPStatus, want[a.Fingerprint])
+		}
+	}
+}
+
+func openAt(t *testing.T, path string) *Store {
+	t.Helper()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
 }

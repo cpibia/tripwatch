@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,6 +69,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 	kind        TEXT NOT NULL,
 	title       TEXT NOT NULL,
 	detail      TEXT NOT NULL,
+	http_status INTEGER NOT NULL DEFAULT 0,
 	status      TEXT NOT NULL DEFAULT 'open',
 	created_at  INTEGER NOT NULL,
 	updated_at  INTEGER NOT NULL,
@@ -367,8 +370,55 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if n == 0 {
-		_, err := db.ExecContext(context.Background(), `ALTER TABLE snapshots ADD COLUMN keep INTEGER NOT NULL DEFAULT 0`)
+		if _, err := db.ExecContext(context.Background(), `ALTER TABLE snapshots ADD COLUMN keep INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	var status int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('alerts') WHERE name = 'http_status'`).Scan(&status); err != nil {
 		return err
+	}
+	if status == 0 {
+		if _, err := db.ExecContext(context.Background(), `ALTER TABLE alerts ADD COLUMN http_status INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		return backfillHTTPStatus(db)
+	}
+	return nil
+}
+
+// loggedStatusRe reads the status from the first line of a web request alert's detail, as the
+// verifier wrote it before the status had a column. The request path before it is written by
+// whoever sent the request: it is matched as one run of non-spaces, so a path holding
+// ", status 200" cannot pass for the status.
+var loggedStatusRe = regexp.MustCompile(`^[A-Z]{1,16} \S+, status ([1-5][0-9]{2}),`)
+
+// backfillHTTPStatus gives the unresolved web request alerts of an earlier version their status,
+// so the list shows it without waiting for each request to come again.
+func backfillHTTPStatus(db *sql.DB) error {
+	rows, err := db.QueryContext(context.Background(), `SELECT id, detail FROM alerts WHERE kind = 'weblog' AND status != 'resolved'`)
+	if err != nil {
+		return err
+	}
+	found := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var detail string
+		if err := rows.Scan(&id, &detail); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if m := loggedStatusRe.FindStringSubmatch(detail); m != nil {
+			found[id], _ = strconv.Atoi(m[1])
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for id, code := range found {
+		if _, err := db.ExecContext(context.Background(), `UPDATE alerts SET http_status = ? WHERE id = ?`, code, id); err != nil {
+			return err
+		}
 	}
 	return nil
 }

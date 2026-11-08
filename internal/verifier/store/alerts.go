@@ -29,6 +29,9 @@ type Alert struct {
 	Kind        string
 	Title       string
 	Detail      string
+	// HTTPStatus is the status the server answered a logged request with, for the alerts
+	// about web requests; zero for the others.
+	HTTPStatus  int
 	Status      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -195,17 +198,17 @@ func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error)
 				}
 			}
 		}
-		_, err = s.db.ExecContext(ctx, `INSERT INTO alerts (host_id, fingerprint, severity, kind, title, detail, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, a.HostID, a.Fingerprint, a.Severity, a.Kind, a.Title, a.Detail, now.Unix(), now.Unix())
+		_, err = s.db.ExecContext(ctx, `INSERT INTO alerts (host_id, fingerprint, severity, kind, title, detail, http_status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, a.HostID, a.Fingerprint, a.Severity, a.Kind, a.Title, a.Detail, a.HTTPStatus, now.Unix(), now.Unix())
 		return true, err
 	case err != nil:
 		return false, err
 	}
 	reopened := status == StatusResolved
-	_, err = s.db.ExecContext(ctx, `UPDATE alerts SET severity = ?, title = ?, detail = ?, updated_at = ?, occurrences = occurrences + 1,
+	_, err = s.db.ExecContext(ctx, `UPDATE alerts SET severity = ?, title = ?, detail = ?, http_status = ?, updated_at = ?, occurrences = occurrences + 1,
 		status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END,
 		notified_at = CASE WHEN status = 'resolved' THEN 0 ELSE notified_at END
-		WHERE host_id = ? AND fingerprint = ?`, a.Severity, a.Title, a.Detail, now.Unix(), a.HostID, a.Fingerprint)
+		WHERE host_id = ? AND fingerprint = ?`, a.Severity, a.Title, a.Detail, a.HTTPStatus, now.Unix(), a.HostID, a.Fingerprint)
 	return reopened, err
 }
 
@@ -457,7 +460,7 @@ func alertWhere(ctx context.Context, f AlertFilter) (string, []any) {
 func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 	where, args := alertWhere(ctx, f)
 	//nolint:gosec // alertWhere builds constant clauses; values are bound
-	q := `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at, occurrences,
+	q := `SELECT id, host_id, fingerprint, severity, kind, title, detail, http_status, status, created_at, updated_at, occurrences,
 		COALESCE(acked_by, ''), notified_at FROM alerts` + where
 	switch {
 	case f.Sort == SortID:
@@ -490,7 +493,7 @@ func (s *Store) Alerts(ctx context.Context, f AlertFilter) ([]Alert, error) {
 	for rows.Next() {
 		var a Alert
 		var created, updated, notified int64
-		if err := rows.Scan(&a.ID, &a.HostID, &a.Fingerprint, &a.Severity, &a.Kind, &a.Title, &a.Detail, &a.Status,
+		if err := rows.Scan(&a.ID, &a.HostID, &a.Fingerprint, &a.Severity, &a.Kind, &a.Title, &a.Detail, &a.HTTPStatus, &a.Status,
 			&created, &updated, &a.Occurrences, &a.AckedBy, &notified); err != nil {
 			return nil, err
 		}
@@ -533,7 +536,7 @@ type HostSummary struct {
 func (s *Store) Summaries(ctx context.Context) (map[string]HostSummary, error) {
 	scope, args := scopeClause(ctx, "host_id")
 	//nolint:gosec // the scope is a constant clause of this package; its label is bound
-	rows, err := s.read.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title, detail, status, created_at, updated_at,
+	rows, err := s.read.QueryContext(ctx, `SELECT id, host_id, fingerprint, severity, kind, title, detail, http_status, status, created_at, updated_at,
 		occurrences, COALESCE(acked_by, ''), notified_at, n FROM (
 			SELECT *, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY status = 'open' DESC, `+severityOrder+`, created_at, id) AS rn,
 				COUNT(*) OVER (PARTITION BY host_id) AS n
@@ -548,7 +551,7 @@ func (s *Store) Summaries(ctx context.Context) (map[string]HostSummary, error) {
 		var a Alert
 		var created, updated, notified int64
 		var n int
-		if err := rows.Scan(&a.ID, &a.HostID, &a.Fingerprint, &a.Severity, &a.Kind, &a.Title, &a.Detail, &a.Status,
+		if err := rows.Scan(&a.ID, &a.HostID, &a.Fingerprint, &a.Severity, &a.Kind, &a.Title, &a.Detail, &a.HTTPStatus, &a.Status,
 			&created, &updated, &a.Occurrences, &a.AckedBy, &notified, &n); err != nil {
 			return nil, err
 		}

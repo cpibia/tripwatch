@@ -1277,3 +1277,30 @@ func TestOverviewFleetShowsOnlyServersNeedingAttention(t *testing.T) {
 		t.Fatal("the silent server or the count of the healthy ones is missing")
 	}
 }
+
+// A web request alert shows the status the server answered with next to its category, so an
+// answered request stands out from a missing page without opening each alert.
+func TestAlertRowShowsHTTPStatus(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, a := range []store.Alert{
+		{HostID: "web-01", Fingerprint: "weblog:script_in_upload_path:/u/a.php|/u/a.php", Severity: "critical", Kind: "weblog", Title: "Web request: script in upload path", HTTPStatus: 200},
+		{HostID: "web-01", Fingerprint: "weblog:script_in_upload_path:/u/b.php|/u/b.php", Severity: "high", Kind: "weblog", Title: "Web request: script in upload path", HTTPStatus: 404},
+		{HostID: "web-01", Fingerprint: "ssh:a", Severity: "medium", Kind: "ssh", Title: "SSH: root login with a password allowed"},
+	} {
+		if _, err := h.store.Raise(ctx, a, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.login()
+	_, body := h.get("/alerts")
+	for _, want := range []string{
+		`Web request: <span class="http-status is-answered" title="HTTP status the server answered with">200</span>`,
+		`Web request: <span class="http-status" title="HTTP status the server answered with">404</span>`,
+		`<span class="kind-tag">Access</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+}

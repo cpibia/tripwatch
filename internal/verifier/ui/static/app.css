@@ -640,6 +640,8 @@ input[type="radio"] { accent-color: var(--teal); margin: 0; }
 
 .kind-tag { display: inline-block; margin-right: 8px; padding: 0 8px; font-size: var(--fs-xs); font-weight: 500; line-height: 19px; white-space: nowrap; color: var(--ink-2); background: var(--surface); border: var(--hair) solid var(--rule-strong); border-radius: 999px; vertical-align: 1px; }
 .tally .kind-tag { margin-right: 0; }
+.http-status { font-family: var(--mono); color: var(--ink); }
+.http-status.is-answered { color: var(--amber-text); font-weight: 600; }
 
 .host-tag { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; text-decoration: none; }
 .host-tag:hover { text-decoration: underline; }

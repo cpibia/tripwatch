@@ -508,7 +508,7 @@ func (a *Analyzer) RunSnapshot(ctx context.Context, id int64) {
 	for _, f := range findings {
 		// Evidence is the snapshot where an alert starts (or comes back), not every later one
 		// that shows it again: a repeated log request would otherwise keep every snapshot.
-		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail}) {
+		if a.raise(ctx, store.Alert{HostID: host, Fingerprint: f.Fingerprint, Severity: f.Severity, Kind: f.Kind, Title: f.Title, Detail: f.Detail, HTTPStatus: f.HTTPStatus}) {
 			evidenceOf = append(evidenceOf, f)
 		}
 		if f.Diff != nil {

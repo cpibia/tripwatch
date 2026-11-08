@@ -623,7 +623,9 @@ application's own weak points (a made-up cart's shipping estimate, PHP sent in a
 attached to a cart item, a POST to a static file) raise one medium alert a day per rule and log,
 shown on the verifier and not mailed, while the scans every site receives all day are only kept
 in the snapshot. The severity of a script in uploads does not depend on the
-HTTP status, which the script itself decides. For each requested script the sensor also says
+HTTP status, which the script itself decides; the verifier's alert lists show the status next to
+each web request alert (a 2xx stands out), so an answered request is told from a missing page
+without opening it. For each requested script the sensor also says
 whether it exists in the document roots of the nginx or Apache sites writing that log (with
 nginx's location roots and aliases, Apache's `Alias`): a request that failed for a script found
 in none of them ran no code, and raises no alert (scanners probe thousands of such paths); so
