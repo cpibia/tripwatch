@@ -214,7 +214,9 @@ sudo systemctl enable --now tripwatch-sensor
 
 ### Kubernetes
 
-On a Kubernetes node, mount the host root into the pod and tell the sensor where it is:
+Kubernetes support is manual today: no DaemonSet manifest or Helm chart is shipped yet (they are
+on the [roadmap](#roadmap)). Run the sensor in a pod on each node, mount the host root into it
+and tell the sensor where it is:
 
 ```sh
 tripwatch-sensor -root /host
@@ -828,6 +830,9 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   `suid` done by root does not change how its files are marked.
 - Outside Linux the sensor is for development only: symlink confinement relies on Linux
   interfaces.
+- A sensor update, ordered from the console or run with `-update`, trusts the release's
+  `SHA256SUMS`: the build provenance attestation is not verified, so whoever can change the
+  files of a release can have every updating sensor install them.
 - With one heartbeat a minute, a sensor suspended for less than 100 seconds cannot be told apart
   from network delay and raises no alert; longer pauses do, even if the heartbeats resume.
 - Whoever keeps producing alerts without being root, the web server user with hidden files or an
@@ -1094,9 +1099,8 @@ A systemd unit with security restrictions is in [deploy/systemd](deploy/systemd)
 
 1. Real-time events from eBPF on kernels 5.8 and later, with the current watchers as the
    fallback.
-2. Installation without a toolchain: signed `.deb`, `.rpm` and `.apk` packages and APT/YUM
-   repositories (one-time token enrollment already exists), image and Helm chart for the
-   DaemonSet; the verifier compares the running binary with the published release.
+2. Installation: `.apk` packages, APT/YUM repositories, image and Helm chart for the DaemonSet;
+   the verifier compares the running binary with the published release.
 3. Signed deploy manifests produced by the build and checked against the lockfile.
 4. Containers: differences of running containers from their image.
 5. Kubernetes and AWS: DaemonSet, audit logs, CloudTrail, VPC Flow Logs.
@@ -1108,10 +1112,12 @@ A systemd unit with security restrictions is in [deploy/systemd](deploy/systemd)
 
 ## Status
 
-Early development, usable end to end. Implemented and tested: the envelope protocol, environment
-and web stack discovery, the system, web, log and application collectors, the sensor as a
-service with real-time events for critical paths and process starts, the verifier with rules,
-alerts, email and web interface. The next step is eBPF events on recent kernels.
+Implemented and tested: the envelope protocol, environment and web stack discovery, the system,
+web, log and application collectors, the sensor as a service with real-time events for critical
+paths and process starts, the verifier with rules, alerts and web interface, notifications by
+email, Telegram and webhooks, the REST API, Prometheus metrics, a second factor for sign-in,
+roles with access limited by label, and remote updates of the sensors ordered from the console.
+The next step is eBPF events on recent kernels.
 
 ## License
 
