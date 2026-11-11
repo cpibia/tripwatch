@@ -42,6 +42,25 @@ jobs:
           name: coverage
           path: coverage.out
 
+  # The provenance verifier against sigstore-go, in a module of its own so the sensor never links
+  # sigstore-go; and the embedded trust root against the one Sigstore publishes through TUF.
+  provenance:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: internal/provenance/reference
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: internal/provenance/reference/go.mod
+          cache-dependency-path: internal/provenance/reference/go.sum
+      - run: go vet ./...
+      - name: Every fixture gives the same outcome in both verifiers
+        run: go test -count=1 ./...
+      - name: The embedded trust root is Sigstore's current one (make trusted-root refreshes it)
+        run: go run ./cmd/trustedroot | cmp - ../trusted_root.json
+
   build:
     runs-on: ubuntu-latest
     needs: [lint, test]

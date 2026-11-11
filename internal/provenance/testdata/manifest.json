@@ -1,0 +1,370 @@
+[
+  {
+    "name": "release-0.1.51",
+    "file": "release-0.1.51.jsonl",
+    "root": "public-good",
+    "version": "0.1.51",
+    "asset": "tripwatch-sensor_linux_amd64",
+    "digest": "34d6f1273fb68b59d998888ef55ab723885829c11ee2810912032d12e0489f09",
+    "want": "accept",
+    "why": "the bundle GitHub made for a published release"
+  },
+  {
+    "name": "valid",
+    "file": "synthetic/valid.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "accept",
+    "why": "every check passes"
+  },
+  {
+    "name": "chain-unknown-ca",
+    "file": "synthetic/chain-unknown-ca.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "leaf issued by a certificate authority outside the trust root"
+  },
+  {
+    "name": "chain-expired",
+    "file": "synthetic/chain-expired.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "leaf no longer valid at the integrated time"
+  },
+  {
+    "name": "chain-no-code-signing",
+    "file": "synthetic/chain-no-code-signing.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "leaf without the code signing usage; sigstore-go accepts it: Go reads a leaf without extended key usages as allowed any usage"
+  },
+  {
+    "name": "chain-ca-window",
+    "file": "synthetic/chain-ca-window.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "integrated after the end of the authority's window in the trust root"
+  },
+  {
+    "name": "identity-other-workflow",
+    "file": "synthetic/identity-other-workflow.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "built by another workflow of the repository"
+  },
+  {
+    "name": "identity-issuer",
+    "file": "synthetic/identity-issuer.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "token from another issuer"
+  },
+  {
+    "name": "identity-repository",
+    "file": "synthetic/identity-repository.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "another repository"
+  },
+  {
+    "name": "identity-ref",
+    "file": "synthetic/identity-ref.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "built from a branch, not the tag"
+  },
+  {
+    "name": "identity-repository-id",
+    "file": "synthetic/identity-repository-id.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "same name, another repository id (a recreated repository)"
+  },
+  {
+    "name": "identity-owner-id",
+    "file": "synthetic/identity-owner-id.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "same name, another owner id (a recreated account)"
+  },
+  {
+    "name": "identity-trigger",
+    "file": "synthetic/identity-trigger.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "run by hand, not by the tag push"
+  },
+  {
+    "name": "identity-runner",
+    "file": "synthetic/identity-runner.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "built on a self-hosted runner"
+  },
+  {
+    "name": "identity-two-uris",
+    "file": "synthetic/identity-two-uris.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "a second URI identity next to the expected one; sigstore-go accepts it: it compares the first URI only"
+  },
+  {
+    "name": "identity-email",
+    "file": "synthetic/identity-email.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "an email identity next to the expected URI; sigstore-go accepts it: it reads the URI and ignores the other names"
+  },
+  {
+    "name": "identity-raw-issuer",
+    "file": "synthetic/identity-raw-issuer.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "the deprecated raw issuer disagrees with the new one; sigstore-go accepts it: it reads the issuer from the new extension only"
+  },
+  {
+    "name": "identity-printable-string",
+    "file": "synthetic/identity-printable-string.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "an identity extension that is not a UTF8String; sigstore-go accepts it: encoding/asn1 converts any string type"
+  },
+  {
+    "name": "dsse-signature",
+    "file": "synthetic/dsse-signature.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "envelope signature over another payload"
+  },
+  {
+    "name": "dsse-payload-type",
+    "file": "synthetic/dsse-payload-type.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "envelope of another payload type"
+  },
+  {
+    "name": "statement-type",
+    "file": "synthetic/statement-type.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "statement of an older in-toto version"
+  },
+  {
+    "name": "predicate-type",
+    "file": "synthetic/predicate-type.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "provenance of an older SLSA version"
+  },
+  {
+    "name": "statement-duplicate-subject",
+    "file": "synthetic/statement-duplicate-subject.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "a file listed twice with two digests; sigstore-go accepts it: it only looks for the expected digest"
+  },
+  {
+    "name": "rekor-unknown-log",
+    "file": "synthetic/rekor-unknown-log.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "entry from a log the trust root does not know"
+  },
+  {
+    "name": "rekor-log-window",
+    "file": "synthetic/rekor-log-window.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "integrated before the log key's window"
+  },
+  {
+    "name": "rekor-set",
+    "file": "synthetic/rekor-set.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "signed entry timestamp for another integrated time"
+  },
+  {
+    "name": "rekor-proof",
+    "file": "synthetic/rekor-proof.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "an inclusion proof hash altered"
+  },
+  {
+    "name": "rekor-checkpoint-signature",
+    "file": "synthetic/rekor-checkpoint-signature.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "checkpoint signature over another note"
+  },
+  {
+    "name": "rekor-checkpoint-root",
+    "file": "synthetic/rekor-checkpoint-root.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "checkpoint of another tree root"
+  },
+  {
+    "name": "rekor-checkpoint-size",
+    "file": "synthetic/rekor-checkpoint-size.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "checkpoint of another tree size with the same root; sigstore-go accepts it: it compares the checkpoint root, not its size"
+  },
+  {
+    "name": "rekor-checkpoint-origin",
+    "file": "synthetic/rekor-checkpoint-origin.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "reference": "accept",
+    "why": "checkpoint of another origin, signed by the log key; sigstore-go accepts it: it does not check a Rekor v1 checkpoint origin"
+  },
+  {
+    "name": "binding-payload",
+    "file": "synthetic/binding-payload.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "log entry for another payload"
+  },
+  {
+    "name": "binding-signature",
+    "file": "synthetic/binding-signature.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "log entry holding another signature"
+  },
+  {
+    "name": "binding-certificate",
+    "file": "synthetic/binding-certificate.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "log entry holding another certificate"
+  },
+  {
+    "name": "other-version",
+    "file": "synthetic/valid.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.4",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "f4565245c41aecee9f09756c31c2b923c9829adc8d810d54f5412aa470dddbc1",
+    "want": "reject",
+    "why": "a valid bundle of 1.2.3 offered for 1.2.4"
+  },
+  {
+    "name": "other-digest",
+    "file": "synthetic/valid.jsonl",
+    "root": "synthetic/trusted_root.json",
+    "version": "1.2.3",
+    "asset": "tripwatch-sensor_1.2.3_linux_amd64",
+    "digest": "425ecb5e1000c9545b105f1547c6d6f03d1cd4b38d94d457ec032907e8b51079",
+    "want": "reject",
+    "why": "a file the valid bundle does not attest"
+  }
+]

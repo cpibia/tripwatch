@@ -5,7 +5,7 @@ COVERAGE_MIN ?= 80
 BINARIES := tripwatch-sensor tripwatch-verifier
 PLATFORMS := linux/amd64 linux/arm64
 
-.PHONY: all build dist test cover lint fmt clean
+.PHONY: all build dist test cover lint fmt clean trusted-root provenance-fixtures
 
 all: lint test build
 
@@ -36,6 +36,14 @@ lint:
 
 fmt:
 	gofmt -w .
+
+# The Sigstore trust root the sensor embeds, fetched through TUF; CI fails while it is stale.
+trusted-root:
+	cd internal/provenance/reference && go run ./cmd/trustedroot > ../trusted_root.json.tmp && mv ../trusted_root.json.tmp ../trusted_root.json
+
+# Synthetic bundles for the provenance tests, signed by a Sigstore of their own.
+provenance-fixtures:
+	cd internal/provenance/reference && go run ./cmd/fixtures -out ../testdata && go test -count=1 ./...
 
 clean:
 	rm -rf bin dist coverage.out

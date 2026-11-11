@@ -37,6 +37,45 @@ the new one is used, and a superseded certificate presented to the verifier rais
 new certificate lives in the sensor's state directory, the bundle in `/etc` stays read-only, and
 the signing key does not change.
 
+## Sensor updates
+
+The sensor installs a release only on proof of where it was built (`internal/provenance`, used by
+`internal/selfupdate` for `-update` and for the orders the verifier signs). Every release carries
+`provenance.sigstore.json`, the Sigstore bundle of the build provenance attestation the release
+workflow makes for every file in `SHA256SUMS`. The sensor reads it as attacker input: one bundle
+of the one version GitHub uses (v0.3), one certificate, one Rekor v1 `dsse` entry, every field
+bounded, anything else refused. It then checks, offline, against the trust root embedded at build
+time (`internal/provenance/trusted_root.json`, Sigstore's public-good instance as TUF publishes
+it; CI fails when it changes, `make trusted-root` refreshes it):
+
+- the log entry: its log is one of the trust root's Rekor keys, valid at the integrated time; the
+  signed entry timestamp over the canonical entry (the only signature over the integrated time);
+  the inclusion proof up to the root of a checkpoint signed by the same log, with its origin and
+  tree size; and the entry's body, which must hold this bundle's payload hash, signature and
+  certificate, or a genuine entry of any other artifact would vouch for it;
+- the certificate, against the Fulcio authorities valid at the integrated time, at that time
+  rather than now, for code signing;
+- the identity, every value compared whole: one URI naming the release workflow at the tag of the
+  version being installed, the issuer, repository, ref, numeric repository and owner ids, a push
+  trigger and a GitHub-hosted runner, with the deprecated raw extensions, when present, agreeing;
+- the DSSE signature of the leaf over the in-toto statement, of SLSA provenance v1, whose subjects
+  give the digest the downloaded file must have.
+
+An order from the verifier adds its own hash, which must equal the attested one. A missing or
+failing bundle, or a file or an order that is not the attested one, is a refusal
+(`selfupdate.RejectedError`): the process that refused leaves it in the state directory and the
+running sensor sends it as an `update_refused` event, a high alert on the verifier. A failure to
+reach the release is retried without an alert.
+
+The verifier is a few hundred lines on the standard library and `transparency-dev/merkle`, not
+sigstore-go, which would double the sensor's size and link network clients it never uses. The
+nested module `internal/provenance/reference` keeps sigstore-go out of the sensor's module: it
+generates the synthetic fixtures (a Sigstore of its own signing a valid bundle and one bundle per
+way a bundle can be wrong) and checks that sigstore-go, with the same policy, reaches the same
+outcome on every fixture and on a real release's bundle, except where the manifest records that
+it is laxer. Before a release is published, its sensors and the previous release's sensors must
+accept the new bundle: a format change at GitHub stops the release instead of every update.
+
 ## Verifier
 
 - **Ingest** (`internal/verifier/ingest`): the common name of the client certificate must be the
@@ -589,6 +628,8 @@ past its fetch budget).
 | `internal/collector/apps` | application configuration and database: administrators, stored scripts, extensions, settings |
 | `internal/watch` | real-time watchers: inotify on critical paths and the process connector on Linux, the container runtimes' state, batching |
 | `internal/transport` | sealing, saving and sending envelopes from the sensor |
+| `internal/provenance` | offline verification of a release's Sigstore provenance bundle |
+| `internal/selfupdate` | the sensor's updates, installed only on verified provenance |
 | `internal/verifier/pki` | private CA, server certificate, enrollment bundles |
 | `internal/verifier/ingest` | mTLS ingest and chain verification |
 | `internal/verifier/store` | SQLite store: hosts, snapshots, events, activity, alerts, users, sessions |

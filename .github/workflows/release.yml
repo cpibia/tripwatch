@@ -6,6 +6,8 @@ on:
 
 # Same pinning as ci.yml. Every artifact gets a signed build provenance attestation, so anyone
 # can check with `gh attestation verify` that a package or image was built here from this tag.
+# GoReleaser publishes a draft; the release becomes public, and visible to sensors, only after
+# the sensors built here and the previous release's sensors accept its provenance bundle.
 permissions:
   contents: read
 
@@ -46,9 +48,52 @@ jobs:
           args: release --clean --release-notes=${{ runner.temp }}/notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/SHA256SUMS
+      # Sensors fetch the bundle from the release: they verify it offline, without GitHub's API.
+      - name: Attach the provenance bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE" dist/provenance.sigstore.json
+          gh release upload "$GITHUB_REF_NAME" dist/provenance.sigstore.json
+      # A bundle the fleet cannot verify would leave every sensor unable to update: the release
+      # stops here, as a draft, instead.
+      - name: Sensors accept the provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Release files under the names they are published with (GoReleaser keeps binaries
+          # under their build directory), so each is checked against its own subject.
+          release="$RUNNER_TEMP/release"
+          mkdir -p "$release"
+          jq -r '.[] | select(.type == "Binary" or .type == "Linux Package") | select(.name | startswith("tripwatch-sensor")) | [.path, .name] | @tsv' dist/artifacts.json |
+            while IFS=$'\t' read -r path name; do cp "$path" "$release/$name"; done
+          files=()
+          while read -r name; do
+            test -f "$release/$name" || { echo "$name is in SHA256SUMS but was not built"; exit 1; }
+            files+=("$release/$name")
+          done < <(awk '$2 ~ /^tripwatch-sensor/ { print $2 }' dist/SHA256SUMS)
+          new="$release/tripwatch-sensor_${version}_linux_amd64"
+          chmod +x "$new"
+          "$new" -verify-provenance dist/provenance.sigstore.json -release "$version" "${files[@]}"
+
+          previous=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName')
+          prev="${previous#v}"
+          if ! gh release view "$previous" --json assets --jq '.assets[].name' | grep -qx provenance.sigstore.json; then
+            echo "$previous predates provenance verification: only the new sensor is checked"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download "$previous" -D "$RUNNER_TEMP/previous" -p provenance.sigstore.json -p "tripwatch-sensor_${prev}_linux_amd64"
+          old="$RUNNER_TEMP/previous/tripwatch-sensor_${prev}_linux_amd64"
+          "$new" -verify-provenance "$RUNNER_TEMP/previous/provenance.sigstore.json" -release "$prev" "$old"
+          chmod +x "$old"
+          "$old" -verify-provenance dist/provenance.sigstore.json -release "$version" "${files[@]}"
 
   image:
     runs-on: ubuntu-latest
@@ -92,3 +137,13 @@ jobs:
           subject-name: ghcr.io/${{ github.repository_owner }}/tripwatch-verifier
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [packages, image]
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

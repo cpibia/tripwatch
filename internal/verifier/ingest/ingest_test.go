@@ -512,6 +512,23 @@ func TestSensorStopsAndStarts(t *testing.T) {
 	}
 }
 
+// A sensor that refuses an update on its provenance raises one high alert for that release.
+func TestRefusedUpdateRaisesAnAlert(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	for range 2 {
+		h.clock = h.clock.Add(time.Hour)
+		if err := c.Send(context.Background(), protocol.KindEvent, []byte(`{"event":"update_refused","version":"1.2.3","reason":"the release has no provenance.sigstore.json"}`), h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alerts := h.alerts()
+	if len(alerts) != 1 || alerts[0].Title != "Sensor update refused" || alerts[0].Severity != "high" ||
+		!strings.Contains(alerts[0].Detail, "1.2.3") || !strings.Contains(alerts[0].Detail, "no provenance.sigstore.json") {
+		t.Fatalf("alerts %+v, want one high alert for 1.2.3", alerts)
+	}
+}
+
 // An update this console ordered goes to the audit log instead of raising an alert per server;
 // one to another version, or before the order, is still an alert.
 func TestOrderedUpdateIsAudited(t *testing.T) {

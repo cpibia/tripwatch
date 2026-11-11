@@ -1,0 +1,42 @@
+{
+  "mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1",
+  "tlogs": [
+    {
+      "baseUrl": "https://rekor.example.test",
+      "hashAlgorithm": "SHA2_256",
+      "publicKey": {
+        "rawBytes": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEo394o6+GvBQnOHyjo1Q7K9r5viWMI/aDxLDnY4H1Xm7abVq/MS4PVq0PoY5NlX3CEPigk3jb96ztAAAHaniMww==",
+        "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+        "validFor": {
+          "start": "2026-05-22T12:00:00Z"
+        }
+      },
+      "logId": {
+        "keyId": "PDjkJ4gfC076gqxpX9jof6LchfyIAzwX0euepAqto3Y="
+      }
+    }
+  ],
+  "certificateAuthorities": [
+    {
+      "subject": {
+        "organization": "example.test",
+        "commonName": "fulcio"
+      },
+      "uri": "https://fulcio.example.test",
+      "certChain": {
+        "certificates": [
+          {
+            "rawBytes": "MIICLDCCAbKgAwIBAgIBAjAKBggqhkjOPQQDAzA8MRwwGgYDVQQKExNmdWxjaW8uZXhhbXBsZS50ZXN0MRwwGgYDVQQDExNmdWxjaW8uZXhhbXBsZS50ZXN0MB4XDTIwMDEwMTAwMDAwMFoXDTQwMDEwMTAwMDAwMFowSTEcMBoGA1UEChMTZnVsY2lvLmV4YW1wbGUudGVzdDEpMCcGA1UEAxMgZnVsY2lvLmV4YW1wbGUudGVzdC1pbnRlcm1lZGlhdGUwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAAQRFxKqhz7nzE6qNzSXmb4KJ2DiR8VGWxxd5wLljhjNm16UWlVvJPnJ2RlWYfbMEA0TDwxHUF2Lj13GcObfhOsU2ELkXQMZJsnevUl31SnJdLplkCsU9S3nvo1cbI8ZURejezB5MA4GA1UdDwEB/wQEAwIBBjATBgNVHSUEDDAKBggrBgEFBQcDAzASBgNVHRMBAf8ECDAGAQH/AgEAMB0GA1UdDgQWBBRo2HnA8kdycjkDra1wLivXWBwIuDAfBgNVHSMEGDAWgBSvftrJpu63qkl9IAjHYUrvhMA5xTAKBggqhkjOPQQDAwNoADBlAjAZVVskAv+WDoDqYrCh+ZnULMYuFBM3lywpLiOJdzDF4gGqcMRzKKO51CfsewGuQjACMQCyVjSn6XTaU9CvV6n0erylRIYbJ3WPA3ZApIRUDEl0/TTx2tgcPVTl6sXKZt430MY="
+          },
+          {
+            "rawBytes": "MIIB5jCCAWygAwIBAgIBATAKBggqhkjOPQQDAzA8MRwwGgYDVQQKExNmdWxjaW8uZXhhbXBsZS50ZXN0MRwwGgYDVQQDExNmdWxjaW8uZXhhbXBsZS50ZXN0MB4XDTIwMDEwMTAwMDAwMFoXDTQwMDEwMTAwMDAwMFowPDEcMBoGA1UEChMTZnVsY2lvLmV4YW1wbGUudGVzdDEcMBoGA1UEAxMTZnVsY2lvLmV4YW1wbGUudGVzdDB2MBAGByqGSM49AgEGBSuBBAAiA2IABLV4rQA+NC19AK/BjtDS4YrF40z4TBcmrXBD5a+LSOqW6BT14icQi02KaoOJ0uKFBbIhECHh+1lgtT8Y74SA05qVz/sanZ5rgNPEzjHHrxvvC34vkJs8xckaK8Z3kd97YqNCMEAwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFK9+2smm7reqSX0gCMdhSu+EwDnFMAoGCCqGSM49BAMDA2gAMGUCMQCzUrWp9sia3/CmPeVVgoQOShyCeUqBl7+zdZTLWqFfYnpGAmXpL23mKmYyTa78TsoCMECiTyiRHcjMd+P24VDtLZGEVvmoikJ4cCHJoi1hjQyIXP2JkEJQ7FpUcH2XDpJsEw=="
+          }
+        ]
+      },
+      "validFor": {
+        "start": "2026-05-02T12:00:00Z",
+        "end": "2026-07-01T12:00:00Z"
+      }
+    }
+  ]
+}

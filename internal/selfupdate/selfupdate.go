@@ -2,13 +2,14 @@
 // running: the .deb or .rpm package when the package manager owns the binary, the static binary
 // otherwise.
 //
-// The file is checked against the release's SHA256SUMS before anything is installed. Both come
-// from the same release over TLS, so the check catches a truncated or altered download, not a
-// compromised release; `gh attestation verify` remains the way to prove where a file was built.
+// Nothing is installed unless the release's build provenance proves the file was built by
+// tripwatch's release workflow from the tag of that version (package provenance, verified
+// offline against the Sigstore roots embedded in the binary). The release's SHA256SUMS is not
+// read: whoever can change a release can change it too. An update order from the verifier adds
+// its own hash, which must be the attested one, but cannot replace the provenance.
 package selfupdate
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,15 +22,35 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/cpibia/tripwatch/internal/provenance"
 )
 
 // Repository is where releases are published.
 const Repository = "https://github.com/cpibia/tripwatch"
 
-const (
-	maxSumsSize  = 64 << 10
-	maxAssetSize = 128 << 20
-)
+const maxAssetSize = 128 << 20
+
+// ProvenanceAsset is the release file holding the Sigstore bundle of the build provenance.
+const ProvenanceAsset = "provenance.sigstore.json"
+
+// RejectedError is an update refused on evidence: a release whose provenance is missing or does
+// not verify, or a file or an order that is not the attested one. Retrying will not change it;
+// errors of any other type (the network, the server, the disk) may go away on their own.
+type RejectedError struct {
+	Version string
+	Err     error
+}
+
+func (e *RejectedError) Error() string {
+	return "update to " + e.Version + " refused: " + e.Err.Error()
+}
+
+func (e *RejectedError) Unwrap() error { return e.Err }
+
+func rejected(version string, format string, args ...any) error {
+	return &RejectedError{Version: version, Err: fmt.Errorf(format, args...)}
+}
 
 // Kind is how the running sensor was installed.
 type Kind string
@@ -56,6 +77,9 @@ type Updater struct {
 	// found.
 	Run func(ctx context.Context, out io.Writer, name string, args ...string) error
 	Out io.Writer
+	// Provenance verifies the release's bundle; nil is the public-good Sigstore embedded in the
+	// binary, the only one outside tests.
+	Provenance *provenance.Verifier
 }
 
 // Update installs the latest release if it is newer than the running one, and reports the
@@ -69,18 +93,11 @@ func (u Updater) Update(ctx context.Context) (string, error) {
 		_, _ = fmt.Fprintf(u.Out, "tripwatch-sensor %s is up to date (latest release %s)\n", u.Current, latest)
 		return u.Current, nil
 	}
-	return u.install(ctx, latest, func(name string) (string, error) {
-		sums, err := u.fetch(ctx, u.BaseURL+"/releases/download/v"+latest+"/SHA256SUMS", maxSumsSize)
-		if err != nil {
-			return "", fmt.Errorf("checksums of %s: %w", latest, err)
-		}
-		return lookupSum(sums, name)
-	})
+	return u.install(ctx, latest, nil)
 }
 
-// UpdateTo installs version, if newer than the running one, checking its file against the hash
-// sums gives for it instead of the release's own SHA256SUMS: the sums come with an order the
-// caller verified, so a file changed where releases are published is refused.
+// UpdateTo installs version, if newer than the running one, on an order the caller verified:
+// the hash sums gives for the file must also be the one its provenance attests.
 func (u Updater) UpdateTo(ctx context.Context, version string, sums map[string]string) (string, error) {
 	if !releaseVersion.MatchString(version) {
 		return "", fmt.Errorf("%q is not a release version", version)
@@ -89,27 +106,30 @@ func (u Updater) UpdateTo(ctx context.Context, version string, sums map[string]s
 		_, _ = fmt.Fprintf(u.Out, "tripwatch-sensor %s is not older than %s\n", u.Current, version)
 		return u.Current, nil
 	}
-	return u.install(ctx, version, func(name string) (string, error) {
-		want, ok := sums[name]
-		if !ok {
-			return "", fmt.Errorf("no hash for %s in the order", name)
-		}
-		return want, nil
-	})
+	if sums == nil {
+		sums = map[string]string{}
+	}
+	return u.install(ctx, version, sums)
 }
 
-// install downloads the release's file for this installation, checks it against the hash want
-// gives, and installs it.
-func (u Updater) install(ctx context.Context, latest string, want func(name string) (string, error)) (string, error) {
+// install verifies the release's provenance, downloads the file for this installation, checks
+// it against the attested digest, and installs it. With ordered sums, the order's hash for the
+// file must be the attested one.
+func (u Updater) install(ctx context.Context, latest string, ordered map[string]string) (string, error) {
 	kind := u.detect(ctx)
 	name, err := AssetName(kind, latest, u.Arch)
 	if err != nil {
 		return "", err
 	}
 	base := u.BaseURL + "/releases/download/v" + latest + "/"
-	sum, err := want(name)
+	sum, err := u.attested(ctx, base, latest, name)
 	if err != nil {
 		return "", err
+	}
+	if ordered != nil {
+		if want, ok := ordered[name]; !ok || !strings.EqualFold(want, sum) {
+			return "", rejected(latest, "the order's hash for %s is not the attested one", name)
+		}
 	}
 
 	dir, err := os.MkdirTemp("", "tripwatch-update-")
@@ -119,7 +139,7 @@ func (u Updater) install(ctx context.Context, latest string, want func(name stri
 	defer func() { _ = os.RemoveAll(dir) }()
 	_, _ = fmt.Fprintf(u.Out, "Downloading %s\n", name)
 	path := filepath.Join(dir, name)
-	if err := u.download(ctx, base+name, path, sum); err != nil {
+	if err := u.download(ctx, base+name, path, sum, latest); err != nil {
 		return "", err
 	}
 
@@ -199,14 +219,48 @@ func AssetName(kind Kind, version, arch string) (string, error) {
 	}
 }
 
-func (u Updater) fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
-	resp, err := u.get(ctx, url)
+// attested fetches and verifies the release's provenance bundle and returns the digest it
+// attests for name. A bundle that is missing (404) or does not verify is a refusal; a failure to
+// reach the server is not.
+func (u Updater) attested(ctx context.Context, base, version, name string) (string, error) {
+	v := u.Provenance
+	if v == nil {
+		var err error
+		if v, err = provenance.Default(); err != nil {
+			return "", err
+		}
+	}
+	resp, err := u.get(ctx, base+ProvenanceAsset)
+	var status *statusError
+	if errors.As(err, &status) && status.code == http.StatusNotFound {
+		return "", rejected(version, "the release has no %s", ProvenanceAsset)
+	}
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("provenance of %s: %w", version, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(io.LimitReader(resp.Body, limit))
+	bundle, err := io.ReadAll(io.LimitReader(resp.Body, provenance.MaxBundleSize+1))
+	if err != nil {
+		return "", fmt.Errorf("provenance of %s: %w", version, err)
+	}
+	subjects, err := v.Verify(bundle, version)
+	if err != nil {
+		return "", &RejectedError{Version: version, Err: err}
+	}
+	d, ok := subjects[name]
+	if !ok {
+		return "", rejected(version, "the provenance does not attest %s", name)
+	}
+	return hex.EncodeToString(d[:]), nil
 }
+
+type statusError struct {
+	url  string
+	code int
+	text string
+}
+
+func (e *statusError) Error() string { return e.url + ": " + e.text }
 
 func (u Updater) get(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -219,13 +273,13 @@ func (u Updater) get(ctx context.Context, url string) (*http.Response, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("%s: %s", url, resp.Status)
+		return nil, &statusError{url: url, code: resp.StatusCode, text: resp.Status}
 	}
 	return resp, nil
 }
 
-// download writes url to path and fails unless its SHA-256 is want.
-func (u Updater) download(ctx context.Context, url, path, want string) error {
+// download writes url to path and refuses it unless its SHA-256 is the attested want.
+func (u Updater) download(ctx context.Context, url, path, want, version string) error {
 	resp, err := u.get(ctx, url)
 	if err != nil {
 		return err
@@ -244,23 +298,9 @@ func (u Updater) download(ctx context.Context, url, path, want string) error {
 		return err
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != want {
-		return fmt.Errorf("%s: SHA-256 %s does not match SHA256SUMS (%s)", filepath.Base(path), got, want)
+		return rejected(version, "%s: SHA-256 %s is not the attested %s", filepath.Base(path), got, want)
 	}
 	return nil
-}
-
-func lookupSum(sums []byte, name string) (string, error) {
-	sc := bufio.NewScanner(strings.NewReader(string(sums)))
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == name {
-			if b, err := hex.DecodeString(fields[0]); err != nil || len(b) != sha256.Size {
-				return "", fmt.Errorf("SHA256SUMS: malformed entry for %s", name)
-			}
-			return strings.ToLower(fields[0]), nil
-		}
-	}
-	return "", fmt.Errorf("SHA256SUMS lists no %s", name)
 }
 
 // replaceExecutable copies src next to dst and renames it over dst, so the binary is never seen

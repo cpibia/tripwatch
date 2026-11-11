@@ -86,6 +86,8 @@ checksum:
       name_template: verifier.env.example
 
 release:
+  # Published by the release workflow once the provenance bundle is attached and verified.
+  draft: true
   extra_files:
     - glob: deploy/verifier/docker-compose.yml
     - glob: deploy/verifier/.env.example

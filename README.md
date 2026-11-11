@@ -178,10 +178,13 @@ service starts only after enrollment. On other distributions use the static bina
 release (`tripwatch-sensor_linux_amd64` or `tripwatch-sensor_linux_arm64`) with the unit in [deploy/systemd](deploy/systemd).
 
 Every file of a release is listed in `SHA256SUMS` and has a build provenance attestation, which
-proves it was built by this repository's release workflow from the tagged source:
+proves it was built by this repository's release workflow from the tagged source. The release
+also carries the attestation's Sigstore bundle as `provenance.sigstore.json`, which an installed
+sensor checks offline, as its updates do:
 
 ```sh
 gh attestation verify tripwatch-sensor_amd64.deb -R cpibia/tripwatch
+tripwatch-sensor -verify-provenance provenance.sigstore.json -release 0.1.52 tripwatch-sensor_amd64.deb
 ```
 
 ### 3. Enrollment
@@ -310,10 +313,23 @@ sudo tripwatch-sensor -update
 
 It finds the latest release, downloads the file of the same kind as the installed one (the
 `.deb` when dpkg owns the binary, the `.rpm` when rpm does, the static binary otherwise) for the
-server's architecture, checks it against the release's `SHA256SUMS` and installs it with dpkg,
-rpm or by replacing the binary. A running sensor is restarted and resumes the same chain; if the
-latest release is not newer, nothing changes. The checksum comes from the same release, so it
-catches a damaged download; to prove where a file was built, use `gh attestation verify`.
+server's architecture and installs it with dpkg, rpm or by replacing the binary. A running sensor
+is restarted and resumes the same chain; if the latest release is not newer, nothing changes.
+
+From 0.1.52 nothing is installed unless the release's build provenance proves the file was built
+by this repository's release workflow, run by the push of that version's tag on a runner GitHub
+hosts. The sensor downloads `provenance.sigstore.json` from the release and verifies it offline
+against the Sigstore roots built into its binary: the Fulcio certificate and the workflow
+identity it names (repository and owner by name and by numeric id, workflow, tag, trigger,
+runner), the signature of the in-toto statement, the Rekor log entry with its signed timestamp and
+its inclusion proof, and that the entry is this bundle's. The file is then downloaded and must
+have the digest the statement attests; the release's `SHA256SUMS` is not used, since whoever can
+change a release can change it too. A bundle that is missing or fails any check is a refusal:
+nothing is installed, and the running sensor reports it as a signed event that raises a high
+"Sensor update refused" alert. A release that cannot be reached is not a refusal, only tried again
+later. There is no switch to turn the check off. Sensors before 0.1.52 still check the release's
+`SHA256SUMS` only, including for the update that brings them to 0.1.52: check that release with
+`gh attestation verify` before updating to it.
 
 From 0.1.17 every sensor can also be updated from the verifier: when sensors are older than it,
 the servers page offers to update them all to the verifier's own release. The verifier reads the
@@ -321,7 +337,9 @@ release's `SHA256SUMS` once, signs the hashes of the sensor's files with its CA 
 sensor holds since enrollment, and hands the order to each sensor in its answers. A sensor checks
 the signature and the version (never older than its own), then installs in a transient systemd
 unit, outside its own service, the file only if it matches the signed hash: a release changed
-after the order installs nothing. Revoking a server likewise tells its sensor, by an order naming
+after the order installs nothing. From 0.1.52 the order alone is not enough: the sensor verifies
+the release's provenance as above, and the order's hash must be the attested one, so an order
+signed with the verifier's CA key can only install files the release workflow built. Revoking a server likewise tells its sensor, by an order naming
 that host and signed the same way, to remove itself: the package is purged (or the service, its
 unit and the binary removed), and `/etc/tripwatch` and `/var/lib/tripwatch` are deleted. Once
 removed, and before its keys are deleted, the sensor reports the removal on its own, signed with
@@ -329,7 +347,7 @@ its key and over its certificate (the revoked host's envelope chain stays stoppe
 page shows "sensor removed" with the time, or "removal not confirmed" while no report came.
 Whoever controls the verifier's console can therefore update every sensor to a published release,
 or remove a sensor by revoking its server; neither reaches a host whose sensor runs without
-systemd, nor installs anything but the files of a release as they were when the order was given.
+systemd, nor installs anything but files the release workflow built and attested.
 
 Sensors older than 0.1.4 have no `-update`: install the package of the new release the same way
 as the first time. Debian and Ubuntu:
@@ -830,9 +848,17 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   `suid` done by root does not change how its files are marked.
 - Outside Linux the sensor is for development only: symlink confinement relies on Linux
   interfaces.
-- A sensor update, ordered from the console or run with `-update`, trusts the release's
-  `SHA256SUMS`: the build provenance attestation is not verified, so whoever can change the
-  files of a release can have every updating sensor install them.
+- Provenance proves where a file was built, not that its source is safe: whoever controls the
+  GitHub account or can push a tag that runs the release workflow can publish a release every
+  sensor accepts.
+- The removal order is signed by the verifier's CA alone: whoever holds that key can make any
+  enrolled sensor remove itself; the silence then raises an alert only on an honest verifier.
+- A sensor whose embedded Sigstore trust root predates a key rotation cannot verify later
+  releases and must be upgraded by hand.
+- The first update to a sensor that verifies provenance (0.1.52) is itself trusted on the
+  release's checksums, as every update before it was.
+- The signed certificate timestamps of the release's Fulcio certificate are not checked: forging
+  a certificate the log accepted would still need Fulcio's key and Rekor's key together.
 - With one heartbeat a minute, a sensor suspended for less than 100 seconds cannot be told apart
   from network delay and raises no alert; longer pauses do, even if the heartbeats resume.
 - Whoever keeps producing alerts without being root, the web server user with hidden files or an

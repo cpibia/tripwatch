@@ -6,7 +6,27 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+- **Upgrade.** Update the verifier first, then the sensors. Check this release by hand before
+  ordering it from the console: the sensors before it still trust the release's `SHA256SUMS`, so
+  run `gh attestation verify tripwatch-sensor_amd64.deb -R cpibia/tripwatch` (and the same for
+  the other files you install) on the files of this release first. From this release on, sensors
+  verify the provenance of every update themselves.
+
+### Sensor
+
+- Updates, with `-update` or ordered from the console, install a file only when the release's
+  build provenance proves it was built by this repository's release workflow from the tag of that
+  version: the release's `provenance.sigstore.json` is verified offline against the Sigstore roots
+  built into the sensor, and the file must have the attested digest. An order signed by the
+  verifier no longer suffices on its own: its hash must be the attested one. `SHA256SUMS` is no
+  longer read. A refused update is reported as a signed `update_refused` event; a release that
+  cannot be reached is tried again without one.
+- `-verify-provenance BUNDLE -release VERSION FILE...` checks release files against a provenance
+  bundle the same way, offline.
+
 ### Verifier
+
+- A sensor that refuses an update raises a high "Sensor update refused" alert, one per release.
 
 - A group of alerts whose titles share only an article (`A script appeared...` and `A server
   configuration file appeared...`) is named after its first alert instead of a bare "A".

@@ -650,6 +650,10 @@ func (s *Server) event(ctx context.Context, host string, e protocol.Envelope, no
 		s.stopping(ctx, host, e, now)
 		return
 	}
+	if ev.Event == "update_refused" {
+		s.updateRefused(ctx, host, e, now)
+		return
+	}
 	if ev.Event != "sensor_started" {
 		return
 	}
@@ -752,6 +756,31 @@ func (s *Server) stopping(ctx context.Context, host string, e protocol.Envelope,
 	s.raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:removed:" + strconv.FormatUint(e.Sequence, 10), Severity: "high", Kind: "sensor-event",
 		Title:  "Sensor removed",
 		Detail: fmt.Sprintf("The sensor package (version %s) was removed from the server and the sensor stopped: nothing on it is watched any more. If no administrator uninstalled it, someone with root did, and the server should be checked from outside.", clipVersion(ev.Version)),
+	}, now)
+}
+
+// maxRefusalReason bounds the sensor's reason for a refused update. Part of it can come from the
+// refused bundle, so it is shown as reported text, never acted on.
+const maxRefusalReason = 512
+
+// updateRefused raises the refusal of an update whose build provenance did not verify: a release
+// that may have been changed where it is published, or an order for files nobody built there.
+// One alert per release, however many servers refuse it.
+func (s *Server) updateRefused(ctx context.Context, host string, e protocol.Envelope, now time.Time) {
+	var ev struct {
+		Version string `json:"version"`
+		Reason  string `json:"reason"`
+	}
+	_ = json.Unmarshal(e.Payload, &ev)
+	version := clipVersion(ev.Version)
+	reason := ev.Reason
+	if len(reason) > maxRefusalReason {
+		reason = reason[:maxRefusalReason]
+	}
+	s.raise(ctx, store.Alert{HostID: host, Fingerprint: "sensor:update-refused:" + version, Severity: "high", Kind: "sensor-event",
+		Title: "Sensor update refused",
+		Detail: fmt.Sprintf("The sensor refused to install release %s: its build provenance does not prove that tripwatch's release workflow built it. Before ordering it again, check the release with gh attestation verify; a release changed after it was published is a compromise of the release, not of this server. The sensor reported: %q.",
+			version, strings.ToValidUTF8(reason, "")),
 	}, now)
 }
 

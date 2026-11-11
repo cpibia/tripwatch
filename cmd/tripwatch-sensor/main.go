@@ -7,6 +7,7 @@
 //
 //	echo tw1.... | tripwatch-sensor enroll -token-file -   (writes /etc/tripwatch/bundle.json)
 //	tripwatch-sensor -update                                (installs the latest release)
+//	tripwatch-sensor -verify-provenance provenance.sigstore.json -release 1.2.3 FILE...
 package main
 
 import (
@@ -40,6 +41,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/collector/web"
 	"github.com/cpibia/tripwatch/internal/discovery"
 	"github.com/cpibia/tripwatch/internal/protocol"
+	"github.com/cpibia/tripwatch/internal/provenance"
 	"github.com/cpibia/tripwatch/internal/selfupdate"
 	"github.com/cpibia/tripwatch/internal/transport"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
@@ -80,11 +82,24 @@ func main() {
 	uninstallFlag := flag.Bool("apply-uninstall", false, "remove the sensor and its data on the order of the verifier that revoked this host, as the sensor starts it outside its service (needs -bundle)")
 	applyUpdate := flag.Bool("apply-update", false, "install the update the verifier ordered, as the sensor starts it on its own outside its service (needs -bundle)")
 	decoysFile := flag.String("decoys-file", "/etc/tripwatch/decoys", "file listing the decoy files, one absolute path a line, owned by root and mode 0600: files nothing legitimate reads, such as a fake backup of a configuration, which the sensor never opens and whose disappearance or change is an alert")
+	verifyBundle := flag.String("verify-provenance", "", "check the files named after the flags against this provenance bundle of a release, as an update does, and exit (needs -release)")
+	releaseVersion := flag.String("release", "", "the release version -verify-provenance checks, such as 1.2.3")
 	watchOnly := flag.Bool("watch-only", false, "print the real-time event batches as JSON lines until interrupted, without a verifier, to see what the watchers report")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println(buildinfo.String("tripwatch-sensor"))
+		return
+	}
+	if *verifyBundle != "" {
+		v, err := provenance.Default()
+		if err == nil {
+			err = verifyRelease(os.Stdout, v, *verifyBundle, *releaseVersion, flag.Args())
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "tripwatch-sensor -verify-provenance:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if *uninstallFlag {
@@ -218,6 +233,7 @@ func selfUpdate(stateDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	_, err = u.Update(ctx)
+	recordRefusal(stateDir, err)
 	return err
 }
 
@@ -389,6 +405,7 @@ func (s sensor) daemon(ctx context.Context, log *slog.Logger, bundlePath, stateD
 		tick := time.NewTicker(heartbeat)
 		defer tick.Stop()
 		for {
+			reportRefusedUpdate(ctx, log, client, stateDir)
 			if err := client.Send(ctx, protocol.KindHeartbeat, nil, time.Now()); err != nil && ctx.Err() == nil {
 				log.Warn("heartbeat not delivered", "err", err)
 			}
