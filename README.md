@@ -853,8 +853,10 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   sensor accepts.
 - The removal order is signed by the verifier's CA alone: whoever holds that key can make any
   enrolled sensor remove itself; the silence then raises an alert only on an honest verifier.
-- A sensor whose embedded Sigstore trust root predates a key rotation cannot verify later
-  releases and must be upgraded by hand.
+- A sensor verifies only what it was built to know: one whose embedded Sigstore trust root
+  predates a key rotation, or that does not know a newer bundle format (Rekor v2 log entries,
+  timestamps from a timestamp authority), cannot verify later releases and must be upgraded by
+  hand.
 - The first update to a sensor that verifies provenance (0.1.52) is itself trusted on the
   release's checksums, as every update before it was.
 - The signed certificate timestamps of the release's Fulcio certificate are not checked: forging

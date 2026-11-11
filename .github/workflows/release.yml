@@ -21,6 +21,10 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: make cover
+      # Sensors built with a stale trust root could fail to verify later releases.
+      - name: The embedded trust root is Sigstore's current one (make trusted-root refreshes it)
+        working-directory: internal/provenance/reference
+        run: go run ./cmd/trustedroot | cmp - ../trusted_root.json
 
   packages:
     runs-on: ubuntu-latest
