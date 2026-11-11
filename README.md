@@ -1,5 +1,7 @@
 # tripwatch
 
+[![ci](https://github.com/cpibia/tripwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/cpibia/tripwatch/actions/workflows/ci.yml)
+
 tripwatch detects unauthorized changes on servers, whatever runs on them. It watches what an
 attacker changes to get in and to stay: new privileged accounts, existing accounts promoted (a
 privileged group by GID or by sudoers rule, a password or shell enabled, a changed UID), SSH keys,
@@ -11,8 +13,15 @@ It is stack-agnostic. The core knows nothing about PHP, Python, Java or Rust: st
 checks live in profiles that switch on when automatic discovery finds the matching technology. It
 runs on plain hosts, Docker hosts, Kubernetes nodes and AWS Fargate.
 
+It is for teams that run their own Linux servers and want an intrusion reported by a machine the
+intruder does not control. The verdict is never taken on the monitored server: a sensor there
+only collects, and a verifier elsewhere compares what it receives with what the package manager,
+the build and the container image say should be there. A reproducible benchmark runs the same
+attack scenarios against AIDE, rkhunter and debsums: see [Detection compared](#detection-compared).
+
 ## Contents
 
+- [Try it in a minute](#try-it-in-a-minute)
 - [How it works](#how-it-works)
 - [Installation](#installation)
   - [1. Verifier](#1-verifier)
@@ -39,6 +48,24 @@ runs on plain hosts, Docker hosts, Kubernetes nodes and AWS Fargate.
 - [Roadmap](#roadmap)
 - [Status](#status)
 - [License](#license)
+
+## Try it in a minute
+
+The sensor alone shows what tripwatch collects, with no verifier and nothing left running. On a
+Debian or Ubuntu machine:
+
+```sh
+cd /tmp
+curl -fsSLO https://github.com/cpibia/tripwatch/releases/latest/download/tripwatch-sensor_$(dpkg --print-architecture).deb
+sudo apt install ./tripwatch-sensor_$(dpkg --print-architecture).deb
+sudo tripwatch-sensor > snapshot.json
+```
+
+`snapshot.json` is the state a verifier would judge: accounts and their privileges, SSH keys,
+persistence, setuid binaries, files that no longer match their package, processes and
+connections. The package's service starts only after enrollment, so this changes nothing on the
+machine beyond installing the binary. For alerts, baselines and the web interface, continue with
+[Installation](#installation).
 
 ## How it works
 
