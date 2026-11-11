@@ -7,7 +7,6 @@
 <p align="center">
   <a href="https://github.com/cpibia/tripwatch/actions/workflows/ci.yml"><img src="https://github.com/cpibia/tripwatch/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="https://github.com/cpibia/tripwatch/releases/latest"><img src="https://img.shields.io/github/v/release/cpibia/tripwatch" alt="Latest release"></a>
-  <a href="https://scorecard.dev/viewer/?uri=github.com/cpibia/tripwatch"><img src="https://api.scorecard.dev/projects/github.com/cpibia/tripwatch/badge" alt="OpenSSF Scorecard"></a>
   <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/cpibia/tripwatch" alt="Go version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/cpibia/tripwatch" alt="License"></a>
 </p>
