@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- A group of alerts whose titles share only an article (`A script appeared...` and `A server
+  configuration file appeared...`) is named after its first alert instead of a bare "A".
+
 ## [0.1.51] - 2026-11-11
 
 - **Upgrade.** Sensors and verifier are rebuilt with Go 1.27.4, which fixes the `net/http`

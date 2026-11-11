@@ -796,6 +796,8 @@ func TestGroupLabel(t *testing.T) {
 		{titles("Code injected into php-fpm8.4", "Codice iniettato in php-fpm8.4"), "Code injected into php-fpm8.4"},
 		{titles("A program started from /tmp", "A program started from /home/ubuntu"), "A program started from"},
 		{titles("Sensor started", "Sensor updated"), "Sensor"},
+		{titles("A script appeared in an upload directory", "A server configuration file appeared in an upload directory"), "A script appeared in an upload directory"},
+		{titles("The file /a changed", "The link /b changed"), "The file /a changed"},
 	} {
 		if got := commonLabel(tc.alerts); got != tc.want {
 			t.Errorf("commonLabel = %q, want %q", got, tc.want)

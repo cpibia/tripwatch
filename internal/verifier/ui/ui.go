@@ -1257,7 +1257,8 @@ func commonLabel(alerts []store.Alert) string {
 	}
 	// Titles read "rule: detail"; without that shape, cut at the last word or path element. A
 	// path cut down to the root names nothing, and a prefix with no boundary in it is part of a
-	// word ("Cod" of "Code" and "Codice"): the lead's title says more than either.
+	// word ("Cod" of "Code" and "Codice"): the lead's title says more than either. So does a
+	// lone article ("A" of "A script appeared" and "A server configuration file appeared").
 	if i := strings.LastIndex(label, ": "); i > 0 {
 		label = label[:i]
 	} else if i := strings.LastIndexAny(label, " /"); i > 0 {
@@ -1266,7 +1267,7 @@ func commonLabel(alerts []store.Alert) string {
 	} else {
 		return alerts[0].Title
 	}
-	if strings.TrimSpace(label) == "" {
+	if len(strings.TrimSpace(label)) < 4 {
 		return alerts[0].Title
 	}
 	return label
