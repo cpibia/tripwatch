@@ -1,6 +1,16 @@
-# tripwatch
+<p align="center"><img src="internal/verifier/ui/static/logo.png" width="96" height="96" alt=""></p>
 
-[![ci](https://github.com/cpibia/tripwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/cpibia/tripwatch/actions/workflows/ci.yml)
+<h1 align="center">tripwatch</h1>
+
+<p align="center">Detects unauthorized changes on your servers.</p>
+
+<p align="center">
+  <a href="https://github.com/cpibia/tripwatch/actions/workflows/ci.yml"><img src="https://github.com/cpibia/tripwatch/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+  <a href="https://github.com/cpibia/tripwatch/releases/latest"><img src="https://img.shields.io/github/v/release/cpibia/tripwatch" alt="Latest release"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/cpibia/tripwatch"><img src="https://api.scorecard.dev/projects/github.com/cpibia/tripwatch/badge" alt="OpenSSF Scorecard"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/cpibia/tripwatch" alt="Go version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/cpibia/tripwatch" alt="License"></a>
+</p>
 
 tripwatch detects unauthorized changes on servers, whatever runs on them. It watches what an
 attacker changes to get in and to stay: new privileged accounts, existing accounts promoted (a
@@ -18,6 +28,10 @@ intruder does not control. The verdict is never taken on the monitored server: a
 only collects, and a verifier elsewhere compares what it receives with what the package manager,
 the build and the container image say should be there. A reproducible benchmark runs the same
 attack scenarios against AIDE, rkhunter and debsums: see [Detection compared](#detection-compared).
+
+![The verifier's overview: open alerts by severity, alerts raised over time, the servers ordered by their worst alert](docs/images/overview.png)
+
+<p align="center"><a href="#detection-compared"><img src="bench/detection.svg" alt="Detection benchmark: attack scenarios detected by tripwatch, AIDE, rkhunter and debsums" width="640"></a></p>
 
 ## Contents
 
@@ -845,6 +859,8 @@ stack. It exposes two ports:
   reverse proxy (nginx, Caddy, Traefik) or reach it with an SSH tunnel.
 
 To install it, see [Installation](#1-verifier).
+
+![A server's page: its open alerts, the most severe on top, and the web applications found on it](docs/images/host.png)
 
 On first start the verifier creates the CA, the server certificate for the names in
 `TRIPWATCH_HOSTNAMES` and the first user from `TRIPWATCH_ADMIN_EMAIL` and
