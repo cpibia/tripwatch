@@ -6,6 +6,8 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.52] - 2026-11-11
+
 - **Upgrade.** Update the verifier first, then the sensors. Check this release by hand before
   ordering it from the console: the sensors before it still trust the release's `SHA256SUMS`, so
   run `gh attestation verify tripwatch-sensor_amd64.deb -R cpibia/tripwatch` (and the same for
