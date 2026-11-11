@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.51] - 2026-11-11
+
+- **Upgrade.** Sensors and verifier are rebuilt with Go 1.27.4, which fixes the `net/http`
+  vulnerability GO-2026-6859 present in the 0.1.50 binaries; the behaviour is the same.
+
 ## [0.1.50] - 2026-11-08
 
 - **Upgrade.** Only the verifier changes; the sensors stay as they are.
