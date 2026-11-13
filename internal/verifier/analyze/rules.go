@@ -2433,9 +2433,6 @@ func sensorOwnUnit(u system.Unit) bool {
 	return len(u.Exec) > 0
 }
 
-// snapData reports a root-owned file in a snap's data directory: snapd creates those for root
-// only, and cloud agents shipped as snaps keep the plugins they download there. A new or changed
-// one is still reported as a new privileged file.
 // snapCarry tells the privileged files a snap refresh brought: under a new revision's image, at a
 // path an earlier revision of the same snap had, with the same mode and owner. Its content is
 // another build of that program; a path or a mode no earlier revision had is new.
@@ -2517,6 +2514,9 @@ func snapMountUnit(unit string) bool {
 	return system.SnapImagePoint("/snap/" + strings.ReplaceAll(base[:i], `\x2d`, "-") + "/" + base[i+1:])
 }
 
+// snapData reports a root-owned file in a snap's data directory: snapd creates those for root
+// only, and cloud agents shipped as snaps keep the plugins they download there. A new or changed
+// one is still reported as a new privileged file.
 func snapData(f fileT) bool {
 	return strings.HasPrefix(f.Path, "/var/snap/") && f.UID != nil && *f.UID == 0
 }
