@@ -126,6 +126,18 @@ accept the new bundle: a format change at GitHub stops the release instead of ev
   session, an origin check on forms, sign-in attempts queued per address with a growing delay
   (never a lockout), and a Content Security Policy with no inline scripts or styles: text
   collected on the servers may be written by an attacker and is always shown as data.
+- **Second factor**: TOTP and WebAuthn (`internal/verifier/webauthn`, stdlib only). Registrations
+  and assertions are parsed by a bounded CBOR decoder (size, depth and item limits, fuzzed);
+  attestation is not trusted (`none` is asked, a statement of another format is ignored), only
+  ES256 and Ed25519 keys are accepted, user presence is required and user verification recorded.
+  The relying party is the host of `TRIPWATCH_PUBLIC_UI_URL` and the client data's origin must
+  equal it. Challenges are 32 random bytes stored per session and purpose, single use, valid for
+  five minutes. The signature counter is updated in the same statement that checks it went
+  forward, so two racing answers cannot both pass; a key that keeps no counter sends zero.
+  Refused keys and wrong codes share one per-account limit. Changing factors needs a session
+  confirmed in the last five minutes, so an open session alone cannot move them to an attacker's
+  key. The only script, `static/webauthn.js`, is loaded on the two pages that ask for a key; the
+  code forms work without it.
 
 ## Sources of truth
 
@@ -636,6 +648,7 @@ past its fetch budget).
 | `internal/verifier/analyze` | bounded snapshot decoding, rules on snapshots and on real-time events, sensor silence |
 | `internal/verifier/notify` | alert emails |
 | `internal/verifier/ui` | web interface |
+| `internal/verifier/webauthn` | WebAuthn registrations and assertions, bounded CBOR and COSE keys |
 | `internal/buildinfo` | version stamped at build time |
 
 `deploy/verifier` holds the verifier's Dockerfile and `docker-compose.yml`, `deploy/systemd` the

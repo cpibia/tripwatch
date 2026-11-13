@@ -20,11 +20,20 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ### Verifier
 
+- Security keys and passkeys (FIDO2/WebAuthn) as a second factor, alone or next to the
+  authenticator app: each user registers up to ten named keys from their account page and signs
+  in with any of them. The recovery codes are shared by the app and the keys, given with the
+  first factor and cleared with the last. Refused keys count toward the same limit as wrong
+  codes; a key whose counter goes back is refused and audited as a possible clone. Keys need
+  `TRIPWATCH_PUBLIC_UI_URL` set to the console's HTTPS address.
+- Adding or removing a second factor takes a session that confirmed one, with a key or a code,
+  in the last five minutes. Resetting a user's second factor, from the console or with
+  `user -reset-2fa`, removes their keys too.
 - A snap refresh is one low "Snap refreshed" alert for the new revision's image instead of a
   high alert for each set-user-ID program it carries: programs at the paths, with the mode and
-  owner, an earlier revision of the snap had (with this release's sensor). A new path or mode, or a program changed in place,
-  stays high. The mount unit of a snap revision and its activation links are low, in snapshots
-  and in real time.
+  owner, an earlier revision of the snap had (with this release's sensor). A new path or mode,
+  or a program changed in place, stays high. The mount unit of a snap revision and its
+  activation links are low, in snapshots and in real time.
 - A watched root that a package removed and recreated within seconds while the package manager
   ran is low instead of medium; one still gone stays medium, and the privilege directories keep
   their severity.
@@ -35,7 +44,6 @@ verifier, so it is clear which of the two needs updating. Versions follow
   held another one in the previous snapshot and no longer hold it: a container runtime's
   streaming server draws a port at every start. A second port beside the first, another program,
   or a port the network reaches still raises "New listening port".
-
 - "Server was off" is one alert per server: each new shutdown and boot adds an occurrence and
   replaces the detail with the latest off period, instead of a new low alert every day for a
   server switched off at night.

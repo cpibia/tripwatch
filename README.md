@@ -948,8 +948,8 @@ administrator, from the command line:
 docker compose exec verifier /tripwatch-verifier user -email colleague@example.net
 ```
 
-A user who lost both their phone and their recovery codes, when no administrator can reset it in
-the console, has their second factor turned off with:
+A user who lost their phone or keys and their recovery codes, when no administrator can reset it
+in the console, has their second factor turned off (the app and every key) with:
 
 ```sh
 docker compose exec verifier /tripwatch-verifier user -email colleague@example.net -reset-2fa
@@ -1064,13 +1064,20 @@ is needed too, which closes them all.
   sensors' requests since the start by kind and answer, and the messages sent to or failed on
   each kind of notification channel. A token limited to some servers
   counts only theirs.
-- **Account.** Each user can set up a second factor (an authenticator app, with ten single-use
-  recovery codes): signing in then asks a code after the password, five wrong codes end the
-  attempt and refuse the account's codes for 15 minutes (each wrong one after that again),
-  whatever the session or the address, and a code works once. A browser becomes a known one
-  only once its code is given, and replacing the second factor takes turning it off with a
-  current code; setting it up or having it reset signs the account out everywhere else. The page lists the sessions of the account and signs out any
-  of them; administrators can reset the second factor of someone who lost their phone.
+- **Account.** Each user can set up a second factor: an authenticator app, security keys and
+  passkeys (FIDO2/WebAuthn, up to ten named ones), or both. The first factor brings ten
+  single-use recovery codes, shared by all of them and cleared with the last one. Signing in
+  then asks, after the password, a code from the app, an answer from a registered key or a
+  recovery code; five wrong codes or refused keys end the attempt and refuse the account's
+  second factor for 15 minutes (each wrong one after that again), whatever the session or the
+  address, and a code works once. A browser becomes a known one only once the second factor is
+  given. Adding or removing a factor takes a session that confirmed one in the last five
+  minutes, with a key or a code; turning one on, or having it reset, signs the account out
+  everywhere else. A key whose signature counter goes back is refused and audited as a possible
+  clone. Keys need `TRIPWATCH_PUBLIC_UI_URL` set to the console's HTTPS address: its host is the
+  WebAuthn relying party and its origin must match exactly. The page lists the sessions of the
+  account and signs out any of them; administrators can reset the second factor of someone who
+  lost their phone or key, which removes the app and every key.
 - **Enroll server.** Generates the one-time token with the command to run on the server, or the
   bundle with the keys to download once; the verifier keeps neither.
 
