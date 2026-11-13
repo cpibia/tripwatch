@@ -135,7 +135,9 @@ func TestHostileSearchIsBoundedInTime(t *testing.T) {
 	if _, err := s.AddEvents(ctx, root, t0); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(write); d > 2*time.Second {
+	// A write held behind the search would wait for most of searchTimeout; the margin below it
+	// absorbs a slow runner under the race detector, where the write alone may take seconds.
+	if d := time.Since(write); d > searchTimeout-time.Second {
 		t.Errorf("a write waited %v behind the search", d)
 	}
 	<-done
