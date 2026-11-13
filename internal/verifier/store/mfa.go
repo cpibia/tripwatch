@@ -91,8 +91,10 @@ func (s *Store) PendingTOTP(ctx context.Context, email string) (string, error) {
 	return pending, nil
 }
 
-// ConfirmTOTP turns the second factor on once a code from the new secret checks out, and returns
-// the single-use recovery codes, shown once: only their hashes are stored.
+// ConfirmTOTP turns the authenticator app on once a code from the new secret checks out. For a
+// user without a security key it is the first second factor, and it returns the single-use
+// recovery codes, shown once: only their hashes are stored. With a key already there the codes
+// given then stay, and none are returned.
 func (s *Store) ConfirmTOTP(ctx context.Context, email, code string, now time.Time) ([]string, error) {
 	email = normalEmail(email)
 	var pending string
@@ -103,18 +105,45 @@ func (s *Store) ConfirmTOTP(ctx context.Context, email, code string, now time.Ti
 	if pending == "" || step < 0 {
 		return nil, ErrBadCode
 	}
-	codes := make([]string, recoveryCodes)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	first, err := noSecondFactor(ctx, tx, email)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_secret = totp_pending, totp_pending = '', totp_last = ? WHERE email = ?`, step, email); err != nil {
 		return nil, err
 	}
+	var codes []string
+	if first {
+		if codes, err = issueRecoveryCodes(ctx, tx, email); err != nil {
+			return nil, err
+		}
+	}
+	return codes, tx.Commit()
+}
+
+// noSecondFactor reports, inside a transaction, whether a user has neither an authenticator app
+// nor a security key.
+func noSecondFactor(ctx context.Context, tx *sql.Tx, email string) (bool, error) {
+	var on bool
+	err := tx.QueryRowContext(ctx, `SELECT totp_secret != '' OR EXISTS (SELECT 1 FROM webauthn_credentials WHERE email = ?) FROM users WHERE email = ?`, email, email).Scan(&on)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return !on, err
+}
+
+// issueRecoveryCodes replaces a user's recovery codes when their first second factor is turned
+// on: the codes stand in for any of the factors.
+func issueRecoveryCodes(ctx context.Context, tx *sql.Tx, email string) ([]string, error) {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE email = ?`, email); err != nil {
 		return nil, err
 	}
+	codes := make([]string, recoveryCodes)
 	for i := range codes {
 		raw := make([]byte, 6)
 		if _, err := rand.Read(raw); err != nil {
@@ -127,10 +156,10 @@ func (s *Store) ConfirmTOTP(ctx context.Context, email, code string, now time.Ti
 			return nil, err
 		}
 	}
-	return codes, tx.Commit()
+	return codes, nil
 }
 
-// TOTPEnabled reports whether a user signs in with a second factor.
+// TOTPEnabled reports whether a user signs in with an authenticator app.
 func (s *Store) TOTPEnabled(ctx context.Context, email string) (bool, error) {
 	var secret string
 	err := s.db.QueryRowContext(ctx, `SELECT totp_secret FROM users WHERE email = ?`, normalEmail(email)).Scan(&secret)
@@ -147,14 +176,76 @@ func (s *Store) RecoveryCodesLeft(ctx context.Context, email string) (int, error
 	return n, err
 }
 
-// DisableTOTP turns a user's second factor off, with their recovery codes and any lock.
+// SecondFactorEnabled reports whether a user signs in with a second factor: an authenticator
+// app, a security key, or both.
+func (s *Store) SecondFactorEnabled(ctx context.Context, email string) (bool, error) {
+	var on bool
+	email = normalEmail(email)
+	err := s.db.QueryRowContext(ctx, `SELECT totp_secret != '' OR EXISTS (SELECT 1 FROM webauthn_credentials WHERE email = ?) FROM users WHERE email = ?`, email, email).Scan(&on)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return on, err
+}
+
+// DisableTOTP turns a user's authenticator app off. When no security key is left either, the
+// recovery codes and any lock go with it.
 func (s *Store) DisableTOTP(ctx context.Context, email string) error {
 	email = normalEmail(email)
-	if err := s.one(ctx, `UPDATE users SET totp_secret = '', totp_pending = '', totp_last = 0, mfa_failures = 0, mfa_locked_until = 0 WHERE email = ?`, email); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM recovery_codes WHERE email = ?`, email)
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE users SET totp_secret = '', totp_pending = '', totp_last = 0 WHERE email = ?`, email)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if err := dropCodesIfNoFactor(ctx, tx, email); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// dropCodesIfNoFactor clears the recovery codes and the lock of a user whose last second factor
+// just went.
+func dropCodesIfNoFactor(ctx context.Context, tx *sql.Tx, email string) error {
+	none, err := noSecondFactor(ctx, tx, email)
+	if err != nil || !none {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE email = ?`, email); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE users SET mfa_failures = 0, mfa_locked_until = 0 WHERE email = ?`, email)
 	return err
+}
+
+// ResetSecondFactor turns every second factor of a user off, for an administrator helping
+// someone who lost their phone, their keys and their recovery codes.
+func (s *Store) ResetSecondFactor(ctx context.Context, email string) error {
+	email = normalEmail(email)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE users SET totp_secret = '', totp_pending = '', totp_last = 0, mfa_failures = 0, mfa_locked_until = 0 WHERE email = ?`, email)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	for _, q := range []string{`DELETE FROM webauthn_credentials WHERE email = ?`, `DELETE FROM recovery_codes WHERE email = ?`} {
+		if _, err := tx.ExecContext(ctx, q, email); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // CheckSecondFactor accepts a code from the user's app, once (a code seen before, or one older
@@ -165,18 +256,7 @@ func (s *Store) DisableTOTP(ctx context.Context, email string) error {
 // so signing in again with a stolen password does not start it over. Only a right code resets it.
 func (s *Store) CheckSecondFactor(ctx context.Context, email, code string, now time.Time) error {
 	email = normalEmail(email)
-	var secret string
-	var last int64
-	err := s.db.QueryRowContext(ctx, `UPDATE users SET mfa_failures = mfa_failures + 1,
-		mfa_locked_until = CASE WHEN mfa_failures + 1 >= ? THEN ? ELSE mfa_locked_until END
-		WHERE email = ? AND mfa_locked_until <= ? RETURNING totp_secret, totp_last`,
-		MaxSecondFactorFailures, now.Add(SecondFactorLock).Unix(), email, now.Unix()).Scan(&secret, &last)
-	if errors.Is(err, sql.ErrNoRows) {
-		if exists, _ := s.UserExists(ctx, email); exists {
-			return ErrSecondFactorLocked
-		}
-		return ErrBadCode
-	}
+	secret, last, err := s.takeAttempt(ctx, email, now)
 	if err != nil {
 		return err
 	}
@@ -187,7 +267,29 @@ func (s *Store) CheckSecondFactor(ctx context.Context, email, code string, now t
 		}
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE users SET mfa_failures = 0, mfa_locked_until = 0 WHERE email = ?`, email)
+	return s.clearAttempts(ctx, email)
+}
+
+// takeAttempt spends one of a user's second factor attempts, codes and security keys alike, and
+// returns their authenticator app's secret and last used step.
+func (s *Store) takeAttempt(ctx context.Context, email string, now time.Time) (string, int64, error) {
+	var secret string
+	var last int64
+	err := s.db.QueryRowContext(ctx, `UPDATE users SET mfa_failures = mfa_failures + 1,
+		mfa_locked_until = CASE WHEN mfa_failures + 1 >= ? THEN ? ELSE mfa_locked_until END
+		WHERE email = ? AND mfa_locked_until <= ? RETURNING totp_secret, totp_last`,
+		MaxSecondFactorFailures, now.Add(SecondFactorLock).Unix(), email, now.Unix()).Scan(&secret, &last)
+	if errors.Is(err, sql.ErrNoRows) {
+		if exists, _ := s.UserExists(ctx, email); exists {
+			return "", 0, ErrSecondFactorLocked
+		}
+		return "", 0, ErrBadCode
+	}
+	return secret, last, err
+}
+
+func (s *Store) clearAttempts(ctx context.Context, email string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET mfa_failures = 0, mfa_locked_until = 0 WHERE email = ?`, email)
 	return err
 }
 
@@ -207,6 +309,27 @@ func (s *Store) matchSecondFactor(ctx context.Context, email, secret string, las
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
+}
+
+// ConfirmWindow is how long a session may change its user's second factors after proving one
+// of them again: a session alone must not be enough to move them elsewhere.
+const ConfirmWindow = 5 * time.Minute
+
+// ConfirmSession records that a session just proved a second factor again.
+func (s *Store) ConfirmSession(ctx context.Context, token string, now time.Time) error {
+	sum := sha256.Sum256([]byte(token))
+	return s.one(ctx, `UPDATE sessions SET mfa_confirmed_at = ? WHERE token_hash = ?`, now.Unix(), sum[:])
+}
+
+// SessionConfirmed reports whether a session proved a second factor within the ConfirmWindow.
+func (s *Store) SessionConfirmed(ctx context.Context, token string, now time.Time) (bool, error) {
+	sum := sha256.Sum256([]byte(token))
+	var at int64
+	err := s.db.QueryRowContext(ctx, `SELECT mfa_confirmed_at FROM sessions WHERE token_hash = ?`, sum[:]).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && at > 0 && at <= now.Unix() && now.Unix()-at <= int64(ConfirmWindow/time.Second), err
 }
 
 // CompleteSecondFactor lets a half-open session through once its code checked out.

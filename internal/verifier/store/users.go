@@ -171,7 +171,8 @@ func (s *Store) openSession(ctx context.Context, email string, now time.Time) (s
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at, created_at, last_seen, mfa_pending)
-		VALUES (?, ?, ?, ?, ?, (SELECT totp_secret != '' FROM users WHERE email = ?))`, sum[:], email, now.Add(SessionLifetime).Unix(), now.Unix(), now.Unix(), email); err != nil {
+		VALUES (?, ?, ?, ?, ?, (SELECT totp_secret != '' OR EXISTS (SELECT 1 FROM webauthn_credentials WHERE email = ?) FROM users WHERE email = ?))`,
+		sum[:], email, now.Add(SessionLifetime).Unix(), now.Unix(), now.Unix(), email, email); err != nil {
 		return "", err
 	}
 	// Whoever has a password can open sessions that wait for a code, as many as the sign-in
@@ -184,9 +185,10 @@ func (s *Store) openSession(ctx context.Context, email string, now time.Time) (s
 // MaxSessions bounds the open sessions of a user.
 const MaxSessions = 50
 
-// PruneExpired deletes the sessions, known browsers, sign-in links and invitations that expired.
+// PruneExpired deletes the sessions, known browsers, sign-in links, invitations and security key
+// challenges that expired.
 func (s *Store) PruneExpired(ctx context.Context, now time.Time) error {
-	for _, table := range []string{"sessions", "devices", "login_links", "invites"} {
+	for _, table := range []string{"sessions", "devices", "login_links", "invites", "webauthn_challenges"} {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at <= ?`, now.Unix()); err != nil { //nolint:gosec // table names from the list above
 			return err
 		}

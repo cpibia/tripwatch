@@ -116,8 +116,9 @@ func (s *Store) SetRole(ctx context.Context, email, role string) error {
 	return tx.Commit()
 }
 
-// DeleteUser removes a user with their sessions, known browsers and sign-in links, keeping at
-// least one administrator.
+// DeleteUser removes a user with their sessions, known browsers, sign-in links and second factor,
+// keeping at least one administrator: an account invited again under the same email starts
+// without the keys and codes of the one removed.
 func (s *Store) DeleteUser(ctx context.Context, email string) error {
 	email = normalEmail(email)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -128,7 +129,8 @@ func (s *Store) DeleteUser(ctx context.Context, email string) error {
 	if err := lastAdmin(ctx, tx, email); err != nil {
 		return err
 	}
-	for _, q := range []string{`DELETE FROM sessions WHERE email = ?`, `DELETE FROM devices WHERE email = ?`, `DELETE FROM login_links WHERE email = ?`} {
+	for _, q := range []string{`DELETE FROM sessions WHERE email = ?`, `DELETE FROM devices WHERE email = ?`, `DELETE FROM login_links WHERE email = ?`,
+		`DELETE FROM recovery_codes WHERE email = ?`, `DELETE FROM webauthn_credentials WHERE email = ?`} {
 		if _, err := tx.ExecContext(ctx, q, email); err != nil {
 			return err
 		}

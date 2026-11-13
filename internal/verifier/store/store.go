@@ -183,6 +183,26 @@ CREATE TABLE IF NOT EXISTS recovery_codes (
 	code_hash BLOB PRIMARY KEY,
 	email     TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+	id            BLOB PRIMARY KEY,
+	email         TEXT NOT NULL,
+	name          TEXT NOT NULL,
+	public_key    BLOB NOT NULL,
+	alg           INTEGER NOT NULL,
+	sign_count    INTEGER NOT NULL,
+	transports    TEXT NOT NULL,
+	user_verified INTEGER NOT NULL,
+	created_at    INTEGER NOT NULL,
+	last_used     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS webauthn_credentials_email ON webauthn_credentials(email);
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+	token_hash BLOB NOT NULL,
+	purpose    TEXT NOT NULL,
+	challenge  BLOB NOT NULL,
+	expires_at INTEGER NOT NULL,
+	PRIMARY KEY (token_hash, purpose)
+);
 CREATE TABLE IF NOT EXISTS invites (
 	token_hash BLOB PRIMARY KEY,
 	email      TEXT NOT NULL,
@@ -330,7 +350,7 @@ func migrate(db *sql.DB) error {
 		"users": {"role": "TEXT NOT NULL DEFAULT 'admin'", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_last": "INTEGER NOT NULL DEFAULT 0", "scope": "TEXT NOT NULL DEFAULT ''", //nolint:gosec // column definitions, not credentials
 			"mfa_failures": "INTEGER NOT NULL DEFAULT 0", "mfa_locked_until": "INTEGER NOT NULL DEFAULT 0"},
 		"sessions": {"created_at": "INTEGER NOT NULL DEFAULT 0", "last_seen": "INTEGER NOT NULL DEFAULT 0", "agent": "TEXT NOT NULL DEFAULT ''",
-			"mfa_pending": "INTEGER NOT NULL DEFAULT 0", "mfa_failures": "INTEGER NOT NULL DEFAULT 0"},
+			"mfa_pending": "INTEGER NOT NULL DEFAULT 0", "mfa_failures": "INTEGER NOT NULL DEFAULT 0", "mfa_confirmed_at": "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		for col, def := range cols {
 			var have int
