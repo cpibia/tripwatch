@@ -94,7 +94,7 @@ func (s *server) accountAction(w http.ResponseWriter, r *http.Request, se sessio
 	ctx := r.Context()
 	action := r.PathValue("action")
 	switch action {
-	case "2fa-begin", "key-add", "key-remove":
+	case "2fa-begin", "2fa-confirm", "key-add", "key-remove":
 		ok, err := s.mayChangeFactors(r, se)
 		if err != nil {
 			s.internal(w, r, err)
@@ -284,6 +284,12 @@ func (s *server) factorAdded(r *http.Request, se session) {
 // totpQR draws the secret being set up as a QR code for authenticator apps. It is served by the
 // verifier, as images must be under the page's policy, and only to the user setting it up.
 func (s *server) totpQR(w http.ResponseWriter, r *http.Request, se session) {
+	// A setup left half done must not hand its secret to a session that did not prove a second
+	// factor since: the QR code is the secret.
+	if ok, err := s.mayChangeFactors(r, se); err != nil || !ok {
+		http.NotFound(w, r)
+		return
+	}
 	secret, err := s.Store.PendingTOTP(r.Context(), se.Email)
 	if err != nil {
 		http.NotFound(w, r)

@@ -185,10 +185,20 @@ func TestSecurityKeyRefused(t *testing.T) {
 	if err := signIn(s, rp, token, a, at); !errors.Is(err, ErrClonedKey) {
 		t.Fatalf("counter repeated: %v", err)
 	}
-	// A key without a counter keeps working.
+	// A key that counted and now claims to keep no counter is a copy too.
 	a.Count = 0xffffffff
-	if err := signIn(s, rp, token, a, at); err != nil {
-		t.Fatalf("counter zero: %v", err)
+	if err := signIn(s, rp, token, a, at); !errors.Is(err, ErrClonedKey) {
+		t.Fatalf("counter back to zero: %v", err)
+	}
+	// A key without a counter, zero from its registration on, keeps working.
+	z := wt.New(wt.ES256)
+	z.Count = 0
+	addKey(t, s, rp, z, t0)
+	for range 2 {
+		z.Count = 0xffffffff
+		if err := signIn(s, rp, token, z, at); err != nil {
+			t.Fatalf("no counter: %v", err)
+		}
 	}
 }
 

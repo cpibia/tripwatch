@@ -163,10 +163,17 @@ func TestChangingFactorsTakesConfirmation(t *testing.T) {
 	h.post("/login/2fa", assertion(t, a, body, url.Values{"next": {"/alerts"}}))
 	csrf = csrfOf(t, h)
 
-	for _, action := range []string{"key-add", "key-remove", "2fa-begin"} {
+	for _, action := range []string{"key-add", "key-remove", "2fa-begin", "2fa-confirm"} {
 		if res, _ := h.post("/account/"+action, url.Values{"csrf": {csrf}}); res.StatusCode != http.StatusForbidden {
 			t.Errorf("%s before confirming: %d", action, res.StatusCode)
 		}
+	}
+	// An app setup left half done keeps its secret from a session that did not confirm.
+	if _, err := h.store.BeginTOTP(context.Background(), email); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := h.get("/account/2fa/qr.png"); res.StatusCode != http.StatusNotFound {
+		t.Errorf("setup secret shown before confirming: %d", res.StatusCode)
 	}
 	if res, _ := h.post("/account/confirm", url.Values{"csrf": {csrf}, "code": {"000000"}}); res.StatusCode != http.StatusBadRequest {
 		t.Fatalf("wrong code confirmed: %d", res.StatusCode)

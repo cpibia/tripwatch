@@ -260,10 +260,12 @@ func (s *Store) CheckSecurityKey(ctx context.Context, rp webauthn.RelyingParty, 
 	if err != nil {
 		return name, fmt.Errorf("%w: %w", ErrKeyRefused, err)
 	}
-	// Keys that keep no counter send zero every time; any other must go up. The condition is
-	// in the statement, so two answers racing cannot both pass with the same count.
+	// Keys that keep no counter send zero every time; any other must go up. A key that counted
+	// once and now answers zero is refused too: a copy would otherwise skip the check by
+	// claiming it keeps no counter. The condition is in the statement, so two answers racing
+	// cannot both pass with the same count.
 	res, err := s.db.ExecContext(ctx, `UPDATE webauthn_credentials SET sign_count = ?, last_used = ?, user_verified = ?
-		WHERE id = ? AND email = ? AND (sign_count = 0 OR ? = 0 OR sign_count < ?)`,
+		WHERE id = ? AND email = ? AND ((sign_count = 0 AND ? = 0) OR sign_count < ?)`,
 		got.SignCount, now.Unix(), got.UserVerified, credentialID, email, got.SignCount, got.SignCount)
 	if err != nil {
 		return "", err
