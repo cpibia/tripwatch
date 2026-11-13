@@ -6,6 +6,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.53] - 2026-11-13
+
+- **Upgrade.** Update the verifier first, then the sensors. Sensors before 0.1.52 still trust
+  the release's `SHA256SUMS`: run `gh attestation verify` on the files of this release, as for
+  0.1.52, before ordering it from the console. The snap refresh alert needs this release's sensor;
+  the other verifier changes work with older sensors.
+
 ### Sensor
 
 - A log event keeps a success after failures of the same request as its status: a scanner

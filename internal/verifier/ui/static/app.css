@@ -699,7 +699,7 @@ a.notify.off:hover { outline: var(--hair) solid var(--amber); }
 .setup .qr { display: block; padding: 10px; background: #fff; border-radius: var(--radius-sm); image-rendering: pixelated; }
 .recovery { columns: 2; max-width: 30rem; }
 .factor-h { margin: 22px 0 8px; padding-top: 14px; border-top: var(--hair) solid var(--rule); font-size: var(--fs-sm); font-weight: 500; color: var(--ink-2); }
-.confirm { margin: 4px 0 8px; padding: 12px 14px; border-left: 2px solid var(--teal); background: var(--teal-wash); border-radius: var(--radius-sm); }
+.confirm { margin: 4px 0 8px; padding: 12px 14px; border: var(--hair) solid var(--rule-strong); background: var(--teal-wash); border-radius: var(--radius-sm); }
 .confirm .note { margin-top: 0; }
 .confirm form + form { margin-top: 10px; }
 .grid.keys { max-width: 46rem; margin-bottom: 12px; }
