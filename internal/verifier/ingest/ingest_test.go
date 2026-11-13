@@ -512,6 +512,50 @@ func TestSensorStopsAndStarts(t *testing.T) {
 	}
 }
 
+// A server switched off every night keeps one "Server was off" alert whose occurrences grow
+// and whose detail is the latest off period; a stop without a shutdown is still its own alert.
+func TestServerOffIsOneAlertPerHost(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.sensor("web-01")
+	ctx := context.Background()
+	send := func(payload string) {
+		t.Helper()
+		h.clock = h.clock.Add(time.Hour)
+		if err := c.Send(ctx, protocol.KindEvent, []byte(payload), h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started := func(boot string) string {
+		return `{"event":"sensor_started","version":"1.2.0","boot_id":"` + boot + `"}`
+	}
+	const shutdown = `{"event":"sensor_stopping","version":"1.2.0","reason":"stopped","shutdown":true}`
+	send(started("aaaaaaaa-1"))
+	for _, boot := range []string{"bbbbbbbb-2", "cccccccc-3", "dddddddd-4"} {
+		send(shutdown)
+		send(started(boot))
+	}
+	var off []store.Alert
+	for _, a := range h.alerts() {
+		if a.Title == "Server was off" {
+			off = append(off, a)
+		}
+	}
+	if len(off) != 1 || off[0].Occurrences != 3 || !strings.Contains(off[0].Detail, "dddddddd-4") {
+		t.Fatalf("nightly shutdowns: %+v", off)
+	}
+	send(`{"event":"sensor_stopping","version":"1.2.0","reason":"stopped","shutdown":false}`)
+	send(started("eeeeeeee-5"))
+	n := 0
+	for _, a := range h.alerts() {
+		if a.Title == "Sensor stopped before a reboot" && a.Severity == "high" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("a stop on a running system then a reboot is not its own high alert: %+v", h.alerts())
+	}
+}
+
 // A sensor that refuses an update on its provenance raises one high alert for that release.
 func TestRefusedUpdateRaisesAnAlert(t *testing.T) {
 	h := newHarness(t)

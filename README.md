@@ -786,8 +786,9 @@ not pretend otherwise, but aims to make both visible. Already today:
   stopped says so in a last signed event, and one removed with its package (`apt remove`,
   `dnf remove`) raises a high alert at once instead of only falling silent; each start is judged
   against how the previous run ended, from what the sensor signed as it stopped: only a stop made
-  while systemd was shutting the system down, followed by a new boot, is one low "Server was off"
-  event (a server switched off every night raises no more), and only a stop for an update of the
+  while systemd was shutting the system down, followed by a new boot, is a low "Server was off"
+  event, kept as one alert per server whose count grows and whose detail is the latest off period
+  (a server switched off every night raises no more), and only a stop for an update of the
   package, followed by a new version, is a low "Sensor updated", or only a line in the audit
   log when it is the version the console ordered. A service stopped on a running
   system stays critical while silent and high when it comes back, even after a later reboot, so

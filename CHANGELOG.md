@@ -6,6 +6,12 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- "Server was off" is one alert per server: each new shutdown and boot adds an occurrence and
+  replaces the detail with the latest off period, instead of a new low alert every day for a
+  server switched off at night.
+
 ## [0.1.52] - 2026-11-11
 
 - **Upgrade.** Update the verifier first, then the sensors. Check this release by hand before

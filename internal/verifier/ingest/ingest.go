@@ -699,6 +699,9 @@ func (s *Server) started(ctx context.Context, host string, e protocol.Envelope, 
 		a.Severity, a.Title = "low", "Sensor started for the first time"
 		a.Detail = fmt.Sprintf("The sensor started for the first time since the server was enrolled at %s (version %s, system boot %s).", enrolled.Format(time.RFC3339), version, boot)
 	case known && boot != run.BootID && stopped && run.Shutdown:
+		// A server switched off every night raises this every morning: one alert per host
+		// whose occurrences grow, carrying the latest off period, instead of one a day.
+		a.Fingerprint = "sensor:started:off"
 		a.Severity, a.Title = "low", "Server was off"
 		a.Detail = fmt.Sprintf("The sensor stopped at %s while the system was shutting down, and started again at %s after a new system boot (version %s, system boot %s): the server was shut down or rebooted. If nobody did, check who could.", run.StoppedAt.Format(time.RFC3339), now.Format(time.RFC3339), version, boot)
 	case known && boot != run.BootID && stopped:
