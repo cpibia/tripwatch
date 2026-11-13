@@ -206,6 +206,13 @@ func TestAlertLifecycle(t *testing.T) {
 	if got, _ := s.Alert(ctx, id); got.Status != StatusResolved || got.AckedBy != "ops@example.net" {
 		t.Fatalf("after resolve: %+v", got)
 	}
+	// Whoever closed it no longer handles it once the condition comes back.
+	if _, err := s.Raise(ctx, Alert{HostID: "web-01", Fingerprint: "a", Severity: "high", Kind: "ssh", Title: "key"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Alert(ctx, id); got.Status != StatusOpen || got.AckedBy != "" {
+		t.Fatalf("after reopen: %+v", got)
+	}
 	if _, err := s.Alert(ctx, id+1); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing alert: %v", err)
 	}

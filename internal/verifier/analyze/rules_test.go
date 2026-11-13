@@ -1472,3 +1472,28 @@ func TestWeblogFindingStatusAndPath(t *testing.T) {
 		t.Errorf("upload script: %d %q", f.HTTPStatus, f.Detail)
 	}
 }
+
+// Each application warning is named by what it says, so two of them on one path read apart.
+func TestAppWarningTitles(t *testing.T) {
+	cur := baseState()
+	cur.Apps.Apps[0].Warnings = []string{
+		"APP_DEBUG is true: errors expose code, environment and credentials",
+		".env is writable by a user other than root (uid 1000): the database it names can be forged by that user",
+		"APP_KEY is empty",
+	}
+	var titles []string
+	for _, f := range Evaluate(nil, cur) {
+		if f.Kind == "apps" {
+			titles = append(titles, f.Title)
+		}
+	}
+	slices.Sort(titles)
+	want := []string{
+		".env is writable by a user other than root (uid 1000) in /var/www/shop",
+		"APP_DEBUG is true in /var/www/shop",
+		"APP_KEY is empty in /var/www/shop",
+	}
+	if !slices.Equal(titles, want) {
+		t.Errorf("titles = %q", titles)
+	}
+}

@@ -6,6 +6,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- An alert that comes back after being resolved no longer shows who resolved it: its page read
+  "open" next to the name of whoever had closed it.
+- Application warnings are titled by what they say ("APP_DEBUG is true in ...", ".env is writable
+  by a user other than root ... in ...") instead of "Development setting in ...", which gave two
+  different warnings on one application the same title.
+
 ## [0.1.54] - 2026-11-13
 
 - **Upgrade.** Update the verifier first, then the sensors. Sensors before 0.1.52 still trust

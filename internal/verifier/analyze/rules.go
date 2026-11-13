@@ -1706,7 +1706,7 @@ func Evaluate(prev *State, cur State) []Finding {
 				}
 			}
 			for _, w := range app.Warnings {
-				state("apps", "warning:"+app.Path+":"+w, "low", "Development setting in "+app.Path, w)
+				state("apps", "warning:"+app.Path+":"+w, "low", warningTitle(w)+" in "+app.Path, w)
 			}
 			for _, o := range app.Objects {
 				if len(o.Markers) == 0 {
@@ -2530,4 +2530,13 @@ func setID(mode string) bool {
 func standardBinDir(p string) bool {
 	return slices.ContainsFunc([]string{"/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/lib/", "/usr/libexec/", "/lib/", "/usr/local/bin/", "/usr/local/sbin/", "/snap/", "/opt/"},
 		func(d string) bool { return strings.HasPrefix(p, d) })
+}
+
+// warningTitle names an application warning by its own first clause, so two warnings on the same
+// application never share a title.
+func warningTitle(w string) string {
+	if head, _, ok := strings.Cut(w, ": "); ok {
+		return head
+	}
+	return w
 }

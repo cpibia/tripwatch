@@ -207,6 +207,7 @@ func (s *Store) Raise(ctx context.Context, a Alert, now time.Time) (bool, error)
 	reopened := status == StatusResolved
 	_, err = s.db.ExecContext(ctx, `UPDATE alerts SET severity = ?, title = ?, detail = ?, http_status = ?, updated_at = ?, occurrences = occurrences + 1,
 		status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END,
+		acked_by = CASE WHEN status = 'resolved' THEN NULL ELSE acked_by END,
 		notified_at = CASE WHEN status = 'resolved' THEN 0 ELSE notified_at END
 		WHERE host_id = ? AND fingerprint = ?`, a.Severity, a.Title, a.Detail, a.HTTPStatus, now.Unix(), a.HostID, a.Fingerprint)
 	return reopened, err
