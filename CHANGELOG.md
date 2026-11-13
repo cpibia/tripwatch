@@ -10,9 +10,14 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 - A log event keeps a success after failures of the same request as its status: a scanner
   redirected on http and answered on https is no longer reported with the redirect.
+- The report of a watched root moved away or removed waits up to five seconds and says when the
+  root was back and watched again.
 
 ### Verifier
 
+- A watched root that a package removed and recreated within seconds while the package manager
+  ran is low instead of medium; one still gone stays medium, and the privilege directories keep
+  their severity.
 - PHP-CGI argument injection that failed or was redirected on a path that is no script present
   on the server is one medium alert a day per log, shown and not mailed, like the other
   attempts; on a script that exists, or with a success, it stays high.

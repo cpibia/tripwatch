@@ -82,6 +82,9 @@ type Event struct {
 	// Root marks the root of a watched place moved away or removed: until it is back, nothing
 	// in it is seen.
 	Root bool `json:"root,omitempty"`
+	// Back, on a Root event, is when the root was watched again, set when that came within
+	// RootBackWithin of its loss: the report waits that long to tell.
+	Back time.Time `json:"back,omitzero"`
 	// Inert marks a script or a server configuration file of an upload directory whose content,
 	// read whole and matching SHA256, runs nothing by the scan's rules (web.InertInUploads).
 	Inert bool `json:"inert,omitempty"`

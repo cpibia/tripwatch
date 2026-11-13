@@ -51,6 +51,12 @@ func EvaluateEvents(events []watch.Event, packageManager bool, history History) 
 		}
 		if (packageManager || e.PackageManager) && lowered(e) {
 			f.Severity = lower(f.Severity)
+			// A package's scripts remove and recreate the directories they own (a daemon's
+			// runtime directory on its restart): one back within seconds left nothing unseen
+			// for longer than that, and what is in it now the next snapshot reads.
+			if e.Root && !e.Back.IsZero() {
+				f.Severity = "low"
+			}
 			f.Detail += " A package manager was running at the time: an installation or an upgrade may have made this change."
 		}
 		out = append(out, f)
@@ -166,8 +172,11 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		}
 		// Grouped by class and path: one directory moved again and again fills its own group,
 		// never the one of a system directory.
-		return event("watch-root", e.Class+":"+e.Path+"|"+strings.TrimSpace(occurrence(e)), sev, "Watched directory moved away or removed: "+e.Path,
-			fmt.Sprintf("%s, watched in real time, was moved away or removed at %s. Changes inside it are not seen until it is back in place and watched again, which the sensor checks every few seconds; the next snapshot shows its state.", e.Path, e.At.Format("15:04:05"))), true
+		detail := fmt.Sprintf("%s, watched in real time, was moved away or removed at %s. Changes inside it are not seen until it is back in place and watched again, which the sensor checks every few seconds; the next snapshot shows its state.", e.Path, e.At.Format("15:04:05"))
+		if !e.Back.IsZero() {
+			detail += fmt.Sprintf(" It was back and watched again at %s.", e.Back.Format("15:04:05"))
+		}
+		return event("watch-root", e.Class+":"+e.Path+"|"+strings.TrimSpace(occurrence(e)), sev, "Watched directory moved away or removed: "+e.Path, detail), true
 	}
 	if e.Dir || e.Path == "" {
 		return Finding{}, false

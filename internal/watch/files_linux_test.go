@@ -559,8 +559,8 @@ func TestFilesFollowRenamedDirectories(t *testing.T) {
 	}
 }
 
-// The root of a watched place moved away and back is reported and watched again within
-// seconds.
+// The root of a watched place moved away and back is reported, as back, and watched again
+// within seconds.
 func TestFilesRootMovedAndBack(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "srv/app/uploads"), 0o750); err != nil {
@@ -585,22 +585,64 @@ func TestFilesRootMovedAndBack(t *testing.T) {
 	if err := os.Rename(up+".x", up); err != nil {
 		t.Fatal(err)
 	}
-	gone := false
-	deadline := time.After(5 * time.Second)
-	for !gone {
+	var gone Event
+	deadline := time.After(RootBackWithin + 2*time.Second)
+	for !gone.Root {
 		select {
 		case e := <-ch:
-			gone = e.Root && e.Path == "/srv/app/uploads"
+			if e.Root && e.Path == "/srv/app/uploads" {
+				gone = e
+			}
 		case <-deadline:
 			t.Fatal("the moved root was not reported")
 		}
 	}
-	time.Sleep(3 * time.Second)
+	if gone.Back.IsZero() || gone.Back.Before(gone.At) {
+		t.Fatalf("the root moved back is not reported as back: %+v", gone)
+	}
+	time.Sleep(time.Second)
 	if err := os.WriteFile(filepath.Join(up, "shell.php"), []byte("<?php"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := collect(t, ch, 1); !has(got, ClassUpload, OpCreate, "/srv/app/uploads/shell.php") {
 		t.Fatalf("the root moved back is not watched again: %+v", got)
+	}
+}
+
+// A root removed and not recreated is reported once the wait for it is over, not as back.
+func TestFilesRootRemovedIsReportedWithoutBack(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv/app/uploads"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, []string{"/srv/app/uploads"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	if err := os.Remove(filepath.Join(root, "srv/app/uploads")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(RootBackWithin + 3*time.Second)
+	for {
+		select {
+		case e := <-ch:
+			if !e.Root || e.Path != "/srv/app/uploads" {
+				continue
+			}
+			if !e.Back.IsZero() {
+				t.Fatalf("a root still gone is reported as back: %+v", e)
+			}
+			return
+		case <-deadline:
+			t.Fatal("the removed root was not reported")
+		}
 	}
 }
 

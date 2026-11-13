@@ -222,6 +222,39 @@ func TestRootHomeHookIsHigh(t *testing.T) {
 	}
 }
 
+// A watched directory a package removed and recreated within seconds is low; one still gone, one
+// back without a package manager, and the privilege directories keep their severity.
+func TestRootBackDuringAnUpgrade(t *testing.T) {
+	at := time.Date(2026, 11, 13, 6, 7, 13, 0, time.UTC)
+	root := func(class, p string, back bool) watch.Event {
+		e := watch.Event{At: at, Class: class, Op: watch.OpDelete, Path: p, Dir: true, Root: true}
+		if back {
+			e.Back = at.Add(2 * time.Second)
+		}
+		return e
+	}
+	for _, c := range []struct {
+		name string
+		e    watch.Event
+		pm   bool
+		want string
+	}{
+		{"back during an upgrade", root(watch.ClassHook, "/run/sshd", true), true, "low"},
+		{"gone during an upgrade", root(watch.ClassHook, "/run/sshd", false), true, "medium"},
+		{"back without an upgrade", root(watch.ClassHook, "/run/sshd", true), false, "high"},
+		{"privileges back during an upgrade", root(watch.ClassPrivilege, "/etc/sudoers.d", true), true, "high"},
+	} {
+		got := EvaluateEvents([]watch.Event{c.e}, c.pm, nil)
+		if len(got) != 1 || got[0].Severity != c.want {
+			t.Errorf("%s: %+v, want %s", c.name, got, c.want)
+			continue
+		}
+		if back := strings.Contains(got[0].Detail, "back and watched again at 06:07:15"); back != !c.e.Back.IsZero() {
+			t.Errorf("%s: detail %q", c.name, got[0].Detail)
+		}
+	}
+}
+
 // A package manager running does not lower another user's crontab or start-up file: the web
 // server's user can read when apt holds its lock.
 func TestPackageManagerLowersOnlyRootsFiles(t *testing.T) {

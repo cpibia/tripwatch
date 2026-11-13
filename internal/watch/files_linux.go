@@ -80,6 +80,9 @@ type Files struct {
 	// would stay unwatched without that check.
 	roots          map[string]fileID
 	rootsCheckedAt time.Time
+	// lost are the root events held for RootBackWithin, by directory, so that one placed again
+	// meanwhile says it was back (Event.Back).
+	lost map[string]Event
 	// mountedFS is mountAt, replaced in tests, which cannot mount.
 	mountedFS func(dir string) (string, bool)
 	// moves are renames of watched directories waiting for their second half, by cookie;
@@ -116,7 +119,7 @@ func NewFiles(root string, src collector.Source, out chan<- Event) (*Files, erro
 	if err != nil {
 		return nil, err
 	}
-	f := &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}, scratchRepeats: map[string]string{}, deferred: map[string]string{}}
+	f := &Files{root: path.Clean(root), src: src, out: out, now: time.Now, fd: fd, byWD: map[int]*watched{}, byDir: map[string]int{}, known: map[string]string{}, scratchSeen: map[string]time.Time{}, moves: map[uint32]move{}, renamed: map[int]bool{}, missing: map[string]int{}, roots: map[string]fileID{}, classWatches: map[string]int{}, scratchByUID: map[uint32]int{}, classEvents: map[string]int{}, scratchRepeats: map[string]string{}, deferred: map[string]string{}, lost: map[string]Event{}}
 	f.mountedFS = f.mountAt
 	return f, nil
 }
@@ -388,6 +391,11 @@ func (f *Files) add(dir string, targets []Target, depth int) {
 		if id, ok := f.identity(dir); ok {
 			f.roots[dir] = id
 		}
+		if e, held := f.lost[dir]; held {
+			delete(f.lost, dir)
+			e.Back = f.now().UTC()
+			f.send(e)
+		}
 	}
 }
 
@@ -430,7 +438,38 @@ func (f *Files) rootLost(dir, class string) {
 	f.gap(class, fmt.Sprintf("watch: %s was moved away or removed", dir))
 	f.missing[dir] = replanRetries
 	f.replanBy(f.now().Add(replanDelay))
-	f.send(Event{At: f.now().UTC(), Class: class, Op: OpDelete, Path: dir, Dir: true, Root: true})
+	e := Event{At: f.now().UTC(), Class: class, Op: OpDelete, Path: dir, Dir: true, Root: true}
+	if _, held := f.lost[dir]; held {
+		return
+	}
+	if len(f.lost) >= maxLost {
+		f.send(e)
+		return
+	}
+	f.lost[dir] = e
+}
+
+// RootBackWithin is how long the report of a root gone waits for the root to be watched again,
+// which a replan does about two seconds after the loss: a package's maintainer script removes
+// and recreates its runtime directory in one go, a root left away stays gone. maxLost bounds the
+// reports held, past which they leave at once.
+const (
+	RootBackWithin = 5 * time.Second
+	maxLost        = 256
+)
+
+// flushLost sends the root reports held for RootBackWithin, or all of them once Run ends, as
+// they are: the root was not back in time.
+func (f *Files) flushLost(all bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	for dir, e := range f.lost {
+		if all || now.Sub(e.At) >= RootBackWithin {
+			delete(f.lost, dir)
+			f.send(e)
+		}
+	}
 }
 
 // replanSoon plans the watches again a second after a rename that may have moved a watched
@@ -622,6 +661,7 @@ func (f *Files) Run(ctx context.Context) error {
 		}
 		f.checkRoots()
 		f.replanIfDue()
+		f.flushLost(false)
 		f.flushDeferred()
 		if n <= 0 {
 			continue
@@ -635,6 +675,7 @@ func (f *Files) Run(ctx context.Context) error {
 		}
 		f.handle(buf[:read])
 	}
+	f.flushLost(true)
 	return nil
 }
 

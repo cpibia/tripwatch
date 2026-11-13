@@ -504,7 +504,11 @@ medium alert of their own, apart from events lost by a sensor that fell behind; 
 snapshot; and what is queued when the sensor stops is sent before its stop event. A watch
 follows the inode, not the path, so every few seconds the sensor checks that each watched root
 is still the directory at its path: one moved away, replaced under its name (an ancestor moved
-aside and recreated) or back after a while is reported and watched again within seconds.
+aside and recreated) or back after a while is reported and watched again within seconds. The
+report waits up to five seconds and says whether the root was back by then: a package's scripts
+remove and recreate the directories they own (a daemon's runtime directory on its restart), so
+a root of services, scheduled tasks or hooks back while a package manager runs is low, one still
+gone is medium, and the other roots (privileges, start-up files) keep their severity.
 
 The watchers need Linux and, for process events, `CAP_NET_ADMIN` in the host's network namespace,
 which the systemd unit grants. The sensor needs it only to subscribe: it gives it up right after,
