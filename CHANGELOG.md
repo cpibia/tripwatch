@@ -12,6 +12,9 @@ verifier, so it is clear which of the two needs updating. Versions follow
   redirected on http and answered on https is no longer reported with the redirect.
 - The report of a watched root moved away or removed waits up to five seconds and says when the
   root was back and watched again.
+- A root mount that lands on a new directory in `/tmp` while the watcher reads it is left
+  unread too: containerd's image snapshot no longer raises its programs when it is mounted in
+  that instant.
 - The privileged scan lists the read-only snap images mounted at `/snap/<name>/<revision>`
   (`snap_images`).
 

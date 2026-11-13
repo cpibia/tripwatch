@@ -843,7 +843,8 @@ The full design is in [docs/architecture.md](docs/architecture.md).
   filesystem mounted on a directory created there is not looked into unless it is FUSE, which
   any user can mount: only root can mount anything else, and what it holds is an image attached
   there (containerd mounts an image's snapshot in `/tmp` to unpack it), not files written in
-  `/tmp`.
+  `/tmp`. The mount is checked again after the directory is read, since containerd mounts right
+  after making the directory.
 - Real-time events cover the watched places and the process starts listed in
   [Real-time events](#real-time-events): a file that appears and disappears elsewhere between two
   snapshots is not seen. inotify has a per-user watch limit (`fs.inotify.max_user_watches`): when

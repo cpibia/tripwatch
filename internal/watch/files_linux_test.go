@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -403,6 +404,59 @@ func TestFilesScratchSkipsRootMounts(t *testing.T) {
 		if strings.HasPrefix(e.Path, "/tmp/containerd-mount1/") {
 			t.Errorf("a file of a root mount was reported: %+v", e)
 		}
+	}
+}
+
+// A root mount that lands on a new directory in /tmp after the watcher first looked, but before
+// it read the directory, is still left unread.
+func TestFilesScratchRootMountedWhileRead(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"tmp", "staging/containerd-mount2/bin", "staging/plain/bin"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range []string{"staging/containerd-mount2/bin/busybox", "staging/plain/bin/tool"} {
+		if err := os.WriteFile(filepath.Join(root, p), []byte("\x7fELF"), 0o700); err != nil { //nolint:gosec // the test's programs
+			t.Fatal(err)
+		}
+	}
+	ch := make(chan Event, 64)
+	f, err := NewFiles(root, collector.NewSource(root), ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	var checks atomic.Int32
+	f.mountedFS = func(dir string) (string, bool) {
+		if path.Base(dir) == "containerd-mount2" && checks.Add(1) > 1 {
+			return "overlay", true
+		}
+		return "", false
+	}
+	f.Set(Targets(nil, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = f.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	for _, d := range []string{"containerd-mount2", "plain"} {
+		if err := os.Rename(filepath.Join(root, "staging", d), filepath.Join(root, "tmp", d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := collect(t, ch, 3)
+	if !has(got, ClassScratch, OpCreate, "/tmp/plain/bin/tool") {
+		t.Errorf("the program in a plain directory was not reported: %+v", got)
+	}
+	for _, e := range got {
+		if strings.HasPrefix(e.Path, "/tmp/containerd-mount2/") {
+			t.Errorf("a file of a root mount was reported: %+v", e)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, watched := f.byDir["/tmp/containerd-mount2"]; watched {
+		t.Error("the root mount is still watched")
 	}
 }
 

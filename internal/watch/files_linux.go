@@ -842,6 +842,14 @@ func (f *Files) watchNew(dir string, t Target, depth int) {
 	if err != nil {
 		return
 	}
+	// containerd makes its directory and mounts on it at once: the mount can land between the
+	// check above and the read, which then lists the image. Checked again, it is left alone.
+	if t.Class == ClassScratch && f.rootMount(dir) {
+		f.mu.Lock()
+		f.unwatchTree(dir)
+		f.mu.Unlock()
+		return
+	}
 	for i, e := range entries {
 		if i == maxNewEntries {
 			f.mu.Lock()
