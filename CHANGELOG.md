@@ -6,7 +6,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- A log event keeps a success after failures of the same request as its status: a scanner
+  redirected on http and answered on https is no longer reported with the redirect.
+
 ### Verifier
+
+- PHP-CGI argument injection that failed or was redirected on a path that is no script present
+  on the server is one medium alert a day per log, shown and not mailed, like the other
+  attempts; on a script that exists, or with a success, it stays high.
 
 - "Server was off" is one alert per server: each new shutdown and boot adds an occurrence and
   replaces the detail with the latest off period, instead of a new low alert every day for a

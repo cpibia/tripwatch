@@ -1591,7 +1591,13 @@ func Evaluate(prev *State, cur State) []Finding {
 			if (e.OnDisk == "missing" || e.OnDisk == "elsewhere" || e.OnDisk == "static") && (e.Status < 200 || e.Status >= 300) && e.Rule != "command_in_parameters" && probe {
 				continue
 			}
-			if e.Severity == "medium" && slices.Contains(attemptRules, e.Rule) {
+			// PHP-CGI argument injection runs code only through a php-cgi binary the web server
+			// executes as a CGI program, which then answers with the script's output. A request
+			// refused or redirected for a name that is no script present on the server reached
+			// none: the scans that try every CGI path all day are attempts, not intrusions. A
+			// script that exists, or any success, stays serious.
+			cgiAttempt := e.Rule == "php_cgi_argument_injection" && e.Status >= 300 && e.OnDisk != "present" && !e.FileExists
+			if cgiAttempt || e.Severity == "medium" && slices.Contains(attemptRules, e.Rule) {
 				// Attempts aimed at the application's own weak points, which leave nothing on
 				// disk when they work: one alert a day per rule and log, shown but not mailed.
 				day := cur.TakenAt.UTC().Format(time.DateOnly)

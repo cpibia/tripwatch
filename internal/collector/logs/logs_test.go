@@ -499,6 +499,18 @@ func TestLaterSuccessRaisesTheEvent(t *testing.T) {
 	}
 }
 
+// A success after a failure of the same severity is the status kept: a scanner redirected on
+// http and answered on https must not look like a refused probe.
+func TestLaterSuccessKeepsItsStatus(t *testing.T) {
+	h := newHost(t)
+	const uri = "/index.php?%ADd+allow_url_include%3d1+%ADd+auto_prepend_file%3dphp://input"
+	h.writeLog(logLine("203.0.113.66", "POST", uri, 301) + logLine("203.0.113.66", "POST", uri, 200) + logLine("203.0.113.66", "POST", uri, 404))
+	res := h.run()
+	if len(res.Events) != 1 || res.Events[0].Rule != "php_cgi_argument_injection" || res.Events[0].Status != 200 || res.Events[0].Count != 3 {
+		t.Errorf("events = %+v", res.Events)
+	}
+}
+
 // A post after reads of the same script names the event: probes read, a web shell is posted to.
 func TestPostAfterReadsNamesTheEvent(t *testing.T) {
 	h := newHost(t)

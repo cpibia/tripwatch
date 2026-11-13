@@ -682,7 +682,11 @@ is matched too. Critical and high events are alerts; of the medium ones, those a
 application's own weak points (a made-up cart's shipping estimate, PHP sent in a request, a file
 attached to a cart item, a POST to a static file) raise one medium alert a day per rule and log,
 shown on the verifier and not mailed, while the scans every site receives all day are only kept
-in the snapshot. The severity of a script in uploads does not depend on the
+in the snapshot. PHP-CGI options that failed or were redirected on a path that is no script
+present on the server join that daily alert too: the injection runs code only through a php-cgi
+binary executed as a CGI program, and scanners try every CGI path all day; on a script that
+exists, or with a success, they stay high. A success after failures of the same request is the
+status the event keeps, so a redirect on http does not hide the answer on https. The severity of a script in uploads does not depend on the
 HTTP status, which the script itself decides; the verifier's alert lists show the status next to
 each web request alert (a 2xx stands out), so an answered request is told from a missing page
 without opening it. For each requested script the sensor also says

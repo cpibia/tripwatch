@@ -757,6 +757,8 @@ func seek(f fs.File, offset int64) error {
 	return err
 }
 
+func success(status int) bool { return status >= 200 && status < 300 }
+
 func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 	r.res.Stats.Requests++
 	r.res.Stats.Statuses[fmt.Sprintf("%dxx", req.Status/100)]++
@@ -787,6 +789,10 @@ func (r *runState) request(log string, req *weblog.Request, hits []weblog.Hit) {
 			r.count(e.Rule, weblog.SeverityRank(e.Severity), -1)
 			r.count(e.Rule, weblog.SeverityRank(h.Severity), 1)
 			e.Severity, e.Status, e.Evidence.Request = h.Severity, req.Status, weblog.RedactURI(req.URI)
+		} else if success(req.Status) && !success(e.Status) {
+			// So does a success after failures: the verifier takes a failed request for a
+			// probe, and a scanner's 301 on http must not hide its 200 on https.
+			e.Status, e.Evidence.Request = req.Status, weblog.RedactURI(req.URI)
 		}
 		// A request that sends something names the event over the reads before it: the verifier
 		// takes failed reads of a missing script for probes, not a post.

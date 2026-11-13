@@ -797,6 +797,43 @@ func TestWeblogAttemptsDaily(t *testing.T) {
 	}
 }
 
+// PHP-CGI argument injection sent to CGI paths that answer 404 or a redirect is a daily attempt;
+// the same request on a script that exists, or answered with a success, stays high.
+func TestPHPCGIInjectionAttempts(t *testing.T) {
+	cur := baseState()
+	cur.TakenAt = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	const q = "?%ADd+allow_url_include%3d1+%ADd+auto_prepend_file%3dphp://input"
+	ev := func(uri string, status int) logs.Event {
+		return logs.Event{Rule: "php_cgi_argument_injection", Severity: "high", Method: "POST", Status: status, Log: "/var/log/nginx/access.log", Evidence: logs.AttackerControlled{Request: uri + q}}
+	}
+	present := ev("/index.php", 302)
+	present.OnDisk, present.FileExists, present.Files = "present", true, []string{"/srv/www/index.php"}
+	cur.Weblog = &logs.Result{Events: []logs.Event{
+		ev("/cgi-bin/php-cgi", 404),
+		ev("/cgi-bin/php-cgi.exe", 404),
+		ev("/php-cgi/php-cgi.exe", 301),
+		ev("/cgi-bin/php", 200),
+		ev("/cgi-bin/php5", 0),
+		present,
+	}}
+	var got []string
+	for _, f := range Evaluate(nil, cur) {
+		if f.Kind == "weblog" {
+			got = append(got, f.Severity+" "+strings.SplitN(f.Fingerprint, "?", 2)[0])
+		}
+	}
+	slices.Sort(got)
+	want := []string{
+		"high weblog:php_cgi_argument_injection:/cgi-bin/php5|/cgi-bin/php5",
+		"high weblog:php_cgi_argument_injection:/cgi-bin/php|/cgi-bin/php",
+		"high weblog:php_cgi_argument_injection:/index.php|/index.php",
+		"medium weblog:php_cgi_argument_injection:/var/log/nginx/access.log|2026-11-13",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("weblog findings = %q, want %q", got, want)
+	}
+}
+
 // Files under /var that a package installed are rewritten by the programs that use them; files
 // elsewhere are not.
 func TestModifiedPackageFilesUnderVar(t *testing.T) {
