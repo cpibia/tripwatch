@@ -257,6 +257,7 @@ func serve(log *slog.Logger) error {
 	web, err := ui.New(ui.Config{
 		Store: st, CA: ca, IngestURL: ingestURL, Release: buildinfo.Version,
 		Notify: mailer.Enabled(), TestChannel: notifier.Test, SecureCookies: strings.HasPrefix(os.Getenv("TRIPWATCH_PUBLIC_UI_URL"), "https://"),
+		PublicURL:    os.Getenv("TRIPWATCH_PUBLIC_UI_URL"),
 		SilenceAfter: silence, Envelopes: in.Counts, Sends: notifier.Counts, Now: now, Log: log,
 	})
 	if err != nil {
@@ -468,7 +469,7 @@ func user(args []string) error {
 			return err
 		}
 		defer func() { _ = st.Close() }()
-		if err := st.DisableTOTP(context.Background(), *email); err != nil {
+		if err := st.ResetSecondFactor(context.Background(), *email); err != nil {
 			return err
 		}
 		return st.Audit(context.Background(), "command line", "second factor reset", *email, "", time.Now().UTC())

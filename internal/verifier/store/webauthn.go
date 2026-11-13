@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -34,6 +35,9 @@ var (
 	ErrKeyExists = errors.New("store: security key registered already")
 	// ErrNoChallenge is returned when the prompt expired, was used, or was never given.
 	ErrNoChallenge = errors.New("store: no security key prompt waiting")
+	// ErrKeyRefused wraps the reason the webauthn checks refused a browser's answer, so callers
+	// tell a refused answer from a failing database.
+	ErrKeyRefused = errors.New("store: security key answer refused")
 )
 
 // SecurityKey is one of a user's WebAuthn credentials, as listed to them.
@@ -135,7 +139,7 @@ func (s *Store) AddSecurityKey(ctx context.Context, rp webauthn.RelyingParty, em
 	}
 	reg, err := rp.VerifyRegistration(challenge, clientData, attestation)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrKeyRefused, err)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -254,7 +258,7 @@ func (s *Store) CheckSecurityKey(ctx context.Context, rp webauthn.RelyingParty, 
 	}
 	got, err := rp.VerifyAssertion(challenge, key, clientData, authData, signature)
 	if err != nil {
-		return "", err
+		return name, fmt.Errorf("%w: %w", ErrKeyRefused, err)
 	}
 	// Keys that keep no counter send zero every time; any other must go up. The condition is
 	// in the statement, so two answers racing cannot both pass with the same count.

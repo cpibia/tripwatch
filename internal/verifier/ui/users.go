@@ -97,9 +97,9 @@ func (s *server) userAction(w http.ResponseWriter, r *http.Request, se session) 
 			s.audit(r, se, "visibility changed", email, "servers with "+orDash(label))
 		}
 	case "reset-2fa":
-		// For someone who lost their phone and their recovery codes: they sign in with the
-		// password only, and set a new second factor up.
-		err = s.Store.DisableTOTP(r.Context(), email)
+		// For someone who lost their phone, their keys and their recovery codes: they sign in
+		// with the password only, and set a new second factor up.
+		err = s.Store.ResetSecondFactor(r.Context(), email)
 		if err == nil {
 			s.audit(r, se, "second factor reset", email, "")
 			// Someone who lost their phone may have lost it to whoever holds it now.

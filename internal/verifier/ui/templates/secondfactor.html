@@ -1,14 +1,23 @@
 {{define "content"}}{{$d := .Data}}
 <div class="login">
   <p class="brand"><img src="/static/logo.png" width="32" height="32" alt=""><span>tripwatch</span></p>
-  <h1>Code from your app</h1>
+  <h1>{{if $d.Key}}Second factor{{else}}Code from your app{{end}}</h1>
   {{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  {{with $d.Key}}
+  <form method="post" action="/login/2fa" class="form" data-webauthn="get" data-challenge="{{.Challenge}}" data-rp="{{.RPID}}" data-keys="{{.Keys}}" hidden>
+    <input type="hidden" name="next" value="{{$d.Next}}">
+    {{template "keyanswer"}}
+    <p class="error" role="alert" data-webauthn-error hidden></p>
+    <button class="primary" type="submit" autofocus>Use a security key</button>
+  </form>
+  <noscript><p class="help">Security keys need JavaScript in this browser; a code still works.</p></noscript>
+  {{end}}
   <form method="post" action="/login/2fa" class="form">
     <input type="hidden" name="next" value="{{$d.Next}}">
-    <label for="code">Six-digit code</label>
-    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" required class="mono" autofocus>
-    <p class="help">Lost the phone? A recovery code works here too, once.</p>
-    <button class="primary" type="submit">Continue</button>
+    <label for="code">{{if $d.App}}Six-digit code{{if $d.Key}}, or a recovery code{{end}}{{else}}Recovery code{{end}}</label>
+    <input id="code" name="code" type="text" inputmode="{{if $d.App}}numeric{{else}}text{{end}}" autocomplete="one-time-code" required class="mono"{{if not $d.Key}} autofocus{{end}}>
+    {{if not $d.Key}}<p class="help">Lost the phone? A recovery code works here too, once.</p>{{end}}
+    <button{{if not $d.Key}} class="primary"{{end}} type="submit">Continue</button>
   </form>
 </div>
 {{end}}

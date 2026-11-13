@@ -9,6 +9,7 @@
 <link rel="icon" href="/static/{{if .Alarm}}favicon-alarm{{else}}favicon{{end}}.png" type="image/png">
 <link rel="stylesheet" href="/static/app.css?v={{version}}">
 <script src="/static/app.js?v={{version}}" defer></script>
+{{if .Keys}}<script src="/static/webauthn.js?v={{version}}" defer></script>{{end}}
 </head>
 <body{{if .Refresh}} data-refresh="60"{{end}}>
 {{if .User}}

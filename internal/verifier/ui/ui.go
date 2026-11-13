@@ -38,6 +38,7 @@ import (
 	"github.com/cpibia/tripwatch/internal/verifier/notify"
 	"github.com/cpibia/tripwatch/internal/verifier/pki"
 	"github.com/cpibia/tripwatch/internal/verifier/store"
+	"github.com/cpibia/tripwatch/internal/verifier/webauthn"
 )
 
 //go:embed templates static
@@ -69,7 +70,7 @@ const unitSource = "https://raw.githubusercontent.com/cpibia/tripwatch/"
 // version changes with the embedded assets, so browsers refetch them after an upgrade.
 var version = func() string {
 	h := sha256.New()
-	for _, name := range []string{"static/app.css", "static/app.js"} {
+	for _, name := range []string{"static/app.css", "static/app.js", "static/webauthn.js"} {
 		b, _ := assets.ReadFile(name)
 		h.Write(b)
 	}
@@ -90,7 +91,10 @@ type Config struct {
 	TestChannel func(ctx context.Context, c store.Channel) error
 	// SecureCookies marks cookies HTTPS-only; on whenever the interface is reached over HTTPS.
 	SecureCookies bool
-	SilenceAfter  time.Duration
+	// PublicURL is the console's address as browsers reach it. Security keys are bound to its
+	// host and checked against its origin, so they are offered only when it is set, over HTTPS.
+	PublicURL    string
+	SilenceAfter time.Duration
 	// LoginBackoff is the first delay after repeated failed logins; zero means one second.
 	LoginBackoff time.Duration
 	// Releases is where the release's SHA256SUMS is read to order the sensors' update, and
@@ -110,6 +114,8 @@ type server struct {
 	Config
 	pages  map[string]*template.Template
 	static http.Handler
+	// rp is the console as security keys know it; its zero value turns keys off.
+	rp     webauthn.RelyingParty
 	logins *limiter
 	// checks bounds the password checks running at once to the CPUs; knownCheck is one more,
 	// reserved to known browsers.
@@ -136,6 +142,11 @@ func New(c Config) (http.Handler, error) {
 		checks: make(chan struct{}, max(1, runtime.GOMAXPROCS(0)-1)), knownCheck: make(chan struct{}, 1)}
 	if c.LoginBackoff > 0 {
 		s.logins = newLimiter(c.LoginBackoff, 15*c.LoginBackoff)
+	}
+	if rp, err := webauthn.NewRelyingParty(c.PublicURL); err == nil {
+		s.rp = rp
+	} else if c.PublicURL != "" && c.Log != nil {
+		c.Log.Warn("security keys off: the public URL is neither HTTPS nor localhost", "url", c.PublicURL)
 	}
 	for _, name := range []string{"login", "link", "overview", "servers", "host", "alerts", "alert", "enroll", "error", "search", "notifications", "users", "audit", "invite", "account", "secondfactor", "apitokens"} {
 		t, err := template.New(name).Funcs(funcs(c.Now)).Funcs(template.FuncMap{"actx": actx, "acceptable": store.Acceptable, "rowx": rowx, "groupx": groupx, "table": table, "hosttable": hostTable, "activitytable": activityTable, "picktable": pickTable, "boardtable": boardTable, "subject": subject, "num": pct, "category": func(kind string) string { return categoryOf(kind).Label }, "headline": headline, "minsevx": minsevx, "hostname": s.hostName, "selecturl": selectURL, "version": func() string { return version }, "kept": s.kept}).ParseFS(assets, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
@@ -252,7 +263,7 @@ func (s *server) authed(h authedHandler) http.HandlerFunc {
 			if r.Method == http.MethodGet {
 				http.Redirect(w, r, "/login/2fa?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
 			} else {
-				s.fail(w, r, http.StatusForbidden, "Code needed", "Give the code from your authenticator app first.")
+				s.fail(w, r, http.StatusForbidden, "Second factor needed", "Give the code from your authenticator app, or use your security key, first.")
 			}
 			return
 		}
@@ -330,7 +341,9 @@ type page struct {
 	// Alarm is set while a critical alert is open, Release is the running version.
 	Alarm   bool
 	Release string
-	Data    any
+	// Keys loads the script that asks the browser for a security key.
+	Keys bool
+	Data any
 }
 
 func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name string, p page) {
@@ -469,7 +482,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("login", "email", email)
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
-	if on, _ := s.Store.TOTPEnabled(r.Context(), email); on {
+	if on, _ := s.Store.SecondFactorEnabled(r.Context(), email); on {
 		if err := s.Store.Audit(r.Context(), email, "password accepted", "", "waiting for the second factor", s.Now()); err != nil {
 			s.Log.Error("audit", "err", err)
 		}
@@ -587,7 +600,7 @@ func (s *server) loginLink(w http.ResponseWriter, r *http.Request) {
 	if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
 		s.cookie(w, deviceCookie, device, store.DeviceLifetime)
 	}
-	if on, _ := s.Store.TOTPEnabled(r.Context(), email); on {
+	if on, _ := s.Store.SecondFactorEnabled(r.Context(), email); on {
 		http.Redirect(w, r, "/login/2fa", http.StatusSeeOther)
 		return
 	}

@@ -1,19 +1,42 @@
 {{define "content"}}{{$d := .Data}}{{$csrf := .CSRF}}
 <header class="head">
   <h1>Account</h1>
-  <p class="tally"><span class="mono">{{$d.Email}}</span><span>{{$d.Role}}</span><span>{{if $d.TOTP}}second factor on{{else}}password only{{end}}</span></p>
+  <p class="tally"><span class="mono">{{$d.Email}}</span><span>{{$d.Role}}</span><span>{{if $d.Factor}}second factor on{{else}}password only{{end}}</span></p>
 </header>
 {{with $d.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
 {{with $d.Notice}}<p class="notice ok" role="status">{{.}}</p>{{end}}
 
 <section class="panel" aria-labelledby="mfa-h">
-  <div class="panel-head"><h2 id="mfa-h">Second factor</h2><p class="panel-note">a code from an authenticator app at each sign-in, besides the password</p></div>
+  <div class="panel-head"><h2 id="mfa-h">Second factor</h2><p class="panel-note">an authenticator app, a security key or both, asked at each sign-in besides the password</p></div>
   {{if $d.Recovery}}
-  <p class="note">The second factor is on. These recovery codes each work once, in place of a code, if the phone is lost: keep them somewhere safe. They are shown only now.</p>
+  <p class="note">The second factor is on. These recovery codes each work once, in place of the app or a key, if they are lost: keep them somewhere safe. They are shown only now.</p>
   <pre class="datum recovery" id="recovery">{{range $d.Recovery}}{{.}}
 {{end}}</pre>
   <div class="actions"><button type="button" data-copy="recovery">Copy the codes</button></div>
-  {{else if $d.Setup}}
+  {{else}}
+  {{if $d.Factor}}<p class="note">On. {{$d.Codes}} recovery {{plural $d.Codes "code" "codes"}} left, each in place of the app or a key, once.</p>{{else}}<p class="note">Off: a stolen password is enough to sign in as you.</p>{{end}}
+  {{if not $d.Confirmed}}
+  <div class="confirm">
+    <p class="note">Adding or removing a second factor asks to confirm it is you, so that a session left open is not enough to move it elsewhere.</p>
+    {{with $d.Confirm}}
+    <form method="post" action="/account/confirm" class="form" data-webauthn="get" data-challenge="{{.Challenge}}" data-rp="{{.RPID}}" data-keys="{{.Keys}}" hidden>
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      {{template "keyanswer"}}
+      <p class="error" role="alert" data-webauthn-error hidden></p>
+      <button type="submit">Confirm with a security key</button>
+    </form>
+    {{end}}
+    <form method="post" action="/account/confirm" class="form inline">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <label for="confirm-code">{{if $d.TOTP}}A current code, or a recovery code{{else}}A recovery code{{end}}</label>
+      <input id="confirm-code" name="code" type="text" autocomplete="one-time-code" required class="mono">
+      <button type="submit">Confirm</button>
+    </form>
+  </div>
+  {{end}}
+
+  <h3 class="factor-h">Authenticator app</h3>
+  {{if $d.Setup}}
   <div class="setup">
     <img class="qr" src="/account/2fa/qr.png" width="222" height="222" alt="QR code of the secret for the authenticator app">
     <div>
@@ -23,21 +46,50 @@
         <input type="hidden" name="csrf" value="{{$csrf}}">
         <label for="code">The code the app shows now</label>
         <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" required class="mono" autofocus>
-        <button class="primary" type="submit">Turn the second factor on</button>
+        <button class="primary" type="submit">Turn the app on</button>
       </form>
     </div>
   </div>
   {{else if $d.TOTP}}
-  <p class="note">On. {{$d.Codes}} recovery {{plural $d.Codes "code" "codes"}} left.</p>
   <form method="post" action="/account/2fa-off" class="form inline">
     <input type="hidden" name="csrf" value="{{$csrf}}">
-    <label for="off-code">A current code, or a recovery code, to turn it off</label>
-    <input id="off-code" name="code" type="text" autocomplete="one-time-code" required class="mono">
-    <button class="danger" type="submit">Turn off</button>
+    {{if not $d.Confirmed}}<label for="off-code">A current code, or a recovery code, to turn it off</label>
+    <input id="off-code" name="code" type="text" autocomplete="one-time-code" required class="mono">{{else}}<p class="note">On: a code from the app at each sign-in.</p>{{end}}
+    <button class="danger" type="submit">Turn the app off</button>
   </form>
+  {{else if $d.Confirmed}}
+  <form method="post" action="/account/2fa-begin"><input type="hidden" name="csrf" value="{{$csrf}}"><button{{if not $d.Factor}} class="primary"{{end}} type="submit">Set up an authenticator app</button></form>
   {{else}}
-  <p class="note">Off: a stolen password is enough to sign in as you.</p>
-  <form method="post" action="/account/2fa-begin"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="primary" type="submit">Set up the second factor</button></form>
+  <p class="note quiet">Not set up.</p>
+  {{end}}
+
+  <h3 class="factor-h">Security keys</h3>
+  {{if $d.KeysOff}}
+  <p class="note">Security keys and passkeys need the console's public HTTPS address in <span class="mono">TRIPWATCH_PUBLIC_UI_URL</span>.</p>
+  {{else}}
+  {{if $d.Keys}}
+  <table class="grid keys">
+    <thead><tr><th scope="col">Key</th><th scope="col" class="num">Added</th><th scope="col" class="num">Last used</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+    <tbody>{{range $d.Keys}}
+    <tr><td>{{.Name}}{{if .UserVerified}} <span class="quiet">with PIN or biometrics</span>{{end}}</td>
+      <td class="num"><time datetime="{{iso .CreatedAt}}" title="{{stamp .CreatedAt}}">{{clock .CreatedAt}}</time></td>
+      <td class="num">{{if .LastUsed.IsZero}}<span class="quiet">never</span>{{else}}<time datetime="{{iso .LastUsed}}" title="{{stamp .LastUsed}}">{{clock .LastUsed}}</time>{{end}}</td>
+      <td class="act">{{if $d.Confirmed}}<form method="post" action="/account/key-remove"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="danger">Remove</button></form>{{end}}</td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="note quiet">None registered.</p>{{end}}
+  {{with $d.Register}}
+  <form method="post" action="/account/key-add" class="form inline" data-webauthn="create" data-challenge="{{.Challenge}}" data-rp="{{.RPID}}" data-user="{{.User}}" data-name="{{$d.Email}}" data-keys="{{.Keys}}" hidden>
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="clientData"><input type="hidden" name="attestation"><input type="hidden" name="transports">
+    <label for="key-name">Name of the new key</label>
+    <input id="key-name" name="name" type="text" maxlength="60" placeholder="Security key" autocomplete="off">
+    <p class="error" role="alert" data-webauthn-error hidden></p>
+    <button{{if not $d.Factor}} class="primary"{{end}} type="submit">Add a security key</button>
+  </form>
+  <noscript><p class="note">Adding a security key needs JavaScript in this browser; the authenticator app works without it.</p></noscript>
+  {{else}}{{if and $d.Confirmed (ge (len $d.Keys) $d.MaxKeys)}}<p class="note quiet">{{$d.MaxKeys}} keys is the most an account holds: remove one to add another.</p>{{end}}{{end}}
+  {{end}}
   {{end}}
 </section>
 

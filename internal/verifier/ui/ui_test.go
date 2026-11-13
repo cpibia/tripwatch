@@ -57,6 +57,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	h, err := New(Config{Store: st, CA: ca, IngestURL: "https://verifier.example.net:8443/v1/envelopes", SilenceAfter: 3 * time.Minute, LoginBackoff: 10 * time.Millisecond,
+		PublicURL: "https://" + consoleHost,
 		// A channel named "broken" fails its test, as a refused send would.
 		TestChannel: func(ctx context.Context, c store.Channel) error {
 			if !strings.Contains(c.Name, "broken") {
