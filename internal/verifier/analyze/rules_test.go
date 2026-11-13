@@ -1113,6 +1113,37 @@ func TestContainerChurnIsNotNew(t *testing.T) {
 	}
 }
 
+// A program that held a loopback port from the ephemeral range and holds another after a
+// restart moved it; a second such port beside the first, another program, or a port the network
+// reaches is new.
+func TestEphemeralLoopbackPortThatMovedIsNotNew(t *testing.T) {
+	prev := baseState()
+	prev.Sockets = &system.SocketsResult{Sockets: []system.Socket{
+		{Proto: "tcp", Local: "127.0.0.1:39875", State: "listen", Process: "containerd", UID: 0, PID: 1522},
+		{Proto: "tcp", Local: "127.0.0.1:41000", State: "listen", Process: "worker", UID: 33},
+		{Proto: "tcp", Local: "0.0.0.0:45000", State: "listen", Process: "agent", UID: 0},
+	}}
+	cur := baseState()
+	cur.Sockets = &system.SocketsResult{Sockets: []system.Socket{
+		{Proto: "tcp", Local: "127.0.0.1:38335", State: "listen", Process: "containerd", UID: 0, PID: 1520},
+		{Proto: "tcp", Local: "127.0.0.1:41000", State: "listen", Process: "worker", UID: 33},
+		{Proto: "tcp", Local: "127.0.0.1:44000", State: "listen", Process: "worker", UID: 33},
+		{Proto: "tcp", Local: "127.0.0.1:44739", State: "listen", Process: "nc", UID: 0},
+		{Proto: "tcp", Local: "0.0.0.0:46000", State: "listen", Process: "agent", UID: 0},
+		{Proto: "tcp", Local: "127.0.0.1:4444", State: "listen", Process: "containerd", UID: 0},
+	}}
+	got := fingerprints(Evaluate(&prev, cur))
+	want := []string{
+		"medium network-change:listen:tcp:0.0.0.0:46000",
+		"medium network-change:listen:tcp:127.0.0.1:44000",
+		"medium network-change:listen:tcp:127.0.0.1:4444",
+		"medium network-change:listen:tcp:127.0.0.1:44739",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 // A cron line that never runs on schedule, or that downloads and runs, decodes or renames what
 // it starts, says why it is critical; an ordinary job stays high.
 func TestCronSuspicion(t *testing.T) {

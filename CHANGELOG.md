@@ -16,6 +16,10 @@ verifier, so it is clear which of the two needs updating. Versions follow
 - PHP-CGI argument injection that failed or was redirected on a path that is no script present
   on the server is one medium alert a day per log, shown and not mailed, like the other
   attempts; on a script that exists, or with a success, it stays high.
+- A loopback listening port from the ephemeral range is not new when the same program and user
+  held another one in the previous snapshot and no longer hold it: a container runtime's
+  streaming server draws a port at every start. A second port beside the first, another program,
+  or a port the network reaches still raises "New listening port".
 
 - "Server was off" is one alert per server: each new shutdown and boot adds an occurrence and
   replaces the detail with the latest off period, instead of a new low alert every day for a

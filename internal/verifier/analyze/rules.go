@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"net/netip"
 	"path"
 	"regexp"
 	"slices"
@@ -822,6 +823,19 @@ func dockerDNS(so system.Socket) bool {
 	return strings.HasPrefix(so.Local, "127.0.0.11:") && so.Process == "dockerd" && so.UID == 0
 }
 
+// ephemeralLoopback reports a listening address on loopback whose port lies in the range Linux
+// draws ports from when a program asks for any (net.ipv4.ip_local_port_range, 32768-60999 by
+// default): no service is configured on such a port.
+func ephemeralLoopback(local string) bool {
+	ap, err := netip.ParseAddrPort(local)
+	return err == nil && ap.Addr().IsLoopback() && ap.Port() >= 32768 && ap.Port() <= 60999
+}
+
+// listener names who holds a listening socket, for telling a port that moved from a new one.
+func listener(so system.Socket) string {
+	return so.Proto + "\x00" + so.Process + "\x00" + strconv.Itoa(so.UID)
+}
+
 // unjudgedHooks are collected with the hooks but not judged by hookChanges: ld.so.preload has
 // its own rule on what it loads, and the resolver files are rewritten by DHCP clients and
 // container runtimes without running anything.
@@ -1330,16 +1344,37 @@ func Evaluate(prev *State, cur State) []Finding {
 	}
 
 	if s := cur.Sockets; s != nil && prev != nil && prev.Sockets != nil {
-		known := set{}
+		known, held := set{}, set{}
+		for _, so := range s.Sockets {
+			if so.State == "listen" {
+				held.add(so.Proto + "\x00" + so.Local)
+			}
+		}
+		// moved are the programs that held a loopback port drawn from the ephemeral range and no
+		// longer hold it: such a port is one the program asked the kernel for (port 0) and gets
+		// anew at every start, as a container runtime's streaming server does.
+		moved := map[string]int{}
 		for _, p := range prev.Sockets.Sockets {
-			if p.State == "listen" {
-				known.add(p.Proto + "\x00" + p.Local)
+			if p.State != "listen" {
+				continue
+			}
+			known.add(p.Proto + "\x00" + p.Local)
+			if ephemeralLoopback(p.Local) && !held.has(p.Proto+"\x00"+p.Local) {
+				moved[listener(p)]++
 			}
 		}
 		for _, so := range s.Sockets {
-			if so.State == "listen" && !known.has(so.Proto+"\x00"+so.Local) && !dockerDNS(so) {
-				change("network-change", "listen:"+so.Proto+":"+so.Local, "medium", "New listening port: "+so.Local, fmt.Sprintf("%s %s, process %s (PID %d).", so.Proto, so.Local, so.Process, so.PID))
+			if so.State != "listen" || known.has(so.Proto+"\x00"+so.Local) || dockerDNS(so) {
+				continue
 			}
+			// The same program, user and protocol now on another such port is the one it lost,
+			// reachable from this host only. A second port it opens next to the first, or one on
+			// an address the network reaches, stays new.
+			if ephemeralLoopback(so.Local) && moved[listener(so)] > 0 {
+				moved[listener(so)]--
+				continue
+			}
+			change("network-change", "listen:"+so.Proto+":"+so.Local, "medium", "New listening port: "+so.Local, fmt.Sprintf("%s %s, process %s (PID %d).", so.Proto, so.Local, so.Process, so.PID))
 		}
 	}
 
