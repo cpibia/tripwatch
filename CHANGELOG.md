@@ -6,7 +6,7 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
-## [0.1.53] - 2026-11-13
+## [0.1.54] - 2026-11-13
 
 - **Upgrade.** Update the verifier first, then the sensors. Sensors before 0.1.52 still trust
   the release's `SHA256SUMS`: run `gh attestation verify` on the files of this release, as for
