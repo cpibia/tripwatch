@@ -336,6 +336,9 @@ func judgeEvent(e watch.Event, history History) (Finding, bool) {
 		if !loadable(e.Path) || netplanOutput(e.Path) {
 			return Finding{}, false
 		}
+		if snapMountUnit(path.Base(e.Path)) {
+			return systemChange(e, "service", "low", "Snap revision mounted", snapMountNote)
+		}
 		return systemChange(e, "service", "high", "Service added or changed",
 			"A unit or a generator here starts with the system, as root unless it says otherwise.")
 

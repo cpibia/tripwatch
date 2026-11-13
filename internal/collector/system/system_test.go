@@ -540,6 +540,25 @@ func TestPrivilegedMarksUserMounts(t *testing.T) {
 	}
 }
 
+// Snap images are the read-only squashfs mounts at /snap/<name>/<revision>; a writable one, one
+// of another type or elsewhere is not.
+func TestPrivilegedListsSnapImages(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/1/mountinfo": text("22 1 259:1 / / rw,relatime shared:1 - ext4 /dev/root rw\n" +
+			"60 22 7:1 / /snap/core18/3267 ro,nodev,relatime shared:30 - squashfs /dev/loop1 ro\n" +
+			"61 22 7:2 / /snap/lxd-agent_dev/x12 ro,nodev,relatime shared:31 - squashfs /dev/loop2 ro\n" +
+			"62 22 7:3 / /snap/core18/3268 rw,nodev,relatime shared:32 - squashfs /dev/loop3 ro\n" +
+			"63 22 0:40 / /snap/core18/3269 ro,relatime shared:33 - tmpfs tmpfs ro\n" +
+			"64 22 7:4 / /snap/core18/3270/usr ro,relatime shared:34 - squashfs /dev/loop4 ro\n" +
+			"65 22 7:5 / /snap/Core/1 ro,relatime shared:35 - squashfs /dev/loop5 ro\n" +
+			"66 22 7:6 / /mnt/snap/core18/1 ro,relatime shared:36 - squashfs /dev/loop6 ro\n"),
+	}
+	res := collect[PrivilegedResult](t, Privileged{Skip: []string{"proc"}}, collector.Source{FS: fsys})
+	if want := []string{"/snap/core18/3267", "/snap/lxd-agent_dev/x12"}; !slices.Equal(res.SnapImages, want) {
+		t.Fatalf("snap images = %v, want %v", res.SnapImages, want)
+	}
+}
+
 // Polkit and doas policies are read like sudoers, and sudoers includes are followed wherever
 // they point.
 func TestPrivilegePolicies(t *testing.T) {

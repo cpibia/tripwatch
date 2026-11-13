@@ -12,9 +12,16 @@ verifier, so it is clear which of the two needs updating. Versions follow
   redirected on http and answered on https is no longer reported with the redirect.
 - The report of a watched root moved away or removed waits up to five seconds and says when the
   root was back and watched again.
+- The privileged scan lists the read-only snap images mounted at `/snap/<name>/<revision>`
+  (`snap_images`).
 
 ### Verifier
 
+- A snap refresh is one low "Snap refreshed" alert for the new revision's image instead of a
+  high alert for each set-user-ID program it carries: programs at the paths, with the mode and
+  owner, an earlier revision of the snap had (with this release's sensor). A new path or mode, or a program changed in place,
+  stays high. The mount unit of a snap revision and its activation links are low, in snapshots
+  and in real time.
 - A watched root that a package removed and recreated within seconds while the package manager
   ran is low instead of medium; one still gone stays medium, and the privilege directories keep
   their severity.

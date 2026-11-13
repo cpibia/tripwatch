@@ -1193,8 +1193,11 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			if knownUnits != nil && !knownUnits.has(u.Path) && !sensorOwnUnit(u) && !scopeUnit(u.Path) {
 				sev, detail := "medium", u.Path+"\n"+strings.Join(u.Exec, "\n")
-				if verified.has(u.Path, u.SHA256) {
+				switch {
+				case verified.has(u.Path, u.SHA256):
 					sev, detail = "low", detail+"\n"+packageCopyNote
+				case len(u.Exec) == 0 && snapMountUnit(path.Base(u.Path)):
+					sev, detail = "low", detail+"\n"+snapMountNote
 				}
 				changeBy(unitOwner(u), "persistence-change", "unit:"+unitOwner(u)+"|"+u.Path, sev, "New systemd service", detail)
 			}
@@ -1434,8 +1437,10 @@ func Evaluate(prev *State, cur State) []Finding {
 		// Computed once per snapshot: per file they made a hostile snapshot quadratic.
 		privGIDs, groupsOf := privilegedGIDs(cur), memberships(cur.Accounts)
 		var known set
+		var carried snapCarry
 		if prev != nil && prev.Privileged != nil {
 			known = setOf(prev.Privileged.Files, func(q fileT) string { return q.Path + "\x00" + q.SHA256 })
+			carried = newSnapCarry(prev.Privileged, p)
 		}
 		for _, f := range p.Files {
 			switch {
@@ -1451,6 +1456,9 @@ func Evaluate(prev *State, cur State) []Finding {
 			}
 			if known != nil && !known.has(f.Path+"\x00"+f.SHA256) {
 				owner := privilegedOwner(f, cur, privGIDs, groupsOf)
+				if owner == "root" && carried.take(f) {
+					continue
+				}
 				// An upgrade replaces set-user-ID programs: one that matches the checksum its
 				// package records is the package's copy. Checksums rewritten by hand to make a
 				// planted copy pass are the "checksums changed without an upgrade" alert.
@@ -1460,6 +1468,11 @@ func Evaluate(prev *State, cur State) []Finding {
 				}
 				changeBy(owner, "privileged-change", "new:"+owner+"|"+f.Path+":"+f.SHA256, sev, "New privileged file: "+f.Path, detail)
 			}
+		}
+		for _, image := range slices.Sorted(maps.Keys(carried.taken)) {
+			name, rev := path.Base(path.Dir(image)), path.Base(image)
+			change("privileged-change", "snap-refresh:"+image, "low", "Snap refreshed: "+name+" revision "+rev,
+				fmt.Sprintf("%d set-user-ID or set-group-ID programs in %s, a read-only snap image only root can mount there, are at the same paths, with the same mode and owner, as in an earlier revision of %s: snapd mounted a new revision. A program at a path no earlier revision had is still reported on its own.", carried.taken[image], image, name))
 		}
 	}
 
@@ -2423,6 +2436,87 @@ func sensorOwnUnit(u system.Unit) bool {
 // snapData reports a root-owned file in a snap's data directory: snapd creates those for root
 // only, and cloud agents shipped as snaps keep the plugins they download there. A new or changed
 // one is still reported as a new privileged file.
+// snapCarry tells the privileged files a snap refresh brought: under a new revision's image, at a
+// path an earlier revision of the same snap had, with the same mode and owner. Its content is
+// another build of that program; a path or a mode no earlier revision had is new.
+type snapCarry struct {
+	images set
+	// before maps a program of a snap (name, path inside, mode, owner) to the image it was seen
+	// in, or "" once seen in more than one.
+	before map[string]string
+	taken  map[string]int
+}
+
+func newSnapCarry(prev, cur *system.PrivilegedResult) snapCarry {
+	c := snapCarry{images: set{}, before: map[string]string{}, taken: map[string]int{}}
+	c.images.add(cur.SnapImages...)
+	known := set{}
+	known.add(prev.SnapImages...)
+	known.add(cur.SnapImages...)
+	for _, f := range prev.Files {
+		if image, rel, ok := snapImageOf(f.Path, known); ok {
+			key := path.Dir(image) + "\x00" + rel + "\x00" + f.Mode + "\x00" + uidOf(f)
+			if seen, ok := c.before[key]; ok && seen != image {
+				image = ""
+			}
+			c.before[key] = image
+		}
+	}
+	return c
+}
+
+// take reports f as carried by a refresh and counts it for its image.
+func (c snapCarry) take(f fileT) bool {
+	image, rel, ok := snapImageOf(f.Path, c.images)
+	if !ok {
+		return false
+	}
+	// Seen only in this very image, the program changed in place: no refresh does that.
+	if seen, ok := c.before[path.Dir(image)+"\x00"+rel+"\x00"+f.Mode+"\x00"+uidOf(f)]; !ok || seen == image {
+		return false
+	}
+	c.taken[image]++
+	return true
+}
+
+// snapImageOf splits a path under one of the snap images, /snap/<name>/<revision>, into the
+// image and the path inside it.
+func snapImageOf(p string, images set) (image, rel string, ok bool) {
+	parts := strings.SplitN(p, "/", 5)
+	if len(parts) != 5 || parts[0] != "" || parts[1] != "snap" {
+		return "", "", false
+	}
+	image = "/snap/" + parts[2] + "/" + parts[3]
+	return image, parts[4], images.has(image)
+}
+
+func uidOf(f fileT) string {
+	if f.UID == nil {
+		return "?"
+	}
+	return strconv.FormatUint(uint64(*f.UID), 10)
+}
+
+// snapMountNote explains why a snap revision's mount unit is low.
+const snapMountNote = "A mount unit runs no program, and systemd mounts it only on the path its name spells, here a snap revision under /snap: what its image holds the privileged-file scan judges."
+
+// snapMountUnit reports the name of the mount unit snapd writes for each revision,
+// snap-<name>-<revision>.mount. systemd loads a mount unit only when its name is the escaped
+// path it mounts on ("-" in the snap name escaped as \x2d), so this one can mount nothing but
+// /snap/<name>/<revision>.
+func snapMountUnit(unit string) bool {
+	base, ok := strings.CutSuffix(unit, ".mount")
+	if !ok {
+		return false
+	}
+	base, ok = strings.CutPrefix(base, "snap-")
+	i := strings.LastIndexByte(base, '-')
+	if !ok || i < 0 || strings.Contains(base[:i], "-") {
+		return false
+	}
+	return system.SnapImagePoint("/snap/" + strings.ReplaceAll(base[:i], `\x2d`, "-") + "/" + base[i+1:])
+}
+
 func snapData(f fileT) bool {
 	return strings.HasPrefix(f.Path, "/var/snap/") && f.UID != nil && *f.UID == 0
 }

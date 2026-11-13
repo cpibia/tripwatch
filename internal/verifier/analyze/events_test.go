@@ -222,6 +222,26 @@ func TestRootHomeHookIsHigh(t *testing.T) {
 	}
 }
 
+// A snap revision's mount unit and its activation links are low as they appear; another unit
+// beside them stays high.
+func TestSnapMountUnitEvents(t *testing.T) {
+	at := time.Date(2026, 11, 13, 6, 0, 0, 0, time.UTC)
+	ev := func(p string) watch.Event {
+		return watch.Event{At: at, Class: watch.ClassService, Op: watch.OpCreate, Path: p}
+	}
+	for p, want := range map[string]string{
+		"/etc/systemd/system/snap-core18-3267.mount":                         "low",
+		"/etc/systemd/system/multi-user.target.wants/snap-core18-3267.mount": "low",
+		"/etc/systemd/system/snap-core18-3267.service":                       "high",
+		"/etc/systemd/system/multi-user.target.wants/backdoor.service":       "high",
+	} {
+		got := EvaluateEvents([]watch.Event{ev(p)}, false, nil)
+		if len(got) != 1 || got[0].Severity != want {
+			t.Errorf("%s: %+v, want %s", p, got, want)
+		}
+	}
+}
+
 // A watched directory a package removed and recreated within seconds is low; one still gone, one
 // back without a package manager, and the privilege directories keep their severity.
 func TestRootBackDuringAnUpgrade(t *testing.T) {

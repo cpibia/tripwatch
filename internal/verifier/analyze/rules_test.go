@@ -1334,6 +1334,91 @@ func TestNewPrivilegedFileVerifiedByPackage(t *testing.T) {
 	}
 }
 
+// A snap refresh is one low alert for the programs the new revision's image carries over; a path
+// or a mode no earlier revision had, a program changed in place, or one outside a mounted image
+// is new.
+func TestSnapRefreshCarriesItsPrograms(t *testing.T) {
+	uid0 := uint32(0)
+	file := func(p, mode, sum string) collector.File {
+		return collector.File{Path: p, Mode: mode, UID: &uid0, GID: &uid0, SHA256: sum}
+	}
+	const setuid = "urwxr-xr-x"
+	prev := State{Privileged: &system.PrivilegedResult{
+		SnapImages: []string{"/snap/core18/2999"},
+		Files: []collector.File{
+			file("/snap/core18/2999/usr/bin/sudo", setuid, "a"),
+			file("/snap/core18/2999/bin/su", setuid, "b"),
+			file("/snap/core18/2999/usr/bin/chfn", setuid, "c"),
+		},
+	}}
+	cur := State{Privileged: &system.PrivilegedResult{
+		SnapImages: []string{"/snap/core18/2999", "/snap/core18/3267"},
+		Files: []collector.File{
+			file("/snap/core18/2999/usr/bin/sudo", setuid, "z"),
+			file("/snap/core18/2999/bin/su", setuid, "b"),
+			file("/snap/core18/2999/usr/bin/chfn", setuid, "c"),
+			file("/snap/core18/3267/usr/bin/sudo", setuid, "d"),
+			file("/snap/core18/3267/bin/su", setuid, "e"),
+			file("/snap/core18/3267/usr/bin/chfn", "gurwxr-xr-x", "f"),
+			file("/snap/core18/3267/usr/bin/helper", setuid, "g"),
+			file("/snap/core18/3268/bin/su", setuid, "h"),
+			file("/snap/other/5/bin/su", setuid, "i"),
+		},
+	}}
+	cur.Privileged.SnapImages = append(cur.Privileged.SnapImages, "/snap/other/5")
+	var got []string
+	for _, f := range fingerprints(Evaluate(&prev, cur)) {
+		if strings.Contains(f, "privileged-change:") {
+			got = append(got, f)
+		}
+	}
+	want := []string{
+		"high privileged-change:new:root|/snap/core18/2999/usr/bin/sudo:z",
+		"high privileged-change:new:root|/snap/core18/3267/usr/bin/chfn:f",
+		"high privileged-change:new:root|/snap/core18/3267/usr/bin/helper:g",
+		"high privileged-change:new:root|/snap/core18/3268/bin/su:h",
+		"high privileged-change:new:root|/snap/other/5/bin/su:i",
+		"low privileged-change:snap-refresh:/snap/core18/3267",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// The mount unit snapd writes for a revision is low; one whose name is no snap revision, or that
+// runs a program, keeps its severity.
+func TestSnapMountUnit(t *testing.T) {
+	for unit, want := range map[string]bool{
+		"snap-core18-3267.mount":        true,
+		`snap-lxd\x2dagent-x12.mount`:   true,
+		"snap-core18-3267.service":      false,
+		"snap-core18-latest.mount":      false,
+		"snap-core18-3267-usr.mount":    false,
+		"snap-.mount":                   false,
+		"var-lib-docker.mount":          false,
+		`snap-core18\x2fetc-3267.mount`: false,
+		"snap-Core18-3267.mount":        false,
+	} {
+		if got := snapMountUnit(unit); got != want {
+			t.Errorf("%s: %v, want %v", unit, got, want)
+		}
+	}
+	file := func(p string) collector.File { return collector.File{Path: p, SHA256: "aa"} }
+	cur := State{Services: &system.ServicesResult{Units: []system.Unit{
+		{File: file("/etc/systemd/system/snap-core18-3267.mount")},
+		{File: file("/etc/systemd/system/snap-tool-1.mount"), Exec: []string{"ExecStartPost=/tmp/x"}},
+	}}}
+	got := map[string]string{}
+	for _, f := range Evaluate(&State{Services: &system.ServicesResult{}}, cur) {
+		if f.Kind == "persistence-change" {
+			got[f.Fingerprint] = f.Severity
+		}
+	}
+	if got["persistence-change:unit:root|/etc/systemd/system/snap-core18-3267.mount"] != "low" || got["persistence-change:unit:root|/etc/systemd/system/snap-tool-1.mount"] != "medium" {
+		t.Errorf("severities %v", got)
+	}
+}
+
 // Units and generators a package installed, equal to its checksum, are low; dpkg's /lib name for
 // a file reached through /usr/lib counts. Others keep their severity.
 func TestNewUnitsVerifiedByPackage(t *testing.T) {

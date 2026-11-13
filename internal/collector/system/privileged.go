@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 
 	"github.com/cpibia/tripwatch/internal/collector"
@@ -24,7 +25,11 @@ type PrivilegedResult struct {
 	Files        []collector.File `json:"files"`
 	Scanned      int              `json:"scanned"`
 	AttrsSkipped int              `json:"attrs_skipped,omitempty"`
-	Issues       collector.Issues `json:"issues,omitempty"`
+	// SnapImages are the mount points /snap/<name>/<revision> holding a read-only squashfs in
+	// the host's mount namespace: what snapd mounts for each revision it keeps. A file under one
+	// came with that image, which only root can mount there.
+	SnapImages []string         `json:"snap_images,omitempty"`
+	Issues     collector.Issues `json:"issues,omitempty"`
 }
 
 // Privileged walks the whole filesystem for files that grant or protect privileges: setuid,
@@ -39,7 +44,8 @@ func (Privileged) Name() string { return "privileged" }
 
 func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, error) {
 	var res PrivilegedResult
-	mounts := readMounts(src, &res.Issues)
+	mounts, snaps := readMounts(src, &res.Issues)
+	res.SnapImages = snaps
 	skip := map[string]bool{}
 	for _, s := range p.Skip {
 		skip[s] = true
@@ -124,14 +130,18 @@ func (p Privileged) Collect(ctx context.Context, src collector.Source) (any, err
 // user's FUSE is root's.
 type mountTable map[string]string
 
+// maxSnapImages bounds the snap images reported; snapd keeps two or three revisions of each snap.
+const maxSnapImages = 512
+
 // readMounts reads the mount table of the host's init process (the observed root's, when the
-// sensor runs in a container with the host mounted).
-func readMounts(src collector.Source, issues *collector.Issues) mountTable {
+// sensor runs in a container with the host mounted), and the snap images mounted in it.
+func readMounts(src collector.Source, issues *collector.Issues) (mountTable, []string) {
 	out := mountTable{}
+	var snaps []string
 	lines, err := collector.ReadLines(src.FS, "proc/1/mountinfo")
 	if err != nil {
 		issues.Add(fmt.Errorf("mount table not read, files on users' FUSE mounts are not marked: %w", err))
-		return out
+		return out, nil
 	}
 	for _, line := range lines {
 		left, right, ok := strings.Cut(line, " - ")
@@ -148,8 +158,28 @@ func readMounts(src collector.Source, issues *collector.Issues) mountTable {
 			}
 		}
 		out[point] = kind
+		if fstype == "squashfs" && slices.Contains(strings.Split(fields[5], ","), "ro") && SnapImagePoint(point) && len(snaps) < maxSnapImages {
+			snaps = append(snaps, point)
+		}
 	}
-	return out
+	return out, snaps
+}
+
+// SnapImagePoint reports a path of the form /snap/<name>/<revision>, as snapd names the mount
+// point of each revision: a snap name (lowercase letters, digits, hyphens, and an instance key
+// after "_") and a revision number, or "x" and a number for a local install.
+func SnapImagePoint(p string) bool {
+	parts := strings.Split(p, "/")
+	if len(parts) != 4 || parts[0] != "" || parts[1] != "snap" || parts[2] == "" || parts[3] == "" {
+		return false
+	}
+	for _, r := range parts[2] {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return false
+		}
+	}
+	rev := strings.TrimPrefix(parts[3], "x")
+	return rev != "" && strings.Trim(rev, "0123456789") == ""
 }
 
 // userMount returns the user mount a path lies on, by its deepest mount, or "".
