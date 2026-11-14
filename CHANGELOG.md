@@ -6,6 +6,11 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+## [0.1.55] - 2026-11-14
+
+- **Upgrade.** Update the verifier first, then the sensors. The deeper upload watch needs this
+  release's sensor; the verifier changes work with older sensors.
+
 ### Sensor
 
 - Upload directories are watched down to 32 levels instead of 8: a whole site a backup or
