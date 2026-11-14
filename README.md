@@ -817,8 +817,11 @@ Coming next:
 - checks that do not run on the server (pages fetched from outside, cloud provider APIs, canary
   tokens, disk snapshots verified offline), which cannot be silenced from there.
 
-An attacker with root can copy the signing key and continue the chain with credible data: the
-external checks and, later, a hardware-bound key are the answer to that.
+An attacker with root can copy the signing key and continue the chain with credible data. What
+left the server before they got there stays on the verifier, and real-time events leave within two
+seconds; what comes after can only be checked from outside the server. A hardware-bound key would
+not change this: it stops the key from being copied elsewhere, not root on the same host from
+having it sign.
 
 Most web compromises spend weeks or months as the web server user before reaching root. In that
 phase the attacker has no permission to stop the sensor or change its files, and the files they
