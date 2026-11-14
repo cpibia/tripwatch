@@ -6,6 +6,15 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Sensor
+
+- Upload directories are watched down to 32 levels instead of 8: a whole site a backup or
+  file-manager plugin copies into the uploads, with its vendor trees, kept the high "Places left
+  without real-time watch: upload" alert open on every snapshot. The uploads' share of the
+  watches still bounds what they cost.
+- Directories whose path is longer than the kernel takes (`PATH_MAX`) are reported as unwatched
+  instead of being skipped without a word.
+
 ### Verifier
 
 - An alert that comes back after being resolved no longer shows who resolved it: its page read

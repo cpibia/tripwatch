@@ -146,8 +146,10 @@ const (
 	MaxUploadWatches = 6144
 	ScratchDepth     = 2
 	// UploadDepth reaches the derivatives CMSs keep deep in their file trees (Drupal's
-	// styles/<style>/public/<dir>/...): MaxUploadWatches, not the depth, bounds what they cost.
-	UploadDepth = 8
+	// styles/<style>/public/<dir>/...) and the whole sites backup and file-manager plugins copy
+	// into the uploads, vendor trees included: MaxUploadWatches, not the depth, bounds what they
+	// cost, and paths the kernel refuses are reported as gaps, not skipped.
+	UploadDepth = 32
 )
 
 // maxWebRootTargets bounds the web roots watched.

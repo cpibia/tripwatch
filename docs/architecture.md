@@ -168,9 +168,11 @@ not try to prevent this, it makes it visible:
 `internal/watch` runs next to the snapshots. Files are watched with inotify on directories, never
 on files, so a file replaced by a rename is still seen: each target names a directory, a class
 (accounts, ssh, privilege, schedule, service, hook, upload) and optionally the entry names it
-keeps. Upload directories are watched recursively down to eight levels, including directories
+keeps. Upload directories are watched recursively down to 32 levels, including directories
 created later, whose contents are listed at once since a file can land there before the watch
-exists. Watches are capped at 8,192, use `IN_DONT_FOLLOW` and `IN_ONLYDIR`, and the file behind an
+exists: deep enough for a whole site a backup or file-manager plugin copies into the uploads,
+while the uploads' share of the watches, not the depth, bounds what they cost. Directories whose
+path is longer than the kernel takes (`PATH_MAX`) are reported, never skipped without a word. Watches are capped at 8,192, use `IN_DONT_FOLLOW` and `IN_ONLYDIR`, and the file behind an
 event is described through the same confined view the collectors use, with `lstat` and no
 following of the final component, so a planted link is reported and never read or opened, and
 hashed only up to 1 MB and 16 MB a second, on the goroutine that reads the kernel's queue.

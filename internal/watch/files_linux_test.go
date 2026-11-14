@@ -193,12 +193,18 @@ func TestFilesSkipGapsOnlyRootCanReach(t *testing.T) {
 	}
 }
 
-// A CMS's image derivatives sit deeper in the upload tree than the system places: they are
-// watched, not reported as a gap.
+// A CMS's image derivatives, and a whole site a backup plugin copied into the uploads with its
+// vendor trees, sit deeper in the upload tree than the system places: they are watched, not
+// reported as a gap.
 func TestFilesWatchDeepUploadTrees(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "srv/app/files/styles/medium/public/thumbnails/2026-10"), 0o750); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{
+		"srv/app/files/styles/medium/public/thumbnails/2026-10",
+		"srv/app/files/backups/2024-07-09/wp-content/plugins/maps/vendor/acme/geo/src/Render/Tiles/Cache/Store",
+	} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f, err := NewFiles(root, collector.NewSource(root), make(chan Event, 16))
 	if err != nil {
@@ -210,6 +216,48 @@ func TestFilesWatchDeepUploadTrees(t *testing.T) {
 		if strings.Contains(issue, "/srv/app/files") {
 			t.Errorf("gap in the uploads: %s", issue)
 		}
+	}
+}
+
+// Directories nested in the uploads until their path is longer than the kernel takes are
+// reported, not left out without a word.
+func TestFilesReportPathsTooLongToWatch(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv/app/files"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// The full path passes PATH_MAX, so the chain is made one level at a time from descriptors.
+	fd, err := unix.Open(filepath.Join(root, "srv/app/files"), unix.O_DIRECTORY|unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := strings.Repeat("d", 250)
+	for range 20 {
+		if err := unix.Mkdirat(fd, name, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		next, err := unix.Openat(fd, name, unix.O_DIRECTORY|unix.O_RDONLY|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fd = next
+	}
+	_ = unix.Close(fd)
+	f, err := NewFiles(root, collector.NewSource(root), make(chan Event, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	f.Set(Targets(nil, []string{"/srv/app/files"}))
+	var gaps []string
+	for _, u := range f.Unwatched() {
+		if strings.Contains(u, "which the kernel refuses") {
+			gaps = append(gaps, u)
+		}
+	}
+	if len(gaps) != 1 || !strings.HasPrefix(gaps[0], ClassUpload+": ") || len(gaps[0]) > 200 {
+		t.Fatalf("long path gaps = %v, unwatched = %v", gaps, f.Unwatched())
 	}
 }
 

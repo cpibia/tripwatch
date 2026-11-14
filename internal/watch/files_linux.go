@@ -323,6 +323,10 @@ func (f *Files) expand(t Target, dir string, depth int, keep map[string][]Target
 	if dir == t.Dir {
 		delete(f.missing, dir)
 	}
+	if !f.pathFits(dir) {
+		f.longPathGap(t)
+		return
+	}
 	if _, seen := keep[dir]; !seen {
 		if limit := classBudget[t.Class]; limit > 0 {
 			if planned[t.Class] >= limit {
@@ -650,6 +654,17 @@ func (f *Files) abs(dir string) string {
 	return f.root + dir
 }
 
+// pathFits reports whether the kernel takes dir's path: inotify_add_watch and openat refuse one
+// of PATH_MAX bytes or more, so a tree nested that far by whoever can write in it would be left
+// unwatched without a word.
+func (f *Files) pathFits(dir string) bool { return len(f.abs(dir)) < unix.PathMax }
+
+// longPathGap reports directories below t whose paths are too long to watch. The message names
+// the target, not the path, which is itself thousands of bytes long. Callers hold f.mu.
+func (f *Files) longPathGap(t Target) {
+	f.gap(t.Class, fmt.Sprintf("watch: directories below %s have paths of %d bytes or more, which the kernel refuses: not watched", t.Dir, unix.PathMax))
+}
+
 // Run reads the kernel's notifications until ctx ends.
 func (f *Files) Run(ctx context.Context) error {
 	buf := make([]byte, 64<<10)
@@ -833,6 +848,12 @@ const maxNewEntries = 64
 // in it: a file can land there before the watch exists.
 func (f *Files) watchNew(dir string, t Target, depth int) {
 	if t.Class == ClassScratch && f.rootMount(dir) {
+		return
+	}
+	if !f.pathFits(dir) {
+		f.mu.Lock()
+		f.longPathGap(t)
+		f.mu.Unlock()
 		return
 	}
 	f.mu.Lock()
