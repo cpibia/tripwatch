@@ -964,7 +964,10 @@ docker compose exec verifier /tripwatch-verifier login-link -email ops@example.n
 
 The link opens a page with a button, and the session starts only when it is pressed: chat
 previews and mail scanners that open the link do not consume it. A password change voids the
-links not yet used. After a leaked password, the browsers it was used from are forgotten with:
+links not yet used. The link does not ask the second factor: whoever can run commands in the
+verifier can already read and change every account, so a code proves nothing more. It is
+recorded as such in the audit log, and adding or removing a factor from that session still asks
+a code. After a leaked password, the browsers it was used from are forgotten with:
 
 ```sh
 docker compose exec verifier /tripwatch-verifier revoke-browsers -email ops@example.net

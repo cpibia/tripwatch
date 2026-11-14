@@ -91,7 +91,10 @@ func (s *Store) ConsumeLoginLink(ctx context.Context, token string, now time.Tim
 	if err != nil {
 		return "", "", ErrNotFound
 	}
-	session, err = s.openSession(ctx, email, now)
+	// Only someone who runs commands in the verifier makes a link, and with that they could
+	// already read and change every account: asking them a code proves nothing more. The session
+	// still never counts as a confirmed second factor, so adding or removing one asks a code.
+	session, err = s.openSession(ctx, email, now, false)
 	return email, session, err
 }
 
@@ -158,12 +161,12 @@ func (s *Store) Login(ctx context.Context, email, password string, now time.Time
 	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
 		return "", ErrBadCredentials
 	}
-	return s.openSession(ctx, email, now)
+	return s.openSession(ctx, email, now, true)
 }
 
-// openSession stores a new session and returns its token, which is not stored. A user with a
-// second factor gets a session that waits for its code: it opens nothing until then.
-func (s *Store) openSession(ctx context.Context, email string, now time.Time) (string, error) {
+// openSession stores a new session and returns its token, which is not stored. When asked, a
+// user with a second factor gets a session that waits for its code: it opens nothing until then.
+func (s *Store) openSession(ctx context.Context, email string, now time.Time, askSecondFactor bool) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -171,8 +174,8 @@ func (s *Store) openSession(ctx context.Context, email string, now time.Time) (s
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO sessions (token_hash, email, expires_at, created_at, last_seen, mfa_pending)
-		VALUES (?, ?, ?, ?, ?, (SELECT totp_secret != '' OR EXISTS (SELECT 1 FROM webauthn_credentials WHERE email = ?) FROM users WHERE email = ?))`,
-		sum[:], email, now.Add(SessionLifetime).Unix(), now.Unix(), now.Unix(), email, email); err != nil {
+		VALUES (?, ?, ?, ?, ?, ? AND (SELECT totp_secret != '' OR EXISTS (SELECT 1 FROM webauthn_credentials WHERE email = ?) FROM users WHERE email = ?))`,
+		sum[:], email, now.Add(SessionLifetime).Unix(), now.Unix(), now.Unix(), askSecondFactor, email, email); err != nil {
 		return "", err
 	}
 	// Whoever has a password can open sessions that wait for a code, as many as the sign-in

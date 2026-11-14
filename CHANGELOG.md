@@ -6,6 +6,13 @@ verifier, so it is clear which of the two needs updating. Versions follow
 
 ## [Unreleased]
 
+### Verifier
+
+- A one-time link from `tripwatch-verifier login-link` signs in without asking the second
+  factor: only someone who can run commands in the verifier makes one, and they can already
+  change every account. The audit log says so, and adding or removing a factor from that session
+  still asks a code.
+
 ## [0.1.55] - 2026-11-14
 
 - **Upgrade.** Update the verifier first, then the sensors. The deeper upload watch needs this

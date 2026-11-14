@@ -593,16 +593,12 @@ func (s *server) loginLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("login with a one-time link", "email", email)
-	if err := s.Store.Audit(r.Context(), email, "signed in", "", "with a one-time link", s.Now()); err != nil {
+	if err := s.Store.Audit(r.Context(), email, "signed in", "", "with a one-time link, no second factor asked", s.Now()); err != nil {
 		s.Log.Error("audit", "err", err)
 	}
 	s.cookie(w, sessionCookie, token, store.SessionLifetime)
 	if device, err := s.Store.CreateDevice(r.Context(), email, s.Now()); err == nil {
 		s.cookie(w, deviceCookie, device, store.DeviceLifetime)
-	}
-	if on, _ := s.Store.SecondFactorEnabled(r.Context(), email); on {
-		http.Redirect(w, r, "/login/2fa", http.StatusSeeOther)
-		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

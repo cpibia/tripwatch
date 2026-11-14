@@ -85,6 +85,45 @@ func TestSecondFactorSignIn(t *testing.T) {
 	}
 }
 
+// A one-time link, which only someone running commands in the verifier makes, signs in without
+// the second factor; changing the factors from that session still asks a code.
+func TestLoginLinkSkipsSecondFactor(t *testing.T) {
+	h := newHarness(t)
+	csrf := h.login()
+	_, body := h.post("/account/2fa-begin", url.Values{"csrf": {csrf}})
+	m := regexp.MustCompile(`<pre class="datum mono">([A-Z2-7]+)</pre>`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("no secret shown")
+	}
+	h.post("/account/2fa-confirm", url.Values{"csrf": {csrf}, "code": {totpCode(t, m[1])}})
+	h.post("/logout", url.Values{"csrf": {csrf}})
+
+	token, err := h.store.CreateLoginLink(context.Background(), email, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := h.post("/login/link", url.Values{"t": {token}}); res.Header.Get("Location") != "/" {
+		t.Fatalf("after the link: %q", res.Header.Get("Location"))
+	}
+	res, body := h.get("/alerts")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("a page after the link: %d %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	if !strings.Contains(h.audited("signed in"), "no second factor asked") {
+		t.Error("the audit log does not say the second factor was skipped")
+	}
+	csrf = csrfField.FindStringSubmatch(body)[1]
+	if res, body := h.post("/account/2fa-begin", url.Values{"csrf": {csrf}}); res.StatusCode != http.StatusForbidden || !strings.Contains(body, confirmFirst) {
+		t.Fatalf("second factor replaced from a link session without a code: %d", res.StatusCode)
+	}
+	if res, _ := h.post("/account/2fa-off", url.Values{"csrf": {csrf}}); res.StatusCode == http.StatusOK || res.StatusCode == http.StatusSeeOther {
+		t.Fatalf("second factor turned off from a link session without a code: %d", res.StatusCode)
+	}
+	if on, _ := h.store.TOTPEnabled(context.Background(), email); !on {
+		t.Fatal("second factor off")
+	}
+}
+
 // Ending sessions that do not exist leaves no trace in the audit log: a user signed in cannot
 // push an administrator's entries out with made-up IDs. Ending a real one is recorded.
 func TestEndSessionAuditsOnlyRealSessions(t *testing.T) {

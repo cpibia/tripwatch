@@ -236,7 +236,7 @@ func (s *Store) AcceptInvite(ctx context.Context, token, password string, now ti
 	if err := tx.Commit(); err != nil {
 		return "", "", err
 	}
-	session, err = s.openSession(ctx, email, now)
+	session, err = s.openSession(ctx, email, now, true)
 	return email, session, err
 }
 
